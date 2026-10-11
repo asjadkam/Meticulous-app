@@ -369,9 +369,18 @@
 
   /* auth first, then onboarding: after any sign-in, route based on onboarded flag */
   function afterAuth() {
-    App.onAuth(window.FB ? FB.user : null);
-    if (store.get('onboarded', false)) App.showView('main');
-    else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
+    try {
+      var u = (window.FB && FB.user) ? FB.user : null;
+      // If FB.user not yet set, try Firebase's currentUser directly
+      if (!u && window.FB && FB.auth && FB.auth.currentUser) {
+        u = FB.auth.currentUser; FB.user = u;
+      }
+      App.onAuth(u);
+      if (store.get('onboarded', false)) App.showView('main');
+      else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
+    } catch (e) {
+      authError('Navigation error: ' + (e.message || e));
+    }
   }
 
   /* ---------------- auth ---------------- */
