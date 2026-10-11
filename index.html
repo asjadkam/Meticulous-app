@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Meticulous</title>
+<meta name="theme-color" content="#1F3764">
+<meta name="description" content="The dump truck driver's companion. Track work, revenue, fuel, and more.">
+<link rel="manifest" href="/assets/manifest.json">
+<link rel="icon" type="image/png" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" href="/assets/icon-192.png">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+/* critical splash: visible before style.css / JS load */
+#splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:20px;transition:opacity .55s ease;}
+#splash.hide{opacity:0;pointer-events:none;}
+#splash img{width:112px;height:112px;border-radius:26px;box-shadow:0 8px 28px rgba(0,0,0,.35);}
+#splash .sp-name{color:#fff;font-size:27px;font-weight:800;letter-spacing:1.5px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+#splash .sp-tag{color:#D9E1F3;font-size:14px;opacity:.85;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+</style>
+</head>
+<body>
+<div id="splash">
+  <img src="/assets/icon-192.png" alt="Meticulous">
+  <div class="sp-name">Meticulous</div>
+  <div class="sp-tag">Set up once. Then just drive.</div>
+</div>
+<div id="app">
+
+  <!-- ONBOARDING -->
+  <div id="onboarding" class="view">
+    <div id="onb">
+      <div class="hero">
+        <img src="/assets/icon-192.png" alt="Meticulous">
+        <h2>Welcome to Meticulous</h2>
+        <p>Set up once. Then just drive.</p>
+      </div>
+      <div class="body">
+        <div class="prog"><i id="onbProg" style="width:14%"></i></div>
+        <div id="onbSteps"></div>
+      </div>
+      <div class="nav">
+        <button class="btn ghost" id="onbBack">Back</button>
+        <button class="btn primary" id="onbNext">Next</button>
+      </div>
+      <button class="skipbtn" id="onbSkip">Skip for now</button>
+      <div style="height:18px"></div>
+    </div>
+  </div>
+
+  <!-- AUTH -->
+  <div id="auth" class="view">
+    <div class="auth-land" id="authLand">
+      <img src="/assets/icon-192.png" class="auth-logo" alt="Meticulous">
+      <h2>Built for the road.</h2>
+      <p class="tag">Every load. Every hour. Every dollar.<br>Tracked &mdash; so nothing slips away.</p>
+      <button class="btn primary big" id="btnGoSignUp">Create account</button>
+      <button class="btn outline big" id="btnGoSignIn">Sign in</button>
+      <button class="skipbtn light" id="authSkipLand">Continue without an account</button>
+    </div>
+    <div class="box hidden" id="authBox">
+      <button class="backlink" id="btnAuthBack">&larr; Back</button>
+      <img src="/assets/icon-192.png" class="auth-mini" alt="Meticulous">
+      <h2 id="authTitle">Sign in</h2>
+      <p class="sub">Your data syncs to your account.</p>
+      <div class="err" id="authErr"></div>
+      <label class="f">Email</label>
+      <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      <label class="f">Password</label>
+      <input id="authPass" type="password" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
+      <button class="btn primary" id="btnSignIn">Sign in</button>
+      <button class="btn navy hidden" id="btnSignUp">Create account</button>
+      <button class="skipbtn" id="authSkip" style="color:var(--muted)">Continue without an account</button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main" class="view">
+    <div class="topbar">
+      <button class="iconbtn" id="btnMenu" aria-label="Menu">☰</button>
+      <span class="logo"><img src="/assets/logo.svg" alt=""></span>
+      <h1>Meticulous</h1>
+      <button class="iconbtn" id="btnBell" aria-label="Reminders">🔔</button>
+    </div>
+
+    <div id="sidebar">
+      <div class="who">
+        <div class="nm" id="sbName">Driver</div>
+        <div class="em" id="sbEmail">—</div>
+      </div>
+      <nav id="sbNav"></nav>
+    </div>
+    <div id="scrim"></div>
+
+    <div id="dashView">
+      <div class="trialbar hidden" id="trialBar"></div>
+      <div class="tracker">
+        <div class="meta" id="trkMeta">Ready to work</div>
+        <div class="clock" id="trkClock">00:00:00</div>
+        <div>
+          <button class="tbtn play" id="trkMain">▶<br>START</button>
+          <button class="tbtn stop hidden" id="trkStop">■<br>STOP</button>
+        </div>
+      </div>
+      <div class="modgrid" id="modGrid"></div>
+    </div>
+
+    <div id="modView" class="hidden">
+      <div class="modhead">
+        <button class="backbtn" id="btnModBack">←</button>
+        <h2 id="modTitle">Module</h2>
+      </div>
+      <div class="pad" id="modBody" style="padding-bottom:90px"></div>
+    </div>
+  </div>
+</div>
+
+<button id="fbFab" class="hidden" title="Send feedback">💬</button>
+<div id="fbSheet">
+  <h3 style="margin:0 0 6px;color:var(--navy)">Quick feedback</h3>
+  <p class="note" style="margin:0 0 8px">What is wrong or what do you want changed?</p>
+  <textarea id="fbText" placeholder="Type here..."></textarea>
+  <label class="f"><input type="checkbox" id="fbScreen" checked style="width:auto"> Attach current screen name</label>
+  <div class="row">
+    <button class="btn ghost" id="fbCancel">Cancel</button>
+    <button class="btn primary" id="fbSend">Send</button>
+  </div>
+</div>
+<div id="scrim2" style="display:none"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="/js/firebase.js"></script>
+<script src="/modules/revenue.js"></script>
+<script src="/modules/dispatch.js"></script>
+<script src="/modules/navigation.js"></script>
+<script src="/modules/fuel.js"></script>
+<script src="/modules/damage.js"></script>
+<script src="/modules/manifest.js"></script>
+<script src="/modules/invoice.js"></script>
+<script src="/modules/connect.js"></script>
+<script src="/modules/reminders.js"></script>
+<script src="/modules/preferences.js"></script>
+<script src="/modules/subscription.js"></script>
+<script src="/js/app.js"></script>
+<script>
+/* splash safety: never trap the user if app JS fails */
+setTimeout(function () {
+  var s = document.getElementById('splash');
+  if (s && !s.classList.contains('hide') && !window.__appReady) s.classList.add('hide');
+}, 6000);
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function(){});
+  });
+}
+</script>
+</body>
+</html>
