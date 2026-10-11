@@ -1,1 +1,28 @@
-{"hosting":{"headers":[{"headers":[{"key":"Cache-Control","value":"no-cache"}],"source":"/sw.js"}],"ignore":["firebase.json",".firebaserc","**/.*","**/node_modules/**"],"public":".","rewrites":[{"destination":"/index.html","source":"**"}]}}
+{
+  "hosting": {
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ],
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "public": ".",
+    "rewrites": [
+      {
+        "destination": "/index.html",
+        "source": "**"
+      }
+    ]
+  }
+}
