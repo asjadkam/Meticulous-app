@@ -10,7 +10,8 @@ var SHELL = [
   '/assets/manifest.json',
   '/assets/logo.svg',
   '/assets/icon-192.png',
-  '/assets/icon-512.png'
+  '/assets/icon-512.png',
+  '/assets/hero-truck.jpg'
 ];
 
 self.addEventListener('install', function (e) {
