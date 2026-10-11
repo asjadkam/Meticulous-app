@@ -364,7 +364,14 @@
     store.set('onboarded', true);
     // ask for notification permission once
     if (window.FB && FB.enablePush) { FB.enablePush().catch(function () {}); }
-    App.showView('auth');
+    App.showView('main');
+  }
+
+  /* auth first, then onboarding: after any sign-in, route based on onboarded flag */
+  function afterAuth() {
+    App.onAuth(window.FB ? FB.user : null);
+    if (store.get('onboarded', false)) App.showView('main');
+    else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
   }
 
   /* ---------------- auth ---------------- */
@@ -376,7 +383,7 @@
       var em = el('authEmail').value.trim(), pw = el('authPass').value;
       if (!em || !pw) return authError('Enter email and password.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
-      FB.signIn(em, pw).then(function () { App.showView('main'); })
+      FB.signIn(em, pw).then(afterAuth)
         .catch(function (e) { authError(e.message || 'Sign in failed.'); });
     };
     el('btnSignUp').onclick = function () {
@@ -384,14 +391,13 @@
       if (!em || !pw) return authError('Enter email and password.');
       if (pw.length < 6) return authError('Password must be at least 6 characters.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
-      FB.signUp(em, pw).then(function () { App.showView('main'); })
+      FB.signUp(em, pw).then(afterAuth)
         .catch(function (e) { authError(e.message || 'Sign up failed.'); });
     };
     el('authSkip').onclick = function () {
       var em = el('authEmail').value.trim();
       if (em) store.set('localEmail', em);
-      App.onAuth(null);
-      App.showView('main');
+      afterAuth();
     };
     /* auth landing (v2): two-button welcome -> form */
     function showAuthForm(mode) {
@@ -428,7 +434,7 @@
       if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); }
       else finishOnboarding();
     };
-    el('onbSkip').onclick = function () { store.set('onboarded', true); App.showView('auth'); };
+    el('onbSkip').onclick = function () { store.set('onboarded', true); App.showView('main'); };
 
     el('btnMenu').onclick = function () {
       el('sidebar').classList.add('open'); el('scrim').classList.add('show');
@@ -448,17 +454,18 @@
     setInterval(trackerTick, 1000);
 
     renderOnbStep();
-    if (store.get('onboarded', false)) {
-      App.showView('auth');
-      // if already signed in, firebase onAuthStateChanged will fire; otherwise stay on auth
-      setTimeout(function () {
-        if (!(window.FB && FB.user) && !(window.FB && FB.ready)) {
-          // offline with no account yet: stay on auth screen
-        }
-      }, 1500);
-    } else {
-      App.showView('onboarding');
+    // auth comes first; after sign-in, afterAuth() routes to onboarding or main
+    App.showView('auth');
+    // if already signed in (returning user), firebase onAuthStateChanged fires -> route there
+    var _authRouted = false;
+    function routeReturningUser() {
+      if (_authRouted) return; _authRouted = true;
+      if (window.FB && FB.user) afterAuth();
     }
+    if (window.FB && FB.auth) {
+      FB.auth.onAuthStateChanged(function () { setTimeout(routeReturningUser, 300); });
+    }
+    setTimeout(routeReturningUser, 2500); // fallback in case the listener was already attached
 
     /* splash: fade out once the first view is up */
     window.__appReady = true;

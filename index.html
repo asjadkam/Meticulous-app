@@ -156,8 +156,42 @@ setTimeout(function () {
 }, 6000);
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js').catch(function(){});
+    navigator.serviceWorker.register('/sw.js').then(function (reg) {
+      // Auto-check for updates every 15 minutes + on visibility change
+      function checkUpdate() { reg.update().catch(function () {}); }
+      setInterval(checkUpdate, 15 * 60 * 1000);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) checkUpdate(); });
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdateBanner(reg);
+        });
+      });
+      // In case an update is already waiting
+      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+    }).catch(function(){});
   });
+}
+function showUpdateBanner(reg) {
+  if (document.getElementById('updBanner')) return;
+  var b = document.createElement('div');
+  b.id = 'updBanner';
+  b.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:9999;background:#1F3764;color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);font-family:inherit;';
+  b.innerHTML = '<span style="flex:1;font-size:14px;">A new version of Meticulous is ready.</span>';
+  var btn = document.createElement('button');
+  btn.textContent = 'Update';
+  btn.style.cssText = 'background:#F26522;color:#fff;border:0;border-radius:10px;padding:10px 18px;font-size:15px;font-weight:700;';
+  btn.onclick = function () {
+    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!reloaded) { reloaded = true; window.location.reload(); }
+    });
+    setTimeout(function () { if (!reloaded) { reloaded = true; window.location.reload(); } }, 1500);
+  };
+  b.appendChild(btn);
+  document.body.appendChild(b);
 }
 </script>
 </body>
