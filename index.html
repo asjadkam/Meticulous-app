@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meticulous</title>
 <meta name="theme-color" content="#1F3764">
 <meta name="description" content="The dump truck driver's companion. Track work, revenue, fuel, and more.">
@@ -75,7 +75,10 @@
       <label class="f">Email</label>
       <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com">
       <label class="f">Password</label>
-      <input id="authPass" type="password" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;">
+      <div style="position:relative;">
+        <input id="authPass" type="password" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="padding-right:48px;">
+        <button type="button" id="btnShowPass" aria-label="Show password" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;font-size:20px;padding:8px;cursor:pointer;">&#128065;</button>
+      </div>
       <button class="btn primary" id="btnSignIn">Sign in</button>
       <button class="btn navy hidden" id="btnSignUp">Create account</button>
       <button class="skipbtn" id="authSkip" style="color:var(--muted)">Continue without an account</button>

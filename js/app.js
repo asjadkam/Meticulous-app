@@ -379,20 +379,32 @@
     var e = el('authErr'); e.textContent = msg; e.style.display = 'block';
   }
   function wireAuth() {
+    if (el('btnShowPass')) el('btnShowPass').onclick = function () {
+      var p = el('authPass');
+      var show = p.type === 'password';
+      p.type = show ? 'text' : 'password';
+      el('btnShowPass').innerHTML = show ? '&#128064;' : '&#128065;';
+    };
     el('btnSignIn').onclick = function () {
       var em = el('authEmail').value.trim(), pw = el('authPass').value;
       if (!em || !pw) return authError('Enter email and password.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
-      FB.signIn(em, pw).then(afterAuth)
-        .catch(function (e) { authError(e.message || 'Sign in failed.'); });
+      var btn = el('btnSignIn');
+      btn.disabled = true; btn.textContent = 'Signing in...';
+      function done() { btn.disabled = false; btn.textContent = 'Sign in'; }
+      FB.signIn(em, pw).then(function () { done(); afterAuth(); })
+        .catch(function (e) { done(); authError((e && e.message) || 'Sign in failed. Check your email and password.'); });
     };
     el('btnSignUp').onclick = function () {
       var em = el('authEmail').value.trim(), pw = el('authPass').value;
       if (!em || !pw) return authError('Enter email and password.');
       if (pw.length < 6) return authError('Password must be at least 6 characters.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
-      FB.signUp(em, pw).then(afterAuth)
-        .catch(function (e) { authError(e.message || 'Sign up failed.'); });
+      var btn = el('btnSignUp');
+      btn.disabled = true; btn.textContent = 'Creating...';
+      function done() { btn.disabled = false; btn.textContent = 'Create account'; }
+      FB.signUp(em, pw).then(function () { done(); afterAuth(); })
+        .catch(function (e) { done(); authError((e && e.message) || 'Sign up failed.'); });
     };
     el('authSkip').onclick = function () {
       var em = el('authEmail').value.trim();
