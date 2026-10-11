@@ -48,6 +48,9 @@
   FB.signIn = function (email, password) {
     return FB.auth.signInWithEmailAndPassword(email, password);
   };
+  FB.sendReset = function (email) {
+    return FB.auth.sendPasswordResetEmail(email);
+  };
   FB.signOut = function () {
     return FB.auth.signOut();
   };

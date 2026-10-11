@@ -385,6 +385,17 @@
       p.type = show ? 'text' : 'password';
       el('btnShowPass').innerHTML = show ? '&#128064;' : '&#128065;';
     };
+    if (el('btnForgot')) el('btnForgot').onclick = function () {
+      var em = el('authEmail').value.trim();
+      if (!em) return authError('Enter your email first, then tap Forgot password.');
+      if (!window.FB || !FB.ready || !FB.auth) return authError('Could not reach the server. Try again.');
+      authError('Sending reset email...');
+      FB.sendReset(em).then(function () {
+        authError('Reset email sent! Check your inbox (and spam folder).');
+      }).catch(function (e) {
+        authError((e && e.message) || 'Could not send reset email.');
+      });
+    };
     el('btnSignIn').onclick = function () {
       var em = el('authEmail').value.trim(), pw = el('authPass').value;
       if (!em || !pw) return authError('Enter email and password.');
