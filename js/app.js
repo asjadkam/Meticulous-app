@@ -392,8 +392,11 @@
       var btn = el('btnSignIn');
       btn.disabled = true; btn.textContent = 'Signing in...';
       function done() { btn.disabled = false; btn.textContent = 'Sign in'; }
-      FB.signIn(em, pw).then(function () { done(); afterAuth(); })
-        .catch(function (e) { done(); authError((e && e.message) || 'Sign in failed. Check your email and password.'); });
+      try {
+        if (!FB.auth) throw new Error('Auth not ready. Reload the app and try again.');
+        FB.signIn(em, pw).then(function () { done(); afterAuth(); })
+          .catch(function (e) { done(); authError((e && e.message) || 'Sign in failed. Check your email and password.'); });
+      } catch (e) { done(); authError(e.message || 'Sign in failed.'); }
     };
     el('btnSignUp').onclick = function () {
       var em = el('authEmail').value.trim(), pw = el('authPass').value;
