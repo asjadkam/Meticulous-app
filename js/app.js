@@ -381,6 +381,18 @@
       return 'This account is disabled. Contact support. (' + code + ')';
     return msg + (code ? ' (' + code + ')' : '');
   }
+  /* v16: show auth errors visibly. The authErr box is hidden on the landing
+     view, so failures there were invisible. If the form is hidden, use alert. */
+  function visibleAuthError(msg) {
+    try {
+      var box = el('authBox'), err = el('authErr');
+      if (box && !box.classList.contains('hidden') && err) {
+        err.textContent = msg; err.style.display = 'block'; err.style.color = '';
+      } else {
+        alert(msg);
+      }
+    } catch (e) { try { alert(msg); } catch (e2) {} }
+  }
   function afterAuth() {
     try {
       var u = (window.FB && FB.user) ? FB.user : null;
@@ -392,7 +404,7 @@
       if (store.get('onboarded', false)) App.showView('main');
       else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
     } catch (e) {
-      authError('Navigation error: ' + (e.message || e));
+      visibleAuthError('Navigation error: ' + (e.message || e));
     }
   }
 
@@ -454,30 +466,22 @@
       })
         .catch(function (e) { done(); authError(friendlyAuthError(e)); });
     };
-    /* v16: bulletproof local-mode entry. Shows errors visibly (the authErr box
-       is hidden on the landing view, so failures were invisible). Falls back
-       to minimal navigation if the full auth chain throws. */
-    function visibleAuthError(msg) {
-      try {
-        var box = el('authBox'), err = el('authErr');
-        if (box && !box.classList.contains('hidden') && err) {
-          err.textContent = msg; err.style.display = 'block'; err.style.color = '';
-        } else {
-          alert(msg);
-        }
-      } catch (e) { try { alert(msg); } catch (e2) {} }
-    }
+    /* v17: verify navigation actually happened; afterAuth swallows its own
+       errors, so check the view and force minimal navigation if stuck. */
     function enterLocalMode() {
+      var em = '';
+      try { em = el('authEmail').value.trim(); } catch (e) {}
+      if (em) { try { store.set('localEmail', em); } catch (e) {} }
+      try { afterAuth(); } catch (e) {}
+      var moved = false;
       try {
-        var em = '';
-        try { em = el('authEmail').value.trim(); } catch (e) {}
-        if (em) { try { store.set('localEmail', em); } catch (e) {} }
-        try { afterAuth(); return; }
-        catch (e) { /* fall through to minimal navigation */ }
-        try { App.onbStep = 0; renderOnbStep(); } catch (e2) {}
-        App.showView('onboarding');
-      } catch (e) {
-        visibleAuthError('Could not enter: ' + (e && e.message || e));
+        moved = el('onboarding').classList.contains('active') ||
+                el('main').classList.contains('active');
+      } catch (e) {}
+      if (!moved) {
+        try { App.onbStep = 0; renderOnbStep(); } catch (e) {}
+        try { App.showView('onboarding'); }
+        catch (e2) { visibleAuthError('Could not enter: ' + (e2 && e2.message || e2)); }
       }
     }
     el('authSkip').onclick = enterLocalMode;
