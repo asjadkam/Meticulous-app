@@ -397,6 +397,13 @@
   }
 
   /* ---------------- auth ---------------- */
+  /* v15: strip invisible characters glitchy keyboards insert into passwords
+     (zero-width spaces etc. are invisible even with the eye toggle on,
+     so the password looks right but never matches). Applied on both
+     signup and sign-in so they always agree. */
+  function cleanPw(pw) {
+    return String(pw || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, '');
+  }
   function authError(msg, ok) {
     var e = el('authErr'); e.textContent = msg; e.style.display = 'block';
     e.style.color = ok ? '#15803d' : '';
@@ -420,7 +427,7 @@
       });
     };
     el('btnSignIn').onclick = function () {
-      var em = el('authEmail').value.trim(), pw = el('authPass').value;
+      var em = el('authEmail').value.trim(), pw = cleanPw(el('authPass').value);
       if (!em || !pw) return authError('Enter email and password.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
       var btn = el('btnSignIn');
@@ -433,7 +440,7 @@
       } catch (e) { done(); authError(e.message || 'Sign in failed.'); }
     };
     el('btnSignUp').onclick = function () {
-      var em = el('authEmail').value.trim(), pw = el('authPass').value;
+      var em = el('authEmail').value.trim(), pw = cleanPw(el('authPass').value);
       if (!em || !pw) return authError('Enter email and password.');
       if (pw.length < 6) return authError('Password must be at least 6 characters.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
