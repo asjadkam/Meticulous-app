@@ -9,7 +9,7 @@
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="icon" type="image/png" href="/assets/icon-192.png">
 <link rel="apple-touch-icon" href="/assets/icon-192.png">
-<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/style.css?v=13">
 <style>
 /* critical splash: visible before style.css / JS load */
 #splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
@@ -83,6 +83,7 @@
       <button class="btn navy hidden" id="btnSignUp">Create account</button>
       <button class="skipbtn" id="btnForgot" style="color:var(--navy);font-weight:600;">Forgot password?</button>
       <button class="skipbtn" id="authSkip" style="color:var(--muted)">Continue without an account</button>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:10px;">v13</div>
     </div>
   </div>
 
@@ -144,19 +145,19 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="/js/firebase.js?v=9"></script>
-<script src="/modules/revenue.js"></script>
-<script src="/modules/dispatch.js"></script>
-<script src="/modules/navigation.js"></script>
-<script src="/modules/fuel.js"></script>
-<script src="/modules/damage.js"></script>
-<script src="/modules/manifest.js"></script>
-<script src="/modules/invoice.js"></script>
-<script src="/modules/connect.js"></script>
-<script src="/modules/reminders.js"></script>
-<script src="/modules/preferences.js"></script>
-<script src="/modules/subscription.js"></script>
-<script src="/js/app.js?v=9"></script>
+<script src="/js/firebase.js?v=13"></script>
+<script src="/modules/revenue.js?v=13"></script>
+<script src="/modules/dispatch.js?v=13"></script>
+<script src="/modules/navigation.js?v=13"></script>
+<script src="/modules/fuel.js?v=13"></script>
+<script src="/modules/damage.js?v=13"></script>
+<script src="/modules/manifest.js?v=13"></script>
+<script src="/modules/invoice.js?v=13"></script>
+<script src="/modules/connect.js?v=13"></script>
+<script src="/modules/reminders.js?v=13"></script>
+<script src="/modules/preferences.js?v=13"></script>
+<script src="/modules/subscription.js?v=13"></script>
+<script src="/js/app.js?v=13"></script>
 <script>
 /* splash safety: never trap the user if app JS fails */
 setTimeout(function () {

@@ -368,6 +368,19 @@
   }
 
   /* auth first, then onboarding: after any sign-in, route based on onboarded flag */
+  function friendlyAuthError(e) {
+    var code = (e && e.code) || '';
+    var msg = (e && e.message) || 'Sign in failed.';
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found')
+      return 'Wrong email or password. If you just reset your password, make sure you are typing the new one. (' + code + ')';
+    if (code === 'auth/too-many-requests')
+      return 'Too many tries — Firebase locked this for a bit. Wait 10 minutes and try again. (' + code + ')';
+    if (code === 'auth/network-request-failed')
+      return 'Could not reach the server. Check your internet and try again. (' + code + ')';
+    if (code === 'auth/user-disabled')
+      return 'This account is disabled. Contact support. (' + code + ')';
+    return msg + (code ? ' (' + code + ')' : '');
+  }
   function afterAuth() {
     try {
       var u = (window.FB && FB.user) ? FB.user : null;
@@ -415,7 +428,7 @@
       try {
         if (!FB.auth) throw new Error('Auth not ready. Reload the app and try again.');
         FB.signIn(em, pw).then(function () { done(); afterAuth(); })
-          .catch(function (e) { done(); authError((e && e.message) || 'Sign in failed. Check your email and password.'); });
+          .catch(function (e) { done(); authError(friendlyAuthError(e)); });
       } catch (e) { done(); authError(e.message || 'Sign in failed.'); }
     };
     el('btnSignUp').onclick = function () {
@@ -427,7 +440,7 @@
       btn.disabled = true; btn.textContent = 'Creating...';
       function done() { btn.disabled = false; btn.textContent = 'Create account'; }
       FB.signUp(em, pw).then(function () { done(); afterAuth(); })
-        .catch(function (e) { done(); authError((e && e.message) || 'Sign up failed.'); });
+        .catch(function (e) { done(); authError(friendlyAuthError(e)); });
     };
     el('authSkip').onclick = function () {
       var em = el('authEmail').value.trim();
