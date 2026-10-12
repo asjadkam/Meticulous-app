@@ -454,11 +454,33 @@
       })
         .catch(function (e) { done(); authError(friendlyAuthError(e)); });
     };
-    el('authSkip').onclick = function () {
-      var em = el('authEmail').value.trim();
-      if (em) store.set('localEmail', em);
-      afterAuth();
-    };
+    /* v16: bulletproof local-mode entry. Shows errors visibly (the authErr box
+       is hidden on the landing view, so failures were invisible). Falls back
+       to minimal navigation if the full auth chain throws. */
+    function visibleAuthError(msg) {
+      try {
+        var box = el('authBox'), err = el('authErr');
+        if (box && !box.classList.contains('hidden') && err) {
+          err.textContent = msg; err.style.display = 'block'; err.style.color = '';
+        } else {
+          alert(msg);
+        }
+      } catch (e) { try { alert(msg); } catch (e2) {} }
+    }
+    function enterLocalMode() {
+      try {
+        var em = '';
+        try { em = el('authEmail').value.trim(); } catch (e) {}
+        if (em) { try { store.set('localEmail', em); } catch (e) {} }
+        try { afterAuth(); return; }
+        catch (e) { /* fall through to minimal navigation */ }
+        try { App.onbStep = 0; renderOnbStep(); } catch (e2) {}
+        App.showView('onboarding');
+      } catch (e) {
+        visibleAuthError('Could not enter: ' + (e && e.message || e));
+      }
+    }
+    el('authSkip').onclick = enterLocalMode;
     /* auth landing (v2): two-button welcome -> form */
     function showAuthForm(mode) {
       el('authLand').classList.add('hidden');
