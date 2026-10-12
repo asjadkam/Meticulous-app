@@ -397,8 +397,9 @@
   }
 
   /* ---------------- auth ---------------- */
-  function authError(msg) {
+  function authError(msg, ok) {
     var e = el('authErr'); e.textContent = msg; e.style.display = 'block';
+    e.style.color = ok ? '#15803d' : '';
   }
   function wireAuth() {
     if (el('btnShowPass')) el('btnShowPass').onclick = function () {
@@ -439,7 +440,11 @@
       var btn = el('btnSignUp');
       btn.disabled = true; btn.textContent = 'Creating...';
       function done() { btn.disabled = false; btn.textContent = 'Create account'; }
-      FB.signUp(em, pw).then(function () { done(); afterAuth(); })
+      FB.signUp(em, pw).then(function () {
+        done();
+        authError('Account created! Setting things up...', true);
+        setTimeout(afterAuth, 600); // brief beat so the confirmation is seen
+      })
         .catch(function (e) { done(); authError(friendlyAuthError(e)); });
     };
     el('authSkip').onclick = function () {
@@ -505,15 +510,25 @@
     // auth comes first; after sign-in, afterAuth() routes to onboarding or main
     App.showView('auth');
     // if already signed in (returning user), firebase onAuthStateChanged fires -> route there
-    var _authRouted = false;
+    // v14: keep polling for the restored session instead of giving up after 2.5s
+    // (slow networks need longer; giving up strands signed-in users on the login screen)
+    var _authRouted = false, _authWaitMs = 0;
     function routeReturningUser() {
-      if (_authRouted) return; _authRouted = true;
-      if (window.FB && FB.user) afterAuth();
+      if (_authRouted) return;
+      if (window.FB && FB.user) { _authRouted = true; afterAuth(); return; }
+      _authWaitMs += 500;
+      if (_authWaitMs < 15000) setTimeout(routeReturningUser, 500);
+      else _authRouted = true; // truly no session after 15s: stay on sign-in
     }
-    if (window.FB && FB.auth) {
-      FB.auth.onAuthStateChanged(function () { setTimeout(routeReturningUser, 300); });
+    function watchAuthState() {
+      if (window.FB && FB.auth) {
+        FB.auth.onAuthStateChanged(function () { setTimeout(routeReturningUser, 300); });
+      } else {
+        setTimeout(watchAuthState, 500); // Firebase not ready yet; retry
+      }
     }
-    setTimeout(routeReturningUser, 2500); // fallback in case the listener was already attached
+    watchAuthState();
+    setTimeout(routeReturningUser, 500);
 
     /* splash: fade out once the first view is up */
     window.__appReady = true;
