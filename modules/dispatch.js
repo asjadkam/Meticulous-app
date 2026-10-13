@@ -85,6 +85,10 @@
       /* ---- New dispatch form ---- */
       h += '<div class="card"><h3>＋ New dispatch</h3>' +
         '<label class="f">Job site</label><input id="dp_site" placeholder="e.g. Aecon — Deerfoot site">' +
+        '<div class="row"><div><label class="f">Scheduled</label><input id="dp_when" type="datetime-local"></div>' +
+        '<div><label class="f">Truck type</label><input id="dp_equip" placeholder="e.g. Tandem"></div></div>' +
+        '<div id="dp_pin" style="font-size:13px;margin:2px 0 6px;"></div>' +
+        '<input type="hidden" id="dp_lat"><input type="hidden" id="dp_lng">' +
         '<div class="row"><div><label class="f">Material</label><input id="dp_mat" placeholder="e.g. Gravel"></div>' +
         '<div><label class="f">Ticket #</label><input id="dp_ticket" placeholder="e.g. 48213"></div></div>' +
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
@@ -113,6 +117,10 @@
                    d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
           return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
             '<div class="b">' + esc(d.date || '') +
+            (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
+            (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
+            (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
+              ' · <a href="https://www.google.com/maps?q=' + d.lat + ',' + d.lng + '" target="_blank" rel="noopener">📍 Map</a>' : '') +
             (d.material ? ' · ' + esc(d.material) : '') +
             (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
             (d.amount ? ' · $' + esc(d.amount) : '') + '</div>' +
@@ -240,6 +248,16 @@
           // Auto-fill dispatch form from first ticket (if empty)
           if (pendingTickets.length === 0) {
             if (form.jobSite && !body.querySelector('#dp_site').value) body.querySelector('#dp_site').value = form.jobSite;
+            /* v31: scheduled datetime + truck type + map pin from OCR */
+            if (form.scheduledAt && !body.querySelector('#dp_when').value) body.querySelector('#dp_when').value = form.scheduledAt;
+            if (form.equipment && !body.querySelector('#dp_equip').value) body.querySelector('#dp_equip').value = form.equipment;
+            if (form.lat !== undefined && form.lat !== null && form.lng !== undefined && form.lng !== null) {
+              body.querySelector('#dp_lat').value = form.lat;
+              body.querySelector('#dp_lng').value = form.lng;
+              body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
+                (form.coordinates ? ' (' + esc(form.coordinates) + ')' : '') +
+                ' — <a href="https://www.google.com/maps?q=' + form.lat + ',' + form.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
+            }
             if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
             if (form.ticketNo && !body.querySelector('#dp_ticket').value) body.querySelector('#dp_ticket').value = form.ticketNo;
             if (form.notes && !body.querySelector('#dp_notes').value) body.querySelector('#dp_notes').value = form.notes;
@@ -293,9 +311,14 @@
       imgCamInput.onchange = handlePhoto;
 
       function readForm() {
+        var latV = body.querySelector('#dp_lat').value, lngV = body.querySelector('#dp_lng').value;
         return {
           id: uid(),
           jobSite: body.querySelector('#dp_site').value.trim(),
+          scheduledAt: body.querySelector('#dp_when').value || '', // v31: dispatch datetime from OCR/manual
+          equipment: body.querySelector('#dp_equip').value.trim(), // v31: truck type (Tandem…)
+          lat: latV !== '' ? parseFloat(latV) : null,               // v31: map pin from OCR coords
+          lng: lngV !== '' ? parseFloat(lngV) : null,
           material: body.querySelector('#dp_mat').value.trim(),
           ticketNo: body.querySelector('#dp_ticket').value.trim(),
           amount: body.querySelector('#dp_amt').value.trim(),

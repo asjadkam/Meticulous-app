@@ -205,6 +205,30 @@
   };
 
   /* ---------- DISPATCH SCREENSHOT parser ---------- */
+
+  /* DMS → decimal degrees. e.g. 50°57'59.4"N → 50.9665 */
+  function dmsToDecimal(deg, min, sec, hemi) {
+    var v = parseFloat(deg) + parseFloat(min) / 60 + parseFloat(sec || 0) / 3600;
+    if (!isFinite(v)) return null;
+    if (hemi === 'S' || hemi === 'W') v = -v;
+    return Math.round(v * 1000000) / 1000000;
+  }
+
+  /* "Tomorrow 8:00am" / "Today 6:30 PM" / "8:00am" → local ISO string for a
+     datetime-local input ("YYYY-MM-DDTHH:MM"). Bare times assume today. */
+  function parseDispatchDateTime(text) {
+    var tm = String(text).match(/(Today|Tomorrow)?\s*(\d{1,2}):(\d{2})\s*([aApP])[mM]/);
+    if (!tm) return null;
+    var d = new Date();
+    if (tm[1] && /tomorrow/i.test(tm[1])) d.setDate(d.getDate() + 1);
+    var h = parseInt(tm[2], 10) % 12;
+    if (/p/i.test(tm[4])) h += 12;
+    d.setHours(h, parseInt(tm[3], 10), 0, 0);
+    function p2(n) { return ('0' + n).slice(-2); }
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) +
+      'T' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+
   TicketOCR.parseDispatch = function (text) {
     var f = { _type: 'dispatch' };
 
@@ -213,15 +237,28 @@
     if (tm) {
       f.time = (tm[1] || '') + tm[2];
       f.time = f.time.trim();
+      // v31 fix: resolve to an actual dispatch datetime (was dumped in notes)
+      f.datetime = parseDispatchDateTime(text);
     }
 
     // Equipment type
     var eq = firstMatch(text, [/(Tandem|Tridem|Tri-axle|End\s*dump|Single\s*axle)/i]);
     if (eq) f.equipment = eq;
 
-    // Site/company — e.g., "Aecon Inf". Usually the line after equipment.
-    var site = firstMatch(text, [/(Aecon\s+\w+)/i]);
-    if (site) f.site = site;
+    // Site/company — full name, not one word. v31 fix: the old regex
+    // /(Aecon\s+\w+)/ captured only "Aecon" + a single word and could clip
+    // the name ("Aecon Inf…"). Capture Aecon + following name words, but
+    // stop before instruction/equipment words ("Go Empty To", "Tandem"…).
+    var site = firstMatch(text, [/(Aecon(?:\s+(?!Go\b|Empty\b|Tomorrow\b|Today\b|Tandem\b|Tridem\b)[A-Z][\w&.'-]*){1,4})/i]);
+    if (!site) {
+      // Generic fallback: a Capitalized company-ish line (2-5 words)
+      site = firstMatch(text, [/\b([A-Z][\w&.'-]+(?:\s+[A-Z][\w&.'-]+){1,4})\s*(?:Ltd|Inc|Corp|Group|Construction|Infrastructure)?\b/]);
+    }
+    if (site) {
+      // Belt-and-braces: cut anything from an instruction phrase onward
+      site = site.replace(/\s+(Go\s+Empty.*|Tomorrow\b.*|Today\b.*)$/i, '');
+      f.site = site.replace(/\s+/g, ' ').trim();
+    }
 
     // Location code — e.g., "A2-L20"
     f.locationCode = firstMatch(text, [/\b([A-Z]\d+-[A-Z]\d+)\b/]);
@@ -231,16 +268,35 @@
     if (inst) f.instructions = inst;
 
     // Coordinates — e.g., 50°57'59.4"N  114°01'54.4"W
-    var lat = firstMatch(text, [/(\d+°\d+'[\d.]+"N)/]);
-    var lng = firstMatch(text, [/(\d+°\d+'[\d.]+"W)/]);
-    if (lat && lng) {
-      f.coordinates = lat + ' ' + lng;
-      f.latitude = lat;
-      f.longitude = lng;
+    // v31 fix: convert DMS to decimal lat/lng so a real map pin can be made
+    // (previously the raw DMS text was dumped into Notes).
+    var cm = String(text).match(/(\d{1,3})°\s*(\d{1,2})'\s*([\d.]+)["”]?\s*([NS])[\s,]*(\d{1,3})°\s*(\d{1,2})'\s*([\d.]+)["”]?\s*([EW])/);
+    if (cm) {
+      var la = dmsToDecimal(cm[1], cm[2], cm[3], cm[4]);
+      var lo = dmsToDecimal(cm[5], cm[6], cm[7], cm[8]);
+      if (la !== null && lo !== null) {
+        f.lat = la;
+        f.lng = lo;
+        f.coordinates = cm[1] + '°' + cm[2] + "'" + cm[3] + '"' + cm[4] + ' ' +
+                        cm[5] + '°' + cm[6] + "'" + cm[7] + '"' + cm[8];
+        f.latitude = f.coordinates;
+        f.longitude = '';
+      }
+    }
+    if (f.lat === undefined) {
+      // Fallback: decimal coords already in text, e.g. "51.0447, -114.0719"
+      var dm = String(text).match(/(-?\d{2,3}\.\d{4,})[\s,]+(-?\d{2,3}\.\d{4,})/);
+      if (dm) {
+        var dLat = parseFloat(dm[1]), dLng = parseFloat(dm[2]);
+        if (Math.abs(dLat) <= 90 && Math.abs(dLng) <= 180) {
+          f.lat = dLat; f.lng = dLng;
+          f.coordinates = dLat + ', ' + dLng;
+        }
+      }
     }
 
     var count = 0;
-    ['time', 'equipment', 'site', 'locationCode', 'instructions', 'coordinates'].forEach(function (k) {
+    ['time', 'datetime', 'equipment', 'site', 'locationCode', 'instructions', 'coordinates'].forEach(function (k) {
       if (f[k]) count++;
     });
     f._confidence = count;
@@ -387,17 +443,25 @@
       if (parsed.date) notes.push(parsed.date);
       if (notes.length) form.notes = notes.join(' · ');
     } else {
-      // Dispatch screenshot
+      // Dispatch screenshot — v31 fix: map each extracted field to its own
+      // form field (previously time/equipment/coords were ALL dumped into
+      // notes, e.g. "Tomorrow 8:00am · Tandem · 50°57'59.4"N…").
       if (parsed.site) form.jobSite = parsed.site;
+      if (parsed.datetime) form.scheduledAt = parsed.datetime;   // → dispatch datetime field
+      if (parsed.time) form.scheduledLabel = parsed.time;        // display string ("Tomorrow 8:00am")
+      if (parsed.equipment) form.equipment = parsed.equipment;   // → truck type field
+      if (parsed.lat !== undefined && parsed.lat !== null) form.lat = parsed.lat;
+      if (parsed.lng !== undefined && parsed.lng !== null) form.lng = parsed.lng;
+      if (parsed.coordinates) form.coordinates = parsed.coordinates; // DMS display string
+      // Notes holds ONLY genuine free-text: the instruction + location code.
       var n = [];
-      if (parsed.time) n.push(parsed.time);
-      if (parsed.equipment) n.push(parsed.equipment);
       if (parsed.instructions && parsed.locationCode) {
         n.push(parsed.instructions + ' ' + parsed.locationCode);
+      } else if (parsed.instructions) {
+        n.push(parsed.instructions);
       } else if (parsed.locationCode) {
-        n.push(parsed.locationCode);
+        n.push('Location ' + parsed.locationCode);
       }
-      if (parsed.coordinates) n.push(parsed.coordinates);
       if (n.length) form.notes = n.join(' · ');
     }
     return form;
