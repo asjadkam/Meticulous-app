@@ -35,7 +35,7 @@
         '<p class="note" id="pf_pushnote"></p></div>';
 
       h += '<button class="btn primary" id="pf_save">Save preferences</button>';
-      h += '<div class="card"><h3>⚠️ Data</h3><button class="btn ghost" id="pf_wipe">Erase all local data</button></div>';
+      // v24: removed "Erase all local data" — developer tool, not for users
 
       body.innerHTML = h;
       body.querySelector('#pf_save').onclick = function () {
@@ -55,12 +55,7 @@
           });
         } else body.querySelector('#pf_pushnote').textContent = 'Push unavailable in this browser.';
       };
-      body.querySelector('#pf_wipe').onclick = function () {
-        if (confirm('Erase ALL local app data? This cannot be undone.')) {
-          Object.keys(localStorage).filter(function (k) { return k.indexOf('mt_') === 0; }).forEach(function (k) { localStorage.removeItem(k); });
-          location.reload();
-        }
-      };
+      // v24: pf_wipe handler removed (button removed above)
     }
   };
 })();

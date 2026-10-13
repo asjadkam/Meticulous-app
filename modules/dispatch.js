@@ -90,7 +90,14 @@
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Loads</label><input id="dp_loads" type="number" min="1" step="1" value="1"></div></div>' +
         '<label class="f">Notes</label><input id="dp_notes" placeholder="Gate code, contact…">' +
-        '<label class="f">Ticket photo</label><input type="file" id="dp_img" accept="image/*" capture="environment">' +
+        '<label class="f">Ticket photo</label>' +
+        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+        '<button type="button" class="btn secondary" id="dp_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="dp_pick" style="flex:1;">📁 Choose file</button>' +
+        '</div>' +
+        '<input type="file" id="dp_img_cam" accept="image/*" capture="environment" style="display:none;">' +
+        '<input type="file" id="dp_img" accept="image/*" style="display:none;">' +
+        '<div id="dp_img_name" style="font-size:12px;color:var(--muted);margin-bottom:8px;">No file chosen</div>' +
         '<div id="dp_preview"></div>' +
         '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
         '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>';
@@ -117,15 +124,22 @@
 
       var pendingPhoto = null;
       var imgInput = body.querySelector('#dp_img');
-      imgInput.onchange = function (ev) {
+      var imgCamInput = body.querySelector('#dp_img_cam');
+      // v24: two buttons — camera and file picker
+      body.querySelector('#dp_cam').onclick = function () { imgCamInput.click(); };
+      body.querySelector('#dp_pick').onclick = function () { imgInput.click(); };
+      function handlePhoto(ev) {
         var f = ev.target.files[0]; if (!f) return;
+        body.querySelector('#dp_img_name').textContent = f.name || 'Photo selected';
         fileToThumb(f, function (dataUrl) {
           pendingPhoto = dataUrl;
           body.querySelector('#dp_preview').innerHTML =
             '<img src="' + dataUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">' +
             '<p class="note">Photo attached. It will be saved with the dispatch.</p>';
         });
-      };
+      }
+      imgInput.onchange = handlePhoto;
+      imgCamInput.onchange = handlePhoto;
 
       function readForm() {
         return {
