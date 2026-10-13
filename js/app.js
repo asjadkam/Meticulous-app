@@ -78,7 +78,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 19;
+      var BUNDLED_VERSION = 20;
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -603,7 +603,15 @@
       if (window.FB && FB.user) { _authRouted = true; afterAuth(); return; }
       _authWaitMs += 500;
       if (_authWaitMs < 15000) setTimeout(routeReturningUser, 500);
-      else _authRouted = true; // truly no session after 15s: stay on sign-in
+      else {
+        _authRouted = true;
+        // v20: local-mode returning user — if previously onboarded, go to main
+        // instead of stranding on sign-in (no Firebase session to restore)
+        if (store.get('onboarded', false)) {
+          try { App.onAuth(null); } catch (e) {}
+          try { App.showView('main'); } catch (e2) {}
+        }
+      }
     }
     function watchAuthState() {
       if (window.FB && FB.auth) {
