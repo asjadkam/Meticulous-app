@@ -76,9 +76,12 @@
         if (v === 'onboarding' && App.onbStep > 0) {
           App.onbStep--;
           try { renderOnbStep(); } catch (e) {}
-        } else if (v === 'onboarding' || v === 'main') {
-          // back out to auth instead of killing the app mid-flow
+        } else if (v === 'onboarding') {
+          // v25: back from onboarding goes to auth (not main) — don't strand user
           try { App.showView('auth'); } catch (e) {}
+        } else if (v === 'main') {
+          // v25: back from main EXITS the app — never bounce to login screen
+          try { Cap.Plugins.App.exitApp(); } catch (e) {}
         } else {
           try { Cap.Plugins.App.exitApp(); } catch (e) {}
         }
@@ -92,7 +95,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 24;
+      var BUNDLED_VERSION = 25;
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
