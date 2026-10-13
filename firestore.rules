@@ -1,0 +1,15 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Meticulous stores ALL app data under the signed-in user's own tree:
+    //   users/{uid}/kv/{key}          (cloud sync store)
+    //   users/{uid}/meta, sessions, feedback, revenue, dispatches, fuel,
+    //   damage, invoices, pnl, pnl_drivers, pnl_wage_entries, maintenance
+    // Owner-only: a signed-in user may read/write only their own tree.
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    // No other paths are used by the app; everything else stays denied.
+  }
+}
