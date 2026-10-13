@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 32,
+  "webVersion": 33,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck-v2.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -15,7 +15,7 @@
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
     "index.html": "0c086f90a2dd6108890d5e923e75ab27dd6ac49eef901a17e2f5764edc5db32d",
     "js/app.js": "532ca8c60b22f3db5fc015441ad6ce150ed131baa950ea714ea437e6b6e5d233",
-    "js/cloudsync.js": "aacc975cd0a10195e24896386694e8dd40251062a9e03f985601dd3b7b34c7b6",
+    "js/cloudsync.js": "2b768b38ca750aea1fc4a2cd8acf939d6f7cebd0099761c0704176854bedbc43",
     "js/firebase.js": "e5310441cd79cc25fb26787c549f655601b7dae1f65f2acd6f7bf7d075a0e025",
     "js/ota.js": "d42df3bbeb231b9763615b350de8e677dbf2e269309dc91621d4c13efa662bc4",
     "js/ticket-ocr.js": "dbe42e060f86f97b1324026a71f0edf4926ce388e59a9041c81abd42c35fa871",

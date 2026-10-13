@@ -26,6 +26,7 @@
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
   var PULL_TIMEOUT_MS = 25000;          // v32: never let a pull hang forever
+  var PUSH_TIMEOUT_MS = 20000;          // v33: never let a single push hang the flush
 
   var S = {
     attached: false,
@@ -193,6 +194,19 @@
         if (document.visibilityState === 'hidden') flush();
       });
       window.addEventListener('beforeunload', function () { flush(); });
+      // v33: watchdog — every 30s, if dirty keys exist and no sync is in
+      // flight, kick one off. Catches cases where an early-return or a
+      // timed-out push left work stranded with a yellow dot.
+      setInterval(function () {
+        try {
+          if (!S.attached || S.flushing || S._pulling || !S.uid) return;
+          var _wm = getMeta(), _wd = false;
+          for (var _wk in _wm.keys) {
+            if (_wm.keys.hasOwnProperty(_wk) && isSyncable(_wk) && isDirty(_wk)) { _wd = true; break; }
+          }
+          if (_wd) syncNow();
+        } catch (e) {}
+      }, 30000);
     } catch (e) {}
 
     refreshDot();
@@ -240,9 +254,45 @@
     S.flushTimer = setTimeout(function () { S.flushTimer = null; flush(); }, DEBOUNCE_MS);
   }
 
+  // v33: race a single push against a timeout. A Firestore set()/delete()
+  // that never settles used to wedge S.flushing=true forever (infinite
+  // yellow dot) — v32 fixed this for pull but not for push. On timeout the
+  // key stays dirty (retried later) and the error surfaces as a red dot
+  // instead of an endless yellow pulse.
+  function pushOneWithTimeout(key) {
+    var pushP;
+    try { pushP = pushOne(key); }
+    catch (e) { pushP = Promise.reject(e); }
+    var timeoutP = new Promise(function (_, reject) {
+      setTimeout(function () {
+        reject(new Error('push-timeout: Firestore gave no response in ' +
+          Math.round(PUSH_TIMEOUT_MS / 1000) + 's for key "' + key + '" — check connection, then retry'));
+      }, PUSH_TIMEOUT_MS);
+    });
+    return Promise.race([pushP, timeoutP]).catch(function (e) {
+      var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+      try { (S._flushErrors = S._flushErrors || []).push(msg); } catch (e2) {}
+      try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
+      return false;
+    });
+  }
+
   function flush() {
     if (S.flushing) { scheduleFlush(); return; }
-    if (!fbReady() || !S.online) { refreshDot(); return; }
+    if (!fbReady() || !S.online) {
+      refreshDot();
+      // v33: don't give up silently — Firebase Auth can be slow to restore
+      // on a cold start. Previously this returned without rescheduling, so
+      // dirty keys sat forever with a yellow dot and no error. Retry soon.
+      try {
+        var _m = getMeta(), _hasDirty = false;
+        for (var _k in _m.keys) {
+          if (_m.keys.hasOwnProperty(_k) && isSyncable(_k) && isDirty(_k)) { _hasDirty = true; break; }
+        }
+        if (_hasDirty) setTimeout(function () { if (!S.flushing) flush(); }, 10000);
+      } catch (e) {}
+      return;
+    }
     S.flushing = true;
     setDot('syncing', 'Syncing…');
     var keys = [];
@@ -273,7 +323,7 @@
     // no way to see why. Now the first error surfaces (red dot + message).
     S._flushErrors = [];
     var chain = Promise.resolve();
-    keys.forEach(function (k) { chain = chain.then(function () { return pushOne(k); }); });
+    keys.forEach(function (k) { chain = chain.then(function () { return pushOneWithTimeout(k); }); });
     chain.then(function () {
       S.flushing = false;
       if (S._flushErrors.length) {
