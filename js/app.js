@@ -72,6 +72,32 @@
     } catch (e) {}
   })();
 
+  /* v19: in-app update checker (native only). The web app auto-updates on
+     reload; the native APK does not. This checks version.json on the live
+     site and shows a download banner when a newer APK is available. */
+  (function () {
+    try {
+      if (!window.Capacitor) return;
+      var BUNDLED_VERSION = 19;
+      fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (info) {
+          if (info && info.version > BUNDLED_VERSION && info.apkUrl) {
+            var bar = document.createElement('div');
+            var link = document.createElement('a');
+            link.href = info.apkUrl;
+            link.textContent = 'Tap to download v' + info.version;
+            link.style.cssText = 'color:#fff;font-weight:bold;text-decoration:underline;';
+            bar.appendChild(document.createTextNode('Update available — '));
+            bar.appendChild(link);
+            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#F26522;color:#fff;text-align:center;padding:12px;z-index:99999;font-size:14px;';
+            document.body.appendChild(bar);
+          }
+        })
+        .catch(function () {});
+    } catch (e) {}
+  })();
+
   App.onAuth = function (user) {
     App.user = user;
     var em = user ? user.email : store.get('localEmail', null);
@@ -384,8 +410,12 @@
   function finishOnboarding() {
     collectOnbInputs();
     store.set('onboarded', true);
-    // ask for notification permission once
-    if (window.FB && FB.enablePush) { FB.enablePush().catch(function () {}); }
+    // ask for notification permission once — never let it block onboarding
+    // (v19: Notification API throws synchronously in some WebViews, which
+    // previously aborted finishOnboarding before showing the main screen)
+    try {
+      if (window.FB && FB.enablePush) { FB.enablePush().catch(function () {}); }
+    } catch (e) {}
     App.showView('main');
   }
 
