@@ -25,6 +25,7 @@
   var DEBOUNCE_MS = 2500;
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
+  var PULL_TIMEOUT_MS = 25000;          // v32: never let a pull hang forever
 
   var S = {
     attached: false,
@@ -121,7 +122,8 @@
   }
   function refreshDot() {
     if (!S.uid) { setDot('off', 'Sync off — sign in to back up your data'); return; }
-    if (S.lastError) { setDot('err', 'Sync error — will retry automatically'); return; }
+    // v32: show the actual error so a stuck sync is diagnosable on-device
+    if (S.lastError) { setDot('err', 'Sync error: ' + String(S.lastError).slice(0, 100)); return; }
     if (S.flushing || S._pulling) { setDot('syncing', 'Syncing…'); return; }
     // any dirty keys left?
     var m = getMeta(), dirty = false;
@@ -266,10 +268,22 @@
       if (keys.length) saveMeta();
     } catch (e) {}
 
+    // v32: collect per-key push errors. Previously failures were swallowed,
+    // keys stayed dirty forever, and the dot pulsed yellow indefinitely with
+    // no way to see why. Now the first error surfaces (red dot + message).
+    S._flushErrors = [];
     var chain = Promise.resolve();
     keys.forEach(function (k) { chain = chain.then(function () { return pushOne(k); }); });
     chain.then(function () {
-      S.flushing = false; S.lastError = null; saveMeta(); refreshDot();
+      S.flushing = false;
+      if (S._flushErrors.length) {
+        S.lastError = S._flushErrors[0];
+        S._flushFails = (S._flushFails || 0) + 1;
+      } else {
+        S.lastError = null;
+        S._flushFails = 0;
+      }
+      saveMeta(); refreshDot();
     }).catch(function (e) {
       S.flushing = false; S.lastError = String((e && e.message) || e); saveMeta(); refreshDot();
     });
@@ -292,7 +306,10 @@
       if (!fbReady()) return Promise.resolve(false);
       try {
         return FB.deleteDoc(KV_COLLECTION, docId).then(function () { return done(true); })
-          .catch(function () { return done(false); });
+          .catch(function (e) {
+            try { (S._flushErrors = S._flushErrors || []).push('delete ' + key + ': ' + String((e && e.message) || e)); } catch (e2) {}
+            return done(false);
+          });
       } catch (e) { return Promise.resolve(done(false)); }
     }
     var val = parseJson(raw, undefined);
@@ -308,9 +325,14 @@
     if (!fbReady()) return Promise.resolve(false);
     try {
       return FB.saveDoc(KV_COLLECTION, docId, { v: val }).then(function (res) {
+        if (res === null) {
+          try { (S._flushErrors = S._flushErrors || []).push('push ' + key + ': not signed in'); } catch (e2) {}
+        }
         return done(res !== null); // saveDoc resolves null when not signed in
       }).catch(function (e) {
-        try { console.warn('[cloudsync] push failed for', key, e && e.message); } catch (e2) {}
+        var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+        try { (S._flushErrors = S._flushErrors || []).push(msg); } catch (e2) {}
+        try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
         return done(false);
       });
     } catch (e) { return Promise.resolve(done(false)); }
@@ -357,7 +379,20 @@
     var meta = getMeta();
     var firstSyncForUid = meta.uid !== S.uid;
 
-    return FB.loadDocs(KV_COLLECTION).then(function (docs) {
+    // v32: a Firestore get() that never settles used to wedge _pulling=true
+    // forever (infinite yellow dot). Race it against a timeout; a late
+    // response arriving after the timeout is ignored.
+    var timedOut = false, loadP;
+    try { loadP = FB.loadDocs(KV_COLLECTION); }
+    catch (e) { loadP = Promise.reject(e); }
+    var timeoutP = new Promise(function (_, reject) {
+      setTimeout(function () {
+        timedOut = true;
+        reject(new Error('pull-timeout: Firestore gave no response in ' + Math.round(PULL_TIMEOUT_MS / 1000) + 's — check connection, then retry'));
+      }, PULL_TIMEOUT_MS);
+    });
+    return Promise.race([loadP, timeoutP]).then(function (docs) {
+      if (timedOut) return { applied: 0 }; // stale late response; ignore
       var applied = 0, cloudKeys = {}, now = Date.now();
       docs.forEach(function (d) {
         var key = d.mt || d.id;

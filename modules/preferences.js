@@ -19,21 +19,19 @@
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
         '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p></div>';
 
-      h += '<div class="card"><h3>⏰ Tracker auto-start</h3>' +
-        '<label class="chk"><input type="checkbox" id="pf_autostart"' + (o.autoStart ? ' checked' : '') + '> Start the tracker by itself</label>' +
-        '<label class="f">Start time</label><input id="pf_autotime" type="time" value="' + esc(o.autoStartTime || '06:00') + '">' +
-        '<label class="f">Days</label><div id="pf_autodays">' +
-        (function () {
-          var names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          var sel = Array.isArray(o.autoStartDays) ? o.autoStartDays : [1, 2, 3, 4, 5];
-          return names.map(function (n, i) {
-            return '<label class="daypill"><input type="checkbox" data-day="' + i + '"' + (sel.indexOf(i) !== -1 ? ' checked' : '') + '> ' + n + '</label>';
-          }).join('');
-        })() + '</div>' +
-        '<p class="note">Time-based only — no location tracking. If the app is open it starts by itself at this time; if it was closed, you\'ll be asked when you open it.</p></div>';
+      // v30: shared with the Auto-start sidebar module — one UI, one behavior.
+      h += Meticulous.modules.autostart.settingsHTML('pf');
 
       h += '<div class="card"><h3>📍 Base location</h3>' +
-        '<label class="f">Where do you park your truck?</label><input id="pf_base" value="' + esc(o.baseLocation || '') + '"></div>';
+        '<label class="f">Where do you park your truck?</label><input id="pf_base" value="' + esc(o.baseLocation || '') + '">' +
+        '<label class="f">Home province</label><select id="pf_prov">' +
+        ['Alberta', 'British Columbia', 'Manitoba', 'New Brunswick', 'Newfoundland and Labrador',
+         'Nova Scotia', 'Ontario', 'Prince Edward Island', 'Quebec', 'Saskatchewan',
+         'Northwest Territories', 'Nunavut', 'Yukon'].map(function (p) {
+          return '<option value="' + p + '"' + (o.homeProvince === p ? ' selected' : '') + '>' + p + '</option>';
+        }).join('') +
+        '<option value=""' + (!o.homeProvince ? ' selected' : '') + '>— not set —</option></select>' +
+        '<p class="note">Sets the workers\u2019 comp name in P&L (WCB in Alberta, WSIB in Ontario, WorkSafeBC in BC, CNESST in Quebec\u2026) and its default rate.</p></div>';
 
       h += '<div class="card"><h3>🏢 Company</h3>' +
         '<label class="f">Company name</label><input id="pf_cname" value="' + esc(o.companyName || '') + '">' +
@@ -60,6 +58,11 @@
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p>' +
         '<button class="btn navy" id="pf_checkupd">Check for updates</button>' +
         '<p class="note" id="pf_updnote"></p></div>';
+      /* v32: cloud-sync diagnostics — shows live sync state, last error, and
+         a manual retry. If the top-bar dot is red/yellow, the reason is here. */
+      h += '<div class="card"><h3>☁️ Cloud sync</h3>' +
+        '<p class="note" id="pf_syncnote">Checking…</p>' +
+        '<button class="btn navy" id="pf_syncnow">Retry sync now</button></div>';
       // v24: removed "Erase all local data" — developer tool, not for users
 
       body.innerHTML = h;
@@ -67,7 +70,7 @@
         var g = function (id) { return body.querySelector('#' + id).value.trim(); };
         o.accountType = g('pf_acct'); o.employment = g('pf_emp'); o.payStandard = g('pf_std');
         o.payRate = g('pf_rate'); o.travelBonus = g('pf_travel') || '1';
-        o.baseLocation = g('pf_base'); o.companyName = g('pf_cname');
+        o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont');
         o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype');
         o.odometerBaseline = g('pf_odo'); o.safetyExpiry = g('pf_safety');
@@ -124,6 +127,31 @@
           if (n && !n.textContent) n.textContent = 'App web version: v' + v.active + (v.inOtaCopy ? ' (updated copy)' : ' (installed copy)');
         });
       } catch (e) {}
+      /* v32: cloud-sync status + manual retry */
+      (function () {
+        var note = body.querySelector('#pf_syncnote');
+        var btn = body.querySelector('#pf_syncnow');
+        if (!note || !btn) return;
+        function paint() {
+          try {
+            if (!window.CloudSync) { note.textContent = 'Sync engine not loaded.'; return; }
+            var st = CloudSync.status();
+            var word = st.dot === 'ok' ? 'Backed up ✓'
+              : st.dot === 'syncing' ? 'Syncing…'
+              : st.dot === 'err' ? 'Error' : 'Off (not signed in)';
+            var t = 'Status: ' + word;
+            if (st.lastError) t += ' — ' + String(st.lastError).slice(0, 140);
+            if (st.dirtyKeys && st.dirtyKeys.length) t += ' — ' + st.dirtyKeys.length + ' change(s) waiting to upload (' + st.dirtyKeys.slice(0, 5).join(', ') + (st.dirtyKeys.length > 5 ? '…' : '') + ')';
+            note.textContent = t;
+          } catch (e) { note.textContent = 'Could not read sync status.'; }
+        }
+        paint();
+        btn.onclick = function () {
+          note.textContent = 'Sync requested — watch the top-bar dot…';
+          try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
+          setTimeout(paint, 4000);
+        };
+      })();
       // v24: pf_wipe handler removed (button removed above)
     }
   };
