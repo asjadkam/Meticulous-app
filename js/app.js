@@ -44,11 +44,33 @@
 
   /* ---------------- views ---------------- */
   App.showView = function (name) {
+    App.currentView = name; // v18: track for Android back button
     ['onboarding', 'auth', 'main'].forEach(function (v) {
       el(v === 'onboarding' ? 'onboarding' : v).classList.toggle('active', v === name);
     });
     el('fbFab').classList.toggle('hidden', name !== 'main');
   };
+
+  /* v18: Android back button (Capacitor native app). Without this, the system
+     back button either does nothing or kills the app. */
+  (function () {
+    try {
+      var Cap = window.Capacitor;
+      if (!Cap || !Cap.Plugins || !Cap.Plugins.App) return;
+      Cap.Plugins.App.addListener('backButton', function () {
+        var v = App.currentView || 'auth';
+        if (v === 'onboarding' && App.onbStep > 0) {
+          App.onbStep--;
+          try { renderOnbStep(); } catch (e) {}
+        } else if (v === 'onboarding' || v === 'main') {
+          // back out to auth instead of killing the app mid-flow
+          try { App.showView('auth'); } catch (e) {}
+        } else {
+          try { Cap.Plugins.App.exitApp(); } catch (e) {}
+        }
+      });
+    } catch (e) {}
+  })();
 
   App.onAuth = function (user) {
     App.user = user;
