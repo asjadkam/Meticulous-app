@@ -37,8 +37,11 @@
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
         '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p></div>';
 
-      // v30: shared with the Auto-start sidebar module — one UI, one behavior.
-      h += Meticulous.modules.autostart.settingsHTML('pf');
+      /* v36: tracker auto-start settings MOVED to Revenue (Asjad) — the
+         tracker feeds Revenue, so its controls live there. Pointer only
+         here; no duplicate controls. */
+      h += '<div class="card"><h3>⏰ Tracker auto-start</h3>' +
+        '<p class="note">Auto tracker settings live in <b>Revenue</b>.</p></div>';
 
       h += '<div class="card"><h3>📍 Base location</h3>' +
         '<label class="f">Where do you park your truck?</label><input id="pf_base" value="' + esc(o.baseLocation || '') + '">' +
@@ -114,12 +117,6 @@
           if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) App._store.set('mt_odo', String(o.odometerBaseline));
           if (o.safetyExpiry) App._store.set('mt_annualDate', o.safetyExpiry);
         } catch (e) {}
-        o.autoStart = body.querySelector('#pf_autostart').checked;
-        o.autoStartTime = body.querySelector('#pf_autotime').value || '06:00';
-        o.autoStartDays = Array.prototype.map.call(
-          body.querySelectorAll('#pf_autodays input[data-day]:checked'),
-          function (c) { return +c.getAttribute('data-day'); }
-        );
         App._store.set('onboarding', o);
         App.onAuth(App.user);
         try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}

@@ -180,8 +180,8 @@
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
-    connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' },
-    autostart:  { title: 'Auto-start',        icon: '⏰', tier: 'basic' } // v30: sidebar entry — Asjad: "should not be buried in preferences"
+    connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
+    // v36: 'autostart' registry entry removed — settings moved into Revenue (Asjad); modules/autostart.js is now a shared card library + pointer stub
   };
 
   /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
@@ -223,7 +223,6 @@
 
   var SIDEBAR_ITEMS = [
     ['dashboard', '🏠', 'Dashboard'],
-    ['autostart', '⏰', 'Auto-start'], // v30: prominent — Asjad: "easy accessible, not buried in preferences"
     ['revenue', '📊', 'Revenue'],
     ['dispatch', '📋', 'Dispatch'],
     ['navigation', '🗺️', 'Navigation'],

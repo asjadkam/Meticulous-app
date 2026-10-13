@@ -1,7 +1,13 @@
-/* Auto-start module — tracker auto-start settings, also reachable from the
-   sidebar menu (Asjad, Oct 13: "should not be buried in preferences, put it
-   in the menu"). The settings card HTML is shared with Preferences so both
-   places always look and behave the same. */
+/* Auto-start settings card — shared library.
+   v36: the controls live in the REVENUE module (Asjad: the auto tracker
+   was "still in preferences, not in revenue" — the tracker feeds Revenue,
+   so its settings sit with the earnings it produces). Before v36 the same
+   shared card was rendered by Preferences (prefix 'pf') and by a
+   standalone sidebar page (prefix 'as'); both are gone — Revenue renders
+   it with prefix 'rv'. This file now only provides the card HTML + save,
+   plus a pointer stub if anything stale still opens the old page.
+   Storage is unchanged: onboarding store, fields autoStart /
+   autoStartTime / autoStartDays (cloud-synced with onboarding). */
 (function () {
   'use strict';
   var esc = function (s) { return App._esc(s); };
@@ -9,8 +15,8 @@
 
   function getOnboarding() { return App._store.get('onboarding', {}); }
 
-  /* Shared settings card. `prefix` namespaces the element ids so the
-     Preferences copy (prefix 'pf') and this module (prefix 'as') can coexist. */
+  /* Shared settings card. `prefix` namespaces the element ids (Revenue
+     uses 'rv'). */
   function settingsHTML(prefix) {
     var o = getOnboarding();
     var sel = Array.isArray(o.autoStartDays) ? o.autoStartDays : [1, 2, 3, 4, 5];
@@ -42,18 +48,12 @@
   Meticulous.modules.autostart = {
     settingsHTML: settingsHTML,
     saveFrom: saveFrom,
+    /* v36: no longer a standalone page (sidebar item + Preferences card
+       removed; controls live in Revenue). Kept as a pointer stub so a
+       stale cached menu entry lands somewhere helpful, not a dead page. */
     render: function (body) {
-      body.innerHTML = settingsHTML('as') +
-        '<button class="btn primary" id="as_save">Save auto-start</button>';
-      body.querySelector('#as_save').onclick = function () {
-        saveFrom('as', body);
-        alert('Auto-start saved.');
-      };
-    },
-    status: function () {
-      var o = getOnboarding();
-      if (!o.autoStart) return 'Off';
-      return 'On — ' + (o.autoStartTime || '06:00');
+      body.innerHTML = '<div class="card"><h3>⏰ Tracker auto-start</h3>' +
+        '<p class="note">Auto tracker settings live in <b>Revenue</b> now.</p></div>';
     }
   };
 })();

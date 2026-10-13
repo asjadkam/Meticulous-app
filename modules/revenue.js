@@ -184,6 +184,15 @@
         '<div class="card" style="flex:1"><div class="note">Loads</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + s.loads + '</div></div>' +
         '</div>';
 
+      /* v36: tracker auto-start settings live in Revenue now (moved from
+         Preferences + the old sidebar page, Asjad: "still in preferences,
+         not in revenue"). The tracker feeds Revenue — onSession logs tracked
+         hours as earnings — so its start-by-itself switch sits here, under
+         the numbers it produces. Shared card + save from modules/autostart.js;
+         storage keys unchanged (onboarding: autoStart/autoStartTime/autoStartDays). */
+      h += Meticulous.modules.autostart.settingsHTML('rv');
+      h += '<button class="btn primary" id="rv_as_save" style="margin-bottom:16px">Save auto-start</button>';
+
       h += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas></div>';
 
       h += '<div class="card"><h3>＋ Manual entry</h3>' +
@@ -219,6 +228,12 @@
 
       body.innerHTML = h;
       drawChart(body.querySelector('#revChart'));
+
+      /* v36: auto-start card save (shared saver, same storage keys). */
+      body.querySelector('#rv_as_save').onclick = function () {
+        Meticulous.modules.autostart.saveFrom('rv', body);
+        alert('Auto-start saved.');
+      };
 
       body.querySelectorAll('[data-p]').forEach(function (b) {
         b.onclick = function () { W('period', b.getAttribute('data-p')); api.render(body); };

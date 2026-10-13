@@ -1,9 +1,10 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 35,
+  "webVersion": 36,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
+    "assets/hero-truck-v2.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
     "assets/icon-192.png": "e3d66e6d3e9687da6d784745f7eb2ee90c7244b66f3bded7032b20fbcca9f32b",
     "assets/icon-512.png": "1d122167d873a784ac96be3288e5bcf9a330d6d00688d6499e1db39413a7242e",
@@ -14,12 +15,12 @@
     "css/style.css": "3e4c3e0963ec81d4fd188b1f8eac000af190873d299fae58d52b4601f28a5c99",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
     "index.html": "44f4b731e8e35d3a84989504e358de35d5b3ed7b01098d088cfd603ac6460a8a",
-    "js/app.js": "0dc4ee4daf03fe42c3418c0998f185636f22919ff9b9472e2c4392a54a6bc224",
+    "js/app.js": "7c90bb791491feb2bd00073ba3925d75116397d84ae4e753110bbfa604ebe22d",
     "js/cloudsync.js": "2a487ed1a3413e8735b7a0679eea7248fe5c34365c7542e25e8b6040164bf23b",
     "js/firebase.js": "ac691acf6df80abbf4903745282b33972672f6922c996908f3d3695a1439bc8a",
     "js/ota.js": "f4465cb36b8b7dc9400b5b3cb369a0129f1ff2ec5a4996ffec8a62f612925ccb",
     "js/ticket-ocr.js": "0382127f79867e546c8d631459807b62138802d0474235f7603005d86c53efbd",
-    "modules/autostart.js": "08dd342bef40e79c7b9f815a22c32b4a4d2e8c58204a285fb0270a264160678f",
+    "modules/autostart.js": "334b7bc0be79d7c324416c2d05df82f69d4df62d460332868b75847ccbeb0d9e",
     "modules/connect.js": "80665c22d1f3602d8af333307ae7907dcfd019c1b1b00155d18084194ab4aa74",
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
     "modules/dispatch.js": "04b9ac7b8f4aaffc2ebfab2c784cf6e11aff4ac55591b7d0f22b09513f149e57",
@@ -29,9 +30,9 @@
     "modules/manifest.js": "458c0b8bc3cb62a4d387d44734629d4adec9a256e74beebe10dde667b807f093",
     "modules/navigation.js": "3b437cfc38ba0791818ba77fa39653114e0be65a0195d9cf953d03ffc5d77d2e",
     "modules/pnl.js": "a11586f02f458ea3cf267e936116cbe24cc505df4dbf1488787e54d627d62226",
-    "modules/preferences.js": "fc547d65eb001a78302770817170440f775c167ede3c992779d8645ab31a6592",
+    "modules/preferences.js": "2ab6b3b8d92acdd30bb53e2556a985ce8ac2e9fafe4f13102b303484c90f8e93",
     "modules/reminders.js": "015d217864ca8b69b97772105b4d5de22fe412287c9d3c4ae3f8f177f4a89d2e",
-    "modules/revenue.js": "09128d9e16427965ef03077b1fb2eb2314896f5b209511abe1fb6acd199d67fb",
+    "modules/revenue.js": "d8c0219e0cc4edb24a0ef21bdeb5c6c95e3ae5d8a45025e4c2f4af0750c9e891",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }
