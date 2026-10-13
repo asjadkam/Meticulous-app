@@ -45,14 +45,23 @@
   /* ---------------- views ---------------- */
   App.showView = function (name) {
     App.currentView = name; // v18: track for Android back button
-    // v21: explicitly clear all views first — never let two screens stack
+    // v22: force via inline styles — classes alone weren't hiding stacked views
     ['onboarding', 'auth', 'main'].forEach(function (v) {
-      var vEl = el(v === 'onboarding' ? 'onboarding' : v);
-      if (vEl) vEl.classList.remove('active');
+      var vEl = document.getElementById(v);
+      if (vEl) {
+        vEl.classList.remove('active');
+        vEl.style.display = 'none';
+      }
     });
-    var target = el(name === 'onboarding' ? 'onboarding' : name);
-    if (target) target.classList.add('active');
-    el('fbFab').classList.toggle('hidden', name !== 'main');
+    var target = document.getElementById(name);
+    if (target) {
+      target.classList.add('active');
+      target.style.display = 'block';
+    }
+    var fab = document.getElementById('fbFab');
+    if (fab) fab.classList.toggle('hidden', name !== 'main');
+    // v22: scroll to top on view change so stacked content can't linger
+    try { window.scrollTo(0, 0); } catch (e) {}
   };
 
   /* v18: Android back button (Capacitor native app). Without this, the system
@@ -82,7 +91,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 21;
+      var BUNDLED_VERSION = 22;
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
