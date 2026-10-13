@@ -89,17 +89,19 @@
     } catch (e) {}
   })();
 
-  /* v19: in-app update checker (native only). The web app auto-updates on
-     reload; the native APK does not. This checks version.json on the live
-     site and shows a download banner when a newer APK is available. */
+  /* v19/v30: native-APK update banner. Web changes arrive via OTA (js/ota.js)
+     and never need a reinstall; this banner is ONLY for native changes
+     (new plugins, permissions, Capacitor upgrades). The site owner publishes
+     the new APK and sets version.json:apkUrl. Bump APK_VERSION with each
+     native release. */
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 25;
+      var APK_VERSION = 30; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
-          if (info && info.version > BUNDLED_VERSION && info.apkUrl) {
+          if (info && info.version > APK_VERSION && info.apkUrl) {
             var bar = document.createElement('div');
             var link = document.createElement('a');
             link.href = info.apkUrl;
@@ -124,6 +126,7 @@
     syncTrial();
     buildSidebar();
     buildDashboard();
+    try { if (window.CloudSync) CloudSync.onAuth(user); } catch (e) {} // v27: cloud sync
   };
 
   /* ---------------- trial & tiers ---------------- */
@@ -166,17 +169,29 @@
   };
 
   /* ---------------- module registry / dashboard ---------------- */
-  var MODULE_ORDER = ['revenue', 'dispatch', 'navigation', 'fuel', 'damage', 'manifest', 'invoice', 'connect'];
+  var MODULE_ORDER = ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
     dispatch:   { title: 'Dispatch',          icon: '📋', tier: 'basic' },
     navigation: { title: 'Navigation',        icon: '🗺️', tier: 'basic' },
     fuel:       { title: 'Fuel & Expense',    icon: '⛽', tier: 'basic' },
+    pnl:        { title: 'P&L',               icon: '📈', tier: 'basic' },
+    maintenance:{ title: 'Maintenance',       icon: '🔧', tier: 'basic' },
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
     connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
   };
+
+  /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
+  function pnlAllowed() {
+    return true;
+  }
+
+  /* Maintenance gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
+  function maintAllowed() {
+    return true;
+  }
 
   function modStatus(key) {
     try {
@@ -190,6 +205,8 @@
     var g = el('modGrid');
     var html = '';
     MODULE_ORDER.forEach(function (key) {
+      if (key === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
+      if (key === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
       var meta = MODULE_META[key];
       var ok = App.tierAllows(meta.tier);
       html += '<div class="modcard' + (ok ? '' : ' locked') + '" data-mod="' + key + '">' +
@@ -209,6 +226,8 @@
     ['dispatch', '📋', 'Dispatch'],
     ['navigation', '🗺️', 'Navigation'],
     ['fuel', '⛽', 'Fuel & Expense'],
+    ['pnl', '📈', 'P&L'],
+    ['maintenance', '🔧', 'Maintenance'],
     ['damage', '📸', 'Damage & Incident'],
     ['manifest', '📝', 'Manifest / Daily Log'],
     ['invoice', '🧾', 'Invoice'],
@@ -224,6 +243,8 @@
     var nav = el('sbNav');
     var html = '';
     SIDEBAR_ITEMS.forEach(function (it) {
+      if (it[0] === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
+      if (it[0] === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
       html += '<button data-act="' + it[0] + '"><span>' + it[1] + '</span> ' + it[2] + '</button>';
     });
     nav.innerHTML = html;
@@ -253,6 +274,7 @@
   App.openModule = function (key) {
     var meta = MODULE_META[key];
     var special = { reminders: 1, preferences: 1, subscription: 1 };
+    /* P&L + Maintenance gates removed Oct 13, 2026 — Asjad (Driver) gets full access. */
     if (meta && !App.tierAllows(meta.tier)) {
       // locked -> go to subscription
       key = 'subscription';
@@ -284,6 +306,12 @@
     var t = App.tracker, sec = t.elapsed;
     if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
     el('trkClock').textContent = fmtClock(sec);
+    // v27: minute check — start the tracker by itself when the auto-start time arrives
+    // while the app is open (covers "set 6 AM and forget").
+    if (!trackerTick._as || Date.now() - trackerTick._as > 60000) {
+      trackerTick._as = Date.now();
+      try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+    }
   }
   function trackerPaint() {
     var t = App.tracker, main = el('trkMain'), stop = el('trkStop'), meta = el('trkMeta');
@@ -298,11 +326,73 @@
       main.classList.add('play'); main.innerHTML = '▶<br>RESUME';
       stop.classList.remove('hidden'); meta.textContent = 'Paused';
     }
+    // v28: show the effective start time + the Edit control
+    var st = el('trkStartLabel');
+    if (st) {
+      st.textContent = (t.status === 'idle')
+        ? (t.presetStart ? 'Will count from ' + fmtTimeAMPM(t.presetStart) : 'Starts from now')
+        : 'Counting from ' + fmtTimeAMPM(trackerSessionStartMs());
+    }
     trackerTick();
   }
+
+  /* ---------------- v28: backdate / adjust the tracker start time ----------------
+     "I started my shift at 8:30 but opened the app at 11:20 — the timer shows
+     5 seconds and I have no way to fix it." Now he does.
+     - While RUNNING or PAUSED: "Edit" sets the real start time; elapsed recalculates.
+     - While IDLE: "Edit" presets a start time; tapping START counts from there. */
+  function fmtTimeAMPM(ms) {
+    var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    return h + ':' + ('0' + m).slice(-2) + ' ' + ap;
+  }
+  /* Overall session start in ms, accounting for accumulated elapsed across pauses. */
+  function trackerSessionStartMs() {
+    var t = App.tracker, now = Date.now();
+    if (t.status === 'idle') return t.presetStart || now;
+    var live = t.elapsed + (t.status === 'running' ? Math.floor((now - t.startTs) / 1000) : 0);
+    return now - live * 1000;
+  }
+  function closeTrackerStartSheet() {
+    el('trkStartSheet').classList.remove('open');
+    el('scrim').classList.remove('show');
+    el('scrim').onclick = closeSidebar;
+  }
+  App.trackerEditStart = function () {
+    var d = new Date(trackerSessionStartMs());
+    el('trkStartTime').value = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    el('trkStartSheet').classList.add('open');
+    el('scrim').classList.add('show');
+    el('scrim').onclick = function () { closeTrackerStartSheet(); };
+  };
+  App.trackerSaveStart = function () {
+    var v = el('trkStartTime').value; // "HH:MM"
+    if (!v) { closeTrackerStartSheet(); return; }
+    var parts = v.split(':'), now = new Date();
+    var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+      parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+    if (target.getTime() > Date.now()) target = new Date(target.getTime() - 24 * 3600 * 1000); // assume yesterday
+    var secs = Math.max(0, Math.floor((Date.now() - target.getTime()) / 1000));
+    if (secs > 12 * 3600 && !confirm('That is ' + fmtClock(secs) + ' ago. Is that right?')) { return; }
+    var t = App.tracker;
+    if (t.status === 'idle') {
+      t.presetStart = target.getTime(); // applied when START is tapped
+    } else {
+      // Collapse the session to "started at <target>": elapsed holds the whole total,
+      // startTs resets to now so the running segment contributes ~0. Paused works the same.
+      t.elapsed = secs; t.startTs = Date.now();
+      if (t.presetStart) delete t.presetStart;
+    }
+    trackerSave(); trackerPaint(); closeTrackerStartSheet();
+  };
   App.trackerToggle = function () {
     var t = App.tracker;
-    if (t.status === 'idle') { t.status = 'running'; t.startTs = Date.now(); t.elapsed = 0; }
+    if (t.status === 'idle') {
+      t.status = 'running'; t.startTs = Date.now();
+      // v28: if a start time was preset ("I actually started at 8:30"), count from there
+      t.elapsed = t.presetStart ? Math.max(0, Math.floor((Date.now() - t.presetStart) / 1000)) : 0;
+      delete t.presetStart;
+    }
     else if (t.status === 'running') { t.elapsed += Math.floor((Date.now() - t.startTs) / 1000); t.status = 'paused'; }
     else { t.status = 'running'; t.startTs = Date.now(); }
     trackerSave(); trackerPaint();
@@ -321,6 +411,79 @@
     }
     App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
     trackerSave(); trackerPaint();
+  };
+
+  /* ---------------- timed auto-start ---------------- */
+  // v27: start the tracker by itself at a set time on chosen days.
+  // Time-based ONLY — no location/GPS involved. Runs when the app is open
+  // (minute check + resume check); if the app was closed, it prompts on next open.
+  var AUTOSTART_GRACE_MIN = 60; // start silently within 60 min of set time; prompt after that
+
+  function autoStartPrefs() {
+    var o = store.get('onboarding', {});
+    var days = o.autoStartDays;
+    if (!Array.isArray(days)) days = [1, 2, 3, 4, 5]; // Mon–Fri default
+    return { enabled: !!o.autoStart, time: o.autoStartTime || '06:00', days: days };
+  }
+  function autoStartFired(today) {
+    var rec = store.get('autostart', {});
+    return !!(rec && rec[today]);
+  }
+  function markAutoStartFired(today) {
+    var rec = store.get('autostart', {});
+    rec[today] = true;
+    store.set('autostart', rec);
+  }
+  function autoStartLabel(timeStr) {
+    var p = String(timeStr || '06:00').split(':');
+    var h = +p[0] || 0, m = ('0' + (+p[1] || 0)).slice(-2);
+    var ap = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+    return h12 + ':' + m + ' ' + ap;
+  }
+  function autoStartNotify(body) {
+    try { if (window.FB && FB.localNotify) { FB.localNotify('Meticulous', body); return; } } catch (e) {}
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('Meticulous', { body: body, icon: 'assets/icon-192.png' });
+      }
+    } catch (e2) {}
+  }
+
+  App.checkAutoStart = function () {
+    try {
+      var p = autoStartPrefs();
+      if (!p.enabled) return 'off';
+      var now = new Date();
+      if (p.days.indexOf(now.getDay()) === -1) return 'wrong-day';
+      var today = todayStr(now);
+      if (autoStartFired(today)) return 'fired';
+      var t = App.tracker || { status: 'idle' };
+      if (t.status === 'running') { markAutoStartFired(today); return 'running'; }
+      var tp = String(p.time).split(':');
+      var startMins = (+tp[0] || 0) * 60 + (+tp[1] || 0);
+      var nowMins = now.getHours() * 60 + now.getMinutes();
+      if (nowMins < startMins) return 'not-yet';
+      var label = autoStartLabel(p.time);
+      markAutoStartFired(today);
+      if (t.status === 'idle' && (nowMins - startMins) <= AUTOSTART_GRACE_MIN) {
+        // Within grace window: start by itself, no questions.
+        App.tracker.status = 'running';
+        App.tracker.startTs = Date.now();
+        App.tracker.elapsed = 0;
+        trackerSave(); trackerPaint();
+        autoStartNotify('Tracker auto-started at ' + label);
+        return 'started';
+      }
+      // Time passed long ago (app was closed), or tracker was paused mid-shift: ask.
+      var msg = t.status === 'paused'
+        ? 'Auto-start time (' + label + ') has passed and your tracker is paused. Resume it now?'
+        : 'Auto-start time (' + label + ') has passed. Start the tracker now?';
+      if (confirm(msg)) {
+        App.trackerToggle(); // idle -> start fresh; paused -> resume
+        return 'prompted-started';
+      }
+      return 'prompted-declined';
+    } catch (e) { return 'error'; }
   };
 
   /* ---------------- feedback ---------------- */
@@ -359,6 +522,8 @@
       type: 'text', ph: 'e.g. Home — 123 Main St, Calgary' },
     { key: 'company', title: 'Company details', hint: 'Used on invoices and manifests.', type: 'company' },
     { key: 'truck', title: 'Truck details', hint: 'Your rig.', type: 'truck' },
+    { key: 'odometer', title: 'Odometer photo', hint: 'Snap your odometer — we read the mileage and use it as the starting point for services.', type: 'odometer' },
+    { key: 'safety', title: 'Safety sticker photo', hint: 'Snap your safety inspection sticker — we read the expiry date and remind you before it is due.', type: 'safety' },
     { key: 'done', title: 'You are set!', hint: 'Review and finish.', type: 'done' }
   ];
 
@@ -391,13 +556,37 @@
     } else if (st.type === 'truck') {
       h += '<label class="f">Truck number</label><input id="ob_tnum" value="' + esc(o.truckNo || '') + '" placeholder="e.g. 007">' +
         '<label class="f">Load / trailer type</label><input id="ob_ttype" value="' + esc(o.truckType || '') + '" placeholder="e.g. Tandem dump">';
+    } else if (st.type === 'odometer') {
+      h += '<div style="display:flex;gap:10px;margin:10px 0;">' +
+        '<button type="button" class="btn secondary" id="ob_odo_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="ob_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<input type="file" id="ob_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="ob_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="ob_odo_prev"></div><div id="ob_odo_status" class="note"></div>' +
+        '<label class="f">Odometer (km) — or type it in</label>' +
+        '<input id="ob_odo" type="number" inputmode="decimal" placeholder="e.g. 245678" value="' + esc(o.odometerBaseline || '') + '">' +
+        '<p class="note">This becomes the starting point for oil changes and services in Maintenance. Skip it if you prefer to set it later.</p>' +
+        '<button type="button" class="btn ghost" id="ob_odo_skip" style="margin-top:6px;">Skip this step →</button>';
+    } else if (st.type === 'safety') {
+      h += '<div style="display:flex;gap:10px;margin:10px 0;">' +
+        '<button type="button" class="btn secondary" id="ob_safety_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="ob_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<input type="file" id="ob_safety_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="ob_safety_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="ob_safety_prev"></div><div id="ob_safety_status" class="note"></div>' +
+        '<label class="f">Safety sticker expiry — or pick it</label>' +
+        '<input id="ob_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
+        '<p class="note">We will remind you 30 days before it expires. Skip it if you prefer to set it later.</p>' +
+        '<button type="button" class="btn ghost" id="ob_safety_skip" style="margin-top:6px;">Skip this step →</button>';
     } else if (st.type === 'done') {
       h += '<div class="card"><div class="kv"><span>Account</span><b>' + esc(o.accountType || '—') + '</b></div>' +
         '<div class="kv"><span>Employment</span><b>' + esc(o.employment || '—') + '</b></div>' +
         '<div class="kv"><span>Pay</span><b>' + esc(o.payStandard || '—') + (o.payRate ? ' @ $' + esc(o.payRate) : '') + '</b></div>' +
         '<div class="kv"><span>Base</span><b>' + esc(o.baseLocation || '—') + '</b></div>' +
         '<div class="kv"><span>Company</span><b>' + esc(o.companyName || '—') + '</b></div>' +
-        '<div class="kv"><span>Truck</span><b>' + esc(o.truckNo || '—') + '</b></div></div>';
+        '<div class="kv"><span>Truck</span><b>' + esc(o.truckNo || '—') + '</b></div>' +
+        '<div class="kv"><span>Odometer</span><b>' + esc(o.odometerBaseline ? Number(o.odometerBaseline).toLocaleString('en-CA') + ' km' : '—') + '</b></div>' +
+        '<div class="kv"><span>Safety expiry</span><b>' + esc(o.safetyExpiry || '—') + '</b></div></div>';
     }
     h += '</div>';
     el('onbSteps').innerHTML = h;
@@ -409,6 +598,121 @@
         renderOnbStep();
       };
     });
+    // v28: photo steps — wire camera/file buttons + per-step skip
+    if (st.type === 'odometer') {
+      onbWirePhoto('ob_odo', 'odometer');
+      var osk = el('ob_odo_skip');
+      if (osk) osk.onclick = function () { collectOnbInputs(); if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); } };
+    } else if (st.type === 'safety') {
+      onbWirePhoto('ob_safety', 'safety');
+      var ssk = el('ob_safety_skip');
+      if (ssk) ssk.onclick = function () { collectOnbInputs(); if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); } };
+    }
+  }
+
+  /* v28: onboarding photo → OCR. kind is 'odometer' or 'safety'.
+     Runs Tesseract on the chosen photo, parses the value, and fills the
+     manual input so the user can confirm or correct it. Never blocks. */
+  var _onbOcrToken = 0;
+  function onbSetStatus(prefix, html) {
+    var s = el(prefix + '_status');
+    if (s) s.innerHTML = html;
+  }
+  function onbPersistPhoto(kind, v) {
+    var o = App.onb || {};
+    if (kind === 'odometer') o.odometerBaseline = v; else o.safetyExpiry = v;
+    App.onb = o;
+    store.set('onboarding', o);
+  }
+  function parseOdometerReading(text) {
+    if (!text) return null;
+    // glue digits split by OCR spaces: "245 678" -> "245678"
+    var t = String(text).replace(/(\d)\s+(?=\d)/g, '$1');
+    var nums = [], re = /(\d[\d,]*\.?\d*)/g, m;
+    while ((m = re.exec(t)) !== null) {
+      var v = parseFloat(m[1].replace(/,/g, ''));
+      if (!isFinite(v)) continue;
+      var iv = Math.floor(v);
+      // odometer: 4+ digits, below 10M km sanity cap; drops speed/trip noise
+      if (iv >= 1000 && iv < 10000000) nums.push(iv);
+    }
+    if (!nums.length) return null;
+    nums.sort(function (a, b) { return b - a; });
+    return String(nums[0]);
+  }
+  var _ONB_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  function parseStickerExpiry(text) {
+    if (!text) return null;
+    var t = String(text).toUpperCase();
+    var mo = null, y = null;
+    var m = t.match(/(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[\s.,-]*(\d{2,4})/);
+    if (m) {
+      mo = _ONB_MONTHS[m[1].slice(0, 3).toLowerCase()];
+      y = parseInt(m[2], 10);
+      if (y < 100) y += 2000;
+    } else {
+      var m2 = t.match(/\b(0?[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+      if (!m2) return null;
+      mo = parseInt(m2[1], 10) - 1;
+      y = parseInt(m2[2], 10);
+    }
+    if (mo === null || mo === undefined || !(y >= 2020 && y <= 2045)) return null;
+    // sticker expires at end of the printed month
+    var last = new Date(y, mo + 1, 0).getDate();
+    return y + '-' + ('0' + (mo + 1)).slice(-2) + '-' + ('0' + last).slice(-2);
+  }
+  function onbWirePhoto(prefix, kind) {
+    var camBtn = el(prefix + '_cam'), pickBtn = el(prefix + '_pick');
+    var camIn = el(prefix + '_cam_in'), pickIn = el(prefix + '_in');
+    var fieldEl = el(prefix), prevEl = el(prefix + '_prev');
+    if (!camBtn || !pickBtn) return;
+    camBtn.onclick = function () { if (camIn) camIn.click(); };
+    pickBtn.onclick = function () { if (pickIn) pickIn.click(); };
+    function handleFile(file) {
+      if (!file) return;
+      var token = ++_onbOcrToken;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var dataUrl = rd.result;
+        if (token !== _onbOcrToken) return;
+        if (prevEl) prevEl.innerHTML = '<img src="' + dataUrl + '" style="width:100%;border-radius:8px;margin:8px 0" alt="Photo">';
+        if (!window.TicketOCR) { onbSetStatus(prefix, '⚠️ Photo reader not ready — enter it manually below.'); return; }
+        onbSetStatus(prefix, '📖 Reading photo… 0%');
+        TicketOCR.recognize(dataUrl, function (p) {
+          if (token !== _onbOcrToken) return;
+          try { onbSetStatus(prefix, '📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
+        }).then(function (text) {
+          if (token !== _onbOcrToken) return;
+          if (kind === 'odometer') {
+            var km = parseOdometerReading(text);
+            if (km && fieldEl) {
+              fieldEl.value = km;
+              onbPersistPhoto(kind, km);
+              onbSetStatus(prefix, '✓ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
+            } else {
+              onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
+            }
+          } else {
+            var iso = parseStickerExpiry(text);
+            if (iso && fieldEl) {
+              fieldEl.value = iso;
+              onbPersistPhoto(kind, iso);
+              onbSetStatus(prefix, '✓ We read expiry <b>' + iso + '</b> — fix it below if that is wrong.');
+            } else {
+              onbSetStatus(prefix, '⚠️ Could not read the expiry date — pick it manually below.');
+            }
+          }
+        }).catch(function () {
+          if (token !== _onbOcrToken) return;
+          onbSetStatus(prefix, '⚠️ Photo reader needs internet the first time — enter it manually below.');
+        });
+      };
+      try { rd.readAsDataURL(file); } catch (e) {
+        onbSetStatus(prefix, '⚠️ Could not read that file — enter it manually below.');
+      }
+    }
+    if (camIn) camIn.onchange = function () { handleFile(camIn.files[0]); camIn.value = ''; };
+    if (pickIn) pickIn.onchange = function () { handleFile(pickIn.files[0]); pickIn.value = ''; };
   }
 
   function collectOnbInputs() {
@@ -421,11 +725,41 @@
     if (g('ob_cont')) o.contractingCo = g('ob_cont');
     if (g('ob_tnum')) o.truckNo = g('ob_tnum');
     if (g('ob_ttype')) o.truckType = g('ob_ttype');
+    if (g('ob_odo')) o.odometerBaseline = g('ob_odo');
+    if (g('ob_safety')) o.safetyExpiry = g('ob_safety');
     store.set('onboarding', o);
   }
 
   function finishOnboarding() {
     collectOnbInputs();
+    var o = App.onb || {};
+    // v28: odometer baseline -> Maintenance PM starting point
+    try {
+      if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) {
+        App._store.set('mt_odo', String(o.odometerBaseline));
+      }
+    } catch (e) {}
+    // v28: safety sticker expiry -> Maintenance annual date + safety reminder
+    try {
+      if (o.safetyExpiry) {
+        App._store.set('mt_annualDate', o.safetyExpiry);
+        var rl = App._store.get('rem_list', []) || [];
+        var exists = rl.some(function (r) { return r && r.type === 'safety' && /annual safety/i.test(r.title || ''); });
+        if (!exists) {
+          rl.push({
+            id: 'r' + Date.now().toString(36),
+            type: 'safety',
+            title: 'Annual safety inspection',
+            expiryDate: o.safetyExpiry,
+            dueDate: '',
+            dueOdometer: '',
+            message: 'Safety sticker expires ' + o.safetyExpiry,
+            notes: 'Added from onboarding photo.'
+          });
+          App._store.set('rem_list', rl);
+        }
+      }
+    } catch (e) {}
     store.set('onboarded', true);
     // ask for notification permission once — never let it block onboarding
     // (v19: Notification API throws synchronously in some WebViews, which
@@ -470,11 +804,29 @@
         u = FB.auth.currentUser; FB.user = u;
       }
       App.onAuth(u);
-      if (store.get('onboarded', false)) App.showView('main');
-      else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
+      routeAfterFirstSync();
     } catch (e) {
       visibleAuthError('Navigation error: ' + (e.message || e));
     }
+  }
+
+  /* v28: wait for the first cloud pull before choosing onboarding vs main.
+     On a fresh install the local onboarded flag is empty until the pull
+     restores it from the cloud; routing immediately would show the onboarding
+     questions even though the answers are already saved. Falls back to local
+     state on timeout so a slow network never strands the user. */
+  function routeAfterFirstSync() {
+    var proceed = function () {
+      try {
+        if (store.get('onboarded', false)) App.showView('main');
+        else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
+      } catch (e) { try { App.showView('main'); } catch (e2) {} }
+    };
+    try {
+      if (window.CloudSync && CloudSync.whenFirstPullDone) {
+        CloudSync.whenFirstPullDone(9000).then(proceed, proceed);
+      } else proceed();
+    } catch (e) { proceed(); }
   }
 
   /* ---------------- auth ---------------- */
@@ -542,16 +894,20 @@
       try { em = el('authEmail').value.trim(); } catch (e) {}
       if (em) { try { store.set('localEmail', em); } catch (e) {} }
       try { afterAuth(); } catch (e) {}
-      var moved = false;
-      try {
-        moved = el('onboarding').classList.contains('active') ||
-                el('main').classList.contains('active');
-      } catch (e) {}
-      if (!moved) {
-        try { App.onbStep = 0; renderOnbStep(); } catch (e) {}
-        try { App.showView('onboarding'); }
-        catch (e2) { visibleAuthError('Could not enter: ' + (e2 && e2.message || e2)); }
-      }
+      /* v28: routing after sign-in waits for the first cloud pull (async), so
+         defer this check past the microtask queue. */
+      setTimeout(function () {
+        var moved = false;
+        try {
+          moved = el('onboarding').classList.contains('active') ||
+                  el('main').classList.contains('active');
+        } catch (e) {}
+        if (!moved) {
+          try { App.onbStep = 0; renderOnbStep(); } catch (e) {}
+          try { App.showView('onboarding'); }
+          catch (e2) { visibleAuthError('Could not enter: ' + (e2 && e2.message || e2)); }
+        }
+      }, 120);
     }
     el('authSkip').onclick = enterLocalMode;
     /* auth landing (v2): two-button welcome -> form */
@@ -578,10 +934,13 @@
   function init() {
     App.onb = store.get('onboarding', {});
     App.tracker = store.get('tracker', { status: 'idle', startTs: 0, elapsed: 0 });
-    if (App.tracker.status === 'running') { // app was closed mid-shift: keep elapsed, pause
+    if (App.tracker.status === 'running') { // v26: app was closed mid-shift — keep RUNNING, account for closed time
       App.tracker.elapsed += Math.floor((Date.now() - App.tracker.startTs) / 1000);
-      App.tracker.status = 'paused';
+      App.tracker.startTs = Date.now();
+      trackerSave(); // persist updated startTs so a quick re-close doesn't double-count
     }
+    // v27: if the auto-start time passed while the app was closed, start or prompt now
+    try { App.checkAutoStart(); } catch (e) {}
 
     el('onbBack').onclick = function () { collectOnbInputs(); if (App.onbStep > 0) { App.onbStep--; renderOnbStep(); } };
     el('onbNext').onclick = function () {
@@ -600,6 +959,9 @@
     el('btnModBack').onclick = App.showDashboard;
     el('trkMain').onclick = App.trackerToggle;
     el('trkStop').onclick = function () { if (confirm('Stop and save this session?')) App.trackerStop(); };
+    el('trkEditStart').onclick = App.trackerEditStart;
+    el('trkStartCancel').onclick = closeTrackerStartSheet;
+    el('trkStartSave').onclick = App.trackerSaveStart;
     el('fbFab').onclick = App.openFeedback;
     el('fbCancel').onclick = function () { el('fbSheet').classList.remove('open'); el('scrim').classList.remove('show'); el('scrim').onclick = closeSidebar; };
     el('fbSend').onclick = sendFeedback;
@@ -607,6 +969,13 @@
     wireAuth();
     trackerPaint();
     setInterval(trackerTick, 1000);
+
+    // v26: save tracker state when app goes to background (Android WebView may be killed)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') { try { trackerSave(); } catch (e) {} }
+      // v27: when the app comes back, check whether the auto-start time arrived
+      if (document.visibilityState === 'visible') { try { App.checkAutoStart(); } catch (e2) {} }
+    });
 
     renderOnbStep();
     // v21: if already onboarded, go straight to main — don't show login at all.
@@ -667,6 +1036,16 @@
   }
 
   App._store = store; App._esc = esc; App._today = todayStr; App._fmtClock = fmtClock;
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
+  try { if (window.CloudSync) CloudSync.attach(store); } catch (e) {} // v27: Firestore mirror
+  /* v30 OTA: wait for the over-the-air updater before booting. OTA.ready()
+     resolves when it is safe to start (update applied or not needed / offline).
+     If js/ota.js failed to load, window.OTA is undefined and we boot at once. */
+  function __bootApp() {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  }
+  try {
+    if (window.OTA && OTA.ready) OTA.ready().then(__bootApp, __bootApp);
+    else __bootApp();
+  } catch (e) { __bootApp(); }
 })();

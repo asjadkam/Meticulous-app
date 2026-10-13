@@ -15,7 +15,11 @@
       "firebase.json",
       ".firebaserc",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "training-data/**",
+      "tools/**",
+      ".github/**",
+      "*.md"
     ],
     "public": ".",
     "rewrites": [

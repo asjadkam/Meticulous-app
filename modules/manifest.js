@@ -55,7 +55,31 @@
       h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(d) + '</h3><div id="mn_doc">';
       if (t.dispatch && c.dispatches.length) {
         h += '<h3>Dispatches</h3>' + c.dispatches.map(function (x) {
-          return '<div class="kv"><span>' + esc(x.pickup) + ' → ' + esc(x.dropoff) + '</span><b>' + esc(x.material || '') + '</b></div>';
+          var dh = '<div class="kv"><span>' + esc(x.jobSite || x.pickup || 'Dispatch') + '</span><b>' + esc(x.material || '') + '</b></div>';
+          /* v26: per-ticket breakdown */
+          if (x.tickets && x.tickets.length) {
+            var o = {};
+            try { o = App._store.get('onboarding', {}); } catch (e) {}
+            var tb = parseFloat(o.travelBonus) || 0;
+            dh += '<div style="margin:4px 0 8px 12px;font-size:13px">';
+            x.tickets.forEach(function (tk, ti) {
+              var lbl = tk.cardNumber ? 'Card #' + esc(tk.cardNumber) :
+                        tk.ticketNo ? 'Ticket #' + esc(tk.ticketNo) : 'Ticket ' + (ti + 1);
+              var det = [];
+              if (tk.foremanHours) det.push(esc(tk.foremanHours) + 'h');
+              if (tk.paymentUnit) det.push(esc(tk.paymentUnit));
+              if (tk.netWeight) det.push(esc(tk.netWeight) + 't');
+              dh += '<div>• ' + lbl + (det.length ? ' — ' + det.join(' · ') : '') + '</div>';
+            });
+            if (window.TicketOCR) {
+              var s = TicketOCR.summarizeTickets(x.tickets, tb);
+              dh += '<div style="font-weight:700;margin-top:4px">Foreman total: ' + s.totalForemanHours + 'h' +
+                (tb > 0 ? ' + travel ' + tb + 'h = ' + s.totalPaidHours + 'h paid' : '') + '</div>';
+              if (s.totalNetWeight > 0) dh += '<div>Total weight: ' + s.totalNetWeight + 't</div>';
+            }
+            dh += '</div>';
+          }
+          return dh;
         }).join('');
       }
       if (t.nav && c.navLog.length) {

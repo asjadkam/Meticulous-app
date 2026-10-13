@@ -98,7 +98,7 @@
   FB.localNotify = function (title, body) {
     if (!('Notification' in window)) return;
     if (Notification.permission === 'granted') {
-      try { new Notification(title, { body: body, icon: '/assets/icon-192.png' }); } catch (e) {}
+      try { new Notification(title, { body: body, icon: 'assets/icon-192.png' }); } catch (e) {}
     }
   };
 

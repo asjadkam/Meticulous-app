@@ -6,10 +6,10 @@
 <title>Meticulous</title>
 <meta name="theme-color" content="#1F3764">
 <meta name="description" content="The dump truck driver's companion. Track work, revenue, fuel, and more.">
-<link rel="manifest" href="/assets/manifest.json">
-<link rel="icon" type="image/png" href="/assets/icon-192.png">
-<link rel="apple-touch-icon" href="/assets/icon-192.png">
-<link rel="stylesheet" href="/css/style.css?v=25">
+<link rel="manifest" href="assets/manifest.json">
+<link rel="icon" type="image/png" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="css/style.css?v=25">
 <style>
 /* critical splash: visible before style.css / JS load */
 #splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
@@ -24,7 +24,7 @@
 </head>
 <body>
 <div id="splash">
-  <img src="/assets/icon-192.png" alt="Meticulous">
+  <img src="assets/icon-192.png" alt="Meticulous">
   <div class="sp-name">Meticulous</div>
   <div class="sp-tag">Set up once. Then just drive.</div>
 </div>
@@ -34,7 +34,7 @@
   <div id="onboarding" class="view">
     <div id="onb">
       <div class="hero">
-        <img src="/assets/icon-192.png" alt="Meticulous">
+        <img src="assets/icon-192.png" alt="Meticulous">
         <h2>Welcome to Meticulous</h2>
         <p>Set up once. Then just drive.</p>
       </div>
@@ -54,7 +54,7 @@
   <!-- AUTH -->
   <div id="auth" class="view">
     <div class="auth-land" id="authLand">
-      <div class="hero-photo"><img src="/assets/hero-truck-v2.jpg?v=25" alt=""></div>
+      <div class="hero-photo"><img src="assets/hero-truck-v2.jpg?v=25" alt=""></div>
       <div class="hero-copy">
         <h2>We care about<br>your load.</h2>
         <p class="tag">World-class customer service, small-town customer care.</p>
@@ -68,7 +68,7 @@
     </div>
     <div class="box hidden" id="authBox">
       <button class="backlink" id="btnAuthBack">&larr; Back</button>
-      <img src="/assets/icon-192.png" class="auth-mini" alt="Meticulous">
+      <img src="assets/icon-192.png" class="auth-mini" alt="Meticulous">
       <h2 id="authTitle">Sign in</h2>
       <p class="sub">Your data syncs to your account.</p>
       <div class="err" id="authErr"></div>
@@ -91,9 +91,10 @@
   <div id="main" class="view">
     <div class="topbar">
       <button class="iconbtn" id="btnMenu" aria-label="Menu">☰</button>
-      <span class="logo"><img src="/assets/logo.svg" alt=""></span>
+      <span class="logo"><img src="assets/logo.svg" alt=""></span>
       <h1>Meticulous</h1>
       <button class="iconbtn" id="btnBell" aria-label="Reminders">🔔</button>
+      <span id="syncDot" class="syncdot sync-off" title="Sync off — sign in to back up your data"></span>
     </div>
 
     <div id="sidebar">
@@ -110,6 +111,10 @@
       <div class="tracker">
         <div class="meta" id="trkMeta">Ready to work</div>
         <div class="clock" id="trkClock">00:00:00</div>
+        <div class="trkStartRow">
+          <span id="trkStartLabel">Starts from now</span>
+          <button class="trkEdit" id="trkEditStart">✎ Edit</button>
+        </div>
         <div>
           <button class="tbtn play" id="trkMain">▶<br>START</button>
           <button class="tbtn stop hidden" id="trkStop">■<br>STOP</button>
@@ -140,29 +145,46 @@
   </div>
 </div>
 <div id="scrim2" style="display:none"></div>
+<div id="trkStartSheet">
+  <h3 style="margin:0 0 6px;color:var(--navy)">Change start time</h3>
+  <p class="note" style="margin:0 0 8px">When did your shift actually start? The timer counts from there.</p>
+  <label class="f">Start time</label>
+  <input id="trkStartTime" type="time">
+  <div class="row">
+    <button class="btn ghost" id="trkStartCancel">Cancel</button>
+    <button class="btn primary" id="trkStartSave">Save</button>
+  </div>
+</div>
 
+<!-- v30 OTA: runs before everything else; gates app boot on OTA.ready() -->
+<script src="js/ota.js?v=30"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="/js/firebase.js?v=25"></script>
-<script src="/modules/revenue.js?v=25"></script>
-<script src="/modules/dispatch.js?v=25"></script>
-<script src="/modules/navigation.js?v=25"></script>
-<script src="/modules/fuel.js?v=25"></script>
-<script src="/modules/damage.js?v=25"></script>
-<script src="/modules/manifest.js?v=25"></script>
-<script src="/modules/invoice.js?v=25"></script>
-<script src="/modules/connect.js?v=25"></script>
-<script src="/modules/reminders.js?v=25"></script>
-<script src="/modules/preferences.js?v=25"></script>
-<script src="/modules/subscription.js?v=25"></script>
-<script src="/js/app.js?v=25"></script>
+<script src="js/firebase.js?v=26"></script>
+<script src="js/cloudsync.js?v=27"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="js/ticket-ocr.js?v=26"></script>
+<script src="modules/revenue.js?v=25"></script>
+<script src="modules/dispatch.js?v=25"></script>
+<script src="modules/navigation.js?v=25"></script>
+<script src="modules/fuel.js?v=25"></script>
+<script src="modules/pnl.js?v=26"></script>
+<script src="modules/maintenance.js?v=26"></script>
+<script src="modules/damage.js?v=25"></script>
+<script src="modules/manifest.js?v=25"></script>
+<script src="modules/invoice.js?v=25"></script>
+<script src="modules/connect.js?v=25"></script>
+<script src="modules/reminders.js?v=25"></script>
+<script src="modules/preferences.js?v=25"></script>
+<script src="modules/subscription.js?v=25"></script>
+<script src="js/app.js?v=27"></script>
 <script>
-/* splash safety: never trap the user if app JS fails */
+/* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {
   var s = document.getElementById('splash');
-  if (s && !s.classList.contains('hide') && !window.__appReady) s.classList.add('hide');
+  if (s && !s.classList.contains('hide') && !window.__appReady && !window.__otaActive) s.classList.add('hide');
 }, 6000);
 /* PWA install prompt: show in-app Install button when browser allows it */
 (function () {
@@ -187,7 +209,7 @@ setTimeout(function () {
 })();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js').then(function (reg) {
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
       // Auto-check for updates every 15 minutes + on visibility change
       function checkUpdate() { reg.update().catch(function () {}); }
       setInterval(checkUpdate, 15 * 60 * 1000);

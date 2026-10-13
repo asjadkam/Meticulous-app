@@ -1,0 +1,553 @@
+/* P&L (Profit & Loss) module — Meticulous standalone
+   Owner-Operator and Fleet Manager ONLY. Never shown to Driver accounts.
+   Income: pulled from Revenue module (rev_entries + rev_extras).
+   Expenses: pulled from Fuel module (fuel_fills + fuel_expenses) plus
+   manual business expenses entered here (pnl_expenses).
+   Persists via App._store (localStorage, mt_ prefix). Firebase via FB.saveDoc.
+*/
+(function () {
+  'use strict';
+  window.Meticulous = window.Meticulous || {};
+  Meticulous.modules = Meticulous.modules || {};
+
+  var S = function (k, d) { return App._store.get('pnl_' + k, d); };
+  var W = function (k, v) { App._store.set('pnl_' + k, v); };
+  var esc = function (s) { return App._esc(s); };
+
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var BIZ_CATS = ['Insurance', 'Truck payment', 'Maintenance', 'Tires', 'Permits & Licenses', 'Phone', 'Other'];
+
+  /* Detailed expense categories — matches Asjad's "monthly analysis" spreadsheet.
+     auto: 'pct_rev' = % of revenue, 'pct_wages' = % of driver wages,
+           'maintenance' = auto from Maintenance module, null = manual entry. */
+  var DETAIL_CATS = [
+    { key: 'brokerage', label: 'Brokerage fees', auto: 'pct_rev', defRate: 10 },
+    { key: 'trailer', label: 'Trailer', auto: null },
+    { key: 'wsib', label: 'WSIB', auto: 'pct_wages', defRate: 4.88, sub: '% of employee pay' },
+    { key: 'irp', label: 'IRP escrow', auto: null },
+    { key: 'parking', label: 'Parking', auto: null },
+    { key: 'repair', label: 'Repair', auto: null },
+    { key: 'natl', label: 'NATL', auto: null },
+    { key: 'maintenance', label: 'Maintenance', auto: 'maintenance' },
+    { key: 'misc', label: 'Misc.', auto: null },
+    { key: 'elog', label: 'Elog', auto: null },
+    { key: 'insurance', label: 'Truck insurance', auto: null }
+  ];
+
+  function detailStore() { return S('detail', {}); }
+  function detailRates() { return S('detail_rates', {}); }
+
+  /* Manual/auto amounts for the detailed categories for a month.
+     Returns { key: { amount, auto, rate } }. */
+  function detailAmounts(m, income, wages) {
+    var saved = detailStore()[m] || {};
+    var rates = detailRates();
+    var maintTotal = 0;
+    (App._store.get('mt_events', []) || []).forEach(function (e) {
+      if (!inMonth(e.date, m)) return;
+      maintTotal += parseFloat(e.cost) || 0;
+    });
+    var out = {};
+    DETAIL_CATS.forEach(function (c) {
+      var sv = saved[c.key] || {};
+      var amount = 0, auto = !!c.auto, rate = null;
+      if (c.auto === 'pct_rev') {
+        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : c.defRate));
+        amount = income * (parseFloat(rate) || 0) / 100;
+        if (sv.amount != null) { amount = parseFloat(sv.amount) || 0; auto = false; }
+      } else if (c.auto === 'pct_wages') {
+        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : c.defRate));
+        amount = wages * (parseFloat(rate) || 0) / 100;
+        if (sv.amount != null) { amount = parseFloat(sv.amount) || 0; auto = false; }
+      } else if (c.auto === 'maintenance') {
+        amount = maintTotal;
+        if (sv.amount != null) { amount = parseFloat(sv.amount) || 0; auto = false; }
+      } else {
+        amount = parseFloat(sv.amount) || 0;
+        auto = false;
+      }
+      out[c.key] = { amount: amount, auto: auto, rate: rate, label: c.label, sub: c.sub };
+    });
+    return out;
+  }
+
+  function saveDetail(m, key, amount, rate) {
+    var all = detailStore();
+    all[m] = all[m] || {};
+    all[m][key] = all[m][key] || {};
+    if (amount != null) all[m][key].amount = amount;
+    if (rate != null) {
+      all[m][key].rate = rate;
+      var r = detailRates(); r[key] = rate; W('detail_rates', r);
+    }
+    W('detail', all);
+  }
+
+  /* Total miles for a month — from fuel fill odometer readings (max-min),
+     with manual override. Falls back to revenue miles if no odometer data. */
+  function totalMiles(m) {
+    var manual = S('miles_' + m, null);
+    if (manual != null && manual !== '') return parseFloat(manual) || 0;
+    var odos = [];
+    (App._store.get('fuel_fills', []) || []).forEach(function (f) {
+      if (!inMonth(f.date, m) || !f.odo) return;
+      odos.push(parseFloat(f.odo));
+    });
+    if (odos.length >= 2) return Math.max.apply(null, odos) - Math.min.apply(null, odos);
+    var revMiles = 0;
+    (App._store.get('rev_entries', []) || []).forEach(function (e) {
+      if (!inMonth(e.date, m)) return;
+      revMiles += parseFloat(e.miles) || 0;
+    });
+    return revMiles;
+  }
+
+  function monthLabel(m) {
+    var p = (m || '').split('-');
+    if (p.length !== 2) return m || '';
+    var mi = parseInt(p[1], 10) - 1;
+    return (MONTHS[mi] || p[1]) + ' ' + p[0];
+  }
+
+  function shiftMonth(m, dir) {
+    var p = m.split('-'), y = parseInt(p[0], 10), mo = parseInt(p[1], 10) - 1 + dir;
+    y += Math.floor(mo / 12); mo = ((mo % 12) + 12) % 12;
+    return y + '-' + ('0' + (mo + 1)).slice(-2);
+  }
+
+  function curMonth() { return S('month', App._today().slice(0, 7)); }
+
+  /* Amount for a revenue entry: explicit amount wins, else derive from pay standard. */
+  function payFor(e, std, rate) {
+    var amt = parseFloat(e.amount);
+    if (amt > 0) return amt;
+    rate = parseFloat(rate) || 0;
+    if (std === 'hourly') return (parseFloat(e.hours) || 0) * rate;
+    if (std === 'miles') return (parseFloat(e.miles) || 0) * rate;
+    if (std === 'trip') return (parseFloat(e.trips) || 0) * rate;
+    if (std === 'weight') return (parseFloat(e.tons) || 0) * rate;
+    return 0;
+  }
+
+  function inMonth(ds, m) { return !!ds && ds.indexOf(m) === 0; }
+
+  function bizExpenses() { return S('expenses', []); }
+
+  /* --- Driver wages ----------------------------------------------------- */
+  var PAY_TYPES = [['hourly', 'Hourly ($/hour)'], ['permile', 'Per mile ($/mile)'], ['perload', 'Per load ($/load)'], ['salary', 'Salary ($/month)']];
+  var PAY_LABEL = { hourly: 'Hourly', permile: 'Per mile', perload: 'Per load', salary: 'Salary' };
+  var UNIT = { hourly: 'hrs', permile: 'mi', perload: 'loads' };
+  var QTY_LABEL = { hourly: 'Hours', permile: 'Miles', perload: 'Loads' };
+
+  function drivers() { return S('drivers', []); }
+  function wageEntries() { return S('wage_entries', []); }
+
+  /* Driver wages for a month — per-driver breakdown + cumulative total.
+     Hourly/per-mile/per-load wages come from logged work entries (the wage
+     is snapshotted at log time so later rate changes don't rewrite history).
+     Salary drivers earn their fixed monthly rate for every month on/after
+     their start month. */
+  function driverWages(m) {
+    var ds = drivers(), es = wageEntries();
+    var per = {}, total = 0;
+    ds.forEach(function (d) {
+      var w = 0, detail = '';
+      if (d.payType === 'salary') {
+        if (!d.start || d.start <= m) {
+          w = parseFloat(d.rate) || 0;
+          detail = money(w) + '/mo';
+        }
+      } else {
+        var qty = 0;
+        es.forEach(function (e) {
+          if (e.driverId !== d.id || !inMonth(e.date, m)) return;
+          qty += parseFloat(e.qty) || 0;
+          w += parseFloat(e.wage) || 0;
+        });
+        if (qty > 0 || w > 0) detail = qty + ' ' + (UNIT[d.payType] || '') + ' × ' + money(parseFloat(d.rate) || 0);
+      }
+      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail };
+      total += w;
+    });
+    return { per: per, total: total };
+  }
+
+  /* Core calculation — pure logic over the three stores. Exposed as _calc for tests. */
+  function calc(m) {
+    var o = App._store.get('onboarding', {});
+    var std = (o.payStandard || 'hourly').toLowerCase(), rate = o.payRate;
+
+    var income = 0, incomeByType = {}, extras = 0;
+    (App._store.get('rev_entries', []) || []).forEach(function (e) {
+      if (!inMonth(e.date, m)) return;
+      var a = payFor(e, std, rate);
+      income += a;
+      var t = e.type || 'load';
+      incomeByType[t] = (incomeByType[t] || 0) + a;
+    });
+    (App._store.get('rev_extras', []) || []).forEach(function (x) {
+      if (!inMonth(x.date, m)) return;
+      var a = parseFloat(x.amount) || 0;
+      income += a; extras += a;
+    });
+
+    var fuel = 0;
+    (App._store.get('fuel_fills', []) || []).forEach(function (f) {
+      if (!inMonth(f.date, m)) return;
+      fuel += parseFloat(f.cost) || 0;
+    });
+    var fuelOther = 0;
+    (App._store.get('fuel_expenses', []) || []).forEach(function (x) {
+      if (!inMonth(x.date, m)) return;
+      fuelOther += parseFloat(x.cost) || 0;
+    });
+
+    var biz = 0, bizByCat = {};
+    bizExpenses().forEach(function (x) {
+      if (!inMonth(x.date, m)) return;
+      var a = parseFloat(x.cost) || 0;
+      biz += a;
+      var c = x.category || 'Other';
+      bizByCat[c] = (bizByCat[c] || 0) + a;
+    });
+
+    var dw = driverWages(m);
+
+    /* Detailed expense categories (Asjad's spreadsheet format) */
+    var miles = totalMiles(m);
+    var det = detailAmounts(m, income, dw.total);
+    var detTotal = 0;
+    var detRows = [];
+    DETAIL_CATS.forEach(function (c) {
+      var d = det[c.key];
+      var amt = d.amount || 0;
+      detTotal += amt;
+      detRows.push({
+        key: c.key, label: c.label, sub: c.sub,
+        amount: amt, auto: d.auto, rate: d.rate,
+        perMile: miles > 0 ? amt / miles : 0,
+        pct: income > 0 ? amt / income * 100 : 0
+      });
+    });
+
+    var expenses = fuel + fuelOther + biz + dw.total + detTotal;
+    return {
+      month: m, income: income, incomeByType: incomeByType, extras: extras,
+      fuel: fuel, fuelOther: fuelOther, biz: biz, bizByCat: bizByCat,
+      wages: dw.total, wagesByDriver: dw.per,
+      miles: miles,
+      detail: detRows, detailTotal: detTotal,
+      fuelPerMile: miles > 0 ? fuel / miles : 0,
+      fuelPct: income > 0 ? fuel / income * 100 : 0,
+      wagesPerMile: miles > 0 ? dw.total / miles : 0,
+      wagesPct: income > 0 ? dw.total / income * 100 : 0,
+      expenses: expenses, net: income - expenses,
+      expPerMile: miles > 0 ? expenses / miles : 0,
+      expPct: income > 0 ? expenses / income * 100 : 0,
+      netPerMile: miles > 0 ? (income - expenses) / miles : 0,
+      netPct: income > 0 ? (income - expenses) / income * 100 : 0
+    };
+  }
+
+  function money(v) { return '$' + v.toFixed(2); }
+
+  var api = {
+    /* Account-type gate REMOVED (Asjad, Oct 13): Driver needs full access. */
+    _allowed: function () {
+      return true;
+    },
+    _calc: calc,
+    _driverWages: driverWages,
+    _totalMiles: totalMiles,
+    _detailAmounts: detailAmounts,
+    _DETAIL_CATS: DETAIL_CATS,
+
+    status: function () {
+      try {
+        if (!api._allowed()) return '';
+        var c = calc(App._today().slice(0, 7));
+        if (!c.income && !c.expenses) return 'No data yet';
+        var sign = c.net < 0 ? '-' : '+';
+        return monthLabel(c.month) + ': ' + sign + '$' + Math.abs(c.net).toFixed(0);
+      } catch (e) { return ''; }
+    },
+
+    render: function (body) {
+      var m = curMonth();
+      var c = calc(m);
+      var netColor = c.net < 0 ? '#c0392b' : '#1e8e3e';
+
+      var h = '<div class="card"><h3>📈 Profit & Loss</h3>' +
+        '<div class="row" style="align-items:center">' +
+        '<button class="btn small ghost" id="pnl_prev">← Prev</button>' +
+        '<div class="center" style="flex:1;font-size:18px;font-weight:800;color:var(--navy)">' + esc(monthLabel(m)) + '</div>' +
+        '<button class="btn small ghost" id="pnl_next">Next →</button>' +
+        '</div></div>';
+
+      h += '<div class="row">' +
+        '<div class="card" style="flex:1"><div class="note">Gross income</div>' +
+        '<div class="center" style="font-size:22px;font-weight:800;color:var(--navy)">' + money(c.income) + '</div></div>' +
+        '<div class="card" style="flex:1"><div class="note">Total expenses</div>' +
+        '<div class="center" style="font-size:22px;font-weight:800;color:var(--navy)">' + money(c.expenses) + '</div></div>' +
+        '<div class="card" style="flex:1"><div class="note">Net ' + (c.net < 0 ? 'loss' : 'profit') + '</div>' +
+        '<div class="center" style="font-size:22px;font-weight:800;color:' + netColor + '">' + money(c.net) + '</div></div>' +
+        '</div>';
+
+      /* Income breakdown */
+      h += '<div class="card"><h3>💰 Income breakdown</h3>';
+      var types = Object.keys(c.incomeByType);
+      if (!types.length && !c.extras) h += '<div class="empty">No income this month. Add entries in Revenue.</div>';
+      types.forEach(function (t) {
+        h += '<div class="kv"><span style="text-transform:capitalize">' + esc(t) + '</span><b>' + money(c.incomeByType[t]) + '</b></div>';
+      });
+      if (c.extras > 0) h += '<div class="kv"><span>Extras (bonus, detention…)</span><b>' + money(c.extras) + '</b></div>';
+      h += '<div class="kv"><span><b>Total income</b></span><b>' + money(c.income) + '</b></div></div>';
+
+      /* Expense breakdown */
+      h += '<div class="card"><h3>🧾 Expense breakdown</h3>';
+      if (!c.expenses) h += '<div class="empty">No expenses this month.</div>';
+      if (c.fuel > 0) h += '<div class="kv"><span>⛽ Fuel</span><b>' + money(c.fuel) + '</b></div>';
+      if (c.fuelOther > 0) h += '<div class="kv"><span>Other (from Fuel module)</span><b>' + money(c.fuelOther) + '</b></div>';
+      Object.keys(c.bizByCat).forEach(function (k) {
+        h += '<div class="kv"><span>' + esc(k) + '</span><b>' + money(c.bizByCat[k]) + '</b></div>';
+      });
+      if (c.wages > 0) h += '<div class="kv"><span>👥 Driver wages</span><b>' + money(c.wages) + '</b></div>';
+      h += '<div class="kv"><span><b>Total expenses</b></span><b>' + money(c.expenses) + '</b></div>';
+      h += '<p class="note">Fuel costs pull automatically from Fuel &amp; Expense. Add other business costs below.</p></div>';
+
+      /* Detailed monthly analysis — Asjad's spreadsheet format:
+         each line shows amount, $/mile, and % of revenue */
+      h += '<div class="card"><h3>📊 Monthly analysis</h3>';
+      h += '<div class="row"><div><label class="f">Total miles</label>' +
+        '<input id="pnl_miles" type="number" inputmode="decimal" min="0" step="0.01" value="' + (c.miles || '') + '" placeholder="Auto from odometer">' +
+        '<div class="note">Auto from fuel odometer readings — override if needed.</div></div></div>';
+      h += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">' +
+        '<tr style="color:#888;border-bottom:1px solid #eee"><td></td>' +
+        '<td style="text-align:right"><b>Totals</b></td>' +
+        '<td style="text-align:right"><b>$/mile</b></td>' +
+        '<td style="text-align:right"><b>%</b></td></tr>';
+      h += '<tr><td>Total rev.</td><td style="text-align:right"><b>' + money(c.income) + '</b></td><td></td><td style="text-align:right">100</td></tr>';
+      h += '<tr><td colspan="4" style="height:6px"></td></tr>';
+      if (c.miles > 0) h += '<tr><td>Total miles</td><td style="text-align:right">' + c.miles.toFixed(2) + '</td><td style="text-align:right">' + (c.income / c.miles).toFixed(5) + '</td><td></td></tr>';
+      /* Fuel line */
+      if (c.fuel > 0 || c.miles > 0) {
+        h += '<tr><td>Total fuel</td><td style="text-align:right">' + money(c.fuel) + '</td>' +
+          '<td style="text-align:right">' + c.fuelPerMile.toFixed(5) + '</td>' +
+          '<td style="text-align:right">' + c.fuelPct.toFixed(2) + '</td></tr>';
+      }
+      /* Salaries (driver wages) line */
+      if (c.wages > 0) {
+        h += '<tr><td>Total salaries</td><td style="text-align:right">' + money(c.wages) + '</td>' +
+          '<td style="text-align:right">' + c.wagesPerMile.toFixed(5) + '</td>' +
+          '<td style="text-align:right">' + c.wagesPct.toFixed(2) + '</td></tr>';
+      }
+      /* Detailed categories */
+      c.detail.forEach(function (r) {
+        h += '<tr data-pnldetrow="' + r.key + '"><td>' + esc(r.label) +
+          (r.sub ? ' <span class="note">(' + esc(r.sub) + ')</span>' : '') +
+          (r.auto && r.rate != null ? ' <span class="note">(' + r.rate + '%)</span>' : '') +
+          '</td>' +
+          '<td style="text-align:right"><input data-pnldet="' + r.key + '" type="number" inputmode="decimal" min="0" step="0.01" ' +
+          'value="' + (r.amount ? r.amount.toFixed(2) : '') + '" placeholder="0.00" ' +
+          'style="width:90px;text-align:right;border:1px solid #ddd;border-radius:6px;padding:4px"></td>' +
+          '<td style="text-align:right">' + r.perMile.toFixed(5).replace(/\.?0+$/, '') + '</td>' +
+          '<td style="text-align:right">' + r.pct.toFixed(2) + '</td></tr>';
+      });
+      h += '<tr><td colspan="4" style="height:6px"></td></tr>';
+      h += '<tr style="border-top:2px solid #333"><td><b>Total expenses</b></td>' +
+        '<td style="text-align:right"><b>' + money(c.expenses) + '</b></td>' +
+        '<td style="text-align:right"><b>' + c.expPerMile.toFixed(5).replace(/\.?0+$/, '') + '</b></td>' +
+        '<td style="text-align:right"><b>' + c.expPct.toFixed(2) + '</b></td></tr>';
+      h += '<tr><td><b>Total profit</b></td>' +
+        '<td style="text-align:right"><b style="color:' + netColor + '">' + money(c.net) + '</b></td>' +
+        '<td style="text-align:right"><b style="color:' + netColor + '">' + c.netPerMile.toFixed(5).replace(/\.?0+$/, '') + '</b></td>' +
+        '<td style="text-align:right"><b style="color:' + netColor + '">' + c.netPct.toFixed(2) + '</b></td></tr>';
+      h += '</table>';
+      h += '<p class="note">Brokerage auto = 10% of revenue · WSIB auto = 4.88% of salaries · Maintenance auto from Maintenance module. Type an amount to override any auto value.</p></div>';
+
+      /* Driver wages breakdown — per-driver wages + cumulative total */
+      h += '<div class="card"><h3>👥 Driver wages — ' + esc(monthLabel(m)) + '</h3>';
+      var dids = Object.keys(c.wagesByDriver);
+      if (!dids.length) {
+        h += '<div class="empty">No drivers yet. Add your drivers below — each driver\u2019s wages are tracked separately, and the total comes off your revenue as an expense.</div>';
+      } else {
+        var anyW = false;
+        dids.forEach(function (id) {
+          var d = c.wagesByDriver[id];
+          if (d.wage > 0) anyW = true;
+          h += '<div class="kv"><span>' + esc(d.name) + (d.detail ? ' <span class="note">(' + esc(d.detail) + ')</span>' : '') + '</span><b>' + money(d.wage) + '</b></div>';
+        });
+        if (!anyW) h += '<div class="empty">No wages logged for this month yet.</div>';
+        h += '<div class="kv"><span><b>Total driver wages</b></span><b>' + money(c.wages) + '</b></div>';
+      }
+      h += '<p class="note">Driver wages are deducted from revenue as a business expense.</p></div>';
+
+      /* Add driver */
+      h += '<div class="card"><h3>＋ Add driver</h3>' +
+        '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1"></div>' +
+        '<div><label class="f">Pay type</label><select id="pnl_dtype">' +
+        PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
+        '</select></div></div>' +
+        '<div class="row"><div><label class="f">Rate $</label><input id="pnl_drate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
+        '<div><label class="f">Start month</label><input id="pnl_dstart" type="month" value="' + esc(m) + '"><div class="note">Salary drivers earn their rate every month from this month on.</div></div></div>' +
+        '<button class="btn primary" id="pnl_dadd">Add driver</button>' +
+        '<div id="pnl_dlist">' + drivers().map(function (d) {
+          return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
+            '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
+        }).join('') + '</div></div>';
+
+      /* Log driver work */
+      var allDs = drivers();
+      var workable = allDs.filter(function (d) { return d.payType !== 'salary'; });
+      h += '<div class="card"><h3>🕒 Log driver work</h3>';
+      if (!workable.length) {
+        h += '<div class="empty">Add an hourly, per-mile, or per-load driver above to log work. Salary drivers are paid automatically each month — no work log needed.</div>';
+      } else {
+        h += '<div class="row"><div><label class="f">Date</label><input type="date" id="pnl_wdate" value="' + App._today() + '"></div>' +
+          '<div><label class="f">Driver</label><select id="pnl_wdriver">' +
+          workable.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + ' (' + esc(PAY_LABEL[d.payType]) + ' ' + money(parseFloat(d.rate) || 0) + ')</option>'; }).join('') +
+          '</select></div></div>' +
+          '<div class="row"><div><label class="f" id="pnl_wqtylabel">Hours</label><input id="pnl_wqty" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0"></div></div>' +
+          '<button class="btn primary" id="pnl_wadd">Log work</button>';
+        h += '<div id="pnl_wlist">' + wageEntries().slice().reverse().slice(0, 30).map(function (e) {
+          var dd = null;
+          allDs.forEach(function (x) { if (x.id === e.driverId) dd = x; });
+          return '<div class="listitem"><div class="a">' + esc(dd ? dd.name : '(removed driver)') + ' — ' + esc(e.qty) + ' ' + esc(e.unit) + ' = ' + money(parseFloat(e.wage) || 0) + '</div>' +
+            '<div class="b">' + esc(e.date) + '</div>' +
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnlwdel="' + esc(e.id) + '">Delete</button></div></div>';
+        }).join('') + '</div>';
+      }
+      h += '</div>';
+
+      /* Manual business expense entry */
+      h += '<div class="card"><h3>＋ Business expense</h3>' +
+        '<div class="row"><div><label class="f">Date</label><input type="date" id="pnl_date" value="' + App._today() + '"></div>' +
+        '<div><label class="f">Category</label><select id="pnl_cat">' +
+        BIZ_CATS.map(function (x) { return '<option>' + x + '</option>'; }).join('') + '</select></div></div>' +
+        '<div class="row"><div><label class="f">What</label><input id="pnl_what" placeholder="e.g. Oil change"></div>' +
+        '<div><label class="f">Cost $</label><input id="pnl_cost" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
+        '<button class="btn primary" id="pnl_add">Add expense</button>' +
+        '<div id="pnl_list">' + bizExpenses().slice().reverse().map(function (x, ri) {
+          return '<div class="listitem"><div class="a">' + esc(x.what || x.category) + ' — $' + esc(x.cost) + '</div>' +
+            '<div class="b">' + esc(x.date) + ' · ' + esc(x.category || 'Other') + '</div>' +
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnldel="' + (bizExpenses().length - 1 - ri) + '">Delete</button></div></div>';
+        }).join('') + '</div></div>';
+
+      body.innerHTML = h;
+
+      body.querySelector('#pnl_prev').onclick = function () { W('month', shiftMonth(m, -1)); api.render(body); };
+      body.querySelector('#pnl_next').onclick = function () { W('month', shiftMonth(m, 1)); api.render(body); };
+
+      /* Monthly analysis: total miles override */
+      var milesIn = body.querySelector('#pnl_miles');
+      if (milesIn) milesIn.onchange = function () {
+        var v = parseFloat(milesIn.value);
+        W('miles_' + m, isNaN(v) ? '' : v);
+        api.render(body);
+      };
+
+      /* Monthly analysis: detailed category amounts (type to override auto) */
+      body.querySelectorAll('[data-pnldet]').forEach(function (inp) {
+        inp.onchange = function () {
+          var key = inp.getAttribute('data-pnldet');
+          var v = parseFloat(inp.value);
+          saveDetail(m, key, isNaN(v) ? 0 : v, null);
+          api.render(body);
+        };
+      });
+
+      body.querySelector('#pnl_add').onclick = function () {
+        var what = body.querySelector('#pnl_what').value.trim();
+        var cost = parseFloat(body.querySelector('#pnl_cost').value);
+        if (!what || !(cost > 0)) { alert('Enter what it was and a cost greater than 0.'); return; }
+        var rec = {
+          date: body.querySelector('#pnl_date').value || App._today(),
+          category: body.querySelector('#pnl_cat').value,
+          what: what,
+          cost: cost.toFixed(2)
+        };
+        var l = bizExpenses(); l.push(rec); W('expenses', l);
+        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl', 'x' + Date.now(), rec); } catch (e) {} }
+        api.render(body);
+      };
+      body.querySelectorAll('[data-pnldel]').forEach(function (b) {
+        b.onclick = function () {
+          if (!confirm('Delete this expense?')) return;
+          var l = bizExpenses(); l.splice(+b.getAttribute('data-pnldel'), 1); W('expenses', l);
+          api.render(body);
+        };
+      });
+
+      /* Driver wages: add driver */
+      var dadd = body.querySelector('#pnl_dadd');
+      if (dadd) dadd.onclick = function () {
+        var name = body.querySelector('#pnl_dname').value.trim();
+        var rate = parseFloat(body.querySelector('#pnl_drate').value);
+        if (!name || !(rate > 0)) { alert('Enter a driver name and a rate greater than 0.'); return; }
+        var rec = {
+          id: 'd' + Date.now(),
+          name: name,
+          payType: body.querySelector('#pnl_dtype').value,
+          rate: rate,
+          start: body.querySelector('#pnl_dstart').value || App._today().slice(0, 7)
+        };
+        var l = drivers(); l.push(rec); W('drivers', l);
+        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
+        api.render(body);
+      };
+      body.querySelectorAll('[data-pnldriverdel]').forEach(function (b) {
+        b.onclick = function () {
+          if (!confirm('Remove this driver? Their logged work entries will be removed too.')) return;
+          var id = b.getAttribute('data-pnldriverdel');
+          W('drivers', drivers().filter(function (d) { return d.id !== id; }));
+          W('wage_entries', wageEntries().filter(function (e) { return e.driverId !== id; }));
+          api.render(body);
+        };
+      });
+
+      /* Driver wages: log work */
+      var wadd = body.querySelector('#pnl_wadd');
+      if (wadd) {
+        var wdriver = body.querySelector('#pnl_wdriver');
+        var updQty = function () {
+          var dd = null;
+          drivers().forEach(function (x) { if (x.id === wdriver.value) dd = x; });
+          var lbl = body.querySelector('#pnl_wqtylabel');
+          if (lbl && dd) lbl.textContent = QTY_LABEL[dd.payType] || 'Amount';
+        };
+        wdriver.onchange = updQty; updQty();
+        wadd.onclick = function () {
+          var dd = null;
+          drivers().forEach(function (x) { if (x.id === wdriver.value) dd = x; });
+          if (!dd) { alert('Pick a driver.'); return; }
+          var qty = parseFloat(body.querySelector('#pnl_wqty').value);
+          if (!(qty > 0)) { alert('Enter the ' + (QTY_LABEL[dd.payType] || 'amount').toLowerCase() + ' worked.'); return; }
+          var rate = parseFloat(dd.rate) || 0;
+          var rec = {
+            id: 'w' + Date.now(),
+            date: body.querySelector('#pnl_wdate').value || App._today(),
+            driverId: dd.id,
+            qty: qty,
+            unit: UNIT[dd.payType] || '',
+            rate: rate,
+            wage: qty * rate
+          };
+          var l = wageEntries(); l.push(rec); W('wage_entries', l);
+          if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_wage_entries', rec.id, rec); } catch (e) {} }
+          api.render(body);
+        };
+        body.querySelectorAll('[data-pnlwdel]').forEach(function (b) {
+          b.onclick = function () {
+            if (!confirm('Delete this work entry?')) return;
+            var id = b.getAttribute('data-pnlwdel');
+            W('wage_entries', wageEntries().filter(function (e) { return e.id !== id; }));
+            api.render(body);
+          };
+        });
+      }
+    }
+  };
+
+  Meticulous.modules.pnl = api;
+})();

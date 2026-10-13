@@ -147,6 +147,8 @@
         amount: e.amount || 0,
         type: e.type || 'load',
         loads: e.loads || 1,
+        tons: e.tons || null,   // v26: Pay by Weight — net tonnes for recalculation
+        hours: e.hours || null,
         note: e.note || ''
       });
       saveEntries(list);
@@ -189,6 +191,7 @@
         '<div><label class="f">Amount $</label><input id="rv_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
         '<div class="row"><div><label class="f">Type</label><select id="rv_type"><option value="load">Load</option><option value="hourly">Hourly</option><option value="trip">Trip</option><option value="weight">Weight</option></select></div>' +
         '<div><label class="f">Loads</label><input id="rv_loads" type="number" min="1" step="1" value="1"></div></div>' +
+        '<div id="rv_tonsrow" style="display:none"><label class="f">Tonnes (net weight)</label><input id="rv_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 12.18"></div>' +
         '<label class="f">Note</label><input id="rv_note" placeholder="e.g. Gravel haul to Site 7">' +
         '<button class="btn primary" id="rv_add">Add earnings</button></div>';
 
@@ -224,17 +227,41 @@
       if (ca) ca.onchange = function () { W('customA', ca.value); api.render(body); };
       if (cb) cb.onchange = function () { W('customB', cb.value); api.render(body); };
 
+      /* v26: Show tonnes input when Weight type selected; auto-calc amount */
+      var rvType = body.querySelector('#rv_type');
+      var rvTonsRow = body.querySelector('#rv_tonsrow');
+      var rvTons = body.querySelector('#rv_tons');
+      var rvAmt = body.querySelector('#rv_amt');
+      function syncTonsRow() {
+        var isW = rvType.value === 'weight';
+        rvTonsRow.style.display = isW ? '' : 'none';
+        if (isW) {
+          var o = App._store.get('onboarding', {});
+          var rate = parseFloat(o.payRate) || 0;
+          var tons = parseFloat(rvTons.value) || 0;
+          if (rate > 0 && tons > 0) rvAmt.value = (tons * rate).toFixed(2);
+        }
+      }
+      rvType.onchange = syncTonsRow;
+      rvTons.oninput = syncTonsRow;
+      syncTonsRow();
+
       body.querySelector('#rv_add').onclick = function () {
         var amt = parseFloat(body.querySelector('#rv_amt').value);
         if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
-        api.addEntry({
+        var entry = {
           date: body.querySelector('#rv_date').value || App._today(),
           amount: amt.toFixed(2),
           type: body.querySelector('#rv_type').value,
           loads: body.querySelector('#rv_loads').value || 1,
           note: body.querySelector('#rv_note').value.trim()
-        });
-        manifestFeedPush('revenue', 'Manual entry: $' + amt.toFixed(2) + ' (' + body.querySelector('#rv_type').value + ')');
+        };
+        if (entry.type === 'weight') {
+          entry.tons = body.querySelector('#rv_tons').value.trim() || null;
+        }
+        api.addEntry(entry);
+        manifestFeedPush('revenue', 'Manual entry: $' + amt.toFixed(2) + ' (' + entry.type + ')' +
+          (entry.tons ? ' · ' + entry.tons + 't' : ''));
         api.render(body);
       };
       body.querySelector('#rx_add').onclick = function () {

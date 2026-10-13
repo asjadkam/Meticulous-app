@@ -90,14 +90,16 @@
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Loads</label><input id="dp_loads" type="number" min="1" step="1" value="1"></div></div>' +
         '<label class="f">Notes</label><input id="dp_notes" placeholder="Gate code, contact…">' +
-        '<label class="f">Ticket photo</label>' +
+        '<label class="f">🎫 Tickets <span style="font-weight:normal;color:var(--muted)">(add one per haul card / scale ticket)</span></label>' +
+        '<div id="dp_ticketlist"></div>' +
         '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
-        '<button type="button" class="btn secondary" id="dp_cam" style="flex:1;">📷 Take photo</button>' +
-        '<button type="button" class="btn secondary" id="dp_pick" style="flex:1;">📁 Choose file</button>' +
+        '<button type="button" class="btn secondary" id="dp_cam" style="flex:1;">📷 Take ticket photo</button>' +
+        '<button type="button" class="btn secondary" id="dp_pick" style="flex:1;">📁 Choose ticket file</button>' +
         '</div>' +
-        '<input type="file" id="dp_img_cam" accept="image/*" capture="environment" style="display:none;">' +
-        '<input type="file" id="dp_img" accept="image/*" style="display:none;">' +
-        '<div id="dp_img_name" style="font-size:12px;color:var(--muted);margin-bottom:8px;">No file chosen</div>' +
+        '<input type="file" id="dp_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="dp_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="dp_img_name" style="font-size:12px;color:var(--muted);margin-bottom:8px;">No tickets yet — add the first one above.</div>' +
+        '<div id="dp_ocr_prompt"></div>' +
         '<div id="dp_preview"></div>' +
         '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
         '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>';
@@ -122,20 +124,169 @@
 
       body.innerHTML = h;
 
-      var pendingPhoto = null;
+      /* v26: Multi-ticket — drivers can have MULTIPLE haul cards per day.
+         Each ticket: photo + OCR data + manually-confirmed hours/payment unit.
+         "Add another ticket" appends; never overwrites. */
+      var pendingTickets = []; // [{id, photo, ocrType, ticketNo, cardNumber, foremanHours, paymentUnit, netWeight, grossWeight, tareWeight}]
+      var pendingPhoto = null; // legacy single-photo (kept for backward compat)
       var imgInput = body.querySelector('#dp_img');
       var imgCamInput = body.querySelector('#dp_img_cam');
       // v24: two buttons — camera and file picker
       body.querySelector('#dp_cam').onclick = function () { imgCamInput.click(); };
       body.querySelector('#dp_pick').onclick = function () { imgInput.click(); };
+
+      function ticketId() { return 't' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); }
+
+      /* Render the ticket list UI */
+      function renderTicketList() {
+        var el = body.querySelector('#dp_ticketlist');
+        var o = App._store.get('onboarding', {});
+        var tb = parseFloat(o.travelBonus) || 0;
+        if (!pendingTickets.length) {
+          el.innerHTML = '';
+          return;
+        }
+        var h = '';
+        pendingTickets.forEach(function (t, i) {
+          var desc = t.ocrType === 'haul_card' ? 'Haul card' :
+                     t.ocrType === 'scale_ticket' ? 'Scale ticket' : 'Dispatch';
+          var num = t.cardNumber ? '#' + esc(t.cardNumber) : t.ticketNo ? '#' + esc(t.ticketNo) : '';
+          var detail = '';
+          if (t.foremanHours) detail += esc(t.foremanHours) + 'h';
+          if (t.paymentUnit) detail += (detail ? ' · ' : '') + esc(t.paymentUnit);
+          if (t.netWeight) detail += (detail ? ' · ' : '') + esc(t.netWeight) + 't';
+          h += '<div class="listitem" style="align-items:flex-start">' +
+            (t.photo ? '<img src="' + t.photo + '" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:10px" alt="Ticket">' : '') +
+            '<div style="flex:1"><div class="a">' + desc + ' ' + num + '</div>' +
+            (detail ? '<div class="b">' + detail + '</div>' : '<div class="b" style="color:var(--orange)">Needs hours — tap ✏️</div>') +
+            '</div>' +
+            '<button class="btn small ghost" data-tedit="' + i + '">✏️</button>' +
+            '<button class="btn small ghost" data-tdel="' + i + '">🗑</button></div>';
+        });
+        // Totals
+        if (window.TicketOCR) {
+          var s = TicketOCR.summarizeTickets(pendingTickets, tb);
+          if (s.ticketCount > 0) {
+            h += '<div class="kv"><span>Foreman hours (' + s.ticketCount + ' tickets)</span><b>' + s.totalForemanHours + 'h</b></div>';
+            if (tb > 0) h += '<div class="kv"><span>+ Travel bonus</span><b>' + tb + 'h</b></div>';
+            h += '<div class="kv"><span><b>Total paid hours</b></span><b style="color:var(--orange)">' + s.totalPaidHours + 'h</b></div>';
+            if (s.totalNetWeight > 0) h += '<div class="kv"><span>Total net weight</span><b>' + s.totalNetWeight + 't</b></div>';
+          }
+        }
+        el.innerHTML = h;
+        el.querySelectorAll('[data-tdel]').forEach(function (b) {
+          b.onclick = function () {
+            if (!confirm('Remove this ticket?')) return;
+            pendingTickets.splice(+b.getAttribute('data-tdel'), 1);
+            renderTicketList();
+          };
+        });
+        el.querySelectorAll('[data-tedit]').forEach(function (b) {
+          b.onclick = function () { editTicket(+b.getAttribute('data-tedit')); };
+        });
+      }
+
+      /* Edit a ticket's manually-confirmed fields (hours, payment unit) */
+      function editTicket(i) {
+        var t = pendingTickets[i]; if (!t) return;
+        var promptEl = body.querySelector('#dp_ocr_prompt');
+        var h = '<div class="card" style="border:2px solid var(--orange)"><h3>✏️ Ticket ' + (i + 1) + '</h3>';
+        if (t.ocrType === 'haul_card') {
+          h += '<label class="f">Foreman hours (from card)</label>' +
+               '<input id="t_hours" type="number" inputmode="decimal" min="0" step="0.25" value="' + esc(t.foremanHours || '') + '" placeholder="e.g. 4">' +
+               '<label class="f">Payment unit (checked on card)</label><select id="t_punit">' +
+               ['HOUR', 'TONNE', 'TONNE / KM', 'OTHER'].map(function (x) {
+                 return '<option' + (t.paymentUnit === x ? ' selected' : '') + '>' + x + '</option>';
+               }).join('') + '</select>';
+        } else if (t.ocrType === 'scale_ticket') {
+          h += '<label class="f">Net weight (tonnes)</label>' +
+               '<input id="t_net" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(t.netWeight || '') + '">';
+        }
+        h += '<div class="row" style="margin-top:8px">' +
+             '<button class="btn primary" id="t_save">Save ticket</button>' +
+             '<button class="btn ghost" id="t_cancel">Cancel</button></div></div>';
+        promptEl.innerHTML = h;
+        promptEl.querySelector('#t_cancel').onclick = function () { promptEl.innerHTML = ''; };
+        promptEl.querySelector('#t_save').onclick = function () {
+          if (t.ocrType === 'haul_card') {
+            t.foremanHours = promptEl.querySelector('#t_hours').value.trim();
+            t.paymentUnit = promptEl.querySelector('#t_punit').value;
+          } else if (t.ocrType === 'scale_ticket') {
+            t.netWeight = promptEl.querySelector('#t_net').value.trim();
+          }
+          promptEl.innerHTML = '';
+          renderTicketList();
+          updateNameEl();
+        };
+      }
+
+      function updateNameEl() {
+        var n = pendingTickets.length;
+        body.querySelector('#dp_img_name').textContent =
+          n === 0 ? 'No tickets yet — add the first one above.' :
+          n + ' ticket' + (n > 1 ? 's' : '') + ' added. Tap "Take ticket photo" to add another.';
+      }
+
+      /* v26: OCR — after photo selected, run Tesseract, then append ticket */
+      function runOCR(dataUrl) {
+        if (!window.TicketOCR) return;
+        var nameEl = body.querySelector('#dp_img_name');
+        nameEl.textContent = 'Reading ticket…';
+        TicketOCR.recognize(dataUrl, function (p) {
+          try { nameEl.textContent = 'Reading ticket… ' + Math.round(p * 100) + '%'; } catch (e) {}
+        }).then(function (text) {
+          var parsed = TicketOCR.parse(text);
+          var form = TicketOCR.toDispatchForm(parsed);
+          // Auto-fill dispatch form from first ticket (if empty)
+          if (pendingTickets.length === 0) {
+            if (form.jobSite && !body.querySelector('#dp_site').value) body.querySelector('#dp_site').value = form.jobSite;
+            if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
+            if (form.ticketNo && !body.querySelector('#dp_ticket').value) body.querySelector('#dp_ticket').value = form.ticketNo;
+            if (form.notes && !body.querySelector('#dp_notes').value) body.querySelector('#dp_notes').value = form.notes;
+          }
+          // Build ticket object
+          var t = {
+            id: ticketId(),
+            photo: dataUrl,
+            ocrType: parsed._type,
+            ticketNo: parsed.ticketNo || form.ticketNo || null,
+            cardNumber: parsed.cardNumber || null,
+            foremanHours: null, // manual — haul cards need user confirmation
+            paymentUnit: null,  // manual — checkbox state needs user confirmation
+            netWeight: form.netWeight || null,
+            grossWeight: form.grossWeight || null,
+            tareWeight: form.tareWeight || null,
+            date: App._today()
+          };
+          pendingTickets.push(t);
+          pendingPhoto = dataUrl; // legacy compat
+          renderTicketList();
+          updateNameEl();
+          // If haul card, immediately prompt for hours/payment unit
+          if (parsed._type === 'haul_card') {
+            body.querySelector('#dp_img_name').textContent =
+              '✓ Haul card detected (card #' + (t.cardNumber || '?') + '). Enter foreman hours below.';
+            editTicket(pendingTickets.length - 1);
+          } else {
+            var label = parsed._type === 'scale_ticket' ? 'Scale ticket' : 'Dispatch';
+            body.querySelector('#dp_img_name').textContent =
+              '✓ ' + label + ' added (' + parsed._confidence + ' fields). Add another or save.';
+          }
+          body.querySelector('#dp_preview').innerHTML = '';
+        }).catch(function () {
+          body.querySelector('#dp_img_name').textContent = 'Photo added (OCR unavailable)';
+          pendingTickets.push({ id: ticketId(), photo: dataUrl, ocrType: 'unknown', date: App._today() });
+          renderTicketList();
+          updateNameEl();
+        });
+      }
       function handlePhoto(ev) {
         var f = ev.target.files[0]; if (!f) return;
         body.querySelector('#dp_img_name').textContent = f.name || 'Photo selected';
         fileToThumb(f, function (dataUrl) {
-          pendingPhoto = dataUrl;
           body.querySelector('#dp_preview').innerHTML =
-            '<img src="' + dataUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">' +
-            '<p class="note">Photo attached. It will be saved with the dispatch.</p>';
+            '<img src="' + dataUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">';
+          runOCR(dataUrl);
         });
       }
       imgInput.onchange = handlePhoto;
@@ -151,6 +302,7 @@
           loads: body.querySelector('#dp_loads').value.trim() || '1',
           notes: body.querySelector('#dp_notes').value.trim(),
           photo: pendingPhoto,
+          tickets: pendingTickets.slice(), // v26: multi-ticket array
           date: App._today(),
           status: 'saved'
         };
@@ -183,16 +335,73 @@
         var l = list();
         for (var i = 0; i < l.length; i++) if (l[i].id === cur.id) { l[i] = cur; break; }
         W('list', l); W('active', null); fbSave(cur);
-        /* One confirmation updates Revenue: log the dispatch earnings. */
-        var amt = parseFloat(cur.amount);
-        if (amt > 0 && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
-          Meticulous.modules.revenue.addEntry({
-            date: App._today(),
-            amount: amt.toFixed(2),
-            type: 'load',
-            loads: cur.loads || 1,
-            note: 'Dispatch: ' + (cur.jobSite || '') + (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '')
-          });
+        /* One confirmation updates Revenue: log the dispatch earnings.
+           v26: Multi-ticket — sum foreman hours from all tickets + travel bonus.
+           Pay by Weight: sum net weights × rate/tonne. */
+        var o = App._store.get('onboarding', {});
+        var std = (o.payStandard || 'hourly').toLowerCase();
+        var rate = parseFloat(o.payRate) || 0;
+        var travelBonus = parseFloat(o.travelBonus) || 0;
+        var revEntry = null;
+        var tickets = cur.tickets || [];
+        if (tickets.length && window.TicketOCR) {
+          var sum = TicketOCR.summarizeTickets(tickets, travelBonus);
+          if (std === 'weight' && sum.totalNetWeight > 0 && rate > 0) {
+            var wAmt = sum.totalNetWeight * rate;
+            revEntry = {
+              date: App._today(),
+              amount: wAmt.toFixed(2),
+              tons: sum.totalNetWeight.toFixed(2),
+              type: 'weight',
+              loads: tickets.length,
+              note: 'Dispatch: ' + (cur.jobSite || '') +
+                ' · ' + sum.totalNetWeight.toFixed(2) + 't @ $' + rate + '/t' +
+                ' (' + tickets.length + ' tickets)'
+            };
+          } else if ((std === 'hourly' || std === 'trip') && sum.totalForemanHours > 0) {
+            var hAmt = sum.totalPaidHours * rate;
+            var brk = sum.breakdown.map(function (b) {
+              return b.label + ': ' + (b.foremanHours || 0) + 'h';
+            }).join(', ');
+            revEntry = {
+              date: App._today(),
+              amount: hAmt.toFixed(2),
+              hours: sum.totalPaidHours.toFixed(2),
+              type: 'hourly',
+              loads: tickets.length,
+              note: 'Dispatch: ' + (cur.jobSite || '') +
+                ' · foreman ' + sum.totalForemanHours + 'h + travel ' + travelBonus + 'h' +
+                ' = ' + sum.totalPaidHours + 'h' +
+                (brk ? ' (' + brk + ')' : '')
+            };
+          }
+        }
+        // Fallback: legacy single amount
+        if (!revEntry) {
+          var amt = parseFloat(cur.amount);
+          if (amt > 0) {
+            revEntry = {
+              date: App._today(),
+              amount: amt.toFixed(2),
+              type: 'load',
+              loads: cur.loads || 1,
+              note: 'Dispatch: ' + (cur.jobSite || '') + (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '')
+            };
+          } else if (cur.netWeight && std === 'weight' && rate > 0) {
+            // Legacy single-weight dispatch
+            var lwAmt = parseFloat(cur.netWeight) * rate;
+            revEntry = {
+              date: App._today(),
+              amount: lwAmt.toFixed(2),
+              tons: cur.netWeight,
+              type: 'weight',
+              loads: 1,
+              note: 'Dispatch: ' + (cur.jobSite || '') + ' · ' + cur.netWeight + 't @ $' + rate + '/t'
+            };
+          }
+        }
+        if (revEntry && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
+          Meticulous.modules.revenue.addEntry(revEntry);
         }
         manifestFeedPush('dispatch', 'Dispatch completed: ' + (cur.jobSite || '') +
           (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '') + (amt > 0 ? ' · $' + amt.toFixed(2) : ''));

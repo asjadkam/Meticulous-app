@@ -9,5 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: node tools/build-ota.js # refresh version.json sha256 manifest for OTA
       - run: npm install -g firebase-tools
       - run: firebase deploy --only hosting --token "${{ secrets.FIREBASE_TOKEN }}"

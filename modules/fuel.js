@@ -37,7 +37,13 @@
         '<div><label class="f">Litres</label><input id="fu_l" type="number" inputmode="decimal"></div></div>' +
         '<div class="row"><div><label class="f">Cost $</label><input id="fu_cost" type="number" inputmode="decimal"></div>' +
         '<div><label class="f">Station</label><input id="fu_stn" placeholder="e.g. Petro-Pass"></div></div>' +
-        '<label class="f">📷 Receipt photo</label><input type="file" id="fu_img" accept="image/*" capture="environment">' +
+        '<label class="f">📷 Receipt photo</label>' +
+        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+        '<button type="button" class="btn secondary" id="fu_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="fu_pick" style="flex:1;">📁 Choose file</button>' +
+        '</div>' +
+        '<input type="file" id="fu_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="fu_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="fu_prev"></div>' +
         '<button class="btn primary" id="fu_add">Save fill-up</button></div>';
 
@@ -56,12 +62,19 @@
         }).join('') : '<div class="empty">No fill-ups yet.</div>') + '</div>';
 
       body.innerHTML = h;
-      body.querySelector('#fu_img').onchange = function (ev) {
+      // v26: two-button pattern (Take photo / Choose file) like dispatch
+      var fuCamInput = body.querySelector('#fu_img_cam');
+      var fuPickInput = body.querySelector('#fu_img');
+      body.querySelector('#fu_cam').onclick = function () { fuCamInput.click(); };
+      body.querySelector('#fu_pick').onclick = function () { fuPickInput.click(); };
+      function fuPreview(ev) {
         var f = ev.target.files[0]; if (!f) return;
         var r = new FileReader();
         r.onload = function () { body.querySelector('#fu_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
         r.readAsDataURL(f);
-      };
+      }
+      fuCamInput.onchange = fuPreview;
+      fuPickInput.onchange = fuPreview;
       body.querySelector('#fu_add').onclick = function () {
         var odo = parseFloat(body.querySelector('#fu_odo').value);
         if (!odo) { alert('Enter the odometer reading.'); return; }
