@@ -54,6 +54,31 @@
     r.readAsDataURL(file);
   }
 
+  /* v35: OCR needs resolution — a full-page rate confirmation / BOL at
+     the 640px storage size is unreadable. OCR runs on a larger rendition
+     (max 1600px); only the small thumb is stored on the ticket. */
+  function fileToOCRImage(file, cb) {
+    var r = new FileReader();
+    r.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var max = 1600, w = img.width, h = img.height;
+        if (w > max || h > max) {
+          var s = Math.min(max / w, max / h);
+          w = Math.round(w * s); h = Math.round(h * s);
+        }
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        cb(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = function () { cb(null); };
+      img.src = r.result;
+    };
+    r.onerror = function () { cb(null); };
+    r.readAsDataURL(file);
+  }
+
   var api = {
     status: function () {
       var a = active();
@@ -157,16 +182,35 @@
         var h = '';
         pendingTickets.forEach(function (t, i) {
           var desc = t.ocrType === 'haul_card' ? 'Haul card' :
-                     t.ocrType === 'scale_ticket' ? 'Scale ticket' : 'Dispatch';
-          var num = t.cardNumber ? '#' + esc(t.cardNumber) : t.ticketNo ? '#' + esc(t.ticketNo) : '';
+                     t.ocrType === 'scale_ticket' ? 'Scale ticket' :
+                     t.ocrType === 'rate_confirmation' ? 'Rate confirmation' :
+                     t.ocrType === 'bill_of_lading' ? 'Bill of lading' :
+                     t.ocrType === 'document' ? 'Document' : 'Dispatch';
+          var num = t.cardNumber ? '#' + esc(t.cardNumber) :
+                    t.orderNo ? '#' + esc(t.orderNo) :
+                    t.ticketNo ? '#' + esc(t.ticketNo) : '';
           var detail = '';
           if (t.foremanHours) detail += esc(t.foremanHours) + 'h';
           if (t.paymentUnit) detail += (detail ? ' · ' : '') + esc(t.paymentUnit);
           if (t.netWeight) detail += (detail ? ' · ' : '') + esc(t.netWeight) + 't';
+          /* v35: no silent failure — the read report is always visible:
+             every field the document reader filled, and every one it
+             couldn't find. */
+          var readLines = '';
+          if (t.docRead) {
+            if (t.docRead.found && t.docRead.found.length) {
+              readLines += '<div class="b">📄 Read: ' + esc(t.docRead.found.join(' · ')) + '</div>';
+            }
+            if (t.docRead.missing && t.docRead.missing.length) {
+              readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(t.docRead.missing.join(', ')) + '</div>';
+            }
+          }
           h += '<div class="listitem" style="align-items:flex-start">' +
             (t.photo ? '<img src="' + t.photo + '" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:10px" alt="Ticket">' : '') +
             '<div style="flex:1"><div class="a">' + desc + ' ' + num + '</div>' +
-            (detail ? '<div class="b">' + detail + '</div>' : '<div class="b" style="color:var(--orange)">Needs hours — tap ✏️</div>') +
+            (detail ? '<div class="b">' + detail + '</div>' :
+              (t.ocrType === 'haul_card' ? '<div class="b" style="color:var(--orange)">Needs hours — tap ✏️</div>' : '')) +
+            readLines +
             '</div>' +
             '<button class="btn small ghost" data-tedit="' + i + '">✏️</button>' +
             '<button class="btn small ghost" data-tdel="' + i + '">🗑</button></div>';
@@ -235,19 +279,27 @@
           n + ' ticket' + (n > 1 ? 's' : '') + ' added. Tap "Take ticket photo" to add another.';
       }
 
-      /* v26: OCR — after photo selected, run Tesseract, then append ticket */
-      function runOCR(dataUrl) {
+      /* v26: OCR — after photo selected, run Tesseract, then append ticket.
+         v35: OCR runs on the larger rendition (ocrUrl); the ticket keeps
+         the small thumb (photoUrl). Documents (rate confirmations / BOLs)
+         go through the full field-sweep reader; upside-down scans are
+         retried at 180° inside recognizeWithRotation. */
+      function runOCR(ocrUrl, photoUrl) {
         if (!window.TicketOCR) return;
         var nameEl = body.querySelector('#dp_img_name');
         nameEl.textContent = 'Reading ticket…';
-        TicketOCR.recognize(dataUrl, function (p) {
+        TicketOCR.recognizeWithRotation(ocrUrl || photoUrl, function (p) {
           try { nameEl.textContent = 'Reading ticket… ' + Math.round(p * 100) + '%'; } catch (e) {}
         }).then(function (text) {
           var parsed = TicketOCR.parse(text);
           var form = TicketOCR.toDispatchForm(parsed);
+          var docRead = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(parsed, form) : null;
+          var isDoc = parsed._type === 'rate_confirmation' || parsed._type === 'bill_of_lading' || parsed._type === 'document';
           // Auto-fill dispatch form from first ticket (if empty)
           if (pendingTickets.length === 0) {
             if (form.jobSite && !body.querySelector('#dp_site').value) body.querySelector('#dp_site').value = form.jobSite;
+            /* v35: rate/amount from a rate confirmation */
+            if (form.amount && !body.querySelector('#dp_amt').value) body.querySelector('#dp_amt').value = form.amount;
             /* v31: scheduled datetime + truck type + map pin from OCR */
             if (form.scheduledAt && !body.querySelector('#dp_when').value) body.querySelector('#dp_when').value = form.scheduledAt;
             if (form.equipment && !body.querySelector('#dp_equip').value) body.querySelector('#dp_equip').value = form.equipment;
@@ -265,9 +317,11 @@
           // Build ticket object
           var t = {
             id: ticketId(),
-            photo: dataUrl,
+            photo: photoUrl,
             ocrType: parsed._type,
             ticketNo: parsed.ticketNo || form.ticketNo || null,
+            orderNo: parsed.orderNo || null,
+            docRead: docRead,
             cardNumber: parsed.cardNumber || null,
             foremanHours: null, // manual — haul cards need user confirmation
             paymentUnit: null,  // manual — checkbox state needs user confirmation
@@ -277,7 +331,7 @@
             date: App._today()
           };
           pendingTickets.push(t);
-          pendingPhoto = dataUrl; // legacy compat
+          pendingPhoto = photoUrl; // legacy compat
           renderTicketList();
           updateNameEl();
           // If haul card, immediately prompt for hours/payment unit
@@ -285,6 +339,17 @@
             body.querySelector('#dp_img_name').textContent =
               '✓ Haul card detected (card #' + (t.cardNumber || '?') + '). Enter foreman hours below.';
             editTicket(pendingTickets.length - 1);
+          } else if (isDoc) {
+            /* v35: plain-language result — never silent. */
+            var docLabel = parsed._type === 'rate_confirmation' ? 'Rate confirmation' :
+                           parsed._type === 'bill_of_lading' ? 'Bill of lading' : 'Document';
+            if (docRead && docRead.found.length) {
+              body.querySelector('#dp_img_name').textContent =
+                '✓ ' + docLabel + ' added — read ' + docRead.found.length + ' fields (details on the ticket).';
+            } else {
+              body.querySelector('#dp_img_name').textContent =
+                'Couldn\'t read anything from that photo — it\'s added below; please fill the form by hand.';
+            }
           } else {
             var label = parsed._type === 'scale_ticket' ? 'Scale ticket' : 'Dispatch';
             body.querySelector('#dp_img_name').textContent =
@@ -293,7 +358,7 @@
           body.querySelector('#dp_preview').innerHTML = '';
         }).catch(function () {
           body.querySelector('#dp_img_name').textContent = 'Photo added (OCR unavailable)';
-          pendingTickets.push({ id: ticketId(), photo: dataUrl, ocrType: 'unknown', date: App._today() });
+          pendingTickets.push({ id: ticketId(), photo: photoUrl, ocrType: 'unknown', date: App._today() });
           renderTicketList();
           updateNameEl();
         });
@@ -301,10 +366,14 @@
       function handlePhoto(ev) {
         var f = ev.target.files[0]; if (!f) return;
         body.querySelector('#dp_img_name').textContent = f.name || 'Photo selected';
-        fileToThumb(f, function (dataUrl) {
+        fileToThumb(f, function (thumbUrl) {
           body.querySelector('#dp_preview').innerHTML =
-            '<img src="' + dataUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">';
-          runOCR(dataUrl);
+            '<img src="' + thumbUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">';
+          /* v35: OCR the larger rendition so full-page documents stay
+             readable; fall back to the thumb if it can't be built. */
+          fileToOCRImage(f, function (ocrUrl) {
+            runOCR(ocrUrl || thumbUrl, thumbUrl);
+          });
         });
       }
       imgInput.onchange = handlePhoto;

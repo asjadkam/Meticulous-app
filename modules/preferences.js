@@ -204,6 +204,9 @@
         note.textContent = 'Checking…';
         if (!window.OTA || !OTA.checkNow) { note.textContent = 'Update check is only available in the installed app.'; return; }
         OTA.checkNow().then(function (r) {
+          /* v35: a completed healthy check clears any stored OTA damage
+             notice; a failure reason keeps it visible. */
+          if (r.updated || !r.reason) { try { localStorage.removeItem('ota_notice'); } catch (e) {} }
           if (r.updated) {
             note.textContent = 'Update v' + r.version + ' downloaded.';
             if (confirm('Update v' + r.version + ' is ready. Restart the app now to use it?')) OTA.restart();
@@ -217,7 +220,13 @@
       try {
         if (window.OTA && OTA.currentVersion) OTA.currentVersion().then(function (v) {
           var n = body.querySelector('#pf_updnote');
-          if (n && !n.textContent) n.textContent = 'App web version: v' + v.active + (v.inOtaCopy ? ' (updated copy)' : ' (installed copy)');
+          if (!n) return;
+          /* v35: surface a stored OTA damage/repair notice (set by the
+             updater's launch self-check) instead of the version line. */
+          var notice = null;
+          try { notice = localStorage.getItem('ota_notice'); } catch (e) {}
+          if (notice) { n.textContent = '⚠️ ' + notice; return; }
+          if (!n.textContent) n.textContent = 'App web version: v' + v.active + (v.inOtaCopy ? ' (updated copy)' : ' (installed copy)');
         });
       } catch (e) {}
       /* v32: cloud-sync status + manual retry */

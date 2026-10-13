@@ -1,12 +1,17 @@
-/* Meticulous — Tesseract.js OCR ticket parser (v26)
+/* Meticulous — Tesseract.js OCR ticket parser (v26, doc reader v35)
    On-device, offline, free. NO Google Vision.
-   
-   Handles two document types:
+
+   Handles document types:
    1. SCALE TICKETS (e.g., BURNCO Aggregate Scale Ticket):
       Ticket#, Date, Time, Gross, Tare, Net, Product, Customer, Job, PO,
       Vehicle, Vehicle Type, Received Today, Weighmaster
    2. DISPATCH SCREENSHOTS (e.g., WhatsApp dispatch message):
       Time, Equipment, Site, Location code, Instructions, Coordinates
+   3. BROKER DOCUMENTS (v35): rate confirmations & bills of lading —
+      full field sweep (parties, cities, dates/times, amount, material,
+      qty/weight, waiting terms, instructions) via parseDocument(), plus
+      a found/missed report via describeRead(). Upside-down scans are
+      retried once at 180° via recognizeWithRotation().
    
    Training data:
    - training-data/scale-tickets/burnco-2026-09-30.jpg (+ .json)
@@ -45,6 +50,42 @@
       });
     }).then(function (result) {
       return result.data.text;
+    });
+  };
+
+  /* Rotate an image data-URL 180° (upside-down scans). Returns a data URL. */
+  TicketOCR.rotate180 = function (image) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          var c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          var ctx = c.getContext('2d');
+          ctx.translate(w, h);
+          ctx.rotate(Math.PI);
+          ctx.drawImage(img, 0, 0);
+          resolve(c.toDataURL('image/jpeg', 0.92));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error('rotate180: could not load image')); };
+      img.src = image;
+    });
+  };
+
+  /* OCR with one upside-down retry: if the first read comes back
+     near-empty (a rotated scan reads as gibberish/nothing), rotate the
+     image 180° and read again, keeping whichever read found more text. */
+  TicketOCR.recognizeWithRotation = function (image, onProgress) {
+    function textLen(t) { return String(t || '').replace(/\s+/g, ' ').trim().length; }
+    return TicketOCR.recognize(image, onProgress).then(function (text) {
+      if (textLen(text) >= 40 || typeof image !== 'string') return text;
+      return TicketOCR.rotate180(image).then(function (rotated) {
+        return TicketOCR.recognize(rotated, onProgress);
+      }).then(function (text2) {
+        return textLen(text2) > textLen(text) ? text2 : text;
+      }).catch(function () { return text; });
     });
   };
 
@@ -389,8 +430,351 @@
     return f;
   };
 
+  /* ---------- DOCUMENT parser (rate confirmations & bills of lading) ----------
+     v35: drivers' real paperwork is broker rate confirmations and BOLs,
+     not just haul cards. Full field sweep across everything a dispatch
+     can use: parties + cities, dates/times, amount, truck type,
+     material/description, qty/weight, waiting-time terms, instructions.
+     Table layouts OCR line-by-line with columns interleaved, so party
+     extraction is layered: label anchors first, then same-line and
+     ordered-phrase fallbacks. Whatever is missed is reported through
+     describeRead() — never silently dropped. */
+  var MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7,
+                 aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  function isoDate(y, mo, d) {
+    if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+    function p2(n) { return ('0' + n).slice(-2); }
+    return y + '-' + p2(mo) + '-' + p2(d);
+  }
+  function normDate(s) {
+    if (!s) return null;
+    s = String(s);
+    var m;
+    if ((m = s.match(/(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})/))) {           // 24-Apr-18
+      var mo1 = MONTHS[m[2].slice(0, 3).toLowerCase()];
+      var y1 = parseInt(m[3], 10); if (y1 < 100) y1 += 2000;
+      if (mo1) return isoDate(y1, mo1, parseInt(m[1], 10));
+    }
+    if ((m = s.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})/))) {              // Apr 24, 2018
+      var mo2 = MONTHS[m[1].slice(0, 3).toLowerCase()];
+      if (mo2) return isoDate(parseInt(m[3], 10), mo2, parseInt(m[2], 10));
+    }
+    if ((m = s.match(/(\d{4})-(\d{2})-(\d{2})/))) return m[0];                   // 2026-10-14
+    if ((m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) {                      // 3/26/2020
+      var y3 = parseInt(m[3], 10); if (y3 < 100) y3 += 2000;
+      return isoDate(y3, parseInt(m[1], 10), parseInt(m[2], 10));
+    }
+    return null;
+  }
+  function normTime(s) {
+    if (!s) return null;
+    var m = String(s).match(/(\d{1,2}):(\d{2})\s*([AP]M)?/i);
+    if (!m) return null;
+    var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+    if (m[3]) {
+      if (/p/i.test(m[3]) && h < 12) h += 12;
+      if (/a/i.test(m[3]) && h === 12) h = 0;
+    }
+    if (h > 23 || mi > 59) return null;
+    function p2(n) { return ('0' + n).slice(-2); }
+    return p2(h) + ':' + p2(mi);
+  }
+  function cleanCompany(s) {
+    if (!s) return null;
+    s = String(s).replace(/\s+/g, ' ').replace(/[\s,;]+$/, '').trim();
+    return s.length >= 3 ? s : null;
+  }
+  function cutAtDigit(s) {
+    if (!s) return s;
+    var i = s.search(/\s+\d/);
+    return i > 2 ? s.slice(0, i) : s;
+  }
+  /* Capitalized company-like phrases in reading order. ALL-CAPS label
+     runs and street/label tail words are filtered out, and known form
+     labels are trimmed off phrase edges (OCR linearization chains them
+     onto real names: "INFORMATION MoveMore Freight Pickup"). */
+  function companyPhrases(str) {
+    var out = [];
+    var stop = { 'order confirmation': 1, 'pick up information': 1,
+      'third notified party': 1, 'united states': 1, 'special instructions': 1,
+      'other comments': 1, 'company name': 1 };
+    var labelWord = /^(INFORMATION|PICK|UP|PICKUP|SHIP|TO|TOTAL|SUBTOTAL|BILL|DATE|TIME|NAME|ADDRESS|CITY|PHONE|PARTY|CONFIRMATION|ORDER|RATE|LOAD|QTY|WEIGHT|DESCRIPTION)$/i;
+    function trimLabels(p) {
+      var w = p.split(' ');
+      while (w.length > 2 && labelWord.test(w[0])) w.shift();
+      while (w.length > 2 && labelWord.test(w[w.length - 1])) w.pop();
+      return w.join(' ');
+    }
+    var re = /\b([A-Z][A-Za-z&.'-]*(?:\s+(?:[A-Z][A-Za-z&.'-]*|of|the|and)){1,3})\b/g, m;
+    while ((m = re.exec(String(str)))) {
+      var p = trimLabels(m[1].replace(/\s+/g, ' ').trim());
+      if (p.split(' ').length < 2) continue;
+      if (stop[p.toLowerCase()]) continue;
+      if (!/[a-z]/.test(p)) continue;
+      if (/(Avenue|Ave|Street|Road|Blvd|Drive|Lane|Court|Way|Information|Confirmation|Party|Instructions|Comments|Name|Address|City|Phone)$/i.test(p)) continue;
+      if (out.indexOf(p) === -1) out.push(p);
+    }
+    return out;
+  }
+  /* City candidates with positions: "Mississauga, ON" and
+     "Catskill New York 12414" shapes. */
+  function cityCandidates(text) {
+    var out = [], m;
+    var reCA = /([A-Z][a-z]+(?: [A-Z][a-z]+)?),\s*(ON|QC|AB|BC|MB|SK|NB|NS|NL|Ontario|Quebec|Alberta)\b/g;
+    while ((m = reCA.exec(text))) out.push({ city: m[1], idx: m.index });
+    var reUS = /([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(New York|Florida|Texas|California|Ohio|Georgia|Illinois|Michigan|Pennsylvania|New Jersey)\s+\d{5}/g;
+    while ((m = reUS.exec(text))) {
+      var city = m[1];
+      // "169 Maple Avenue Catskill New York 12414" — the street suffix
+      // word ("Avenue") is not part of the city; drop a leading one.
+      city = city.replace(/^(Avenue|Ave|Street|St|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way)\s+/, '');
+      out.push({ city: city, idx: m.index });
+    }
+    out.sort(function (a, b) { return a.idx - b.idx; });
+    return out;
+  }
+
+  TicketOCR.parseDocument = function (text) {
+    var isRateCon = /ORDER\s+CONFIRMATION|RATE\s+CONFIRMATION|LOAD\s+CONFIRMATION/i.test(text);
+    var isBOL = /STRAIGHT\s+BILL\s+OF\s+LADING/i.test(text) ||
+                (/BILL\s+OF\s+LADING/i.test(text) && !/NOT\s+A\s+BILL\s+OF\s+LADING/i.test(text));
+    var weakDoc = /PICK\s?UP/i.test(text) && /SHIP\s+TO/i.test(text) &&
+                  /TOTAL\s*\$?\s*[\d,]+\.\d{2}/i.test(text);
+    if (!isRateCon && !isBOL && !weakDoc) return null;
+
+    var f = { _type: isRateCon ? 'rate_confirmation' : isBOL ? 'bill_of_lading' : 'document',
+              _strong: !!(isRateCon || isBOL) };
+
+    /* Broker / carrier (the party issuing the document) */
+    var billToAt = text.search(/BILL\s+TO/i);
+    if (billToAt >= 0) {
+      var bp = companyPhrases(text.slice(billToAt, billToAt + 220));
+      if (bp.length) f.broker = bp[0];
+    }
+    if (!f.broker) {
+      var hdr = firstMatch(text, [/^\s*([A-Z][A-Za-z&.'-]*(?:\s+[A-Z][A-Za-z&.'-]*){1,3})\s+(?:Order|Rate|Load)\s+Confirmation/im]);
+      if (hdr) f.broker = cleanCompany(hdr);
+    }
+
+    /* Order / confirmation number */
+    f.orderNo = firstMatch(text, [
+      /(?:Order|Rate|Load)\s+Confirmation\s*:?\s*#?\s*([A-Z]{1,5}[- ]?[A-Z0-9-]{2,})/i,
+      /Confirmation\s*(?:#|No\.?)?\s*:?\s*([A-Z0-9-]{4,})/i,
+      /Order\s*#\s*:?\s*([A-Z0-9-]{3,})/i,
+      /Pickup\s*#\s*:?\s*([A-Z0-9-]{4,})/i
+    ]);
+
+    /* Total amount / rate */
+    var amt = firstMatch(text, [
+      /TOTAL[\s:]*\$?\s*([\d,]+\.\d{2})/i,
+      /Total\s*(?:Due|Amount)[\s:]*\$?\s*([\d,]+(?:\.\d{2})?)/i,
+      /Rate[\s:]*\$\s*([\d,]+(?:\.\d{2})?)/i
+    ]);
+    if (!amt) {
+      var dollars = allMatches(text, /\$\s*([\d,]+\.\d{2})/g);
+      if (dollars.length) {
+        dollars.sort(function (a, b) {
+          return parseFloat(b.replace(/,/g, '')) - parseFloat(a.replace(/,/g, ''));
+        });
+        amt = dollars[0];
+      }
+    }
+    if (amt) f.amount = amt.replace(/,/g, '');
+
+    /* Parties — pickup (shipper) and delivery (consignee) */
+    var pc = firstMatch(text, [
+      /Company Name:\s*([^\n]{3,60})/i,
+      /Pickup Company:\s*([^\n]{3,60})/i,
+      /Shipper:?\s*([^\n]{3,60})/i
+    ]);
+    if (pc) pc = cleanCompany(cutAtDigit(pc));
+    f.pickupCompany = pc;
+
+    var dc = firstMatch(text, [
+      /Consignee\s*:\s*([A-Z][^\n]{3,60})/i,
+      /To\s*\(Consignee\)\s*:?\s*([A-Z][^\n]{3,60})/i,
+      /Ship\s*To:?\s*\n\s*([A-Z][^\n]{3,60})/i,
+      /Destination:?\s*([^\n]{3,60})/i
+    ]);
+    if (dc) dc = cleanCompany(cutAtDigit(dc));
+    // Reject label-bleed: a capture that is really the parties-row labels
+    // or that contains the pickup company is not the delivery company
+    // (e.g. "Company Name: Rock Solid Provisions…" from the SHIP TO row).
+    if (dc && ((pc && dc.indexOf(pc) >= 0) || /^(Company|Address|City|Zip|Phone|State|Province)\b/i.test(dc))) {
+      dc = null;
+    }
+    if (!dc && pc) {
+      // Same-line fallback: the parties row linearizes as
+      // "PickupCo 169 Maple  DeliveryCo  BrokerCo" — strip the pickup
+      // company, its street number + street-name word, and the broker.
+      var lines = text.split('\n');
+      for (var li = 0; li < lines.length && !dc; li++) {
+        if (lines[li].indexOf(pc) === -1) continue;
+        var rest = lines[li].slice(lines[li].indexOf(pc) + pc.length);
+        rest = rest.replace(/^\s*\d+\s+[A-Za-z]+\s+/, ' ');
+        if (f.broker) rest = rest.replace(f.broker, ' ');
+        dc = cleanCompany(cutAtDigit(rest.replace(/\s+/g, ' ')));
+        if (dc && dc.length < 4) dc = null;
+      }
+    }
+    if (!dc && pc) {
+      var afterPc = text.slice(text.indexOf(pc) + pc.length, text.indexOf(pc) + pc.length + 700);
+      var phrases = companyPhrases(afterPc);
+      for (var pi = 0; pi < phrases.length; pi++) {
+        if (phrases[pi] !== pc && phrases[pi] !== f.broker) { dc = phrases[pi]; break; }
+      }
+    }
+    // The broker's name can trail the delivery company in the parties
+    // row ("Five Star Rags MoveMore Freight") — cut it off.
+    if (dc && f.broker) {
+      var bw = f.broker.split(' ').slice(0, 2).join(' ');
+      var bi = dc.indexOf(bw);
+      if (bi > 2) dc = cleanCompany(dc.slice(0, bi));
+    }
+    f.deliveryCompany = dc;
+
+    /* Cities — nearest candidate after each company, each used once */
+    var cities = cityCandidates(text);
+    var usedCity = {};
+    function cityAfter(company) {
+      if (!company) return null;
+      var at = text.indexOf(company);
+      for (var i = 0; i < cities.length; i++) {
+        if (cities[i].idx > at && !usedCity[cities[i].idx]) {
+          usedCity[cities[i].idx] = 1;
+          return cities[i].city;
+        }
+      }
+      return null;
+    }
+    f.pickupCity = cityAfter(f.pickupCompany);
+    f.deliveryCity = cityAfter(f.deliveryCompany);
+
+    /* Dates & times */
+    var pdRaw = firstMatch(text, [
+      /Pickup Date\s*:?\s*([^\n]{4,18})/i,
+      /Ship\s*Date:?\s*([^\n]{4,18})/i,
+      /\bShip:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+      /\bLoad:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i
+    ]);
+    f.pickupDate = normDate(pdRaw);
+    var ptRaw = firstMatch(text, [/Pickup Time\s*:?\s*([^\n]{3,22})/i]);
+    if (ptRaw) {
+      f.pickupTime = normTime(ptRaw);
+      if (/before/i.test(ptRaw)) f.pickupQualifier = 'before';
+      else if (/after/i.test(ptRaw)) f.pickupQualifier = 'after';
+    }
+    if (f.pickupDate) {
+      f.scheduledAt = f.pickupDate + 'T' + (f.pickupTime || '08:00');
+    }
+    var ddRaw = firstMatch(text, [/Delivery Date\s*:?\s*([^\n]{2,30})/i]);
+    var dtRaw = firstMatch(text, [/Delivery Time\s*:?\s*([^\n]{2,30})/i]);
+    f.deliveryDate = normDate(ddRaw);
+    var dNotes = [];
+    if (ddRaw && !f.deliveryDate && !/same/i.test(ddRaw)) dNotes.push(ddRaw.replace(/\s+/g, ' ').trim());
+    if (dtRaw) dNotes.push(dtRaw.replace(/\s+/g, ' ').trim());
+    else if (ddRaw && /same/i.test(ddRaw)) dNotes.push(ddRaw.replace(/\s+/g, ' ').trim());
+    if (dNotes.length) f.deliveryNote = dNotes.join(' · ');
+    if (!f.deliveryDate && f.pickupDate && /same/i.test((ddRaw || '') + ' ' + (dtRaw || ''))) {
+      f.deliveryDate = f.pickupDate;
+    }
+
+    /* Truck type (FTL/LTL are load types, not trucks — see material) */
+    f.equipment = firstMatch(text, [/(Tandem|Tridem|Tri-axle|Tri\s+axle|Quad\s+axle|End\s*dump|Single\s*axle)/i]);
+
+    /* Material / description */
+    var descParts = [];
+    if (/NON\s*HAZ/i.test(text)) descParts.push('NON HAZ');
+    else if (/\bHAZMAT\b/i.test(text)) descParts.push('HAZMAT');
+    var lt = firstMatch(text, [/\b(FTL|LTL)\b/i]);
+    if (lt) descParts.push(lt.toUpperCase());
+    if (!descParts.length || isBOL) {
+      var goods = firstMatch(text, [
+        /([A-Z][a-z]{3,}(?:\s+[\w#-]{1,8}){0,3})\s+\d+\s+CHEP\s+PALLETS/i,
+        /Description:?\s*\n?\s*([A-Z][^\n]{3,50})/i
+      ]);
+      if (goods) descParts.push(goods.replace(/\s+/g, ' ').trim());
+    }
+    if (descParts.length) f.material = descParts.join(' · ');
+
+    /* Quantity & weight */
+    f.qty = firstMatch(text, [
+      /(\d[\d,]*)\s+(cases|cartons|boxes|skids|pallets|units)\b/i,
+      /(\d+)\s+CHEP\s+PALLETS/i
+    ]);
+    if (f.qty && /CHEP/i.test(text) && !/pallet/i.test(f.qty)) f.qty = f.qty + ' CHEP pallets';
+    f.weight = firstMatch(text, [
+      /Gross Weight:?\s*([\d,]{3,})/i,
+      /Net Weight:?\s*([\d,]{3,})/i,
+      /Weight:?\s*([\d,]{4,})\s*(lbs|kg)?/i
+    ]);
+
+    /* Waiting-time terms */
+    var wait = firstMatch(text, [
+      /\$?(\d+(?:\.\d+)?)\s*\/\s*hr\s+(?:for\s+)?waiting/i,
+      /waiting time[^.\n]{0,40}?\$(\d+(?:\.\d+)?)/i,
+      /detention[^.\n]{0,30}?\$(\d+(?:\.\d+)?)/i
+    ]);
+    if (wait) f.waitingRate = '$' + wait + '/hr';
+
+    /* Key instructions worth surfacing */
+    var inst = [];
+    if (/blind\s*bol/i.test(text)) inst.push('Blind BOL — send paperwork to broker for border clearing');
+    if (/must\s+scale/i.test(text)) inst.push('Must scale full/empty at the same location');
+    var dropT = text.match(/drop trailer for\s+([\d.]+)\s*days/i);
+    if (dropT) inst.push('Drop trailer for ' + dropT[1] + ' days at receiver');
+    var dock = text.match(/drop in dock\s+(\w+)/i);
+    if (dock) inst.push('Drop in dock ' + dock[1]);
+    if (/no later than|before (the )?time stated/i.test(text)) inst.push('Strict times — pickup/delivery no later than stated');
+    var temp = text.match(/Low:?\s*(\d+)[\s\S]{0,16}?High:?\s*(\d+)/i);
+    if (temp && /temp|degree/i.test(text)) inst.push('Keep between ' + temp[1] + '–' + temp[2] + '°F');
+    if (inst.length) f.instructions = inst;
+
+    var count = 0;
+    ['orderNo', 'amount', 'pickupCompany', 'deliveryCompany', 'pickupDate',
+     'equipment', 'material', 'qty', 'weight', 'waitingRate'].forEach(function (k) {
+      if (f[k]) count++;
+    });
+    if (f.instructions) count++;
+    f._confidence = count;
+    f._raw = text;
+    return f;
+  };
+
+  /* What the reader found / missed, for the UI read-report line.
+     Found entries carry values; missing entries are plain field names. */
+  TicketOCR.describeRead = function (parsed, form) {
+    form = form || TicketOCR.toDispatchForm(parsed);
+    var found = [], missing = [];
+    function add(ok, foundLabel, missingLabel) {
+      if (ok) found.push(foundLabel); else missing.push(missingLabel);
+    }
+    if (parsed._type === 'rate_confirmation' || parsed._type === 'bill_of_lading' || parsed._type === 'document') {
+      add(!!form.amount, 'amount $' + (form.amount ? Number(form.amount).toLocaleString('en-US') : ''), 'amount');
+      add(!!parsed.pickupCompany, 'pickup ' + parsed.pickupCompany + (parsed.pickupCity ? ' (' + parsed.pickupCity + ')' : ''), 'pickup');
+      add(!!parsed.deliveryCompany, 'delivery ' + parsed.deliveryCompany + (parsed.deliveryCity ? ' (' + parsed.deliveryCity + ')' : ''), 'delivery');
+      add(!!parsed.pickupDate, 'pickup ' + parsed.pickupDate + (parsed.pickupTime ? ' ' + (parsed.pickupQualifier ? parsed.pickupQualifier + ' ' : '') + parsed.pickupTime : ''), 'pickup date/time');
+      add(!!(parsed.deliveryDate || parsed.deliveryNote), 'delivery ' + (parsed.deliveryDate || parsed.deliveryNote), 'delivery date/time');
+      add(!!parsed.equipment, 'truck ' + parsed.equipment, 'truck type');
+      add(!!parsed.material, 'material ' + parsed.material, 'material');
+      add(!!(parsed.qty || parsed.weight), (parsed.qty ? 'qty ' + parsed.qty : '') + (parsed.qty && parsed.weight ? ' · ' : '') + (parsed.weight ? 'weight ' + parsed.weight : ''), 'qty/weight');
+      add(!!parsed.waitingRate, 'waiting ' + parsed.waitingRate, 'waiting time');
+      add(!!(parsed.instructions && parsed.instructions.length), 'instructions (' + (parsed.instructions ? parsed.instructions.length : 0) + ')', 'instructions');
+    } else {
+      add(!!form.jobSite, 'job site ' + form.jobSite, 'job site');
+      add(!!form.scheduledAt, 'scheduled ' + form.scheduledAt, 'scheduled time');
+      add(!!form.material, 'material ' + form.material, 'material');
+      add(!!form.ticketNo, 'ticket #' + form.ticketNo, 'ticket #');
+      add(!!form.notes, 'notes', 'notes');
+    }
+    return { found: found, missing: missing };
+  };
+
   /* ---------- Auto-detect and parse ---------- */
   TicketOCR.parse = function (text) {
+    var doc = TicketOCR.parseDocument(text);
+    if (doc && doc._strong) return doc;
+
     var isHaulCard = /DAILY\s+TRUCK\s+HAUL\s+CARD/i.test(text);
     var isScale = /SCALE\s+TICKET/i.test(text) ||
                   (/Gross:/i.test(text) && /Tare:/i.test(text));
@@ -408,6 +792,7 @@
     var best = s;
     if (d._confidence > best._confidence) best = d;
     if (h._confidence > best._confidence) best = h;
+    if (doc && doc._confidence > best._confidence) best = doc;
     return best;
   };
 
@@ -442,6 +827,31 @@
       if (parsed.vehicleType) notes.push(parsed.vehicleType);
       if (parsed.date) notes.push(parsed.date);
       if (notes.length) form.notes = notes.join(' · ');
+    } else if (parsed._type === 'rate_confirmation' || parsed._type === 'bill_of_lading' || parsed._type === 'document') {
+      // v35: broker documents (rate con / BOL) — sweep results mapped to
+      // the dispatch fields they can feed. Job site carries the route
+      // (pickup → delivery); notes carry the key instructions only.
+      if (parsed.amount) form.amount = parsed.amount;
+      var route = '';
+      if (parsed.pickupCompany) route = parsed.pickupCompany + (parsed.pickupCity ? ' (' + parsed.pickupCity + ')' : '');
+      if (parsed.deliveryCompany) route += (route ? ' → ' : '') + parsed.deliveryCompany + (parsed.deliveryCity ? ' (' + parsed.deliveryCity + ')' : '');
+      if (route) form.jobSite = route;
+      if (parsed.pickupCompany) form.pickup = parsed.pickupCompany + (parsed.pickupCity ? ', ' + parsed.pickupCity : '');
+      if (parsed.deliveryCompany) form.dropoff = parsed.deliveryCompany + (parsed.deliveryCity ? ', ' + parsed.deliveryCity : '');
+      if (parsed.scheduledAt) form.scheduledAt = parsed.scheduledAt;
+      if (parsed.pickupDate) {
+        form.scheduledLabel = parsed.pickupDate + (parsed.pickupTime ? ' ' + (parsed.pickupQualifier ? parsed.pickupQualifier + ' ' : '') + parsed.pickupTime : '');
+      }
+      if (parsed.equipment) form.equipment = parsed.equipment;
+      if (parsed.material) form.material = parsed.material;
+      var dn = [];
+      (parsed.instructions || []).forEach(function (s) { dn.push(s); });
+      if (parsed.waitingRate) dn.push('Waiting ' + parsed.waitingRate);
+      if (parsed.deliveryNote) dn.push('Delivery: ' + parsed.deliveryNote);
+      if (parsed.orderNo) dn.push('Order ' + parsed.orderNo);
+      if (parsed.qty) dn.push('Qty ' + parsed.qty);
+      if (parsed.weight) dn.push('Weight ' + parsed.weight);
+      if (dn.length) form.notes = dn.join(' · ');
     } else {
       // Dispatch screenshot — v31 fix: map each extracted field to its own
       // form field (previously time/equipment/coords were ALL dumped into
