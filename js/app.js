@@ -180,7 +180,8 @@
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
-    connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
+    connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' },
+    autostart:  { title: 'Auto-start',        icon: '⏰', tier: 'basic' } // v30: sidebar entry — Asjad: "should not be buried in preferences"
   };
 
   /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
@@ -222,6 +223,7 @@
 
   var SIDEBAR_ITEMS = [
     ['dashboard', '🏠', 'Dashboard'],
+    ['autostart', '⏰', 'Auto-start'], // v30: prominent — Asjad: "easy accessible, not buried in preferences"
     ['revenue', '📊', 'Revenue'],
     ['dispatch', '📋', 'Dispatch'],
     ['navigation', '🗺️', 'Navigation'],
@@ -661,7 +663,11 @@
     var last = new Date(y, mo + 1, 0).getDate();
     return y + '-' + ('0' + (mo + 1)).slice(-2) + '-' + ('0' + last).slice(-2);
   }
-  function onbWirePhoto(prefix, kind) {
+  /* v31: onbWirePhoto now accepts an optional persistFn(kind, value) so
+     Preferences can reuse the same OCR wiring with its own save logic.
+     Exposed as App._wirePhotoOCR for the preferences module. */
+  function onbWirePhoto(prefix, kind, persistFn) {
+    var persist = persistFn || onbPersistPhoto;
     var camBtn = el(prefix + '_cam'), pickBtn = el(prefix + '_pick');
     var camIn = el(prefix + '_cam_in'), pickIn = el(prefix + '_in');
     var fieldEl = el(prefix), prevEl = el(prefix + '_prev');
@@ -687,7 +693,7 @@
             var km = parseOdometerReading(text);
             if (km && fieldEl) {
               fieldEl.value = km;
-              onbPersistPhoto(kind, km);
+              persist(kind, km);
               onbSetStatus(prefix, '✓ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
@@ -696,7 +702,7 @@
             var iso = parseStickerExpiry(text);
             if (iso && fieldEl) {
               fieldEl.value = iso;
-              onbPersistPhoto(kind, iso);
+              persist(kind, iso);
               onbSetStatus(prefix, '✓ We read expiry <b>' + iso + '</b> — fix it below if that is wrong.');
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the expiry date — pick it manually below.');
@@ -1036,6 +1042,7 @@
   }
 
   App._store = store; App._esc = esc; App._today = todayStr; App._fmtClock = fmtClock;
+  App._wirePhotoOCR = onbWirePhoto; // v31: reused by Preferences for odometer/safety retakes
   try { if (window.CloudSync) CloudSync.attach(store); } catch (e) {} // v27: Firestore mirror
   /* v30 OTA: wait for the over-the-air updater before booting. OTA.ready()
      resolves when it is safe to start (update applied or not needed / offline).

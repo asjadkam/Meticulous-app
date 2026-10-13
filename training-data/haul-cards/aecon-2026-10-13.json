@@ -1,0 +1,17 @@
+{
+  "source": "Asjad Kamal, Oct 13 2026 - real AECON Daily Truck Haul Card for OCR training",
+  "image": "aecon-2026-10-13.jpg",
+  "fields": {
+    "company": "AECON",
+    "card_type": "DAILY TRUCK HAUL CARD",
+    "project": "A01728",
+    "date": "Oct 13, 2026",
+    "network_activity": "L80/L90",
+    "material": "Clay",
+    "start_time": "8:30 AM",
+    "card_number": "23141",
+    "payment_units": ["HOUR", "TONNE", "TONNE / KM", "OTHER"],
+    "truck_types": ["TANDEM TRUCK ONLY", "C/W TANDEM END DUMP OR PUP", "C/W TRI-AXLE END DUMP OR PUP", "C/W TRI-AXLE WAGON", "C/W QUAD WAGON", "OTHER"]
+  },
+  "layout_notes": "Handwritten fields: Project, Date, Network Activity, Material, Start Time. Table for 30 trips (Trip No, Net Weight, Km, Initials). Bottom: Total Net Weight, Start/Finish Time, Total Hours, Payment Unit checkboxes (HOUR/TONNE/TONNE/KM/OTHER), Truck Type checkboxes. This is the FOREMAN TICKET - hours on this card determine pay."
+}

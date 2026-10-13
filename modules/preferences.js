@@ -39,12 +39,29 @@
         '<label class="f">Business address</label><input id="pf_caddr" value="' + esc(o.companyAddr || '') + '">' +
         '<label class="f">Contracting company</label><input id="pf_cont" value="' + esc(o.contractingCo || '') + '"></div>';
 
+      /* v31: photo retake buttons — same OCR as onboarding. Lets Asjad update
+         the odometer baseline (e.g. new truck / rolled over) or the safety
+         sticker (renewed) without redoing onboarding. */
       h += '<div class="card"><h3>🚛 Truck</h3>' +
         '<label class="f">Truck number</label><input id="pf_tnum" value="' + esc(o.truckNo || '') + '">' +
         '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">' +
-        '<label class="f">Odometer baseline (km)</label><input id="pf_odo" type="number" inputmode="decimal" value="' + esc(o.odometerBaseline || '') + '">' +
+        '<label class="f">Odometer baseline (km)</label>' +
+        '<div style="display:flex;gap:8px;margin:6px 0;">' +
+        '<button type="button" class="btn secondary" id="pf_odo_cam" style="flex:1;">📷 Retake photo</button>' +
+        '<button type="button" class="btn secondary" id="pf_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<input type="file" id="pf_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="pf_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="pf_odo_prev"></div><div id="pf_odo_status" class="note"></div>' +
+        '<input id="pf_odo" type="number" inputmode="decimal" value="' + esc(o.odometerBaseline || '') + '">' +
         '<p class="note">Starting point for oil changes and services in Maintenance.</p>' +
-        '<label class="f">Safety sticker expiry</label><input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
+        '<label class="f">Safety sticker expiry</label>' +
+        '<div style="display:flex;gap:8px;margin:6px 0;">' +
+        '<button type="button" class="btn secondary" id="pf_safety_cam" style="flex:1;">📷 Retake photo</button>' +
+        '<button type="button" class="btn secondary" id="pf_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<input type="file" id="pf_safety_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="pf_safety_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="pf_safety_prev"></div><div id="pf_safety_status" class="note"></div>' +
+        '<input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
         '<p class="note">We remind you 30 days before it expires.</p></div>';
 
       h += '<div class="card"><h3>🔔 Notifications</h3>' +
@@ -90,6 +107,28 @@
         try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
         alert('Preferences saved.');
       };
+      /* v31: wire the odometer/safety photo retake buttons to the same OCR
+         used in onboarding. Persists immediately to the stored onboarding
+         and to the Maintenance PM stores. */
+      try {
+        if (App._wirePhotoOCR) {
+          var prefsPersistPhoto = function (kind, v) {
+            try {
+              var ob = App._store.get('onboarding', {}) || {};
+              if (kind === 'odometer') {
+                ob.odometerBaseline = v;
+                if (v && parseFloat(v) > 0) App._store.set('mt_odo', String(v));
+              } else {
+                ob.safetyExpiry = v;
+                if (v) App._store.set('mt_annualDate', v);
+              }
+              App._store.set('onboarding', ob);
+            } catch (e) {}
+          };
+          App._wirePhotoOCR('pf_odo', 'odometer', prefsPersistPhoto);
+          App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
+        }
+      } catch (e) {}
       body.querySelector('#pf_push').onclick = function () {
         if (window.FB && FB.enablePush) {
           FB.enablePush().then(function (r) {

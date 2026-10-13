@@ -17,13 +17,48 @@
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var BIZ_CATS = ['Insurance', 'Truck payment', 'Maintenance', 'Tires', 'Permits & Licenses', 'Phone', 'Other'];
 
+  /* Workers' comp name + ballpark default rate (%) by province.
+     Alberta = WCB, Ontario = WSIB, BC = WorkSafeBC, Quebec = CNESST, etc.
+     Rates vary by industry class and year — every default is editable in the UI. */
+  var WC_BY_PROVINCE = {
+    'Alberta': { label: 'WCB', defRate: 2.75 },
+    'British Columbia': { label: 'WorkSafeBC', defRate: 2.50 },
+    'Manitoba': { label: 'WCB', defRate: 3.00 },
+    'New Brunswick': { label: 'WorkSafeNB', defRate: 2.50 },
+    'Newfoundland and Labrador': { label: 'WorkplaceNL', defRate: 2.75 },
+    'Nova Scotia': { label: 'WCB', defRate: 2.50 },
+    'Ontario': { label: 'WSIB', defRate: 4.88 },
+    'Prince Edward Island': { label: 'WCB', defRate: 2.50 },
+    'Quebec': { label: 'CNESST', defRate: 3.20 },
+    'Saskatchewan': { label: 'WCB', defRate: 2.50 },
+    'Northwest Territories': { label: 'WSCC', defRate: 2.25 },
+    'Nunavut': { label: 'WSCC', defRate: 2.25 },
+    'Yukon': { label: 'WCB', defRate: 2.25 }
+  };
+
+  /* Home province from Preferences (onboarding store). Used for the
+     workers' comp label. Returns '' when the user never set one. */
+  function homeProvince() {
+    try { return String((App._store.get('onboarding', {}).homeProvince || '')).trim(); } catch (e) { return ''; }
+  }
+
+  /* { label, defRate } for the workers' comp line. No province set →
+     generic "Workers' comp" (editable label via Preferences). */
+  function wcInfo() {
+    var w = WC_BY_PROVINCE[homeProvince()];
+    if (w) return { label: w.label, defRate: w.defRate };
+    return { label: "Workers' comp", defRate: 4.88 };
+  }
+
   /* Detailed expense categories — matches Asjad's "monthly analysis" spreadsheet.
      auto: 'pct_rev' = % of revenue, 'pct_wages' = % of driver wages,
-           'maintenance' = auto from Maintenance module, null = manual entry. */
+           'maintenance' = auto from Maintenance module, null = manual entry.
+     The 'wsib' row (key kept for storage compat) takes its label and default
+     rate from wcInfo() so it reads WCB in Alberta, WSIB in Ontario, etc. */
   var DETAIL_CATS = [
     { key: 'brokerage', label: 'Brokerage fees', auto: 'pct_rev', defRate: 10 },
     { key: 'trailer', label: 'Trailer', auto: null },
-    { key: 'wsib', label: 'WSIB', auto: 'pct_wages', defRate: 4.88, sub: '% of employee pay' },
+    { key: 'wsib', wc: true, auto: 'pct_wages', sub: '% of employee pay' },
     { key: 'irp', label: 'IRP escrow', auto: null },
     { key: 'parking', label: 'Parking', auto: null },
     { key: 'repair', label: 'Repair', auto: null },
@@ -48,15 +83,18 @@
       maintTotal += parseFloat(e.cost) || 0;
     });
     var out = {};
+    var wc = wcInfo(); /* dynamic workers' comp label + default rate */
     DETAIL_CATS.forEach(function (c) {
       var sv = saved[c.key] || {};
       var amount = 0, auto = !!c.auto, rate = null;
+      var defRate = c.wc ? wc.defRate : c.defRate;
+      var label = c.wc ? wc.label : c.label;
       if (c.auto === 'pct_rev') {
-        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : c.defRate));
+        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : defRate));
         amount = income * (parseFloat(rate) || 0) / 100;
         if (sv.amount != null) { amount = parseFloat(sv.amount) || 0; auto = false; }
       } else if (c.auto === 'pct_wages') {
-        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : c.defRate));
+        rate = (sv.rate != null ? sv.rate : (rates[c.key] != null ? rates[c.key] : defRate));
         amount = wages * (parseFloat(rate) || 0) / 100;
         if (sv.amount != null) { amount = parseFloat(sv.amount) || 0; auto = false; }
       } else if (c.auto === 'maintenance') {
@@ -66,7 +104,7 @@
         amount = parseFloat(sv.amount) || 0;
         auto = false;
       }
-      out[c.key] = { amount: amount, auto: auto, rate: rate, label: c.label, sub: c.sub };
+      out[c.key] = { amount: amount, auto: auto, rate: rate, label: label, sub: c.sub };
     });
     return out;
   }
@@ -223,7 +261,7 @@
       var amt = d.amount || 0;
       detTotal += amt;
       detRows.push({
-        key: c.key, label: c.label, sub: c.sub,
+        key: c.key, label: d.label, sub: c.sub,
         amount: amt, auto: d.auto, rate: d.rate,
         perMile: miles > 0 ? amt / miles : 0,
         pct: income > 0 ? amt / income * 100 : 0
@@ -345,7 +383,10 @@
       c.detail.forEach(function (r) {
         h += '<tr data-pnldetrow="' + r.key + '"><td>' + esc(r.label) +
           (r.sub ? ' <span class="note">(' + esc(r.sub) + ')</span>' : '') +
-          (r.auto && r.rate != null ? ' <span class="note">(' + r.rate + '%)</span>' : '') +
+          (r.auto && r.rate != null ?
+            ' <span class="note">(<input data-pnlrate="' + r.key + '" type="number" inputmode="decimal" min="0" step="0.01" ' +
+            'value="' + r.rate + '" title="Change the auto % rate" ' +
+            'style="width:52px;text-align:right;border:1px solid #ddd;border-radius:6px;padding:2px 4px">%)</span>' : '') +
           '</td>' +
           '<td style="text-align:right"><input data-pnldet="' + r.key + '" type="number" inputmode="decimal" min="0" step="0.01" ' +
           'value="' + (r.amount ? r.amount.toFixed(2) : '') + '" placeholder="0.00" ' +
@@ -363,7 +404,17 @@
         '<td style="text-align:right"><b style="color:' + netColor + '">' + c.netPerMile.toFixed(5).replace(/\.?0+$/, '') + '</b></td>' +
         '<td style="text-align:right"><b style="color:' + netColor + '">' + c.netPct.toFixed(2) + '</b></td></tr>';
       h += '</table>';
-      h += '<p class="note">Brokerage auto = 10% of revenue · WSIB auto = 4.88% of salaries · Maintenance auto from Maintenance module. Type an amount to override any auto value.</p></div>';
+      (function () {
+        var wcN = wcInfo();
+        var br = null, wr = null;
+        c.detail.forEach(function (r) {
+          if (r.key === 'brokerage') br = r.rate;
+          if (r.key === 'wsib') wr = r.rate;
+        });
+        h += '<p class="note">Brokerage auto = ' + (br != null ? br : 10) + '% of revenue · ' +
+          esc(wcN.label) + ' auto = ' + (wr != null ? wr : wcN.defRate) + '% of salaries · ' +
+          'Maintenance auto from Maintenance module. Type an amount to override any auto value; tap a % to change the rate.</p></div>';
+      })();
 
       /* Driver wages breakdown — per-driver wages + cumulative total */
       h += '<div class="card"><h3>👥 Driver wages — ' + esc(monthLabel(m)) + '</h3>';
@@ -453,6 +504,17 @@
           var key = inp.getAttribute('data-pnldet');
           var v = parseFloat(inp.value);
           saveDetail(m, key, isNaN(v) ? 0 : v, null);
+          api.render(body);
+        };
+      });
+
+      /* Monthly analysis: auto % rates (e.g. workers' comp) — editable per province default */
+      body.querySelectorAll('[data-pnlrate]').forEach(function (inp) {
+        inp.onchange = function () {
+          var key = inp.getAttribute('data-pnlrate');
+          var v = parseFloat(inp.value);
+          if (isNaN(v) || v < 0) { api.render(body); return; }
+          saveDetail(m, key, null, v);
           api.render(body);
         };
       });

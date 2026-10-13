@@ -1,0 +1,29 @@
+{
+  "source": "Asjad Kamal, Oct 13 2026 - real BURNCO scale ticket for OCR training",
+  "image": "burnco-2026-09-30.jpg",
+  "fields": {
+    "company": "BURNCO",
+    "ticket_type": "AGGREGATE SCALE TICKET",
+    "customer": "496010 AECON TRANSPORTATION WEST LTD - CAL",
+    "address": "GLENMORE & 15TH STREET SE, Annual Pricing",
+    "po": "4500753853",
+    "job": "A01728",
+    "carrier": "PU1200",
+    "vehicle": "AIT",
+    "type": "Tandem - T",
+    "product_code": "SG0403300",
+    "product": "40MM CRUSHED ROCK",
+    "order": "SABANNUAL",
+    "site_id": "13026",
+    "site_name": "BLV Joint Venture",
+    "ticket_number": "1026538139",
+    "date": "9/30/2026",
+    "time": "12:10:03PM",
+    "gross": "22.42",
+    "tare": "10.24",
+    "net": "12.18",
+    "received_today": "100.22 t",
+    "weighmaster": "NR"
+  },
+  "layout_notes": "Two copies on one page (Copy 1 Customer, Copy 2 Carrier). Key fields: Ticket number, Date/Time top-right. Gross/Tare/Net in box. Product in center box. Customer/Job/PO left side."
+}
