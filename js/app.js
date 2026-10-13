@@ -399,12 +399,20 @@
     else { t.status = 'running'; t.startTs = Date.now(); }
     trackerSave(); trackerPaint();
   };
-  App.trackerStop = function () {
+  /* v34: stop with an explicit end time. Asjad often forgets to press STOP
+     when the shift actually ends, so the recorded end overshot. The STOP
+     button now opens an end-time sheet (defaults to now — same result as
+     before) where he can set the real finish; the saved session's duration
+     and endedAt are computed to that end. Mirrors the start-time Edit. */
+  function trackedSecondsAt(endMs) {
     var t = App.tracker;
-    var sec = t.elapsed + (t.status === 'running' ? Math.floor((Date.now() - t.startTs) / 1000) : 0);
+    return t.elapsed + (t.status === 'running' ? Math.floor((endMs - t.startTs) / 1000) : 0);
+  }
+  function stopSessionAt(endMs) {
+    var sec = trackedSecondsAt(endMs);
     if (sec > 0) {
       var sessions = store.get('sessions', []);
-      var entry = { date: todayStr(), seconds: sec, endedAt: new Date().toISOString() };
+      var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
       sessions.push(entry); store.set('sessions', sessions);
       if (window.FB && FB.saveDoc) FB.saveDoc('sessions', 's' + Date.now(), entry);
       if (Meticulous.modules.revenue && Meticulous.modules.revenue.onSession) {
@@ -413,6 +421,33 @@
     }
     App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
     trackerSave(); trackerPaint();
+  }
+  App.trackerStop = function () { stopSessionAt(Date.now()); };
+  function closeTrackerEndSheet() {
+    el('trkEndSheet').classList.remove('open');
+    el('scrim').classList.remove('show');
+    el('scrim').onclick = closeSidebar;
+  }
+  App.trackerStopPrompt = function () {
+    var now = new Date();
+    el('trkEndTime').value = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    el('trkEndSheet').classList.add('open');
+    el('scrim').classList.add('show');
+    el('scrim').onclick = function () { closeTrackerEndSheet(); };
+  };
+  App.trackerSaveEnd = function () {
+    var v = el('trkEndTime').value; // "HH:MM"
+    if (!v) { closeTrackerEndSheet(); App.trackerStop(); return; }
+    var parts = v.split(':'), startMs = trackerSessionStartMs(), sd = new Date(startMs);
+    var end = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(),
+      parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+    if (end.getTime() <= startMs) end = new Date(end.getTime() + 24 * 3600 * 1000); // overnight shift
+    if (end.getTime() > Date.now()) end = new Date(); // can't end in the future
+    var secs = trackedSecondsAt(end.getTime());
+    if (secs <= 0) { alert('That end time is not after the start. Check the times and try again.'); return; }
+    if (secs > 12 * 3600 && !confirm('That makes a ' + fmtClock(secs) + ' shift. Is that right?')) { return; }
+    closeTrackerEndSheet();
+    stopSessionAt(end.getTime());
   };
 
   /* ---------------- timed auto-start ---------------- */
@@ -486,6 +521,32 @@
       }
       return 'prompted-declined';
     } catch (e) { return 'error'; }
+  };
+
+  /* ---------------- v34: sync status popup (tap the top-bar dot) ----------------
+     The dot's state used to live only in its `title` tooltip — invisible on
+     Android — so a stuck sync could not be diagnosed from a screenshot.
+     Tapping the dot now pops the same status Preferences shows, and first
+     kicks a sync (which also heals a signed-in user the engine missed). */
+  App.showSyncStatus = function () {
+    try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
+    setTimeout(function () {
+      try {
+        if (!window.CloudSync || !CloudSync.status) { alert('Sync engine not loaded.'); return; }
+        var st = CloudSync.status();
+        var who = (window.FB && FB.user && FB.user.email) || (App.user && App.user.email) || null;
+        var word = st.dot === 'ok' ? 'Backed up ✓'
+          : st.dot === 'syncing' ? 'Syncing…'
+          : st.dot === 'err' ? 'Error' : 'Off';
+        var lines = ['Cloud sync: ' + word];
+        lines.push(who ? 'Signed in as: ' + who : 'Not signed in (local mode)');
+        if (st.dirtyKeys && st.dirtyKeys.length) lines.push('Waiting to upload: ' + st.dirtyKeys.join(', '));
+        if (st.stats) lines.push('Uploaded: ' + (st.stats.pushed || 0) + ' · Downloaded: ' + (st.stats.pulled || 0));
+        if (st.lastError) lines.push('Last error: ' + st.lastError);
+        if (!st.online) lines.push('Phone reports offline.');
+        alert(lines.join('\n'));
+      } catch (e) { alert('Could not read sync status.'); }
+    }, 600);
   };
 
   /* ---------------- feedback ---------------- */
@@ -628,19 +689,41 @@
   }
   function parseOdometerReading(text) {
     if (!text) return null;
-    // glue digits split by OCR spaces: "245 678" -> "245678"
-    var t = String(text).replace(/(\d)\s+(?=\d)/g, '$1');
-    var nums = [], re = /(\d[\d,]*\.?\d*)/g, m;
-    while ((m = re.exec(t)) !== null) {
-      var v = parseFloat(m[1].replace(/,/g, ''));
-      if (!isFinite(v)) continue;
-      var iv = Math.floor(v);
-      // odometer: 4+ digits, below 10M km sanity cap; drops speed/trip noise
-      if (iv >= 1000 && iv < 10000000) nums.push(iv);
+    /* v34: prefer the TOTAL odometer over the trip meter. On Asjad's dash
+       photo the old largest-number rule still lost because the trip value
+       came through clean while the total (168472, beside its "KM" label)
+       competed with every other gauge number. Ranking now:
+         1. largest 5-6 digit whole number on a "KM" line (or next to one)
+         2. largest 5-6 digit whole number anywhere — totals have no
+            decimal; trip meters usually do (1553.5) or fewer digits
+         3. largest plausible reading at all (old behaviour)
+       The manual field stays as the fallback when OCR gets it wrong. */
+    var lines = String(text).split(/\r?\n/);
+    var kmOnly = lines.map(function (l) { return /^\s*km\s*$/i.test(l); });
+    var all = [], onKm = [];
+    lines.forEach(function (line, i) {
+      // glue digits OCR split with spaces/commas: "168 472" / "168, 472"
+      var t = line.replace(/(\d)[ \t]+(?=\d)/g, '$1').replace(/(\d),[ \t]+(?=\d)/g, '$1,');
+      var nearKm = /km/i.test(t) || !!kmOnly[i + 1] || !!kmOnly[i - 1];
+      var re = /(\d[\d,]*\.?\d*)/g, m;
+      while ((m = re.exec(t)) !== null) {
+        var v = parseFloat(m[1].replace(/,/g, ''));
+        if (!isFinite(v)) continue;
+        var iv = Math.floor(v);
+        if (iv < 1000 || iv >= 10000000) continue; // sanity cap; drops RPM/speed noise
+        var cand = { v: iv, digits: m[1].replace(/,/g, '').split('.')[0].length, dec: /\.\d/.test(m[1]) };
+        all.push(cand);
+        if (nearKm) onKm.push(cand);
+      }
+    });
+    function largest(list) {
+      var best = null;
+      list.forEach(function (c) { if (!best || c.v > best.v) best = c; });
+      return best;
     }
-    if (!nums.length) return null;
-    nums.sort(function (a, b) { return b - a; });
-    return String(nums[0]);
+    function isTotal(c) { return c.digits >= 5 && c.digits <= 6 && !c.dec; }
+    var pick = largest(onKm.filter(isTotal)) || largest(all.filter(isTotal)) || largest(all);
+    return pick ? String(pick.v) : null;
   }
   var _ONB_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
   function parseStickerExpiry(text) {
@@ -962,17 +1045,30 @@
     };
     el('scrim').onclick = closeSidebar;
     el('btnBell').onclick = function () { App.openModule('reminders'); };
+    var sdEl = el('syncDot');
+    if (sdEl) sdEl.onclick = function () { App.showSyncStatus(); }; // v34: tap dot = sync status
     el('btnModBack').onclick = App.showDashboard;
     el('trkMain').onclick = App.trackerToggle;
-    el('trkStop').onclick = function () { if (confirm('Stop and save this session?')) App.trackerStop(); };
+    el('trkStop').onclick = function () { App.trackerStopPrompt(); }; // v34: end-time sheet
     el('trkEditStart').onclick = App.trackerEditStart;
     el('trkStartCancel').onclick = closeTrackerStartSheet;
     el('trkStartSave').onclick = App.trackerSaveStart;
+    el('trkEndCancel').onclick = closeTrackerEndSheet;
+    el('trkEndSave').onclick = App.trackerSaveEnd;
     el('fbFab').onclick = App.openFeedback;
     el('fbCancel').onclick = function () { el('fbSheet').classList.remove('open'); el('scrim').classList.remove('show'); el('scrim').onclick = closeSidebar; };
     el('fbSend').onclick = sendFeedback;
 
     wireAuth();
+    /* v34: sign-in version label = the live web version, from the same
+       source Preferences uses (OTA.currentVersion().active). The old label
+       was hard-coded "v25" and had lied about every release since. */
+    try {
+      if (window.OTA && OTA.currentVersion) OTA.currentVersion().then(function (v) {
+        var n = el('authVer');
+        if (n && v && v.active) n.textContent = 'v' + v.active;
+      });
+    } catch (e) {}
     trackerPaint();
     setInterval(trackerTick, 1000);
 

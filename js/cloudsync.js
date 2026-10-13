@@ -121,18 +121,27 @@
       : state === 'err' ? 'syncerr' : 'sync-off');
     if (title) { try { d.title = title; } catch (e) {} }
   }
+  // v34: the dot must reflect THIS user's outstanding work only. A key that
+  // is dirty but owned by a different uid (shared device) can never be
+  // pushed by this session — counting it here wedged the dot at amber
+  // "syncing" forever even though everything of the current user's was
+  // backed up. flush() already filters with canPush(); the dot now does too.
+  function hasPushableDirty() {
+    try {
+      var m = getMeta();
+      for (var k in m.keys) {
+        if (m.keys.hasOwnProperty(k) && isSyncable(k) && isDirty(k) && canPush(k)) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
   function refreshDot() {
     if (!S.uid) { setDot('off', 'Sync off — sign in to back up your data'); return; }
     // v32: show the actual error so a stuck sync is diagnosable on-device
     if (S.lastError) { setDot('err', 'Sync error: ' + String(S.lastError).slice(0, 100)); return; }
     if (S.flushing || S._pulling) { setDot('syncing', 'Syncing…'); return; }
-    // any dirty keys left?
-    var m = getMeta(), dirty = false;
-    try {
-      for (var k in m.keys) {
-        if (m.keys.hasOwnProperty(k) && isSyncable(k) && isDirty(k)) { dirty = true; break; }
-      }
-    } catch (e) {}
+    // any dirty keys left that this session can actually push?
+    var dirty = hasPushableDirty();
     setDot(dirty ? 'syncing' : 'ok', dirty ? 'Syncing…' : 'Backed up ✓');
   }
 
@@ -197,14 +206,11 @@
       // v33: watchdog — every 30s, if dirty keys exist and no sync is in
       // flight, kick one off. Catches cases where an early-return or a
       // timed-out push left work stranded with a yellow dot.
+      // v34: only pushable dirty keys count (same rule as the dot).
       setInterval(function () {
         try {
           if (!S.attached || S.flushing || S._pulling || !S.uid) return;
-          var _wm = getMeta(), _wd = false;
-          for (var _wk in _wm.keys) {
-            if (_wm.keys.hasOwnProperty(_wk) && isSyncable(_wk) && isDirty(_wk)) { _wd = true; break; }
-          }
-          if (_wd) syncNow();
+          if (hasPushableDirty()) syncNow();
         } catch (e) {}
       }, 30000);
     } catch (e) {}
@@ -285,11 +291,7 @@
       // on a cold start. Previously this returned without rescheduling, so
       // dirty keys sat forever with a yellow dot and no error. Retry soon.
       try {
-        var _m = getMeta(), _hasDirty = false;
-        for (var _k in _m.keys) {
-          if (_m.keys.hasOwnProperty(_k) && isSyncable(_k) && isDirty(_k)) { _hasDirty = true; break; }
-        }
-        if (_hasDirty) setTimeout(function () { if (!S.flushing) flush(); }, 10000);
+        if (hasPushableDirty()) setTimeout(function () { if (!S.flushing) flush(); }, 10000);
       } catch (e) {}
       return;
     }
@@ -363,7 +365,16 @@
       } catch (e) { return Promise.resolve(done(false)); }
     }
     var val = parseJson(raw, undefined);
-    if (val === undefined) return Promise.resolve(done(false)); // corrupt; leave dirty
+    if (val === undefined) {
+      // v34: unparseable local value. It can never be pushed as JSON, and
+      // leaving it dirty wedged the dot at amber "syncing" forever with no
+      // error shown (found in the v34 audit). Treat it like the oversized
+      // case below: stop retrying, keep the local copy as the truth.
+      try { console.warn('[cloudsync] skipping unparseable key (kept locally):', key); } catch (e) {}
+      km.s = km.t;
+      saveMeta();
+      return Promise.resolve(done(false));
+    }
     var size = 0;
     try { size = raw.length; } catch (e) {}
     if (size > MAX_DOC_BYTES) {
@@ -391,6 +402,13 @@
   /* ---------------- pull (cloud -> local) ---------------- */
 
   function syncNow() {
+    // v34: self-heal a desync where Firebase HAS a signed-in user but this
+    // engine never got (or lost) that sign-in — on device the dot then sat
+    // gray ('off') while the user was signed in. Re-driving onAuth restarts
+    // pull+flush. No loop: onAuth sets S.uid, so the nested syncNow proceeds.
+    try {
+      if (window.FB && FB.user && FB.user.uid !== S.uid) { S.onAuth(FB.user); return; }
+    } catch (e) {}
     if (!fbReady()) { refreshDot(); return; }
     pull().then(function () { flush(); }).catch(function () { flush(); });
   }
@@ -509,6 +527,7 @@
       S.pulledUid = S.uid;
       S.lastPullAt = Date.now();
       S._pulling = false;
+      S.lastError = null; // v34: a healthy pull clears a stale earlier error
       S.stats.pulled += applied;
       refreshDot();
 
@@ -548,7 +567,9 @@
     var m = getMeta(), dirty = [];
     try {
       for (var k in m.keys) {
-        if (m.keys.hasOwnProperty(k) && isSyncable(k) && (m.keys[k].t || 0) > (m.keys[k].s || 0)) dirty.push(k);
+        // v34: same rule as the dot — dirty AND pushable by this user
+        // (the old t>s check also missed unpushed tombstones).
+        if (m.keys.hasOwnProperty(k) && isSyncable(k) && isDirty(k) && canPush(k)) dirty.push(k);
       }
     } catch (e) {}
     return {

@@ -83,7 +83,7 @@
       <button class="btn navy hidden" id="btnSignUp">Create account</button>
       <button class="skipbtn" id="btnForgot" style="color:var(--navy);font-weight:600;">Forgot password?</button>
       <button class="skipbtn" id="authSkip" style="color:var(--muted)">Continue without an account</button>
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:10px;">v25</div>
+      <div id="authVer" style="text-align:center;color:var(--muted);font-size:11px;margin-top:10px;"></div>
     </div>
   </div>
 
@@ -153,6 +153,16 @@
   <div class="row">
     <button class="btn ghost" id="trkStartCancel">Cancel</button>
     <button class="btn primary" id="trkStartSave">Save</button>
+  </div>
+</div>
+<div id="trkEndSheet">
+  <h3 style="margin:0 0 6px;color:var(--navy)">End shift</h3>
+  <p class="note" style="margin:0 0 8px">When did you actually finish? If you forgot to stop at the end, set the real finish time — your hours adjust.</p>
+  <label class="f">End time</label>
+  <input id="trkEndTime" type="time">
+  <div class="row">
+    <button class="btn ghost" id="trkEndCancel">Cancel</button>
+    <button class="btn primary" id="trkEndSave">Stop &amp; save</button>
   </div>
 </div>
 

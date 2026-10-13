@@ -12,6 +12,24 @@
         '<label class="f">Employment</label><select id="pf_emp">' +
         ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div>';
 
+      /* v34: in-app password change — distinct from "Forgot password?" (the
+         email reset on the sign-in screen). Signed-in users only: Firebase
+         needs a current user for updatePassword, and re-authenticates with
+         the current password when it demands a recent login. */
+      var signedIn = !!(window.FB && FB.user);
+      h += '<div class="card"><h3>🔒 Security</h3>';
+      if (signedIn) {
+        h += '<p class="note">Signed in as ' + esc(FB.user.email || '') + '</p>' +
+          '<label class="f">Current password</label><input id="pf_pw_cur" type="password" autocomplete="current-password">' +
+          '<label class="f">New password</label><input id="pf_pw_new" type="password" autocomplete="new-password">' +
+          '<label class="f">Confirm new password</label><input id="pf_pw_conf" type="password" autocomplete="new-password">' +
+          '<button class="btn navy" id="pf_pw_btn" style="margin-top:10px;">Change password</button>' +
+          '<p class="note" id="pf_pw_note"></p>';
+      } else {
+        h += '<p class="note">Sign in to change your password.</p>';
+      }
+      h += '</div>';
+
       h += '<div class="card"><h3>💵 Pay</h3>' +
         '<label class="f">Payment standard</label><select id="pf_std">' +
         ['Miles', 'Hourly', 'Trip', 'Weight'].map(function (x) { return '<option' + (o.payStandard === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
@@ -129,6 +147,42 @@
           App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
         }
       } catch (e) {}
+      /* v34: change-password handler (Security card, signed-in only) */
+      var pwBtn = body.querySelector('#pf_pw_btn');
+      if (pwBtn) pwBtn.onclick = function () {
+        var note = body.querySelector('#pf_pw_note');
+        // same invisible-character strip as sign-in, so the passwords agree
+        var clean = function (p) { return String(p || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, ''); };
+        var cur = clean(body.querySelector('#pf_pw_cur').value);
+        var nw = clean(body.querySelector('#pf_pw_new').value);
+        var conf = clean(body.querySelector('#pf_pw_conf').value);
+        if (!cur) { note.textContent = 'Enter your current password.'; return; }
+        if (!nw || nw.length < 6) { note.textContent = 'New password must be at least 6 characters.'; return; }
+        if (nw !== conf) { note.textContent = 'New passwords do not match.'; return; }
+        if (!window.FB || !FB.changePassword) { note.textContent = 'Password change is unavailable right now.'; return; }
+        pwBtn.disabled = true; note.textContent = 'Changing…';
+        function ok() {
+          pwBtn.disabled = false;
+          note.textContent = '✓ Password changed.';
+          body.querySelector('#pf_pw_cur').value = '';
+          body.querySelector('#pf_pw_new').value = '';
+          body.querySelector('#pf_pw_conf').value = '';
+        }
+        function fail(e) {
+          pwBtn.disabled = false;
+          var code = (e && e.code) || '';
+          note.textContent = (code === 'auth/wrong-password' || code === 'auth/invalid-credential')
+            ? 'Current password is wrong.'
+            : code === 'auth/weak-password' ? 'New password is too weak — use at least 6 characters.'
+            : 'Could not change password: ' + ((e && e.message) || e);
+        }
+        FB.changePassword(nw).then(ok).catch(function (e) {
+          if (e && e.code === 'auth/requires-recent-login') {
+            note.textContent = 'Confirming it is you…';
+            FB.reauthenticate(cur).then(function () { return FB.changePassword(nw); }).then(ok).catch(fail);
+          } else fail(e);
+        });
+      };
       body.querySelector('#pf_push').onclick = function () {
         if (window.FB && FB.enablePush) {
           FB.enablePush().then(function (r) {

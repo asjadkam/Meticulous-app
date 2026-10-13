@@ -51,6 +51,17 @@
   FB.sendReset = function (email) {
     return FB.auth.sendPasswordResetEmail(email);
   };
+  /* v34: in-app password change (Preferences > Security). updatePassword
+     can reject with auth/requires-recent-login; reauthenticate covers it. */
+  FB.changePassword = function (newPassword) {
+    if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
+    return FB.auth.currentUser.updatePassword(newPassword);
+  };
+  FB.reauthenticate = function (password) {
+    if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
+    var cred = firebase.auth.EmailAuthProvider.credential(FB.auth.currentUser.email, password);
+    return FB.auth.currentUser.reauthenticateWithCredential(cred);
+  };
   FB.signOut = function () {
     return FB.auth.signOut();
   };
