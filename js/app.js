@@ -45,9 +45,13 @@
   /* ---------------- views ---------------- */
   App.showView = function (name) {
     App.currentView = name; // v18: track for Android back button
+    // v21: explicitly clear all views first — never let two screens stack
     ['onboarding', 'auth', 'main'].forEach(function (v) {
-      el(v === 'onboarding' ? 'onboarding' : v).classList.toggle('active', v === name);
+      var vEl = el(v === 'onboarding' ? 'onboarding' : v);
+      if (vEl) vEl.classList.remove('active');
     });
+    var target = el(name === 'onboarding' ? 'onboarding' : name);
+    if (target) target.classList.add('active');
     el('fbFab').classList.toggle('hidden', name !== 'main');
   };
 
@@ -78,7 +82,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 20;
+      var BUNDLED_VERSION = 21;
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -592,6 +596,12 @@
     setInterval(trackerTick, 1000);
 
     renderOnbStep();
+    // v21: if already onboarded, go straight to main — don't show login at all.
+    // Firebase session restores in background via onAuthStateChanged.
+    if (store.get('onboarded', false)) {
+      try { App.onAuth(null); } catch (e) {}
+      try { App.showView('main'); } catch (e2) {}
+    } else {
     // auth comes first; after sign-in, afterAuth() routes to onboarding or main
     App.showView('auth');
     // if already signed in (returning user), firebase onAuthStateChanged fires -> route there
@@ -622,6 +632,7 @@
     }
     watchAuthState();
     setTimeout(routeReturningUser, 500);
+    } // end v21 else (not onboarded)
 
     /* splash: fade out once the first view is up */
     window.__appReady = true;
