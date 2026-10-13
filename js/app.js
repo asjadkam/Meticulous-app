@@ -45,7 +45,8 @@
   /* ---------------- views ---------------- */
   App.showView = function (name) {
     App.currentView = name; // v18: track for Android back button
-    // v22: force via inline styles — classes alone weren't hiding stacked views
+    // v23: hide via inline none, but CLEAR inline on show so CSS controls layout
+    // (forcing display:block broke #auth's flex centering)
     ['onboarding', 'auth', 'main'].forEach(function (v) {
       var vEl = document.getElementById(v);
       if (vEl) {
@@ -56,7 +57,7 @@
     var target = document.getElementById(name);
     if (target) {
       target.classList.add('active');
-      target.style.display = 'block';
+      target.style.display = ''; // let CSS decide (flex for auth, block for others)
     }
     var fab = document.getElementById('fbFab');
     if (fab) fab.classList.toggle('hidden', name !== 'main');
@@ -91,7 +92,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var BUNDLED_VERSION = 22;
+      var BUNDLED_VERSION = 23;
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
