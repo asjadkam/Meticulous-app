@@ -59,12 +59,35 @@
     return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay };
   }
 
+  /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
+     turn it on every single day or off every single day"): the section
+     toggles are ONE global set in the SYNCED store (mft_sections) — set
+     once, remembered on every day, every launch, every device. They are
+     never per-date: the date picker only chooses which day's data is
+     shown. Pre-v67 the set lived under mani_toggles; that most recent
+     set migrates into mft_sections on first read and the old key is
+     removed, so there is exactly one source of truth. */
+  var SECTIONS_KEY = 'mft_sections';
+  var LEGACY_TOGGLES_KEY = 'mani_toggles';
+
   function toggles() {
-    var t = G('mani_toggles', null);
-    if (!t) { t = {}; }
+    var t = G(SECTIONS_KEY, null);
+    if (!t || typeof t !== 'object') {
+      var legacy = G(LEGACY_TOGGLES_KEY, null);
+      t = (legacy && typeof legacy === 'object') ? legacy : {};
+      App._store.set(SECTIONS_KEY, t);
+      if (legacy) App._store.del(LEGACY_TOGGLES_KEY);
+    }
     // sections added after a user's toggles were saved default ON
-    SECTIONS.forEach(function (s) { if (t[s[0]] === undefined) t[s[0]] = true; });
-    return t;
+    var out = {};
+    SECTIONS.forEach(function (s) { out[s[0]] = (t[s[0]] === undefined) ? true : !!t[s[0]]; });
+    return out;
+  }
+
+  function setToggle(key, on) {
+    var t = toggles();
+    t[key] = !!on;
+    App._store.set(SECTIONS_KEY, t);
   }
 
   Meticulous.modules.manifest = {
@@ -72,7 +95,7 @@
     render: function (body) {
       var d = dayStr(), c = collect(d), t = toggles();
       var h = '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';
-      h += '<div class="note">Toggle sections on/off for this manifest.</div>';
+      h += '<div class="note">Choose what shows on your manifest — the app remembers your choice.</div>';
       SECTIONS.forEach(function (s) {
         h += '<div class="toggle"><span>' + s[1] + '</span><label class="switch"><input type="checkbox" data-tg="' + s[0] + '"' + (t[s[0]] ? ' checked' : '') + '><span class="knob"></span></label></div>';
       });
@@ -170,8 +193,8 @@
       };
       body.querySelectorAll('[data-tg]').forEach(function (cb) {
         cb.onchange = function () {
-          var tt = toggles(); tt[cb.getAttribute('data-tg')] = cb.checked;
-          App._store.set('mani_toggles', tt); Meticulous.modules.manifest.render(body);
+          setToggle(cb.getAttribute('data-tg'), cb.checked);
+          Meticulous.modules.manifest.render(body);
         };
       });
       body.querySelector('#mn_print').onclick = function () { window.print(); };
