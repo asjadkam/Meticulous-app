@@ -64,7 +64,7 @@
      survives even when the photo cannot be kept. */
   function dspSlimDraft(draft) {
     if (!draft) return draft;
-    var out = { fields: draft.fields || {}, tickets: [], photo: null, photoDropped: true, savedAt: draft.savedAt || 0 };
+    var out = { fields: draft.fields || {}, tickets: [], photo: null, photoDropped: true, savedAt: draft.savedAt || 0, editId: draft.editId || null };
     (draft.tickets || []).forEach(function (t) {
       var c = {};
       for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k]; }
@@ -105,6 +105,82 @@
     }
     if (!dspVerifySaved(d.id, !!start)) return { ok: false, stage: 'verify' };
     return { ok: true };
+  }
+  /* ---- v56: EDITING a saved dispatch ----
+     Until now the only save flow CREATED records: a saved dispatch
+     could not be corrected at all (the owner's Oct 14 note fix —
+     "Go Empty To" should have read "Go to Ivor East Pond empty" —
+     had no path). Editing an existing record:
+       - keeps the SAME id (no duplicate history entry);
+       - overlays only form fields — status, startedAt / endedAt and
+         the record's day are lifecycle facts, pinned from the
+         original, so editing the ACTIVE dispatch can never restart
+         it, complete it, or move its day;
+       - stores the ticket photo exactly once (same rule as create);
+       - writes with the same discipline as a create: write, then
+         READ BACK and compare; on any failure the stored record is
+         left untouched (a failed list write never landed; a failed
+         active write rolls the list copy back to the original). */
+  function dspFindRecord(id) {
+    if (!id) return null;
+    var l = dspGet('list', []);
+    for (var i = 0; i < l.length; i++) { if (l[i] && l[i].id === id) return l[i]; }
+    var a = dspGet('active', null);
+    return (a && a.id === id) ? a : null;
+  }
+  function dspApplyEdit(orig, f, tickets, legacyPhoto) {
+    var d = {};
+    var k;
+    for (k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) d[k] = orig[k]; }
+    for (k in f) { if (Object.prototype.hasOwnProperty.call(f, k)) d[k] = f[k]; }
+    d.id = orig.id;           // an edit never mints a new id
+    d.status = orig.status;   // lifecycle is not a form field
+    d.date = orig.date;       // an edit never moves the dispatch's day
+    if (orig.startedAt !== undefined) d.startedAt = orig.startedAt;
+    if (orig.endedAt !== undefined) d.endedAt = orig.endedAt;
+    d.tickets = tickets ? tickets.slice() : [];
+    /* photo stored once — same rule as dspBuildRecord */
+    d.photo = d.tickets.length ? null : (legacyPhoto || null);
+    return d;
+  }
+  function dspVerifyUpdated(updated, inList, isActive) {
+    var want = JSON.stringify(updated);
+    if (inList) {
+      var l = dspGet('list', []);
+      var found = null;
+      for (var i = 0; i < l.length; i++) { if (l[i] && l[i].id === updated.id) { found = l[i]; break; } }
+      if (!found || JSON.stringify(found) !== want) return false;
+    }
+    if (isActive) {
+      var a = dspGet('active', null);
+      if (!a || a.id !== updated.id || JSON.stringify(a) !== want) return false;
+    }
+    return true;
+  }
+  function dspUpdateRecord(updated, orig) {
+    var l = dspGet('list', []);
+    var idx = -1;
+    for (var i = 0; i < l.length; i++) { if (l[i] && l[i].id === updated.id) { idx = i; break; } }
+    var act = dspGet('active', null);
+    var isActive = !!(act && act.id === updated.id);
+    if (idx === -1 && !isActive) return { ok: false, stage: 'missing' };
+    if (idx !== -1) {
+      var nl = l.slice(); nl[idx] = updated;
+      if (dspSet('list', nl) === false) return { ok: false, stage: 'list' };
+    }
+    if (isActive) {
+      if (dspSet('active', updated) === false) {
+        /* roll the list copy back so the two stores cannot disagree */
+        if (idx !== -1 && orig) {
+          var rl = dspGet('list', []);
+          for (var j = 0; j < rl.length; j++) { if (rl[j] && rl[j].id === updated.id) { rl[j] = orig; break; } }
+          dspSet('list', rl);
+        }
+        return { ok: false, stage: 'active' };
+      }
+    }
+    if (!dspVerifyUpdated(updated, idx !== -1, isActive)) return { ok: false, stage: 'verify' };
+    return { ok: true, wasActive: isActive };
   }
   /* ================= DSP-SAVE-END ================= */
 
@@ -309,6 +385,19 @@
     getActive: function () { return active(); },
     render: function (body) {
       var a = active();
+      /* v56: the form's draft is resolved BEFORE the HTML is built —
+         a draft carrying editId means the form opens in EDIT mode for
+         that record (title, single "Save changes" button). If the
+         record was deleted elsewhere since the edit began, the edit
+         draft is safely DISCARDED (never resurrected as a new
+         dispatch) and a note says so. */
+      var draft0 = dspLoadDraft();
+      var editRec = null, editGone = false;
+      if (draft0 && draft0.editId) {
+        editRec = dspFindRecord(draft0.editId);
+        if (!editRec) { dspClearDraft(); draft0 = null; editGone = true; }
+      }
+      var editingId = editRec ? editRec.id : null;
       /* v52: optional driver picker — only when the account keeps P&L
          drivers. It is how a dispatch "identifies a driver", which the
          travel-bonus routing needs when an office user completes the
@@ -331,15 +420,18 @@
           (a.material ? '<div class="kv"><span>Material</span><b>' + esc(a.material) + '</b></div>' : '') +
           (a.ticketNo ? '<div class="kv"><span>Ticket #</span><b>' + esc(a.ticketNo) + '</b></div>' : '') +
           (a.amount ? '<div class="kv"><span>Amount</span><b>$' + esc(a.amount) + '</b></div>' : '') +
+          (a.notes ? '<div class="kv"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
           '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>' +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' : '') +
           '<div class="row" style="margin-top:10px">' +
           '<button class="btn primary" id="dp_complete">✅ Complete dispatch</button>' +
+          '<button class="btn ghost" id="dp_edit_active">✏️ Edit</button>' +
           '<button class="btn ghost" id="dp_cancel">Cancel</button></div></div>';
       }
 
-      /* ---- New dispatch form ---- */
-      h += '<div class="card"><h3>＋ New dispatch</h3>' +
+      /* ---- New dispatch form (v56: the same form is the EDIT form
+           when editingId is set — one form, prefilled either way) ---- */
+      h += '<div class="card"><h3>' + (editingId ? '✏️ Edit dispatch' : '＋ New dispatch') + '</h3>' +
         '<div id="dp_draft_note"></div>' +
         '<div id="dp_draft_warn"></div>' +
         '<div id="dp_save_err"></div>' +
@@ -365,8 +457,11 @@
         '<div id="dp_img_name" style="font-size:12px;color:var(--muted);margin-bottom:8px;">No tickets yet — add the first one above.</div>' +
         '<div id="dp_ocr_prompt"></div>' +
         '<div id="dp_preview"></div>' +
-        '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
-        '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>';
+        (editingId ?
+          '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_saveedit">💾 Save changes</button>' +
+          '<button class="btn ghost" id="dp_canceledit">Cancel edit</button></div></div>' :
+          '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
+          '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>');
 
       /* ---- History ---- */
       var hist = list().slice().reverse();
@@ -383,10 +478,12 @@
               ' · <a href="https://www.google.com/maps?q=' + d.lat + ',' + d.lng + '" target="_blank" rel="noopener">📍 Map</a>' : '') +
             (d.material ? ' · ' + esc(d.material) : '') +
             (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
-            (d.amount ? ' · $' + esc(d.amount) : '') + '</div>' +
+            (d.amount ? ' · $' + esc(d.amount) : '') +
+            (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
             (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' : '') +
             '<div class="row" style="margin-top:8px">' +
             (d.status === 'saved' ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
+            '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>' +
             '<button class="btn small ghost" data-del="' + i + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
 
@@ -400,7 +497,8 @@
          an unsaved form now survives app close, OTA reload, and
          navigating away. The draft is cleared only after a verified
          save (see attemptSave below). */
-      var draft0 = dspLoadDraft();
+      /* draft0 was loaded at the top of render (v56 needs it before
+         the HTML is built, to render the form in edit mode). */
       var pendingTickets = (draft0 && draft0.tickets) ? draft0.tickets.slice() : []; // [{id, photo, ocrType, ticketNo, cardNumber, foremanHours, paymentUnit, netWeight, grossWeight, tareWeight}]
       var pendingPhoto = draft0 ? (draft0.photo || null) : null; // legacy single-photo (kept for backward compat)
       if (pendingPhoto === null) { var _dp0 = dspPhotoFor({ tickets: pendingTickets }); if (_dp0) pendingPhoto = _dp0; }
@@ -417,10 +515,12 @@
           },
           tickets: pendingTickets.slice(),
           photo: pendingPhoto,
+          editId: editingId || null, // v56: an in-progress edit stays an edit across reloads
           savedAt: Date.now()
         };
       }
       function draftIsEmpty(d) {
+        if (d.editId) return false; // v56: an edit in progress is never an "empty" draft
         var f = d.fields || {};
         var any = f.jobSite || f.scheduledAt || f.equipment || f.material ||
                   f.ticketNo || f.amount || f.notes || f.lat || f.lng || f.driverId;
@@ -469,7 +569,13 @@
           body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
             ' — <a href="https://www.google.com/maps?q=' + f.lat + ',' + f.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
         }
-        if (!draftIsEmpty({ fields: f, tickets: pendingTickets, photo: pendingPhoto })) {
+        if (editingId) {
+          /* v56: an edit draft restores AS an edit — the banner names
+             the record and promises exactly what Save changes does. */
+          body.querySelector('#dp_draft_note').innerHTML =
+            '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">✏️ <b>Editing: ' + esc(editRec.jobSite || editRec.pickup || 'dispatch') + '</b> — your changes update this saved dispatch when you tap “Save changes”. Its start time and status do not change.' +
+            (draft0.photoDropped ? '<br>⚠️ The ticket photo could not be kept (the app storage on your phone was full) — please add the photo again.' : '') + '</div>';
+        } else if (!draftIsEmpty({ fields: f, tickets: pendingTickets, photo: pendingPhoto })) {
           body.querySelector('#dp_draft_note').innerHTML =
             '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">📝 <b>Draft restored</b> — this unsaved dispatch was kept from last time. Check it, then tap Save.' +
             (draft0.photoDropped ? '<br>⚠️ The ticket photo could not be kept (the app storage on your phone was full) — please add the photo again.' : '') + '</div>';
@@ -604,6 +710,12 @@
 
       /* v48: restore a kept draft (fields + tickets + note) */
       if (draft0) { restoreDraft(); renderTicketList(); updateNameEl(); }
+      /* v56: the record behind an abandoned edit draft was deleted —
+         the edit was discarded at the top of render; say so plainly. */
+      if (editGone) {
+        body.querySelector('#dp_draft_note').innerHTML =
+          '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">✏️ The dispatch you were editing is no longer there, so that unfinished edit was discarded. Nothing was changed.</div>';
+      }
 
       /* v26: OCR — after photo selected, run Tesseract, then append ticket.
          v35: OCR runs on the larger rendition (ocrUrl); the ticket keeps
@@ -765,8 +877,67 @@
         api.render(body);
       }
 
-      body.querySelector('#dp_add').onclick = function () { attemptSave(false); };
-      body.querySelector('#dp_addstart').onclick = function () { attemptSave(true); };
+      /* v56: EDIT save — the verified-update twin of attemptSave.
+         Builds the updated record from the ORIGINAL (lifecycle
+         fields pinned by dspApplyEdit), writes it back under the
+         SAME id, and only then clears the draft. On failure the
+         stored record is untouched, the edit stays as a draft, and
+         an in-page error says so — the v48 rules, unchanged. */
+      function attemptEditSave() {
+        clearSaveError();
+        var orig = dspFindRecord(editingId);
+        if (!orig) { dspClearDraft(); api.render(body); return; } // gone mid-edit; render discards + explains
+        var fields = readForm();
+        if (!fields.jobSite) { showSaveError('Enter the job site first — nothing was saved. Your edit is kept below as a draft.'); return; }
+        fields.date = orig.date; // readForm stamps today; an edit never moves the dispatch's day
+        var updated = dspApplyEdit(orig, fields, pendingTickets, pendingPhoto);
+        var res = dspUpdateRecord(updated, orig);
+        if (!res.ok) {
+          persistDraft(); // best effort — the on-screen form is untouched either way
+          showSaveError('⚠️ Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the saved dispatch is unchanged. Your edit is kept as a draft below, so nothing is lost. Free up some phone space, then tap “Save changes” again.');
+          return;
+        }
+        dspClearDraft(); // only a verified update clears the draft
+        fbSave(updated);
+        manifestFeedPush('dispatch', 'Dispatch edited: ' + updated.jobSite + (updated.ticketNo ? ' · ticket #' + updated.ticketNo : ''));
+        api.render(body);
+      }
+      /* v56: enter edit mode for a record — the record is loaded into
+         the form THROUGH the draft (editId carried), so a mid-edit
+         app close restores the edit itself, never a new dispatch. */
+      function startEdit(d) {
+        if (!d) return;
+        var fields = {
+          jobSite: d.jobSite || '', scheduledAt: d.scheduledAt || '', equipment: d.equipment || '',
+          lat: (d.lat !== null && d.lat !== undefined) ? String(d.lat) : '',
+          lng: (d.lng !== null && d.lng !== undefined) ? String(d.lng) : '',
+          material: d.material || '', ticketNo: d.ticketNo || '',
+          amount: (d.amount !== null && d.amount !== undefined) ? String(d.amount) : '',
+          loads: (d.loads !== null && d.loads !== undefined) ? String(d.loads) : '1',
+          notes: d.notes || '', driverId: d.driverId || ''
+        };
+        var tk = (d.tickets || []).map(function (t) {
+          var c = {};
+          for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k]; }
+          return c;
+        });
+        var draft = { fields: fields, tickets: tk, photo: dspPhotoFor(d), editId: d.id, savedAt: Date.now() };
+        if (dspSaveDraft(draft) === false) { dspSaveDraft(dspSlimDraft(draft)); }
+        api.render(body);
+        var siteEl = body.querySelector('#dp_site');
+        if (siteEl && siteEl.scrollIntoView) { try { siteEl.scrollIntoView({ block: 'start' }); } catch (e) {} }
+      }
+
+      var addBtn = body.querySelector('#dp_add');
+      if (addBtn) addBtn.onclick = function () { attemptSave(false); };
+      var addStartBtn = body.querySelector('#dp_addstart');
+      if (addStartBtn) addStartBtn.onclick = function () { attemptSave(true); };
+      var saveEditBtn = body.querySelector('#dp_saveedit');
+      if (saveEditBtn) saveEditBtn.onclick = function () { attemptEditSave(); };
+      var cancelEditBtn = body.querySelector('#dp_canceledit');
+      if (cancelEditBtn) cancelEditBtn.onclick = function () { dspClearDraft(); api.render(body); };
+      var editActiveBtn = body.querySelector('#dp_edit_active');
+      if (editActiveBtn) editActiveBtn.onclick = function () { startEdit(active()); };
 
       var doneBtn = body.querySelector('#dp_complete');
       if (doneBtn) doneBtn.onclick = function () {
@@ -877,6 +1048,9 @@
           if (!confirm('Delete this dispatch?')) return;
           var l = list(); l.splice(+b.getAttribute('data-del'), 1); W('list', l); api.render(body);
         };
+      });
+      body.querySelectorAll('[data-edit]').forEach(function (b) {
+        b.onclick = function () { startEdit(list()[+b.getAttribute('data-edit')]); };
       });
     }
   };

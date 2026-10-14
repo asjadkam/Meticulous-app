@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 55,
+  "webVersion": 56,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     ".gitignore": "92473056db0816ef5a56a2b5b70e8856048a10292a2a04307fd79c3138954c68",
