@@ -823,7 +823,7 @@
     var t = App.tracker;
     return t.elapsed + (t.status === 'running' ? Math.floor((endMs - t.startTs) / 1000) : 0);
   }
-  function stopSessionAt(endMs, endOdoVal) {
+  function stopSessionAt(endMs) {
     var sec = trackedSecondsAt(endMs);
     // v40: close out live-miles tracking first (watcher off, final
     // crumb + total persisted) so the finished entry can carry the day.
@@ -839,12 +839,6 @@
       // shift start, pending on the tracker) onto the day's session.
       var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
       if (pendingStart) entry.startOdo = pendingStart;
-      // End-sheet odometer: a closing reading handed in with the stop
-      // (typed or snapped on the End shift sheet) lands on the entry
-      // being saved — every pay mode, no start reading required. Runs
-      // before the reconcile below and before the entry is handed to
-      // FB.saveDoc / Revenue, so every consumer sees the whole entry.
-      applyEndOdoToEntry(entry, endOdoVal);
       // v40: live miles for the day (only when fixes actually flowed —
       // no field at all when location was unavailable; never a fake 0).
       if (milesFin && typeof milesFin.liveKm === 'number') {
@@ -882,23 +876,13 @@
     try { if (window.ShiftTrack) ShiftTrack.drainNow(); } catch (e) {}
     var now = new Date();
     el('trkEndTime').value = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
-    // The end-odometer field starts blank every time the sheet opens:
-    // yesterday's reading must never ride into today's close, and any
-    // photo read still in flight from a previous open is disowned.
-    _endOdoToken++;
-    var eoIn = el('trkEndOdo'); if (eoIn) eoIn.value = '';
-    var eoSt = el('trkEndOdoStatus'); if (eoSt) eoSt.innerHTML = '';
     el('trkEndSheet').classList.add('open');
     el('scrim').classList.add('show');
     el('scrim').onclick = function () { closeTrackerEndSheet(); };
   };
   App.trackerSaveEnd = function () {
     var v = el('trkEndTime').value; // "HH:MM"
-    // Optional end-odometer value from this sheet (typed or snapped).
-    // Blank = skipped — the stop saves exactly as it always has.
-    var eoEl = el('trkEndOdo');
-    var endOdoVal = eoEl ? eoEl.value : '';
-    if (!v) { closeTrackerEndSheet(); stopSessionAt(Date.now(), endOdoVal); return; }
+    if (!v) { closeTrackerEndSheet(); App.trackerStop(); return; }
     var parts = v.split(':'), startMs = trackerSessionStartMs(), sd = new Date(startMs);
     var end = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(),
       parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
@@ -908,83 +892,8 @@
     if (secs <= 0) { alert('That end time is not after the start. Check the times and try again.'); return; }
     if (secs > 12 * 3600 && !confirm('That makes a ' + fmtClock(secs) + ' shift. Is that right?')) { return; }
     closeTrackerEndSheet();
-    stopSessionAt(end.getTime(), endOdoVal);
+    stopSessionAt(end.getTime());
   };
-
-  /* End-sheet odometer photo: the End shift sheet's own camera/file
-     actions — present for EVERY pay mode, unlike the v46 odo prompt
-     (by-mile, or the opt-in "Daily odometer photos" preference; that
-     sheet stays as-is for its start/end prompts). Same reader
-     pipeline as the odo sheet: TicketOCR -> parseOdometerReading ->
-     the v63 plausibility gate (a below-master read counts as failed,
-     never filled) -> the v59 power-read escalation on a local miss.
-     A read only FILLS the editable field — nothing persists until
-     "Stop & save", and the field may stay blank. Callbacks re-check
-     the token + the sheet is still open, so a late answer never
-     hijacks a later close. */
-  var _endOdoToken = 0;
-  function endOdoLive(token) {
-    var s = el('trkEndSheet');
-    return token === _endOdoToken && !!(s && s.classList.contains('open'));
-  }
-  function endOdoSetStatus(html) {
-    var st = el('trkEndOdoStatus');
-    if (st) st.innerHTML = html;
-  }
-  function endSheetOdoHandleFile(file) {
-    if (!file) return;
-    var token = ++_endOdoToken;
-    if (!window.TicketOCR || !TicketOCR.fileToOCRImage) {
-      endOdoSetStatus('⚠️ Photo reader not ready — type the reading above, or leave it blank.');
-      return;
-    }
-    endOdoSetStatus('📖 Reading photo…');
-    TicketOCR.fileToOCRImage(file, function (ocrUrl) {
-      if (!endOdoLive(token)) return;
-      if (!ocrUrl) { endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.'); return; }
-      TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
-        try { if (endOdoLive(token)) endOdoSetStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
-      }).then(function (text) {
-        if (!endOdoLive(token)) return;
-        var km = parseOdometerReading(text);
-        if (km && !odoLocalFailed(km)) {
-          var inp = el('trkEndOdo');
-          if (inp) inp.value = km;
-          endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
-        } else {
-          if (km) endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
-          else endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.');
-          endSheetOdoPowerRead(ocrUrl, token);
-        }
-      }).catch(function () {
-        if (endOdoLive(token)) endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.');
-      });
-    });
-  }
-  /* Power-read escalation for the end sheet — mirrors the odo
-     sheet's: the cloud value fills this same field, and the sheet's
-     Stop & save stays the confirm. A skip (off / no key) is reported
-     in the sheet, never silent. */
-  function endSheetOdoPowerRead(ocrUrl, token) {
-    if (!window.PowerRead || !PowerRead.escalate) return;
-    PowerRead.escalate({
-      reader: 'odometer', image: ocrUrl, origin: { module: 'tracker', label: 'the end-of-shift sheet' },
-      onStatus: function (s) {
-        if (!endOdoLive(token)) return;
-        if (s.state === 'waiting') endOdoSetStatus('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the reading, or leave it blank.');
-        else if (s.state === 'unavailable') endOdoSetStatus(s.message + ' Type the reading above, or leave it blank.');
-        else if (s.state === 'error') endOdoSetStatus(s.message + ' Type the reading above, or leave it blank.');
-      },
-      onResult: function (res) {
-        if (!endOdoLive(token)) return;
-        var v = res.fields && res.fields.value;
-        if (!v) { endOdoSetStatus('⚡ Power read couldn\'t read it either — type it above, or leave it blank.'); return; }
-        var inp = el('trkEndOdo');
-        if (inp) inp.value = v;
-        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
-      }
-    });
-  }
 
   /* ODO-PROMPT-BEGIN — day odometer prompts (v39, generalized v46).
      Decision + record-keeping only (DOM lives in maybePromptOdo below).
@@ -1073,25 +982,6 @@
       }
     }
     return false;
-  }
-  /* End-of-shift sheet reading (owner, Oct 14: "make sure there is a
-     way at the end of the shift to snap a picture of the odo to close
-     it"). The End shift sheet asks EVERY driver for the closing
-     odometer — typed, or snapped with its camera/file actions — and
-     hands the value in WITH the stop, so it lands here, on the entry
-     stopSessionAt is saving. Unlike applyOdoReading('end', ...) it
-     needs NO start reading first and never creates a session; it only
-     completes the one being saved. The master moves upward only, like
-     every other capture point; a reading at or below the master still
-     stays on the entry (the driver's word for the day) — it just
-     cannot drag the master down. Blank/garbage = skipped, returns
-     false, entry untouched. */
-  function applyEndOdoToEntry(entry, value) {
-    var n = parseFloat(value);
-    if (!entry || !(n > 0)) return false;
-    entry.endOdo = n;
-    bumpOdometer(n);
-    return true;
   }
   /* stopSessionAt: move the pending start reading onto the new session
      entry. Matches on the session's START date, so an overnight shift
@@ -2225,10 +2115,6 @@
     el('odoSheetPick').onclick = function () { el('odoSheetIn').click(); };
     el('odoSheetCamIn').onchange = function () { odoSheetHandleFile(el('odoSheetCamIn').files[0]); el('odoSheetCamIn').value = ''; };
     el('odoSheetIn').onchange = function () { odoSheetHandleFile(el('odoSheetIn').files[0]); el('odoSheetIn').value = ''; };
-    el('trkEndOdoCam').onclick = function () { el('trkEndOdoCamIn').click(); };
-    el('trkEndOdoPick').onclick = function () { el('trkEndOdoIn').click(); };
-    el('trkEndOdoCamIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoCamIn').files[0]); el('trkEndOdoCamIn').value = ''; };
-    el('trkEndOdoIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoIn').files[0]); el('trkEndOdoIn').value = ''; };
     el('odoSheetSave').onclick = function () { App.odoSheetSave(); }; // v46: confirm the reading in the sheet
     // v41: dynamic tracker controls — mode buttons under the hero
     // (delegated: the buttons are re-rendered by paintTrackerExtra), the
