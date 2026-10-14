@@ -153,8 +153,9 @@
 
     // Ticket number — may appear twice (two copies). Strict digits-only;
     // bestNumeric takes the first contiguous run so adjacent columns
-    // ("1026538139 6") don't get concatenated.
-    var tickets = allMatches(text, /Ticket:\s*([\d\s]{6,14})/gi);
+    // ("1026538139 6") don't get concatenated. Photo OCR renders the
+    // label "Ticket." (period) as often as "Ticket:".
+    var tickets = allMatches(text, /Ticket\s*[.:]?\s*([\d\s]{6,14})/gi);
     f.ticketNo = bestNumeric(tickets);
 
     f.date = firstMatch(text, [
@@ -167,9 +168,49 @@
       /(\d{1,2}:\d{2}:\d{2}\s*[AP]M)/i
     ]);
 
-    f.gross = firstMatch(text, [/Gross:\s*([\d.]+)/i]);
-    f.tare = firstMatch(text, [/Tare:\s*([\d.]+)/i]);
-    f.net = firstMatch(text, [/Net:\s*([\d.]+)/i]);
+    // Weights — photo OCR drops the colon and sometimes the decimal
+    // point ("Gross 22.42Tare;_1024Net 12 14" on one run-together
+    // line). Tolerate both; a space inside the number is the decimal.
+    var weightSpaceForm = {};
+    function weightVal(label) {
+      var m = text.match(new RegExp(label + '[^0-9\\n]{0,3}([\\d]+(?:[.\\s][\\d]+)?)', 'i'));
+      if (!m) return null;
+      if (/\s/.test(m[1])) weightSpaceForm[label] = true; // decimal point OCR'd as a space — lower confidence
+      var v = m[1].replace(/\s+/g, '.');
+      var n = parseFloat(v);
+      return isFinite(n) ? String(n) : null;
+    }
+    f.gross = weightVal('Gross');
+    f.tare = weightVal('Tare');
+    f.net = weightVal('Net');
+    // Decimal-point repair: a weight that OCR'd as a bare 3+ digit
+    // integer ("1024" for 10.24) is rescaled when the result is a
+    // plausible scale weight and the raw value is not.
+    ['gross', 'tare', 'net'].forEach(function (k) {
+      if (!f[k] || f[k].indexOf('.') >= 0) return;
+      var raw = parseFloat(f[k]);
+      if (raw >= 100) {
+        var fixed = raw / 100;
+        var g = parseFloat(f.gross);
+        if (fixed < 200 && (k === 'gross' || !isFinite(g) || fixed < g)) f[k] = String(fixed);
+      }
+    });
+    // Scale arithmetic is definitional: any two weights give the third.
+    // And when all three are present but disagree slightly, a weight
+    // whose decimal point OCR'd as a space is the least reliable —
+    // recompute it from the other two.
+    (function () {
+      var g = parseFloat(f.gross), t = parseFloat(f.tare), n = parseFloat(f.net);
+      function r2(x) { return String(Math.round(x * 100) / 100); }
+      if (isFinite(g) && isFinite(t) && !isFinite(n) && g > t) f.net = r2(g - t);
+      else if (isFinite(g) && isFinite(n) && !isFinite(t) && g > n) f.tare = r2(g - n);
+      else if (isFinite(t) && isFinite(n) && !isFinite(g)) f.gross = r2(t + n);
+      else if (isFinite(g) && isFinite(t) && isFinite(n) && Math.abs(g - t - n) > 0.02 && Math.abs(g - t - n) <= 0.15) {
+        if (weightSpaceForm.Net && !weightSpaceForm.Gross && !weightSpaceForm.Tare) f.net = r2(g - t);
+        else if (weightSpaceForm.Tare && !weightSpaceForm.Gross && !weightSpaceForm.Net) f.tare = r2(g - n);
+        else if (weightSpaceForm.Gross && !weightSpaceForm.Tare && !weightSpaceForm.Net) f.gross = r2(t + n);
+      }
+    })();
 
     // Product — e.g., "40MM CRUSHED ROCK". OCR may misread digits ("20MM").
     // Prefer the match that appears most often (two copies = dedupe).
@@ -218,6 +259,12 @@
     f.receivedToday = firstMatch(text, [
       /Received Today:?\s*([\d.]+)\s*[t1lI]?\b/i
     ]);
+    // Photo OCR drops the decimal point in this cumulative figure
+    // ("10022" for 100.22 t): a 4+ digit integer here is tonnes with
+    // two implied decimals.
+    if (f.receivedToday && /^\d{4,}$/.test(f.receivedToday)) {
+      f.receivedToday = f.receivedToday.slice(0, -2) + '.' + f.receivedToday.slice(-2);
+    }
     // Normalize: ensure it ends with " t" for tonnes
     if (f.receivedToday && !/[a-z]/i.test(f.receivedToday)) {
       f.receivedToday = f.receivedToday + ' t';
@@ -308,6 +355,72 @@
     var inst = firstMatch(text, [/(Go\s+Empty\s+To)/i]);
     if (inst) f.instructions = inst;
 
+    /* v52: driver-speak movement extraction — move type, destination,
+       origin. Dispatches arrive as terse instructions: "Go to Ivor East
+       Pond empty", "Twins East loaded to the plant", "Haul from North
+       Pit to South Plant". The extracted place names are LABELS ONLY —
+       never geocode a name (v50 rule); fences need coordinates. */
+    function trimPlace(s) {
+      if (!s) return null;
+      s = String(s).replace(/\s+/g, ' ').trim();
+      s = s.replace(/^(the|to|at)\s+/i, '');
+      s = s.replace(/\s+(empty|loaded|tomorrow|today|tandem|tridem|please|and then)\b.*$/i, '');
+      s = s.replace(/[\s,.:;]+$/, '').trim();
+      if (s.length < 3 || !/[A-Za-z]/.test(s)) return null;
+      if (/^(here|there|site|yard\s+gate)$/i.test(s)) return s.length >= 4 ? s : null;
+      return s;
+    }
+    var mv = null; // {moveType, destination, origin, clause}
+    var mFromTo = text.match(/\bfrom\s+(?:the\s+)?(.{2,40}?)\s+to\s+(?:the\s+)?(.{2,40}?)(?=[.,;\n]|$|\s+empty\b|\s+loaded\b)/i);
+    if (mFromTo) {
+      mv = { origin: trimPlace(mFromTo[1]), destination: trimPlace(mFromTo[2]),
+             moveType: /\bempty\b/i.test(text) ? 'empty' : 'loaded' };
+    }
+    if (!mv) {
+      var mLead = text.match(/^(.{2,40}?)\s+loaded\s+to\s+(?:the\s+)?(.{2,40}?)(?=[.,;\n]|$)/im);
+      if (mLead) mv = { origin: trimPlace(mLead[1]), destination: trimPlace(mLead[2]), moveType: 'loaded' };
+    }
+    if (!mv) {
+      var mAt = text.match(/\bloaded\s+at\s+(.{2,40}?)[,;]\s*dump\s+(?:at|to)\s+(?:the\s+)?(.{2,40}?)(?=[.,;\n]|$)/i);
+      if (mAt) mv = { origin: trimPlace(mAt[1]), destination: trimPlace(mAt[2]), moveType: 'loaded' };
+    }
+    if (!mv) {
+      var mGet = text.match(/\bgo\s+empty\s+to\s+(?:the\s+)?(.{2,40}?)(?=[.,;:\n]|$)/i);
+      if (mGet) mv = { destination: trimPlace(mGet[1]), moveType: 'empty' };
+    }
+    if (!mv) {
+      var mDh = text.match(/\bdeadhead\s+(?:to\s+)?(?:the\s+)?(.{2,40}?)(?=[.,;\n]|$)/i);
+      if (mDh) mv = { destination: trimPlace(mDh[1]), moveType: 'empty' };
+    }
+    if (!mv) {
+      var mGte = text.match(/\bgo\s+to\s+(?:the\s+)?(.{2,40}?)\s+empty\b/i);
+      if (mGte) mv = { destination: trimPlace(mGte[1]), moveType: 'empty' };
+    }
+    if (!mv) {
+      var mHt = text.match(/\b(?:haul|bring|grab|load)\b[^.\n]{0,30}?\bto\s+(?:the\s+)?(.{2,40}?)(?=[.,;\n]|$)/i);
+      if (mHt) {
+        mv = { destination: trimPlace(mHt[1]), moveType: 'loaded' };
+        var mLead2 = text.match(/^(.{2,40}?),\s*(?:haul|bring|grab|load)\b/i);
+        if (mLead2) mv.origin = trimPlace(mLead2[1]);
+      }
+    }
+    if (!mv && /\bempty\b/i.test(text) && /\b(go|to|deadhead|travel|head)\b/i.test(text)) {
+      mv = { moveType: 'empty' };
+    }
+    if (!mv && /\b(grab|dump|haul|load|loaded|pick\s?up)\b/i.test(text)) {
+      mv = { moveType: 'loaded' };
+    }
+    if (mv) {
+      if (mv.moveType) f.moveType = mv.moveType;
+      if (mv.destination) f.destination = mv.destination;
+      else if (f.locationCode && mv.moveType === 'empty') f.destination = f.locationCode;
+      if (mv.origin) f.origin = mv.origin;
+      if (!f.instructions) {
+        var clause = text.match(/[^\n.!?]*\b(go|deadhead|haul|bring|grab|dump|loaded)\b[^\n.!?]*/i);
+        if (clause) f.instructions = clause[0].replace(/\s+/g, ' ').trim().slice(0, 90);
+      }
+    }
+
     // Coordinates — e.g., 50°57'59.4"N  114°01'54.4"W
     // v31 fix: convert DMS to decimal lat/lng so a real map pin can be made
     // (previously the raw DMS text was dumped into Notes).
@@ -363,25 +476,45 @@
   TicketOCR.parseHaulCard = function (text) {
     var f = { _type: 'haul_card' };
 
-    // Form type detection
-    f.isHaulCard = /DAILY\s+TRUCK\s+HAUL\s+CARD/i.test(text);
+    // Form type detection — the printed header OCRs imperfectly at
+    // photo resolution ("BAILY TRUCK HAUL CARD", words dropped), so
+    // accept the distinctive fragments in combination.
+    f.isHaulCard = /DAILY\s+TRUCK\s+HAUL\s+CARD/i.test(text) ||
+      /(DAILY|BAILY|DAIL)\s+TRUCK\s+HAUL/i.test(text) ||
+      (/TRUCK\s+HAUL/i.test(text) && /\bCARD\b/i.test(text)) ||
+      (/\bHAUL\s+CARD\b/i.test(text) && /(AECON|ACLU|ABCON)/i.test(text));
 
-    // Card number — printed, bottom-right (e.g., "23141")
-    // Look for a 4-6 digit number near OPERATOR/APPROVED BY or at end
+    // Card number — printed, bottom-right (e.g., "23141"); most are 5
+    // digits but 4-digit cards exist (8590, 8367). Prefer a candidate
+    // near the end of the text (bottom of the form), 5-6 digits first,
+    // then a 4-digit that is not a year.
     var cardNo = firstMatch(text, [
       /OPERATOR[\s\S]{0,200}?(\d{5})\s*$/i,
       /(\d{5})\s*$/,
       /\b(23141)\b/
     ]);
-    // Fallback: any 5-digit number (card numbers are 5 digits)
     if (!cardNo) {
-      var nums = allMatches(text, /\b(\d{5})\b/g);
-      if (nums.length) cardNo = nums[nums.length - 1];
+      var cand = [];
+      var reCN = /\b(\d{4,6})\b/g, mCN;
+      while ((mCN = reCN.exec(text)) !== null) cand.push({ v: mCN[1], at: mCN.index });
+      var tail = cand.filter(function (c) { return c.at > text.length * 0.6 && c.v.length >= 5; });
+      if (tail.length) cardNo = tail[tail.length - 1].v;
+      if (!cardNo) {
+        var fives = cand.filter(function (c) { return c.v.length >= 5; });
+        if (fives.length) cardNo = fives[fives.length - 1].v;
+      }
+      if (!cardNo) {
+        var fours = cand.filter(function (c) {
+          var n = parseInt(c.v, 10); return !(n >= 1900 && n <= 2099);
+        });
+        if (fours.length) cardNo = fours[fours.length - 1].v;
+      }
     }
     f.cardNumber = cardNo;
 
-    // Company — OCR often misreads "AECON" as "ACLU"; fuzzy match
-    if (/AECON/i.test(text) || /ACLU/i.test(text)) f.company = 'AECON';
+    // Company — OCR misreads "AECON" several ways ("ACLU", "ABCON",
+    // "Aecon" with broken case); fuzzy match the observed variants
+    if (/AECON|ACLU|ABCON/i.test(text)) f.company = 'AECON';
 
     // Payment unit options — known for AECON haul cards.
     // OCR cannot reliably read these labels from the form, so we use the
@@ -535,7 +668,7 @@
   }
 
   TicketOCR.parseDocument = function (text) {
-    var isRateCon = /ORDER\s+CONFIRMATION|RATE\s+CONFIRMATION|LOAD\s+CONFIRMATION/i.test(text);
+    var isRateCon = /ORDER\s+CONFIRMATION|RATE\s+CONFIRMATION|LOAD\s+CONFIRMATION|CARRIER\s+CONFIRMATION/i.test(text);
     var isBOL = /STRAIGHT\s+BILL\s+OF\s+LADING/i.test(text) ||
                 (/BILL\s+OF\s+LADING/i.test(text) && !/NOT\s+A\s+BILL\s+OF\s+LADING/i.test(text));
     var weakDoc = /PICK\s?UP/i.test(text) && /SHIP\s+TO/i.test(text) &&
@@ -551,18 +684,38 @@
       var bp = companyPhrases(text.slice(billToAt, billToAt + 220));
       if (bp.length) f.broker = bp[0];
     }
+    if (f.broker) {
+      // Strip a leading section label ("Broker Info BBI" -> "BBI") and
+      // reject a bare label with no company behind it ("Bill To").
+      f.broker = f.broker.replace(/^(Broker\s+Info|Bill\s+To|Ship\s+To|Carrier|Broker)\s+/i, '');
+      if (/^(Bill\s+To|Ship\s+To|Pickup|Delivery|Broker\s+Info)$/i.test(f.broker)) f.broker = undefined;
+    }
     if (!f.broker) {
-      var hdr = firstMatch(text, [/^\s*([A-Z][A-Za-z&.'-]*(?:\s+[A-Z][A-Za-z&.'-]*){1,3})\s+(?:Order|Rate|Load)\s+Confirmation/im]);
+      var hdr = firstMatch(text, [/^\s*([A-Z][A-Za-z&.'-]*(?:\s+[A-Z][A-Za-z&.'-]*){1,3})\s+(?:Order|Rate|Load|Carrier)\s+Confirmation/im]);
       if (hdr) f.broker = cleanCompany(hdr);
     }
 
-    /* Order / confirmation number */
+    /* Order / confirmation number — broker formats vary wildly:
+       "Route # 3000217588", "Load #: 1551183", "LOAD# 268133",
+       "Load ID: 31367432", "LOAD NUMBER 13865084". Label-anchored
+       digit runs win; the generic fallbacks must contain a digit
+       (they used to capture words like "Date" / "Bill To"). */
     f.orderNo = firstMatch(text, [
-      /(?:Order|Rate|Load)\s+Confirmation\s*:?\s*#?\s*([A-Z]{1,5}[- ]?[A-Z0-9-]{2,})/i,
-      /Confirmation\s*(?:#|No\.?)?\s*:?\s*([A-Z0-9-]{4,})/i,
-      /Order\s*#\s*:?\s*([A-Z0-9-]{3,})/i,
-      /Pickup\s*#\s*:?\s*([A-Z0-9-]{4,})/i
+      /\bRoute\s*#\s*:?\s*(\d{5,})/i,
+      /\bLoad\s*#\s*:?\s*(\d{4,})/i,
+      /\bLoad\s+ID\s*:?\s*(\d{4,})/i,
+      /\bLoad\s+Number\s*:?\s*(\d{4,})/i,
+      /\bOrder\s*#\s*:?\s*(\d{3,})/i,
+      /\bConfirmation\s*(?:#|No\.?)\s*:?\s*(\d{4,})/i
     ]);
+    if (!f.orderNo) {
+      var gen = firstMatch(text, [
+        /(?:Order|Rate|Load)\s+Confirmation\s*:?\s*#?\s*([A-Z]{1,5}[- ]?[A-Z0-9-]{2,})/i,
+        /Confirmation\s*(?:#|No\.?)?\s*:?\s*([A-Z0-9-]{4,})/i,
+        /Pickup\s*#\s*:?\s*([A-Z0-9-]{4,})/i
+      ]);
+      if (gen && /\d/.test(gen)) f.orderNo = gen;
+    }
 
     /* Total amount / rate */
     var amt = firstMatch(text, [
@@ -985,8 +1138,15 @@
     if (lit) f.litres = clean(num(lit), 3);
     else if (trip) f.litres = clean(trip.litres, 3);
     else {
-      var at = t.match(/([\d,]+\.\d{1,3})\s*L\s*@\s*\$?\s*([\d,]+\.\d{3})/i);
-      if (at) { f.litres = clean(num(at[1]), 3); f.pricePerLitre = clean(num(at[2]), 3); }
+      var at = t.match(/([\d,]+\.\d{1,3})\s*L\s*@\s*\$?\s*([\d,]+\.\d{3})/i) ||
+               t.match(/([\d,]+\.\d{3,4})\s*(?:AT|@)\s*\$?\s*([\d,]+\.\d{3})\s*\/\s*L/i);
+      if (at) {
+        f.litres = clean(num(at[1]), 3); f.pricePerLitre = clean(num(at[2]), 3);
+        // The pair is printed together ("103.805 AT $2.348/L"), so when
+        // the TOTAL line itself didn't survive OCR, litres x price is
+        // the total within the printed price's rounding.
+        if (!f.cost) f.cost = clean(num(at[1]) * num(at[2]), 2);
+      }
       else {
         var lu = t.match(/([\d,]+\.\d{2,3})\s*(?:LITRES|LITERS)\b/i) || t.match(/([\d,]+\.\d{3})\s*L\b/i);
         if (lu) f.litres = clean(num(lu[1]), 3);
@@ -1011,7 +1171,7 @@
     var BRANDS = [
       ['Petro-Pass', /petro[\s\-–]?pass/i],
       ['Petro-Canada', /petro[\s\-–]?canada/i],
-      ['Mobil', /\bmobil\b/i],
+      ['Mobil', /\bmobil\b|\bmobile\b/i],
       ['Shell', /\bshell\b/i],
       ['Esso', /\besso\b/i],
       ['Husky', /\bhusky\b/i],
@@ -1175,7 +1335,7 @@
       ['TELUS', /\btelus\b/i],
       ['Rogers', /\brogers\b/i],
       ['Koodo', /\bkoodo\b/i],
-      ['Mobil', /\bmobil\b/i],
+      ['Mobil', /\bmobil\b|\bmobile\b/i],
       ['Shell', /\bshell\b/i],
       ['Esso', /\besso\b/i],
       ['Petro-Canada', /petro[\s\-–]?canada/i],
@@ -1194,6 +1354,15 @@
         if (/^\d/.test(ln)) continue;                       // street address
         if (/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/.test(ln)) continue; // phone
         if (/receipt|invoice|welcome|thank|cashier|server|order\s|gst|hst|www\.|@|tel\b|phone|fax/i.test(ln)) continue;
+        // OCR-garble guard: on a real vendor line most letters live in
+        // real words (3+ letters); symbol soup is fragments and singles.
+        var words = ln.match(/[A-Za-z]{2,}/g) || [];
+        if (!words.some(function (w) { return w.length >= 4; })) continue;
+        var lettersTotal = (ln.match(/[A-Za-z]/g) || []).length;
+        var lettersInWords = words.reduce(function (a, w) { return a + (w.length >= 3 ? w.length : 0); }, 0);
+        if (!lettersTotal || lettersInWords / lettersTotal < 0.5) continue;
+        var singles = (ln.match(/\b[A-Za-z]\b/g) || []).length;
+        if (singles >= 3 && singles * 2 > words.length + singles) continue;
         if (normDate(ln) && ln.length < 22) continue;       // a bare date line
         ln = ln.replace(/\s+(#\d+|store\s*\d+)$/i, '');
         var cc = cleanCompany(ln);
