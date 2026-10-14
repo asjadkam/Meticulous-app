@@ -495,6 +495,23 @@
         if (revEntry && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
           Meticulous.modules.revenue.addEntry(revEntry);
         }
+        /* v41: dynamic tracker — a dispatch completed during a running
+           session counts as one trip for the day, and its tickets' NET
+           weights (tonnes) accumulate into the session's Weight total.
+           No-op when the tracker is idle (App.noteDispatchCompleted). */
+        try {
+          if (window.App && App.noteDispatchCompleted) {
+            var netTonnes = 0, wLoads = 0;
+            tickets.forEach(function (t) {
+              var nw = parseFloat(t && t.netWeight);
+              if (nw > 0) { netTonnes += nw; wLoads++; }
+            });
+            if (!(netTonnes > 0) && parseFloat(cur.netWeight) > 0) {
+              netTonnes = parseFloat(cur.netWeight); wLoads = 1;
+            }
+            App.noteDispatchCompleted({ netTonnes: netTonnes, weightLoads: wLoads });
+          }
+        } catch (e) {}
         manifestFeedPush('dispatch', 'Dispatch completed: ' + (cur.jobSite || '') +
           (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '') + (amt > 0 ? ' · $' + amt.toFixed(2) : ''));
         alert(amt > 0 ? 'Dispatch completed — $' + amt.toFixed(2) + ' logged to Revenue.' : 'Dispatch completed.');

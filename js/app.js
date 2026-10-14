@@ -303,12 +303,217 @@
 
   /* ---------------- tracker ---------------- */
   function trackerSave() { store.set('tracker', App.tracker); }
+
+  /* DYN-TRACKER-BEGIN — the dynamic tracker (v41, Asjad: "a very key
+     feature"). The big home-screen tracker tracks a different quantity
+     per pay method (onboarding.payStandard):
+       Hourly -> a timer (unchanged) · Miles -> a live-miles dial ·
+       Weight -> accumulated NET weight · Trip -> a simple load counter.
+     Same start/pause/stop for all; elapsed time always records
+     underneath. Decision + bookkeeping only (DOM glue is paintHero
+     below). Harness-extractable: may use `store`, `App.tracker`,
+     `fmtClock`, `trackerSave`, and window.LiveMiles (guarded). */
+  function payMode() {
+    var o = store.get('onboarding', {});
+    var s = String((o && o.payStandard) || 'Hourly').toLowerCase();
+    if (s === 'miles') return 'Miles';
+    if (s === 'weight') return 'Weight';
+    if (s === 'trip') return 'Trip';
+    return 'Hourly';
+  }
+  function round2(n) { return Math.round(n * 100) / 100; }
+  var LBS_PER_KG = 2.2046;
+  function kgFromUnit(v, unit) {
+    v = parseFloat(v) || 0;
+    if (unit === 't') return v * 1000;
+    if (unit === 'lbs') return v / LBS_PER_KG;
+    return v; // kg
+  }
+  function withCommas(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  /* Display formatting for a kg quantity in the chosen unit. */
+  function fmtWeightKg(kg, unit) {
+    kg = parseFloat(kg) || 0;
+    if (unit === 'lbs') return { text: withCommas(Math.round(kg * LBS_PER_KG)), unit: 'lbs' };
+    if (unit === 't') return { text: String(Math.round(kg / 10) / 100), unit: 't' };
+    return { text: withCommas(Math.round(kg)), unit: 'kg' };
+  }
+  /* Weight display unit: 't' | 'kg' | 'lbs', chosen by tapping the unit
+     on the tracker hero; persisted as a preference (store key). */
+  function weightUnit() {
+    var u = store.get('weightUnit', 't');
+    return (u === 't' || u === 'kg' || u === 'lbs') ? u : 't';
+  }
+  function cycleWeightUnit() {
+    var order = ['t', 'kg', 'lbs'];
+    var n = order[(order.indexOf(weightUnit()) + 1) % order.length];
+    store.set('weightUnit', n);
+    return n;
+  }
+  function sessionActive() {
+    return !!(App.tracker && App.tracker.status && App.tracker.status !== 'idle');
+  }
+  /* Session-scoped accumulators, persisted on the tracker state (so a
+     relaunch mid-shift keeps the day). Fresh at every fresh start. */
+  function trkAccum() {
+    var t = App.tracker;
+    if (!t.accum || typeof t.accum !== 'object') t.accum = { weightKg: 0, loadCount: 0, tripCount: 0 };
+    if (typeof t.accum.weightKg !== 'number') t.accum.weightKg = 0;
+    if (typeof t.accum.loadCount !== 'number') t.accum.loadCount = 0;
+    if (typeof t.accum.tripCount !== 'number') t.accum.tripCount = 0;
+    return t.accum;
+  }
+  function resetAccum() {
+    App.tracker.accum = { weightKg: 0, loadCount: 0, tripCount: 0 };
+  }
+  /* Manual "+ Add load" (Weight mode): weight entered in t/kg/lbs,
+     stored as kg. Allowed whenever the session is active (running OR
+     paused) — never when idle/stopped. Returns the accumulator, or
+     null when refused. */
+  function trackerAddLoad(weight, unit) {
+    if (!sessionActive()) return null;
+    var kg = kgFromUnit(weight, unit);
+    if (!(kg > 0)) return null;
+    var a = trkAccum();
+    a.weightKg = round2(a.weightKg + kg);
+    a.loadCount += 1;
+    trackerSave();
+    return a;
+  }
+  function trackerAddTrip() {
+    if (!sessionActive()) return null;
+    var a = trkAccum();
+    a.tripCount += 1;
+    trackerSave();
+    return a;
+  }
+  /* A dispatch completed while a session is active counts as one trip
+     toward the day; its tickets' NET weights (tonnes) join the Weight
+     accumulator. info: { netTonnes, weightLoads }. Returns false when
+     no session is active (that completion belongs to no tracked day). */
+  function noteDispatchCompleted(info) {
+    if (!sessionActive()) return false;
+    var a = trkAccum();
+    a.tripCount += 1;
+    var nt = parseFloat(info && info.netTonnes) || 0;
+    if (nt > 0) {
+      a.weightKg = round2(a.weightKg + nt * 1000);
+      a.loadCount += parseInt(info.weightLoads, 10) || 1;
+    }
+    trackerSave();
+    return true;
+  }
+  /* stopSessionAt: move the accumulated quantities onto the session
+     entry — canonical storage is totalWeightKg (kg) + loadCount, and
+     tripCount. Fields appear only when something was accumulated. */
+  function takeSessionAccum(entry) {
+    var a = App.tracker.accum;
+    if (!a) return;
+    if (a.weightKg > 0) {
+      entry.totalWeightKg = round2(a.weightKg);
+      entry.loadCount = a.loadCount || 0;
+    }
+    if (a.tripCount > 0) entry.tripCount = a.tripCount;
+  }
+  function liveKmNow() {
+    try { if (window.LiveMiles && LiveMiles.currentKm) return LiveMiles.currentKm(); } catch (e) {}
+    return null;
+  }
+  /* What the hero shows for a session with `sec` elapsed seconds.
+     Miles with no live fix: '— km' plus the session's starting-odometer
+     anchor when one exists — never a fake 0. */
+  function heroModel(sec) {
+    var mode = payMode(), t = App.tracker, a = trkAccum();
+    var m = { mode: mode, big: fmtClock(sec), unit: null, sub: '', showSub: false };
+    if (mode === 'Miles') {
+      var live = liveKmNow();
+      m.big = (live === null) ? '— km' : (Math.round(live * 10) / 10).toFixed(1) + ' km';
+      var parts = ['Elapsed ' + fmtClock(sec)];
+      if (t.odoStart && t.odoStart.value) parts.push('Start odo ' + Number(t.odoStart.value).toLocaleString('en-CA') + ' km');
+      m.sub = parts.join(' · '); m.showSub = true;
+    } else if (mode === 'Weight') {
+      var f = fmtWeightKg(a.weightKg, weightUnit());
+      m.big = f.text; m.unit = f.unit;
+      m.sub = (a.loadCount || 0) + (a.loadCount === 1 ? ' load' : ' loads');
+      m.showSub = true;
+    } else if (mode === 'Trip') {
+      m.big = String(a.tripCount || 0); m.unit = 'loads';
+      m.sub = 'Elapsed ' + fmtClock(sec); m.showSub = true;
+    }
+    return m;
+  }
+  /* DYN-TRACKER-END */
+
+  var _heroSig = '';
+  function paintHero(sec) {
+    var clock = el('trkClock');
+    if (!clock) return;
+    var m = heroModel(sec);
+    var html;
+    if (m.mode === 'Weight') html = esc(m.big) + ' <span class="trkUnit" id="trkUnitBtn" title="Tap to change unit">' + m.unit + '</span>';
+    else if (m.mode === 'Trip') html = esc(m.big) + ' <span class="trkUnitLbl">' + m.unit + '</span>';
+    else html = esc(m.big);
+    var sig = m.mode + '|' + html + '|' + (m.showSub ? m.sub : '');
+    if (sig !== _heroSig) {
+      _heroSig = sig;
+      clock.innerHTML = html;
+      var sub = el('trkSub');
+      if (sub) {
+        sub.textContent = m.showSub ? m.sub : '';
+        sub.classList.toggle('hidden', !m.showSub);
+      }
+    }
+    paintTrackerExtra(m.mode);
+  }
+  var _extraSig = '';
+  function paintTrackerExtra(mode) {
+    var box = el('trkExtra');
+    if (!box) return;
+    var sig = mode + '|' + App.tracker.status;
+    if (sig === _extraSig) return;
+    _extraSig = sig;
+    var h = '';
+    if (sessionActive() && mode === 'Weight') h = '<button type="button" class="trkAddBtn" id="trkAddLoadBtn">＋ Add load</button>';
+    else if (sessionActive() && mode === 'Trip') h = '<button type="button" class="trkAddBtn" id="trkAddTripBtn">＋ Load</button>';
+    box.innerHTML = h;
+  }
+  /* v41: "+ Add load" sheet (Weight mode) + public tracker APIs for
+     Dispatch (completion hook) and the tracker card controls. */
+  function closeLoadSheet() {
+    var s = el('loadSheet');
+    if (s) s.classList.remove('open');
+    el('scrim').classList.remove('show');
+    el('scrim').onclick = closeSidebar;
+  }
+  App.openLoadSheet = function () {
+    if (!sessionActive()) return;
+    var sel = el('ldUnit'); if (sel) sel.value = weightUnit();
+    var inp = el('ldWeight'); if (inp) inp.value = '';
+    el('loadSheet').classList.add('open');
+    el('scrim').classList.add('show');
+    el('scrim').onclick = function () { closeLoadSheet(); };
+  };
+  App.loadSheetSave = function () {
+    var w = parseFloat(el('ldWeight').value);
+    if (!(w > 0)) { alert('Enter the load weight.'); return; }
+    App.trackerAddLoad(w, el('ldUnit').value);
+    closeLoadSheet();
+  };
+  App.loadSheetCancel = function () { closeLoadSheet(); };
+  App.trackerAddLoad = function (w, u) { var a = trackerAddLoad(w, u); trackerTick(); return a; };
+  App.trackerAddTrip = function () { var a = trackerAddTrip(); trackerTick(); return a; };
+  App.noteDispatchCompleted = function (info) { var okd = noteDispatchCompleted(info); trackerTick(); return okd; };
+
   function trackerTick() {
     var t = App.tracker, sec = t.elapsed;
     if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
-    el('trkClock').textContent = fmtClock(sec);
+    // v41: the hero quantity depends on the pay method (dynamic tracker);
+    // for Hourly this renders exactly the same clock as before.
+    paintHero(sec);
     // v40: keep the "Miles (live)" dashboard line current
     try { if (window.LiveMiles) LiveMiles.paint(); } catch (e) {}
+    // v41: in Miles mode the dial IS the miles display — the small
+    // live-miles line would only repeat it.
+    if (payMode() === 'Miles') { var mm = el('trkMiles'); if (mm) mm.classList.add('hidden'); }
     // v27: minute check — start the tracker by itself when the auto-start time arrives
     // while the app is open (covers "set 6 AM and forget").
     if (!trackerTick._as || Date.now() - trackerTick._as > 60000) {
@@ -396,6 +601,7 @@
       // v28: if a start time was preset ("I actually started at 8:30"), count from there
       t.elapsed = t.presetStart ? Math.max(0, Math.floor((Date.now() - t.presetStart) / 1000)) : 0;
       delete t.presetStart;
+      resetAccum(); // v41: a fresh shift starts with empty weight/trip totals
     }
     else if (t.status === 'running') { t.elapsed += Math.floor((Date.now() - t.startTs) / 1000); t.status = 'paused'; }
     else { t.status = 'running'; t.startTs = Date.now(); }
@@ -437,6 +643,9 @@
         entry.liveKm = milesFin.liveKm;
         entry.milesKey = milesFin.key;
       }
+      // v41: the dynamic tracker's accumulated quantities for the day
+      // (Weight: totalWeightKg + loadCount; Trip: tripCount).
+      takeSessionAccum(entry);
       sessions.push(entry); store.set('sessions', sessions);
       // v40: both odometer readings already on the entry -> reconcile
       // now (the usual path reconciles when the end reading lands via
@@ -680,6 +889,7 @@
         App.tracker.status = 'running';
         App.tracker.startTs = Date.now();
         App.tracker.elapsed = 0;
+        resetAccum(); // v41: fresh auto-started shift, fresh totals
         trackerSave(); trackerPaint();
         autoStartNotify('Tracker auto-started at ' + label);
         // v40: an auto-started shift tracks live miles like any other.
@@ -1270,6 +1480,21 @@
     el('odoSheetPick').onclick = function () { el('odoSheetIn').click(); };
     el('odoSheetCamIn').onchange = function () { odoSheetHandleFile(el('odoSheetCamIn').files[0]); el('odoSheetCamIn').value = ''; };
     el('odoSheetIn').onchange = function () { odoSheetHandleFile(el('odoSheetIn').files[0]); el('odoSheetIn').value = ''; };
+    // v41: dynamic tracker controls — mode buttons under the hero
+    // (delegated: the buttons are re-rendered by paintTrackerExtra), the
+    // tappable weight unit on the hero, and the "+ Add load" sheet.
+    el('trkExtra').onclick = function (ev) {
+      var id = ev.target && ev.target.id;
+      if (id === 'trkAddTripBtn') App.trackerAddTrip();
+      else if (id === 'trkAddLoadBtn') App.openLoadSheet();
+    };
+    el('trkClock').onclick = function (ev) {
+      if (ev.target && ev.target.id === 'trkUnitBtn' && payMode() === 'Weight') {
+        cycleWeightUnit(); _heroSig = ''; trackerTick();
+      }
+    };
+    el('ldSave').onclick = App.loadSheetSave;
+    el('ldCancel').onclick = function () { App.loadSheetCancel(); };
     el('fbFab').onclick = App.openFeedback;
     el('fbCancel').onclick = function () { el('fbSheet').classList.remove('open'); el('scrim').classList.remove('show'); el('scrim').onclick = closeSidebar; };
     el('fbSend').onclick = sendFeedback;

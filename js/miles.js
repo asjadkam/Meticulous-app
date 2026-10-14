@@ -424,6 +424,16 @@
     flush: function () { persist(true); },
     paint: paint,
 
+    /* v41: the live total for the dynamic tracker's Miles dial.
+       Returns km (2dp) once at least one fix has been accepted; null
+       before that — no data is NOT 0 miles, and the dial shows '—'
+       (odometer-anchored) instead of a fake zero. */
+    currentKm: function () {
+      if (!engine.hasFix()) return null;
+      return Math.round(engine.totalM() / 10) / 100;
+    },
+    flowing: function () { return watching && !broken && engine.hasFix(); },
+
     crumbsFor: function (key) {
       var rec = recordFor(key);
       return rec && rec.crumbs ? rec.crumbs : [];

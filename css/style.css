@@ -49,6 +49,13 @@ body{
 .tracker .clock{font-size:36px;font-weight:700;letter-spacing:1px;margin:8px 0 16px;font-variant-numeric:tabular-nums;}
 .tracker .meta{font-size:13px;opacity:.8;margin-bottom:14px;}
 .tracker .miles{font-size:15px;font-weight:600;margin:0 0 12px;}
+/* v41: dynamic tracker — sub-line under the hero, tappable weight unit, mode buttons */
+.tracker .trksub{font-size:13px;opacity:.85;margin:-8px 0 12px;font-variant-numeric:tabular-nums;}
+.tracker .trkUnit{font-size:22px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:5px;}
+.tracker .trkUnitLbl{font-size:22px;opacity:.75;}
+.trkAddBtn{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.45);color:#fff;
+  border-radius:22px;padding:9px 24px;font-size:15px;font-weight:700;cursor:pointer;margin-top:14px;}
+.trkAddBtn:active{transform:scale(.97);}
 .tbtn{border:0;border-radius:50%;width:96px;height:96px;font-size:15px;font-weight:700;color:#fff;
   cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);}
 .tbtn.play{background:var(--green);}
@@ -184,12 +191,12 @@ canvas.chart{width:100%;height:170px;}
 /* ---------- v28 tracker start-time adjust ("I started at 8:30 but opened the app at 11:20") ---------- */
 .trkStartRow{margin:0 0 14px;font-size:13px;opacity:.85;display:flex;align-items:center;justify-content:center;gap:8px;}
 .trkEdit{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer;}
-#trkStartSheet,#trkEndSheet,#odoSheet{position:fixed;left:0;right:0;bottom:0;z-index:110;background:#fff;border-radius:18px 18px 0 0;
+#trkStartSheet,#trkEndSheet,#odoSheet,#loadSheet{position:fixed;left:0;right:0;bottom:0;z-index:110;background:#fff;border-radius:18px 18px 0 0;
   padding:18px;max-width:480px;margin:0 auto;transform:translateY(105%);transition:transform .25s;
   box-shadow:0 -4px 24px rgba(0,0,0,.2);}
-#trkStartSheet.open,#trkEndSheet.open,#odoSheet.open{transform:translateY(0);}
-#trkStartTime,#trkEndTime{width:100%;font-size:22px;padding:10px;border:2px solid #dfe4f2;border-radius:12px;margin:4px 0 12px;}
-@media(min-width:520px){ #trkStartSheet,#trkEndSheet,#odoSheet{right:calc(50% - 224px);left:calc(50% - 224px);} }
+#trkStartSheet.open,#trkEndSheet.open,#odoSheet.open,#loadSheet.open{transform:translateY(0);}
+#trkStartTime,#trkEndTime,#ldWeight,#ldUnit{width:100%;font-size:22px;padding:10px;border:2px solid #dfe4f2;border-radius:12px;margin:4px 0 12px;}
+@media(min-width:520px){ #trkStartSheet,#trkEndSheet,#odoSheet,#loadSheet{right:calc(50% - 224px);left:calc(50% - 224px);} }
 
 /* ---------- v27 cloud sync dot (topbar) ---------- */
 /* v34: padding + background-clip gives a ~24px tap target around the 10px

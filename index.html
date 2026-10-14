@@ -9,7 +9,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=25">
+<link rel="stylesheet" href="css/style.css?v=41">
 <style>
 /* critical splash: visible before style.css / JS load */
 #splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
@@ -111,6 +111,8 @@
       <div class="tracker">
         <div class="meta" id="trkMeta">Ready to work</div>
         <div class="clock" id="trkClock">00:00:00</div>
+        <!-- v41: dynamic tracker sub-line (elapsed / loads / start odo, per pay method) -->
+        <div class="trksub hidden" id="trkSub"></div>
         <div class="trkStartRow">
           <span id="trkStartLabel">Starts from now</span>
           <button class="trkEdit" id="trkEditStart">✎ Edit</button>
@@ -121,6 +123,8 @@
           <button class="tbtn play" id="trkMain">▶<br>START</button>
           <button class="tbtn stop hidden" id="trkStop">■<br>STOP</button>
         </div>
+        <!-- v41: dynamic tracker mode controls (+ Add load / + Load), rendered by js/app.js per pay method -->
+        <div id="trkExtra"></div>
       </div>
       <div class="modgrid" id="modGrid"></div>
     </div>
@@ -180,6 +184,19 @@
   <div id="odoSheetStatus" style="font-size:14px;margin:6px 0;"></div>
   <button type="button" class="btn ghost" id="odoSheetSkip" style="width:100%;">Skip</button>
 </div>
+<!-- v41: manual load entry for the Weight tracker (weight + unit -> kg) -->
+<div id="loadSheet">
+  <h3 style="margin:0 0 6px;color:var(--navy)">Add load</h3>
+  <p class="note" style="margin:0 0 8px">Net weight of this load — it joins today's total on the tracker.</p>
+  <div class="row">
+    <div><label class="f">Weight</label><input id="ldWeight" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 12.4"></div>
+    <div><label class="f">Unit</label><select id="ldUnit"><option value="t">tonnes (t)</option><option value="kg">kilograms (kg)</option><option value="lbs">pounds (lbs)</option></select></div>
+  </div>
+  <div class="row">
+    <button class="btn ghost" id="ldCancel">Cancel</button>
+    <button class="btn primary" id="ldSave">Add load</button>
+  </div>
+</div>
 
 <!-- v30 OTA: runs before everything else; gates app boot on OTA.ready() -->
 <script src="js/ota.js?v=30"></script>
@@ -191,8 +208,8 @@
 <script src="js/cloudsync.js?v=27"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="js/ticket-ocr.js?v=26"></script>
-<script src="modules/revenue.js?v=25"></script>
-<script src="modules/dispatch.js?v=25"></script>
+<script src="modules/revenue.js?v=41"></script>
+<script src="modules/dispatch.js?v=41"></script>
 <script src="modules/navigation.js?v=25"></script>
 <script src="modules/fuel.js?v=25"></script>
 <script src="modules/pnl.js?v=26"></script>
@@ -205,9 +222,9 @@
 <script src="modules/autostart.js?v=30"></script>
 <script src="modules/preferences.js?v=25"></script>
 <script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=27"></script>
+<script src="js/app.js?v=41"></script>
 <script src="js/geo.js?v=37"></script>
-<script src="js/miles.js?v=40"></script>
+<script src="js/miles.js?v=41"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

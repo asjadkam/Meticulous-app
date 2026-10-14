@@ -287,17 +287,56 @@
       var s = summary();
       return s.total > 0 ? 'Last ' + s.days + 'd: $' + s.total.toFixed(0) : 'No entries yet';
     },
-    /* Tracker hook — called by app.js when a work session stops. */
+    /* Tracker hook — called by app.js when a work session stops.
+       v41: the session entry carries the dynamic tracker's tracked
+       quantity for the pay standard, and the amount is priced from THAT
+       quantity (never from hours for non-hourly modes):
+         Miles  -> session.liveKm (fallback: endOdo - startOdo) x rate
+         Weight -> session.totalWeightKg (stored as tonnes) x rate
+         Trip   -> session.tripCount x rate
+         Hourly -> hours x rate (unchanged behaviour).
+       The quantity field is always set alongside the amount so payFor
+       can re-derive it if the rate is edited later. */
     onSession: function (session) {
       var o = App._store.get('onboarding', {});
       var std = (o.payStandard || 'hourly').toLowerCase();
+      var rate = parseFloat(o.payRate) || 0;
       var hrs = (session.seconds || 0) / 3600;
       var e = { date: session.date || App._today(), type: 'hourly', hours: hrs.toFixed(2), note: 'Auto from tracker', auto: true };
-      if (std === 'hourly' && parseFloat(o.payRate) > 0) {
-        e.amount = (hrs * parseFloat(o.payRate)).toFixed(2);
+      var feed = 'Tracked session ' + hrs.toFixed(2) + 'h logged to Revenue.';
+      if (std === 'miles') {
+        e.type = 'miles';
+        var km = (typeof session.liveKm === 'number') ? session.liveKm : null;
+        if (km === null && parseFloat(session.startOdo) > 0 && parseFloat(session.endOdo) > parseFloat(session.startOdo)) {
+          km = Math.round((parseFloat(session.endOdo) - parseFloat(session.startOdo)) * 100) / 100;
+        }
+        if (km !== null && km > 0) {
+          e.miles = String(km);
+          if (rate > 0) e.amount = (km * rate).toFixed(2);
+          feed = 'Tracked session: ' + km + ' km logged to Revenue.';
+        }
+      } else if (std === 'weight') {
+        e.type = 'weight';
+        var kg = parseFloat(session.totalWeightKg) || 0;
+        if (kg > 0) {
+          var tons = Math.round(kg / 10) / 100; // kg -> tonnes at 2dp, the unit payFor prices
+          e.tons = String(tons);
+          if (rate > 0) e.amount = (tons * rate).toFixed(2);
+          feed = 'Tracked session: ' + tons + 't logged to Revenue.';
+        }
+      } else if (std === 'trip') {
+        e.type = 'trip';
+        var trips = parseInt(session.tripCount, 10) || 0;
+        if (trips > 0) {
+          e.trips = String(trips);
+          if (rate > 0) e.amount = (trips * rate).toFixed(2);
+          feed = 'Tracked session: ' + trips + ' trip' + (trips === 1 ? '' : 's') + ' logged to Revenue.';
+        }
+      } else if (rate > 0) {
+        e.amount = (hrs * rate).toFixed(2);
       }
       var list = entries(); list.push(e); saveEntries(list);
-      manifestFeedPush('revenue', 'Tracked session ' + hrs.toFixed(2) + 'h logged to Revenue.');
+      manifestFeedPush('revenue', feed);
     },
     /* Cross-module: dispatch completion logs earnings here. */
     addEntry: function (e) {
