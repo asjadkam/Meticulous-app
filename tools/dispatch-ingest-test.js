@@ -426,5 +426,220 @@ const FIXTURES = [
      dspSrc.indexOf('DispatchIngest.use(') < dspSrc.indexOf('function attemptSave'));
 })();
 
+/* ================= (k) v66: multi-dispatch batch ================= */
+(function () {
+  console.log('(k) v66 multi-dispatch batch');
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const WDN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const p2 = function (n) { return ('0' + n).slice(-2); };
+  const dayAt = function (off) { const d = new Date(); d.setDate(d.getDate() + off); return d; };
+  const dstr = function (off) { const d = dayAt(off); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+  const hdr = function (d) { return WDN[d.getDay()] + ' ' + MON[d.getMonth()] + ' ' + d.getDate(); };
+
+  const w = makeWorld(freshBacking());
+  const DI = w.DispatchIngest;
+
+  /* (a) one text: 3 dated dispatches (mixed header formats) + one
+     chit-chat block under its own weekday header */
+  const msgA = [
+    'Boss:', hdr(dayAt(-2)), '8:00am', 'Tandem', 'Aecon Inf', 'Go Empty To A2-L20:', '',
+    'Yesterday', '7:30am', 'Tandem', 'Haul from North Pit to South Plant', '',
+    WDN[dayAt(0).getDay()], 'Soccer practice at 5, bring snacks for the team and sign the permission forms', '',
+    'Today', '8:00am', 'Go to Ivor East Pond empty'
+  ].join('\n');
+  const pb = DI.parseDispatchBatch(msgA);
+  eq('(k) message reads as a batch', pb.isBatch, true);
+  eq('(k) four blocks segmented', pb.segments.length, 4);
+  eq('(k) three blocks are dispatch-shaped', pb.segments.filter(function (s) { return s.isDispatchShape; }).length, 3);
+  const chatSeg = pb.segments.filter(function (s) { return s.text.indexOf('Soccer') !== -1; })[0];
+  ok('(k) chit-chat block yields nothing', !!chatSeg && !chatSeg.isDispatchShape);
+
+  const r1 = DI.intakeBatch(msgA, 'paste');
+  eq('(k) exactly 3 suggestions land', r1.added.length, 3);
+  eq('(k) tray holds 3', DI.list().length, 3);
+  const byDate = {};
+  DI.list().forEach(function (e) { byDate[e.segmentDate] = e; });
+  const eA = byDate[dstr(-2)], eB = byDate[dstr(-1)], eC = byDate[dstr(0)];
+  ok('(k) all three days present', !!(eA && eB && eC));
+  eq('(k) -2 scheduledAt', eA.fields.scheduledAt, dstr(-2) + 'T08:00');
+  eq('(k) -2 job site', eA.fields.jobSite, 'Aecon Inf');
+  eq('(k) -2 destination', eA.fields.destination, 'A2-L20');
+  eq('(k) -2 sender from its label line', eA.senderHint, 'Boss');
+  ok('(k) -2 card shows its own date', String(eA.fields.timeLabel).indexOf(hdr(dayAt(-2))) === 0, eA.fields.timeLabel);
+  eq('(k) -1 scheduledAt', eB.fields.scheduledAt, dstr(-1) + 'T07:30');
+  eq('(k) -1 origin', eB.fields.origin, 'North Pit');
+  eq('(k) -1 destination', eB.fields.destination, 'South Plant');
+  eq('(k) -1 carries no sender label', eB.senderHint, null);
+  eq('(k) today scheduledAt', eC.fields.scheduledAt, dstr(0) + 'T08:00');
+  eq('(k) today destination', eC.fields.destination, 'Ivor East Pond');
+  ok('(k) shared raw message referenced once per batch', DI.list().every(function (e) { return e.batchText === msgA; }));
+  ok('(k) one batch id across the three', DI.list().every(function (e) { return !!e.batchId && e.batchId === DI.list()[0].batchId; }));
+  ok('(k) each suggestion keeps its own segment text',
+    eA.rawText.indexOf('Aecon Inf') !== -1 && eA.rawText.indexOf('Ivor') === -1 && eC.rawText.indexOf('Ivor East Pond') !== -1);
+
+  /* (b) the same text pasted again adds nothing */
+  const r2 = DI.intakeBatch(msgA, 'paste');
+  eq('(k) re-paste adds nothing', r2.added.length, 0);
+  eq('(k) re-paste reports all 3 as duplicates', r2.duplicates, 3);
+  eq('(k) tray still holds 3', DI.list().length, 3);
+  ok('(k) v65 intake() of a batch text returns the waiting entry',
+    !!DI.intake(msgA, 'paste') && DI.list().length === 3);
+
+  /* (c) an overlapping text: one shared day (re-headed with an
+     explicit date), one brand-new day -> only the new day lands */
+  const msgC = [
+    hdr(dayAt(-1)), '7:30am', 'Tandem', 'Haul from North Pit to South Plant', '',
+    hdr(dayAt(1)), '8:00am', 'Deadhead to Ivor West Pond'
+  ].join('\n');
+  const r3 = DI.intakeBatch(msgC, 'paste');
+  eq('(k) overlap adds only the new day', r3.added.length, 1);
+  eq('(k) overlap flags the shared day as a duplicate', r3.duplicates, 1);
+  eq('(k) tray now holds 4', DI.list().length, 4);
+  eq('(k) the added one is tomorrow', r3.added[0].segmentDate, dstr(1));
+
+  /* single-dispatch messages behave exactly as v65 */
+  const wS = makeWorld(freshBacking());
+  const rS = wS.DispatchIngest.intakeBatch('Tomorrow 8:00am\nTandem\nAecon Inf\nGo Empty To A2-L20:', 'paste');
+  ok('(k) single dispatch: not a batch, one added', rS.batch === false && rS.added.length === 1);
+  ok('(k) single entry keeps the v65 store shape',
+    !!rS.added[0] && !('batchId' in rS.added[0]) && !('segmentKey' in rS.added[0]) && rS.added[0].batchText === undefined);
+  const rChat = wS.DispatchIngest.intakeBatch('see you at the game tomorrow night, bring the kids', 'paste');
+  eq('(k) chit-chat through intakeBatch adds nothing', rChat.added.length, 0);
+  const rLbl = wS.DispatchIngest.intakeBatch('Saleem:\nTomorrow 8:00am\nTandem\nAecon Inf\nGo Empty To A2-L20:', 'paste');
+  ok('(k) one labelled dispatch stays on the v65 path', rLbl.batch === false && rLbl.added.length === 1);
+})();
+
+/* ============ (l) v66: attribution + same-day conflicts ============ */
+(function () {
+  console.log('(l) v66 sender attribution + conflicts');
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const WDN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const p2 = function (n) { return ('0' + n).slice(-2); };
+  const dayAt = function (off) { const d = new Date(); d.setDate(d.getDate() + off); return d; };
+  const dstr = function (off) { const d = dayAt(off); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+  const hdr = function (d) { return WDN[d.getDay()] + ' ' + MON[d.getMonth()] + ' ' + d.getDate(); };
+
+  const w = makeWorld(freshBacking());
+  const DI = w.DispatchIngest;
+  /* two authorities, SAME day: the fleet manager's block under a bare
+     name line, the boss's block under a "Boss:" header */
+  const msg = [
+    'Saleem', hdr(dayAt(1)), '7:00am', 'Tandem', 'Deadhead to Ivor West Pond', '',
+    'Boss:', hdr(dayAt(1)), '8:00am', 'Tandem', 'Aecon Inf', 'Go Empty To A2-L20:'
+  ].join('\n');
+  const r = DI.intakeBatch(msg, 'paste');
+  eq('(l) both same-day dispatches land', r.added.length, 2);
+  eq('(l) first block attributed to its bare name line', r.added[0].senderHint, 'Saleem');
+  eq('(l) second block attributed to its label', r.added[1].senderHint, 'Boss');
+  ok('(l) both carry tomorrow', r.added.every(function (e) { return e.segmentDate === dstr(1); }));
+
+  const conf = DI.conflicts();
+  eq('(l) exactly one conflicted date', conf.length, 1);
+  eq('(l) the conflict names tomorrow', conf[0] && conf[0].date, dstr(1));
+  eq('(l) the conflict counts both', conf[0] && conf[0].count, 2);
+  ok('(l) the conflict lists both ids',
+    !!conf[0] && conf[0].ids.indexOf(r.added[0].id) !== -1 && conf[0].ids.indexOf(r.added[1].id) !== -1);
+
+  /* conflicts() is a pure read — the store does not move */
+  const snap = function () {
+    return JSON.stringify({ s: w.store.get('dsp_suggest', []), a: w.store.get('dsp_active', null), l: w.store.get('dsp_list', []) });
+  };
+  const before = snap();
+  DI.conflicts(); DI.conflicts(DI.list());
+  eq('(l) conflicts() changes nothing', snap(), before);
+
+  /* no auto-winner: Use is the human's pick, per suggestion */
+  const first = r.added[0], second = r.added[1];
+  ok('(l) Use works on the picked suggestion', DI.use(first.id).ok === true);
+  const rest = DI.list().filter(function (e) { return e.id === second.id; })[0];
+  ok('(l) the rival suggestion is untouched, still waiting', !!rest && rest.status === 'suggested');
+  eq('(l) Use activated nothing', w.store.get('dsp_active', null), null);
+  DI.dismiss(second.id);
+  eq('(l) the flag clears when one side is dismissed', DI.conflicts().length, 0);
+  eq('(l) no record was ever created or promoted', w.store.get('dsp_list', []).length, 0);
+})();
+
+/* ============ (m) v66: the active-dispatch save guard ============ */
+(function () {
+  console.log('(m) v66 active-dispatch save guard');
+  const p2 = function (n) { return ('0' + n).slice(-2); };
+  const dayAt = function (off) { const d = new Date(); d.setDate(d.getDate() + off); return d; };
+  const dstr = function (off) { const d = dayAt(off); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+
+  const w = makeWorld(freshBacking());
+  const DI = w.DispatchIngest;
+  const store = w.store;
+  store.set('onboarding', { autoStart: true, autoStartTime: '06:00', autoStartDays: [0, 1, 2, 3, 4, 5, 6] });
+
+  /* today's 08:00 dispatch, ACTIVE (started this morning) */
+  const todayFields = {
+    jobSite: 'Today Site', scheduledAt: dstr(0) + 'T08:00', equipment: 'Tandem', lat: '', lng: '',
+    material: '', ticketNo: '', amount: '', loads: '1', notes: '', driverId: '', driverName: '', date: dstr(0)
+  };
+  const todayRec = w.dspBuildRecord(todayFields, [], null, 'rec-today');
+  eq('(m) today\'s own dispatch may start', w.dspMayStart(todayRec, dstr(0)), true);
+  todayRec.status = 'active'; todayRec.startedAt = 1760000000000;
+  eq('(m) setup: today\'s dispatch saved + started', w.dspSaveRecord(todayRec, true).ok, true);
+  const activeJson = JSON.stringify(store.get('dsp_active', null));
+  const todayListJson = JSON.stringify(store.get('dsp_list', []).filter(function (d) { return d.id === 'rec-today'; })[0]);
+
+  /* mid-afternoon: tomorrow's dispatch arrives; Use -> form -> the
+     owner taps "Save & start" out of habit */
+  const sug = DI.intake('Tomorrow\n7:00am\nTandem\nDeadhead to Ivor West Pond', 'paste');
+  ok('(m) tomorrow\'s suggestion exists', !!sug);
+  eq('(m) tomorrow\'s suggestion is dated tomorrow', sug.fields.scheduledAt, dstr(1) + 'T07:00');
+  ok('(m) Use fills the form draft', DI.use(sug.id).ok === true);
+  const draftFields = store.get('dsp_draft', null).fields;
+  const formFields = Object.assign({}, draftFields, { date: dstr(0) }); // readForm stamps date=today
+  const rec2 = w.dspBuildRecord(formFields, [], null, 'rec-tomorrow');
+  eq('(m) the record\'s day is tomorrow', w.dspRecordDate(rec2), dstr(1));
+  eq('(m) guard refuses to start a future dispatch', w.dspMayStart(rec2, dstr(0)), false);
+  eq('(m) guard refuses to start a past dispatch', w.dspMayStart({ scheduledAt: dstr(-1) + 'T08:00' }, dstr(0)), false);
+  eq('(m) an undated record behaves as today\'s, as ever', w.dspMayStart({}, dstr(0)), true);
+  const mayStart = true && w.dspMayStart(rec2, dstr(0)); // attemptSave's composition
+  eq('(m) "Save & start" is downgraded to a plain save', mayStart, false);
+  eq('(m) the guarded save succeeds', w.dspSaveRecord(rec2, mayStart).ok, true);
+
+  /* (a) the active record is byte-unchanged */
+  eq('(m) dsp_active byte-unchanged', JSON.stringify(store.get('dsp_active', null)), activeJson);
+  eq('(m) today\'s list entry byte-unchanged',
+    JSON.stringify(store.get('dsp_list', []).filter(function (d) { return d.id === 'rec-today'; })[0]), todayListJson);
+  /* (b) the new record is a scheduled record for its own day */
+  const saved2 = store.get('dsp_list', []).filter(function (d) { return d.id === 'rec-tomorrow'; })[0];
+  eq('(m) new record saved, not started', saved2.status, 'saved');
+  eq('(m) new record has no startedAt', saved2.startedAt, undefined);
+  eq('(m) new record keeps its own day', saved2.scheduledAt, dstr(1) + 'T07:00');
+
+  /* (c) the v53 engine: today still plans from today's dispatch, and
+     the new record is tomorrow's plan source */
+  const region = extractRegion(appSrc, 'AUTOSTART-ENGINE-BEGIN', 'AUTOSTART-ENGINE-END');
+  const sandbox2 = {
+    console: console,
+    store: store,
+    todayStr: function (d) { d = d || new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); },
+    confirm: function () { return false; },
+    resetAccum: function () {}, trackerSave: function () {}, trackerPaint: function () {},
+    maybePromptOdo: function () { return false; }, trackerSessionStartMs: function () { return Date.now(); },
+    App: { tracker: { status: 'idle', startTs: 0, elapsed: 0 }, userRole: function () { return 'driver'; } },
+    window: null
+  };
+  sandbox2.window = sandbox2;
+  vm.createContext(sandbox2);
+  vm.runInContext(region, sandbox2);
+  const info = sandbox2.App.autostartTodayInfo();
+  eq('(m) today\'s plan source stays the dispatch', info.source, 'dispatch');
+  eq('(m) today\'s plan stays 08:00 — tomorrow\'s earlier 07:00 does not leak', info.time, '08:00');
+  eq('(m) tomorrow\'s plan reads the new record',
+    sandbox2.autostartDispatchTimeFor(store.get('dsp_active', null), store.get('dsp_list', []), dstr(1)), '07:00');
+
+  /* static wiring: the guard, the plain form line, the card changes */
+  ok('(m) attemptSave gates start through dspMayStart', dspSrc.indexOf('dspMayStart(d, App._today())') !== -1);
+  ok('(m) attemptSave saves with the gated flag', dspSrc.indexOf('dspSaveRecord(d, mayStart)') !== -1);
+  ok('(m) the form carries the plain line', dspSrc.indexOf('stays active — this saves for') !== -1 && dspSrc.indexOf('dp_active_note') !== -1);
+  ok('(m) cards show the sender plainly', dspSrc.indexOf("bits.push('From: '") !== -1);
+  ok('(m) the tray carries the conflict banner', dspSrc.indexOf('nothing is chosen for you') !== -1);
+  ok('(m) the module asks DispatchIngest for conflicts', dspSrc.indexOf('DispatchIngest.conflicts') !== -1);
+})();
+
 console.log('\ndispatch-ingest-test: ' + pass + ' passed, ' + fail + ' failed');
 if (failures.length) { console.log('failures:\n - ' + failures.join('\n - ')); process.exit(1); }

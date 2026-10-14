@@ -1,4 +1,4 @@
-/* Meticulous — Dispatch INGESTION (v65).
+/* Meticulous — Dispatch INGESTION (v65; multi-dispatch v66).
    Owner direction (Oct 14, 2026): dispatches should arrive from the
    driver's messages instead of being retyped. They come from MANY
    different senders across text / email / WhatsApp, so the system is
@@ -6,6 +6,20 @@
    one question — "does this read like a dispatch?" — by the same
    v57 dispatch-phrasing engine that reads dispatch screenshots
    (TicketOCR.parseDispatch, 27/27 on tools/corpus/phrasing.json).
+
+   v66 (owner, same day): ONE message often carries SEVERAL
+   dispatches — today's, yesterday's, a few days at once (a foreman's
+   catch-up / week-at-a-glance). intake() therefore segments a
+   multi-block message on its date cues (explicit dates, weekday
+   names, today/tomorrow/yesterday, per-block headers) and on sender
+   label lines ("Boss:", a bare name line), judges each block on its
+   own, and stores one suggestion per dispatch-shaped block — past
+   dates included (they are records for those days). The two
+   authorities problem (boss daily + a fleet manager, possibly for
+   the SAME day) is handled by attribution + flagging, never by
+   choosing: each suggestion carries its own senderHint, and
+   DispatchIngest.conflicts() reports dates with 2+ live suggestions
+   so the tray can warn "pick one" — the human always picks.
 
    Product rules (owner's, non-negotiable):
    - A matching message becomes a DRAFT SUGGESTION only (synced key
@@ -143,6 +157,324 @@
     return out;
   }
 
+  /* ---------------- MULTI-DISPATCH segmentation (v66) ----------------
+     splitSegments cuts a message into blocks at DATE CUES (a line
+     starting with an explicit date, a weekday name, or
+     today/tomorrow/yesterday) and at SENDER LABELS (a standalone
+     "Boss:" line heads the next block; a bare name line trailing one
+     block belongs to the next; a "Name:" prefix on a block's first
+     line attributes it). A block is "anchored" when it carries a cue
+     or a sender; a message is a BATCH when 2+ anchored blocks exist.
+     Anything else keeps the exact v65 single-message behaviour. */
+
+  var MONTH_NUM = { jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11 };
+  var WEEKDAY_NUM = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
+  var MONTH_SRC = '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)';
+  var WEEKDAY_SRC = '(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thur|thurs|sun|mon|tue|wed|thu|fri|sat)';
+  /* words that must never be read as a sender's name */
+  var NOT_A_NAME_RE = /^(note|reminder|subject|re|fyi|update|important|warning|tandem|tridem|tri-?axle|end\s?dump|single\s?axle)$/i;
+  var NOT_A_NAME_LINE_RE = /\b(tandem|tridem|tri-?axle|end\s?dump|single\s?axle|aecon|construction|trucking|hauling|aggregates|infrastructure|developments|yard|plant|pond|pit|empty|loaded|today|tomorrow|yesterday|haul|bring|grab|dump|load|please|thanks)\b/i;
+
+  function pad2(n) { return ('0' + n).slice(-2); }
+  function fmtDateStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function datePart(s) {
+    s = String(s == null ? '' : s);
+    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
+  }
+
+  /* A year-less explicit date ("Oct 12") resolves to the occurrence
+     NEAREST today: a catch-up text's dates sit just behind us, a
+     week-preview's just ahead — nearest serves both. */
+  function nearestYearDate(month, day) {
+    var now = startOfDay(new Date());
+    var best = null, bestDist = Infinity;
+    for (var dy = -1; dy <= 1; dy++) {
+      var cand = new Date(now.getFullYear() + dy, month, day);
+      if (cand.getMonth() !== month || cand.getDate() !== day) continue; // Feb 30 etc.
+      var dist = Math.abs(Math.round((cand - now) / 86400000));
+      if (dist < bestDist) { bestDist = dist; best = cand; }
+    }
+    return best;
+  }
+  /* A bare weekday ("Monday") resolves to its nearest occurrence
+     (0 = today; forward wins at distance 3, backward at 4). */
+  function weekdayToDate(wd) {
+    var now = startOfDay(new Date());
+    var fwd = (wd - now.getDay() + 7) % 7;
+    var d = new Date(now);
+    d.setDate(d.getDate() + (fwd <= 3 ? fwd : fwd - 7));
+    return d;
+  }
+  function relativeToDate(word) {
+    var d = startOfDay(new Date());
+    if (/^tomorrow$/i.test(word)) d.setDate(d.getDate() + 1);
+    else if (/^yesterday$/i.test(word)) d.setDate(d.getDate() - 1);
+    return d;
+  }
+
+  /* matchDateCue(line) -> null | { dateStr, label, textStart }.
+     textStart = index in the ORIGINAL line just past the cue tokens.
+     A cue is only a cue when what follows it on the line is empty, a
+     separator (":" "-" "," ")" …), a clock time, or the cue itself
+     carried 2+ date elements ("Mon Oct 12 Tandem…" is unambiguous;
+     "Monday shift starts…" is not a cue at all). */
+  function matchDateCue(line) {
+    var s = String(line == null ? '' : line);
+    var rest = s.replace(/^\s+/, '');
+    var base = s.length - rest.length;
+    var lm = rest.match(/^(?:[-*•·]\s+|\d{1,2}\s*[.)]\s+)/);
+    if (lm) { base += lm[0].length; rest = rest.slice(lm[0].length); }
+    if (/^[[(]/.test(rest)) { base += 1; rest = rest.slice(1); }
+
+    var elements = 0, explicit = null, weekday = null, relative = null;
+    var pos = 0, m;
+    function skipSep() { var sm = rest.slice(pos).match(/^[\s,]+/); if (sm) pos += sm[0].length; }
+    for (var i = 0; i < 3; i++) {
+      skipSep();
+      var tail = rest.slice(pos);
+      if (!explicit && (m = tail.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\b/))) {
+        var iso = new Date(+m[1], +m[2] - 1, +m[3]);
+        if (iso.getMonth() === +m[2] - 1 && iso.getDate() === +m[3]) { explicit = iso; pos += m[0].length; elements++; continue; }
+      }
+      if (!explicit && (m = tail.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}|\d{2}))?\b/))) {
+        var mo = +m[1] - 1, dy = +m[2];
+        if (mo >= 0 && mo <= 11 && dy >= 1 && dy <= 31) {
+          var nd = m[3] ? new Date(m[3].length === 2 ? 2000 + (+m[3]) : +m[3], mo, dy) : nearestYearDate(mo, dy);
+          if (nd && nd.getMonth() === mo && nd.getDate() === dy) { explicit = nd; pos += m[0].length; elements++; continue; }
+        }
+      }
+      if (!explicit && (m = tail.match(new RegExp('^' + MONTH_SRC + '\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:\\s*,?\\s*(\\d{4})\\b)?', 'i')))) {
+        var mn = MONTH_NUM[m[1].toLowerCase()];
+        var md = m[3] ? new Date(+m[3], mn, +m[2]) : nearestYearDate(mn, +m[2]);
+        if (md && md.getMonth() === mn && md.getDate() === +m[2]) { explicit = md; pos += m[0].length; elements++; continue; }
+      }
+      if (!explicit && (m = tail.match(new RegExp('^(\\d{1,2})(?:st|nd|rd|th)?\\s+' + MONTH_SRC + '\\b(?:\\s*,?\\s*(\\d{4})\\b)?', 'i')))) {
+        var mn2 = MONTH_NUM[m[2].toLowerCase()];
+        var md2 = m[3] ? new Date(+m[3], mn2, +m[1]) : nearestYearDate(mn2, +m[1]);
+        if (md2 && md2.getMonth() === mn2) { explicit = md2; pos += m[0].length; elements++; continue; }
+      }
+      if (weekday === null && (m = tail.match(new RegExp('^' + WEEKDAY_SRC + '\\.?\\b', 'i')))) {
+        weekday = WEEKDAY_NUM[m[1].toLowerCase()]; pos += m[0].length; elements++; continue;
+      }
+      if (!relative && !explicit && weekday === null && (m = tail.match(/^(today|tomorrow|yesterday)\b/i))) {
+        relative = m[1]; pos += m[0].length; elements++; continue;
+      }
+      break;
+    }
+    if (!elements) return null;
+    var date = explicit || (relative ? relativeToDate(relative) : (weekday !== null ? weekdayToDate(weekday) : null));
+    if (!date) return null;
+    var after = rest.slice(pos).replace(/^\s+/, '');
+    var okRemainder = after === '' || /^[:\-–—,)\]]/.test(after) || /^\d{1,2}:\d{2}\b/.test(after) || elements >= 2;
+    if (!okRemainder) return null;
+    return {
+      dateStr: fmtDateStr(date),
+      label: rest.slice(0, pos).replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim(),
+      textStart: base + pos
+    };
+  }
+
+  /* A line that is ONLY "Name:" — a chain header for the next block. */
+  function matchLabelLine(trimmed) {
+    var m = String(trimmed).match(/^([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}):$/);
+    if (!m) return null;
+    var name = m[1].trim();
+    if (NOT_A_NAME_RE.test(name) || SITE_STRONG_RE.test(name)) return null;
+    return name;
+  }
+  /* A bare name line ("Saleem") — a sender label when it trails one
+     block and the next block follows. */
+  function matchBareNameLine(trimmed) {
+    var t = String(trimmed);
+    if (t.length > 30 || /\d/.test(t)) return null;
+    if (!/^[A-Z][\w.'-]+(?:\s+[A-Z][\w.'-]+){0,2}$/.test(t)) return null;
+    if (NOT_A_NAME_LINE_RE.test(t)) return null;
+    var low = t.toLowerCase();
+    if (MONTH_NUM[low] !== undefined || WEEKDAY_NUM[low] !== undefined) return null;
+    return t;
+  }
+  /* "Name: <rest of line>" — attribution for the block this line opens.
+     Returns { sender, rest, consumed } or null. */
+  function peelSenderPrefix(line) {
+    var s = String(line);
+    var m = s.match(/^(\s*)([A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2}):\s+(\S[\s\S]*)$/);
+    if (!m) return null;
+    var name = m[2].trim();
+    if (NOT_A_NAME_RE.test(name) || SITE_STRONG_RE.test(name)) return null;
+    return { sender: name, rest: m[3], restAt: s.length - m[3].length };
+  }
+
+  function splitSegments(text) {
+    var lines = String(text).split('\n');
+    var segs = [];
+    var cur = null, pendingSender = null, boundary = false;
+    function openSeg(cue, sender) {
+      cur = { cue: cue || null, sender: sender || null, lines: [] };
+      segs.push(cur);
+      boundary = false;
+    }
+    /* a bare name line trailing the current block heads the NEXT one */
+    function popTrailingName() {
+      if (!cur || !cur.lines.length) return null;
+      var j = cur.lines.length - 1;
+      while (j >= 0 && !cur.lines[j].trim()) j--;
+      if (j < 0) return null;
+      var nm = matchBareNameLine(cur.lines[j].trim());
+      if (!nm) return null;
+      cur.lines = cur.lines.slice(0, j);
+      return nm;
+    }
+    lines.forEach(function (line) {
+      var trimmed = line.trim();
+      var label = trimmed ? matchLabelLine(trimmed) : null;
+      if (label) {
+        popTrailingName();
+        pendingSender = label;
+        boundary = true;
+        return;
+      }
+      var peel = trimmed ? peelSenderPrefix(line) : null;
+      var cue = matchDateCue(peel ? peel.rest : line);
+      if (cue) {
+        var moved = popTrailingName();
+        openSeg(
+          { dateStr: cue.dateStr, label: cue.label, textStart: cue.textStart + (peel ? peel.restAt : 0) },
+          pendingSender || moved || (peel ? peel.sender : null)
+        );
+        pendingSender = null;
+        cur.lines.push(line);
+        return;
+      }
+      if (!cur || boundary) {
+        openSeg(null, pendingSender || (peel ? peel.sender : null));
+        pendingSender = null;
+      } else if (!cur.sender && peel) {
+        cur.sender = peel.sender;
+      }
+      cur.lines.push(line);
+    });
+    return segs.map(function (sg) {
+      var text = sg.lines.join('\n').trim();
+      var body = text;
+      if (sg.cue && sg.lines.length) {
+        var firstRaw = sg.lines[0];
+        var restLines = sg.lines.slice(1).join('\n');
+        var head = firstRaw.slice(sg.cue.textStart).replace(/^[\s:,\-–—)\]]+/, '').trim();
+        body = ((head ? head + (restLines ? '\n' : '') : '') + restLines).trim();
+      }
+      return {
+        text: text,
+        bodyText: body,
+        cue: sg.cue ? { dateStr: sg.cue.dateStr, label: sg.cue.label } : null,
+        sender: sg.sender || null
+      };
+    }).filter(function (sg) { return sg.text.length > 0; });
+  }
+
+  /* The dedupe fingerprint body: lowercased, sender-prefix-free,
+     punctuation-collapsed — the same block re-pasted under a
+     different header format ("Mon Oct 12" vs "Oct 12") keys the
+     same, because the header itself never enters the body. */
+  function normalizeForKey(s) {
+    var t = String(s == null ? '' : s).toLowerCase();
+    t = t.replace(/^[a-z][\w.'-]*(?:\s+[a-z][\w.'-]*){0,2}:\s+/, '');
+    return t.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function keyFor(dateStr, bodyText) { return (dateStr || '') + '|' + normalizeForKey(bodyText); }
+  function fingerprintOf(dateStr, fields) {
+    if (!dateStr || !fields || !fields.jobSite) return null;
+    function ci(v) { return String(v || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    return dateStr + '|' + ci(fields.jobSite) + '|' + ci(fields.equipment || '');
+  }
+
+  /* A segment's resolved date overrides the parser's own date guess
+     (the parser only understands today/tomorrow); the time of day
+     the parser found is kept. No time anywhere -> the trade's
+     standard 08:00 start, visible and editable in the form. */
+  function applySegmentDate(fields, cue) {
+    var f = {};
+    for (var k in fields) f[k] = fields[k];
+    var time = '';
+    if (f.scheduledAt && f.scheduledAt.indexOf('T') !== -1) time = f.scheduledAt.split('T')[1];
+    var clockLabel = '';
+    if (f.timeLabel) {
+      var cm = String(f.timeLabel).match(/(\d{1,2}):(\d{2})\s*([aApP])[mM]/);
+      if (cm) {
+        clockLabel = cm[1] + ':' + cm[2] + cm[3].toLowerCase() + 'm';
+        if (!time) {
+          var h = parseInt(cm[1], 10) % 12;
+          if (/p/i.test(cm[3])) h += 12;
+          time = pad2(h) + ':' + cm[2];
+        }
+      }
+    }
+    if (!time) time = '08:00';
+    f.scheduledAt = cue.dateStr + 'T' + time;
+    f.segmentDate = cue.dateStr;
+    f.timeLabel = cue.label + (clockLabel ? ' · ' + clockLabel : '');
+    return f;
+  }
+
+  /* parseDispatchBatch(text) -> { isBatch, segments: [{ text,
+     bodyText, dateStr, dateLabel, sender, isDispatchShape, score,
+     confidence, fields, parsed }] }. Batch = 2+ anchored blocks
+     (date-cued or sender-labelled). Non-batch input returns
+     isBatch:false and the caller keeps the v65 path byte-identical. */
+  function parseDispatchBatch(text) {
+    var t = String(text == null ? '' : text).trim();
+    var out = { isBatch: false, segments: [] };
+    if (t.length < 4) return out;
+    var raw = splitSegments(t);
+    var anchored = 0;
+    raw.forEach(function (sg) { if (sg.cue || sg.sender) anchored++; });
+    if (raw.length < 2 || anchored < 2) return out;
+    out.isBatch = true;
+    out.segments = raw.map(function (sg) {
+      /* a cued segment is judged on its BODY (header stripped): the
+         header is metadata — left in, its own capitalised words
+         ("Tue Oct") pollute the parser's site guess. The resolved
+         date is re-applied by applySegmentDate below, and a bare
+         clock time survives the strip (it sits past the cue). */
+      var r = parseDispatchText(sg.cue ? sg.bodyText : sg.text);
+      var seg = {
+        text: sg.text,
+        bodyText: sg.bodyText,
+        dateStr: sg.cue ? sg.cue.dateStr : null,
+        dateLabel: sg.cue ? sg.cue.label : null,
+        sender: sg.sender,
+        isDispatchShape: r.isDispatchShape,
+        score: r.score,
+        confidence: r.confidence,
+        fields: r.fields,
+        parsed: r.parsed
+      };
+      if (r.isDispatchShape && sg.cue) seg.fields = applySegmentDate(r.fields, sg.cue);
+      return seg;
+    });
+    return out;
+  }
+
+  /* conflicts(entries?) -> [{ date, count, ids }] for every date
+     holding 2+ LIVE suggestions (two authorities can legitimately
+     dispatch the same day). Purely a report — flagging only; the
+     app never picks a winner and Use stays per-suggestion. */
+  function conflicts(entries) {
+    var byDate = {};
+    var src = Array.isArray(entries) ? entries : list();
+    src.forEach(function (e) {
+      if (!e || e.status !== 'suggested') return;
+      var f = e.fields || {};
+      var d = f.segmentDate || datePart(f.scheduledAt);
+      if (!d) return;
+      (byDate[d] = byDate[d] || []).push(e.id);
+    });
+    return Object.keys(byDate)
+      .filter(function (d) { return byDate[d].length >= 2; })
+      .sort()
+      .map(function (d) { return { date: d, count: byDate[d].length, ids: byDate[d] }; });
+  }
+
   /* ---------------- the suggestion store ---------------- */
 
   function list() {
@@ -151,19 +483,24 @@
     return Array.isArray(v) ? v : [];
   }
 
-  /* intake(text, source) -> the stored suggestion entry, or null when
-     the text is not dispatch-shaped (chit-chat produces NOTHING) or
-     the store refused the write. Identical raw text already waiting
-     is returned as-is — a re-shared message never duplicates. */
-  function intake(text, source) {
+  /* intakeSingle(text, source) -> { entry, duplicate }: the v65
+     single-message path, unchanged. entry is null when the text is
+     not dispatch-shaped (chit-chat produces NOTHING) or the store
+     refused the write. Identical raw text — or the full text of a
+     batch stored earlier — already waiting is returned flagged as a
+     duplicate: a re-shared message never duplicates. */
+  function intakeSingle(text, source) {
+    var none = { entry: null, duplicate: false };
     var t = String(text == null ? '' : text).trim();
-    if (t.length < 4) return null;
+    if (t.length < 4) return none;
     var r = parseDispatchText(t);
-    if (!r.isDispatchShape) return null;
-    var st = store(); if (!st) return null;
+    if (!r.isDispatchShape) return none;
+    var st = store(); if (!st) return none;
     var existing = list();
     for (var i = 0; i < existing.length; i++) {
-      if (existing[i] && existing[i].rawText === t) return existing[i];
+      if (existing[i] && (existing[i].rawText === t || existing[i].batchText === t)) {
+        return { entry: existing[i], duplicate: true };
+      }
     }
     var entry = {
       id: uid(),
@@ -178,8 +515,93 @@
       status: 'suggested'
     };
     existing.push(entry);
-    if (st.set(SUGGEST_KEY, existing) === false) return null;
-    return entry;
+    if (st.set(SUGGEST_KEY, existing) === false) return none;
+    return { entry: entry, duplicate: false };
+  }
+
+  /* intakeBatch(text, source) -> { added: [entries], duplicates,
+     batch }: the one entry point every door uses. A BATCH message
+     (2+ anchored blocks) stores one suggestion per dispatch-shaped
+     segment — each with its own parsed date and its own sender —
+     while a non-dispatch-shaped block inside the message yields
+     nothing. Per-segment dedupe: a segment is skipped when its key
+     (resolved date + cue-stripped body, normalised) or its
+     date+site+truck fingerprint matches a live suggestion, so
+     re-pasting the same multi-day message — or an overlapping one —
+     adds only the genuinely new days. Anything else (one block,
+     chit-chat) falls through to the v65 single path untouched. */
+  function intakeBatch(text, source) {
+    var t = String(text == null ? '' : text).trim();
+    var res = { added: [], duplicates: 0, batch: false };
+    if (t.length < 4) return res;
+    var b = parseDispatchBatch(t);
+    if (!b.isBatch) {
+      var one = intakeSingle(t, source);
+      if (one.entry) { res.added = [one.entry]; res.duplicates = one.duplicate ? 1 : 0; }
+      return res;
+    }
+    res.batch = true;
+    var st = store(); if (!st) return res;
+    var existing = list();
+    var keys = {}, fps = {};
+    existing.forEach(function (e) {
+      if (!e) return;
+      if (e.segmentKey) keys[e.segmentKey] = true;
+      var fp = fingerprintOf((e.fields && e.fields.segmentDate) || datePart(e.fields && e.fields.scheduledAt), e.fields);
+      if (fp) fps[fp] = true;
+    });
+    var hint = senderHint(t);
+    var batchId = uid();
+    var changed = false;
+    b.segments.forEach(function (sg) {
+      if (!sg.isDispatchShape) return; // partial validity: bad blocks land nothing
+      var key = keyFor(sg.dateStr, sg.bodyText);
+      var fp = fingerprintOf(sg.dateStr, sg.fields);
+      if (keys[key] || (fp && fps[fp])) { res.duplicates++; return; }
+      var entry = {
+        id: uid(),
+        rawText: sg.text.slice(0, 2000),
+        batchText: t.slice(0, 4000),
+        batchId: batchId,
+        segmentKey: key,
+        segmentDate: sg.dateStr || null,
+        source: source || 'paste',
+        senderHint: sg.sender || hint,
+        fields: sg.fields,
+        verdict: 'dispatch',
+        shapeScore: sg.score,
+        confidence: sg.confidence,
+        createdAt: Date.now(),
+        status: 'suggested'
+      };
+      existing.push(entry);
+      keys[key] = true;
+      if (fp) fps[fp] = true;
+      res.added.push(entry);
+      changed = true;
+    });
+    if (changed && st.set(SUGGEST_KEY, existing) === false) {
+      return { added: [], duplicates: res.duplicates, batch: true, failed: true };
+    }
+    return res;
+  }
+
+  /* intake(text, source) -> the stored suggestion entry, or null:
+     the v65 signature, kept for existing callers. A batch message
+     returns its first newly-added suggestion (or the first stored
+     entry of that batch when it was already waiting). */
+  function intake(text, source) {
+    var t = String(text == null ? '' : text).trim();
+    if (t.length >= 4 && parseDispatchBatch(t).isBatch) {
+      var r = intakeBatch(t, source);
+      if (r.added.length) return r.added[0];
+      var ex = list();
+      for (var i = 0; i < ex.length; i++) {
+        if (ex[i] && ex[i].batchText === t) return ex[i];
+      }
+      return null;
+    }
+    return intakeSingle(t, source).entry;
   }
 
   function dismiss(id) {
@@ -296,17 +718,24 @@
     st.set(INBOX_KEY, []);
     var added = 0, failed = 0;
     inbox.forEach(function (item) {
-      if (item && intake(item.text, 'share')) added++;
-      else failed++;
+      if (!item) { failed++; return; }
+      var r = null;
+      try { r = intakeBatch(item.text, 'share'); } catch (e) {}
+      if (r && r.added.length) added += r.added.length; // a shared multi-day message counts each dispatch
+      else if (!r || !r.duplicates) failed++;
     });
     return { added: added, failed: failed };
   }
 
   window.DispatchIngest = {
     parseDispatchText: parseDispatchText,
+    parseDispatchBatch: parseDispatchBatch,
+    splitSegments: splitSegments,
+    conflicts: conflicts,
     senderHint: senderHint,
     list: list,
     intake: intake,
+    intakeBatch: intakeBatch,
     dismiss: dismiss,
     use: use,
     formFieldsFor: formFieldsFor,

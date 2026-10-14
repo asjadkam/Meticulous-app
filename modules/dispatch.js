@@ -182,6 +182,29 @@
     if (!dspVerifyUpdated(updated, idx !== -1, isActive)) return { ok: false, stage: 'verify' };
     return { ok: true, wasActive: isActive };
   }
+  /* ---- v66: the ACTIVE-DISPATCH guard ----
+     The owner's day (Oct 14, 2026): tomorrow's dispatch arrives
+     mid-afternoon while TODAY's dispatch is still active until
+     ~7 PM. Saving the new one must never disturb the active record
+     and never start the new one early. A dispatch's day is its
+     scheduledAt date (the same key the v53 auto-start engine reads);
+     a record with no scheduled date is today's, as it always was.
+     dspMayStart is the single gate attemptSave routes "Save & start"
+     through: start is honoured ONLY for today's dispatch — a past
+     or future record saves as a plain scheduled record for its own
+     day (where the engine will find it when that day comes). */
+  function dspRecordDate(d) {
+    var s = d && d.scheduledAt;
+    if (typeof s === 'string') {
+      var m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+      if (m) return m[1];
+    }
+    return (d && typeof d.date === 'string') ? d.date : '';
+  }
+  function dspMayStart(d, today) {
+    var rd = dspRecordDate(d);
+    return !rd || rd === today;
+  }
   /* ================= DSP-SAVE-END ================= */
 
   /* ================= DSP-COMPLETE-BEGIN =================
@@ -327,6 +350,14 @@
     try { return new Date(ts).toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
     catch (e) { return ''; }
   }
+  /* v66: 'YYYY-MM-DD' -> 'Tue, Oct 13' (parsed as a LOCAL date —
+     never through the UTC-shifting Date(string) path). */
+  function fmtDay(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return String(iso || '');
+    try { return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }); }
+    catch (e) { return String(iso || ''); }
+  }
 
   /* v65: dispatch INGESTION — a one-shot note for the "📩 Suggested
      dispatches" card (set by an intake action or the share drain,
@@ -465,6 +496,7 @@
         '<label class="f">Job site</label><input id="dp_site" placeholder="e.g. Aecon — Deerfoot site">' +
         '<div class="row"><div><label class="f">Scheduled</label><input id="dp_when" type="datetime-local"></div>' +
         '<div><label class="f">Truck type</label><input id="dp_equip" placeholder="e.g. Tandem"></div></div>' +
+        '<div id="dp_active_note"></div>' +
         '<div id="dp_pin" style="font-size:13px;margin:2px 0 6px;"></div>' +
         '<input type="hidden" id="dp_lat"><input type="hidden" id="dp_lng">' +
         '<div class="row"><div><label class="f">Material</label><input id="dp_mat" placeholder="e.g. Gravel"></div>' +
@@ -524,27 +556,39 @@
       function ingestHTML() {
         var sug = [];
         try { if (window.DispatchIngest) sug = DispatchIngest.list(); } catch (e) {}
+        /* v66: same-day conflicts (two authorities, one day) are
+           flagged, never resolved — the human picks. */
+        var conf = [];
+        try { if (window.DispatchIngest && DispatchIngest.conflicts) conf = DispatchIngest.conflicts(sug); } catch (e) {}
+        var confByDate = {};
+        conf.forEach(function (c) { confByDate[c.date] = c.count; });
         var h = '<div class="card">';
         if (sug.length) {
           h += '<h3>📩 Suggested dispatches <span class="pill">' + sug.length + '</span></h3>' +
             '<p class="note">From messages you pasted or shared — whoever sent them. Tap <b>Use</b> to put one in the form below. Nothing is saved until you tap Save there.</p>' +
+            conf.map(function (c) {
+              return '<div style="border:2px solid #b45309;background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px;color:#7c4a03">⚠️ <b>' + c.count + ' dispatches for ' + esc(fmtDay(c.date)) + '</b> — more than one sender dispatched this day. Pick the right one below; nothing is chosen for you.</div>';
+            }).join('') +
             sug.map(function (e) {
               var f = e.fields || {};
               var title = f.jobSite || f.destination || 'Dispatch';
               var bits = [];
               if (f.timeLabel) bits.push('🕗 ' + esc(f.timeLabel));
               else if (f.scheduledAt) bits.push('🕗 ' + esc(String(f.scheduledAt).replace('T', ' ')));
+              if (e.senderHint) bits.push('From: ' + esc(e.senderHint));
               if (f.equipment) bits.push('🚛 ' + esc(f.equipment));
               if (f.type === 'empty') bits.push('Travel empty');
               if (f.type === 'loaded') bits.push('Loaded haul');
               if (f.destination && f.destination !== f.jobSite) bits.push('→ ' + esc(f.destination));
+              var eDate = f.segmentDate || (/^\d{4}-\d{2}-\d{2}/.test(f.scheduledAt || '') ? String(f.scheduledAt).slice(0, 10) : '');
               var raw = String(e.rawText || '');
               if (raw.length > 140) raw = raw.slice(0, 140) + '…';
               return '<div class="listitem"><div style="flex:1"><div class="a">' + esc(title) + '</div>' +
                 (bits.length ? '<div class="b">' + bits.join(' · ') + '</div>' : '') +
+                (confByDate[eDate] ? '<div class="b" style="color:#b45309">⚠️ One of ' + confByDate[eDate] + ' suggestions for this day — pick one.</div>' : '') +
                 (f.notes ? '<div class="b">📝 ' + esc(f.notes) + '</div>' : '') +
                 '<div class="b" style="color:var(--muted)">' + esc(raw) + '</div>' +
-                '<div class="b" style="color:var(--muted);font-size:11px">From a ' + esc(e.source || 'paste') + (e.senderHint ? ' · ' + esc(e.senderHint) : '') + '</div></div>' +
+                '<div class="b" style="color:var(--muted);font-size:11px">From a ' + esc(e.source || 'paste') + '</div></div>' +
                 '<div style="display:flex;flex-direction:column;gap:6px">' +
                 '<button class="btn small primary" data-suguse="' + esc(e.id) + '">Use</button>' +
                 '<button class="btn small ghost" data-sugdismiss="' + esc(e.id) + '">Dismiss</button></div></div>';
@@ -568,11 +612,23 @@
         var pb = wrap.querySelector('#dp_paste_btn');
         if (pb) pb.onclick = function () {
           var ta = wrap.querySelector('#dp_paste');
-          var entry = null;
-          try { if (window.DispatchIngest) entry = DispatchIngest.intake(ta ? ta.value : '', 'paste'); } catch (e) {}
-          ingestFlash = entry
-            ? '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.'
-            : 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
+          var res = null;
+          try {
+            if (window.DispatchIngest) {
+              res = DispatchIngest.intakeBatch
+                ? DispatchIngest.intakeBatch(ta ? ta.value : '', 'paste')
+                : (DispatchIngest.intake(ta ? ta.value : '', 'paste') ? { added: [1], duplicates: 0 } : { added: [], duplicates: 0 });
+            }
+          } catch (e) {}
+          if (res && res.added.length > 1) {
+            ingestFlash = '✓ That message held ' + res.added.length + ' dispatches — each one is in your suggestions above. Tap <b>Use</b> to put one in the form.';
+          } else if (res && res.added.length === 1) {
+            ingestFlash = '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.';
+          } else if (res && res.duplicates > 0) {
+            ingestFlash = 'Those dispatches are already in your suggestions above — nothing was added twice.';
+          } else {
+            ingestFlash = 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
+          }
           paintIngest();
         };
         wrap.querySelectorAll('[data-sugdismiss]').forEach(function (b) {
@@ -818,8 +874,31 @@
           n + ' ticket' + (n > 1 ? 's' : '') + ' added. Tap "Take ticket photo" to add another.';
       }
 
+      /* v66: the active-dispatch note — while another dispatch is
+         ACTIVE and this form is being filled for a DIFFERENT day,
+         say plainly that today's stays active and this one only
+         saves for its own day (the save guard in attemptSave makes
+         it true). Recomputed whenever the Scheduled field changes. */
+      function paintActiveNote() {
+        var e = body.querySelector('#dp_active_note');
+        if (!e) return;
+        var msg = '';
+        var act = active();
+        if (!editingId && act) {
+          var whenEl = body.querySelector('#dp_when');
+          var rd = whenEl ? dspRecordDate({ scheduledAt: whenEl.value || '' }) : '';
+          if (rd && rd !== App._today()) {
+            msg = '🚛 Today\'s dispatch stays active — this saves for ' + fmtDay(rd) + ' and will not start now.';
+          }
+        }
+        e.innerHTML = msg ? '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin:6px 0 10px;">' + esc(msg) + '</div>' : '';
+      }
+      var whenNode = body.querySelector('#dp_when');
+      if (whenNode) { whenNode.addEventListener('input', paintActiveNote); whenNode.addEventListener('change', paintActiveNote); }
+
       /* v48: restore a kept draft (fields + tickets + note) */
       if (draft0) { restoreDraft(); renderTicketList(); updateNameEl(); }
+      paintActiveNote();
       /* v56: the record behind an abandoned edit draft was deleted —
          the edit was discarded at the top of render; say so plainly. */
       if (editGone) {
@@ -969,11 +1048,16 @@
           d = dspBuildRecord(fields, pendingTickets, pendingPhoto, uid());
           lastSaveTry = { fp: fp, rec: d, startedAt: 0 };
         }
-        if (start) {
+        /* v66 guard: "Save & start" on a dispatch whose day is NOT
+           today saves it as a scheduled record for its own day —
+           it never starts, and the active dispatch (usually today's,
+           still running) is never touched. */
+        var mayStart = start && dspMayStart(d, App._today());
+        if (mayStart) {
           if (!lastSaveTry.startedAt) lastSaveTry.startedAt = Date.now();
           d.status = 'active'; d.startedAt = lastSaveTry.startedAt;
         }
-        var res = dspSaveRecord(d, start);
+        var res = dspSaveRecord(d, mayStart);
         if (!res.ok) {
           persistDraft(); // best effort — the on-screen form is untouched either way
           showSaveError('⚠️ That save did NOT go through — the app storage on your phone looks full, or the write failed, so your dispatch was not saved. Your entry is kept as a draft below, so nothing is lost. Free up some phone space, then tap ' + (start ? '“Save & start”' : '“Save dispatch”') + ' again.');
@@ -982,8 +1066,8 @@
         lastSaveTry = null;
         dspClearDraft(); // only a verified save clears the draft
         fbSave(d);
-        manifestFeedPush('dispatch', 'Dispatch ' + (start ? 'started' : 'saved') + ': ' + d.jobSite + (d.ticketNo ? ' · ticket #' + d.ticketNo : ''));
-        if (start && window.FB && FB.localNotify) { try { FB.localNotify('Dispatch started', d.jobSite); } catch (e) {} }
+        manifestFeedPush('dispatch', 'Dispatch ' + (mayStart ? 'started' : 'saved') + ': ' + d.jobSite + (d.ticketNo ? ' · ticket #' + d.ticketNo : ''));
+        if (mayStart && window.FB && FB.localNotify) { try { FB.localNotify('Dispatch started', d.jobSite); } catch (e) {} }
         api.render(body);
       }
 
