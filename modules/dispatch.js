@@ -336,6 +336,94 @@
   }
   /* ================= DSP-COMPLETE-END ================= */
 
+  /* ================= DSP-CLOSE-BEGIN =================
+     v73: CLOSE WITH TICKET PHOTO (owner, Oct 14) — the ticket photo
+     IS the close of the dispatch, not an attachment chore inside
+     Edit followed by a separate Complete tap. Pure helpers for the
+     one-motion close; the render glue (capture sheet + confirm view)
+     drives them. The transaction rules are the v48 rules:
+       - the closed record is built from the stored active record
+         (identity/lifecycle pinned by construction), with the new
+         ticket appended and the photo stored ONCE (inside
+         tickets[] — the dspBuildRecord convention);
+       - the close write is VERIFIED: the completed record is read
+         back from the list byte-for-byte, and dsp_active must no
+         longer hold the id; if the active-clearing write fails, the
+         list copy is rolled back to the open record so the two
+         stores can never disagree — the dispatch stays active and
+         the caller shows a plain error and keeps the confirm view;
+       - dspCompletionFor is the SINGLE assembly of the completion
+         money inputs (ticket summary + dspCompletionPlan). The
+         plain Complete handler, the close-with-ticket Confirm, and
+         the confirm view's "what happens" preview all run it, so
+         what the preview promises is what Confirm logs — the same
+         inputs always produce the same Revenue entry;
+       - an unfinished EDIT draft on this very dispatch blocks the
+         close (dspCloseBlocked): the close never silently discards
+         an edit — it says so plainly and sends him back to the
+         form to save or cancel it first (the v65 busy-form rule). */
+  function dspBuildClosed(orig, ticket, endedAt) {
+    var d = {};
+    for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) d[k] = orig[k]; }
+    var tk = (orig.tickets || []).slice();
+    if (ticket) tk.push(ticket);
+    d.tickets = tk;
+    /* photo stored once — inside tickets[] when tickets carry it;
+       top-level only for the legacy no-ticket case. */
+    d.photo = tk.length ? null : (orig.photo || null);
+    d.status = 'completed';
+    d.endedAt = endedAt;
+    return d;
+  }
+  function dspCloseRecord(doneRec) {
+    var l = dspGet('list', []);
+    var idx = -1, origEntry = null;
+    for (var i = 0; i < l.length; i++) { if (l[i] && l[i].id === doneRec.id) { idx = i; origEntry = l[i]; break; } }
+    if (idx === -1) return { ok: false, stage: 'missing' };
+    var nl = l.slice(); nl[idx] = doneRec;
+    if (dspSet('list', nl) === false) return { ok: false, stage: 'list' };
+    var act = dspGet('active', null);
+    if (act && act.id === doneRec.id) {
+      if (dspSet('active', null) === false) {
+        /* roll the list copy back to the open record so the two
+           stores cannot disagree — the dispatch stays active */
+        var rl = dspGet('list', []);
+        for (var j = 0; j < rl.length; j++) { if (rl[j] && rl[j].id === doneRec.id) { rl[j] = origEntry; break; } }
+        dspSet('list', rl);
+        return { ok: false, stage: 'active' };
+      }
+    }
+    /* read back: the completed record must be in the list
+       byte-for-byte, and nothing may still be active under this id */
+    var back = dspGet('list', []);
+    var found = null;
+    for (var k = 0; k < back.length; k++) { if (back[k] && back[k].id === doneRec.id) { found = back[k]; break; } }
+    if (!found || JSON.stringify(found) !== JSON.stringify(doneRec)) return { ok: false, stage: 'verify' };
+    var a2 = dspGet('active', null);
+    if (a2 && a2.id === doneRec.id) return { ok: false, stage: 'verify' };
+    return { ok: true };
+  }
+  function dspCloseBlocked(draft, activeId) {
+    if (draft && draft.editId && activeId && draft.editId === activeId) {
+      return 'You have an unfinished edit on this dispatch in the form below — tap “Save changes” or “Cancel edit” there first, then close with the ticket. Nothing was closed.';
+    }
+    return '';
+  }
+  function dspCompletionFor(rec, sett) {
+    var tickets = (rec && rec.tickets) || [];
+    var sum = (tickets.length && typeof window !== 'undefined' && window.TicketOCR && window.TicketOCR.summarizeTickets)
+      ? window.TicketOCR.summarizeTickets(tickets, sett.travelBonus) : null;
+    var plan = dspCompletionPlan({
+      sum: sum, std: sett.std, rate: sett.rate, role: sett.role, date: sett.today,
+      jobSite: (rec && rec.jobSite) || '', ticketCount: tickets.length,
+      travelBonusRaw: sett.travelBonus, driver: sett.driver || null,
+      legacyAmount: rec ? rec.amount : null, legacyNetWeight: rec ? rec.netWeight : null,
+      loads: rec ? rec.loads : null, ticketNo: rec ? rec.ticketNo : null
+    });
+    return { tickets: tickets, sum: sum, plan: plan };
+  }
+  /* ================= DSP-CLOSE-END ================= */
+
   function fbSave(doc) {
     if (window.FB && FB.saveDoc) { try { FB.saveDoc('dispatches', doc.id, doc); } catch (e) {} }
   }
@@ -475,10 +563,13 @@
           (a.notes ? '<div class="kv"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
           '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>' +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' : '') +
+          '<div id="dp_close_note"></div>' +
           '<div class="row" style="margin-top:10px">' +
           '<button class="btn primary" id="dp_complete">✅ Complete dispatch</button>' +
+          '<button class="btn navy" id="dp_close_ticket">📸 Close with ticket photo</button>' +
           '<button class="btn ghost" id="dp_edit_active">✏️ Edit</button>' +
-          '<button class="btn ghost" id="dp_cancel">Cancel</button></div></div>';
+          '<button class="btn ghost" id="dp_cancel">Cancel</button></div>' +
+          '<div id="dp_closeflow"></div></div>';
       }
 
       /* ---- v65: 📩 Suggested dispatches + "Add from a message" ----
@@ -1133,13 +1224,35 @@
       var editActiveBtn = body.querySelector('#dp_edit_active');
       if (editActiveBtn) editActiveBtn.onclick = function () { startEdit(active()); };
 
-      var doneBtn = body.querySelector('#dp_complete');
-      if (doneBtn) doneBtn.onclick = function () {
-        var cur = active(); if (!cur) return;
-        cur.status = 'completed'; cur.endedAt = Date.now();
-        var l = list();
-        for (var i = 0; i < l.length; i++) if (l[i].id === cur.id) { l[i] = cur; break; }
-        W('list', l); W('active', null); fbSave(cur);
+      /* ---- completion glue (v73): ONE application path ----
+         completionSettings assembles the account inputs (pay
+         standard/rate/travel bonus, the completing user's role, the
+         identified driver for an office completer); applyCompletion
+         runs dspCompletionFor — the single money assembly — and
+         applies its plan: Revenue entry, P&L travel claim, tracker
+         note, manifest feed, result message. The plain Complete
+         button and the close-with-ticket Confirm both end here, so
+         the same closed record always logs the same entry. */
+      function completionSettings(rec) {
+        var o = App._store.get('onboarding', {});
+        var role = (App.userRole ? App.userRole() : 'driver');
+        var matchedDriver = null;
+        if (role === 'office') {
+          var pds = App._store.get('pnl_drivers', []) || [];
+          pds.forEach(function (pd) { if (!matchedDriver && rec.driverId && pd.id === rec.driverId) matchedDriver = pd; });
+          if (!matchedDriver && rec.driverName) {
+            var nm = String(rec.driverName).trim().toLowerCase();
+            pds.forEach(function (pd) { if (!matchedDriver && pd.name && String(pd.name).trim().toLowerCase() === nm) matchedDriver = pd; });
+          }
+        }
+        return {
+          std: (o.payStandard || 'hourly').toLowerCase(),
+          rate: parseFloat(o.payRate) || 0,
+          travelBonus: parseFloat(o.travelBonus) || 0,
+          role: role, driver: matchedDriver, today: App._today()
+        };
+      }
+      function applyCompletion(cur) {
         /* One confirmation updates Revenue: log the dispatch earnings.
            v26: Multi-ticket — sum foreman hours from all tickets + travel bonus.
            Pay by Weight: sum net weights × rate/tonne.
@@ -1148,29 +1261,9 @@
            unchanged; an office completer's entry excludes the travel
            hours, which are routed to the identified driver's P&L wages
            as a claim — or disclosed as held out when no driver matches. */
-        var o = App._store.get('onboarding', {});
-        var std = (o.payStandard || 'hourly').toLowerCase();
-        var rate = parseFloat(o.payRate) || 0;
-        var travelBonus = parseFloat(o.travelBonus) || 0;
-        var tickets = cur.tickets || [];
-        var sum = (tickets.length && window.TicketOCR) ? TicketOCR.summarizeTickets(tickets, travelBonus) : null;
-        var role = (App.userRole ? App.userRole() : 'driver');
-        var matchedDriver = null;
-        if (role === 'office') {
-          var pds = App._store.get('pnl_drivers', []) || [];
-          pds.forEach(function (pd) { if (!matchedDriver && cur.driverId && pd.id === cur.driverId) matchedDriver = pd; });
-          if (!matchedDriver && cur.driverName) {
-            var nm = String(cur.driverName).trim().toLowerCase();
-            pds.forEach(function (pd) { if (!matchedDriver && pd.name && String(pd.name).trim().toLowerCase() === nm) matchedDriver = pd; });
-          }
-        }
-        var plan = dspCompletionPlan({
-          sum: sum, std: std, rate: rate, role: role, date: App._today(),
-          jobSite: cur.jobSite || '', ticketCount: tickets.length,
-          travelBonusRaw: travelBonus, driver: matchedDriver,
-          legacyAmount: cur.amount, legacyNetWeight: cur.netWeight,
-          loads: cur.loads, ticketNo: cur.ticketNo
-        });
+        var planRes = dspCompletionFor(cur, completionSettings(cur));
+        var plan = planRes.plan;
+        var tickets = planRes.tickets;
         var revEntry = plan.entry;
         var amt = parseFloat(cur.amount);
         if (revEntry && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
@@ -1212,7 +1305,241 @@
           doneMsg = 'Dispatch completed' + (revEntry ? ' — $' + revEntry.amount + ' logged to Revenue' : '') + '. ' + plan.disclosure;
         }
         alert(doneMsg);
+      }
+
+      var doneBtn = body.querySelector('#dp_complete');
+      if (doneBtn) doneBtn.onclick = function () {
+        var cur = active(); if (!cur) return;
+        cur.status = 'completed'; cur.endedAt = Date.now();
+        var l = list();
+        for (var i = 0; i < l.length; i++) if (l[i].id === cur.id) { l[i] = cur; break; }
+        W('list', l); W('active', null); fbSave(cur);
+        applyCompletion(cur);
         api.render(body);
+      };
+
+      /* ---- v73: CLOSE WITH TICKET PHOTO ----
+         One motion: snap the haul card → the reader reads it → ONE
+         confirm view shows what was read and exactly what will
+         happen → Confirm files the ticket (photo stored once),
+         completes the dispatch and logs the earnings, all through
+         the verified dspCloseRecord. Before Confirm, NOTHING is
+         written (the read ticket is held in memory only) — a cancel
+         or a failed write leaves the day exactly as it was. If the
+         read is weak, the same confirm view takes typed hours; the
+         photo still goes on the record. An unfinished edit on this
+         dispatch blocks the open (dspCloseBlocked) — resolve the
+         form first. */
+      var closeState = null; // { targetId, step:'capture'|'confirm', ticket, readFail }
+      function closeFlowEl() { return body.querySelector('#dp_closeflow'); }
+      function paintCloseNote(msg) {
+        var e = body.querySelector('#dp_close_note');
+        if (e) e.innerHTML = msg ?
+          '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin:6px 0 10px;">' + esc(msg) + '</div>' : '';
+      }
+      function closeTicketDesc(t) {
+        return t.ocrType === 'haul_card' ? 'Haul card' :
+               t.ocrType === 'scale_ticket' ? 'Scale ticket' :
+               t.ocrType === 'rate_confirmation' ? 'Rate confirmation' :
+               t.ocrType === 'bill_of_lading' ? 'Bill of lading' :
+               t.ocrType === 'document' ? 'Document' : 'Ticket';
+      }
+      function closeTicketNum(t) {
+        return t.cardNumber ? '#' + t.cardNumber :
+               t.orderNo ? '#' + t.orderNo :
+               t.ticketNo ? '#' + t.ticketNo : '';
+      }
+      function paintCloseFlow() {
+        var wrap = closeFlowEl();
+        if (!wrap) return;
+        if (!closeState) { wrap.innerHTML = ''; return; }
+        var t = closeState.ticket;
+        if (closeState.step === 'capture') {
+          wrap.innerHTML =
+            '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>📸 Close with the ticket photo</h3>' +
+            '<p class="note">Snap the haul card — the app reads it, shows you the close before anything happens, and one Confirm tap files the ticket, completes this dispatch and logs the earnings.</p>' +
+            '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+            '<button type="button" class="btn secondary" id="dp_ct_cam" style="flex:1;">📷 Take photo</button>' +
+            '<button type="button" class="btn secondary" id="dp_ct_pick" style="flex:1;">📁 Choose file</button>' +
+            '</div>' +
+            '<input type="file" id="dp_ct_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+            '<input type="file" id="dp_ct_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+            '<div id="dp_ct_status" style="font-size:14px;margin:6px 0;"></div>' +
+            '<div id="dp_ct_preview"></div>' +
+            '<div class="row"><button type="button" class="btn ghost" id="dp_ct_cancel">Cancel</button></div></div>';
+          var camIn = wrap.querySelector('#dp_ct_img_cam');
+          var fileIn = wrap.querySelector('#dp_ct_img');
+          wrap.querySelector('#dp_ct_cam').onclick = function () { camIn.click(); };
+          wrap.querySelector('#dp_ct_pick').onclick = function () { fileIn.click(); };
+          wrap.querySelector('#dp_ct_cancel').onclick = function () { closeState = null; paintCloseFlow(); };
+          camIn.onchange = handleClosePhoto;
+          fileIn.onchange = handleClosePhoto;
+          return;
+        }
+        /* ---- confirm step ---- */
+        var readLines = '';
+        if (closeState.readFail) {
+          readLines = '<div class="b" style="color:var(--orange)">⚠️ That photo couldn\'t be read — it is still attached below as the record. Type the hours from the card.</div>';
+        } else if (t.docRead) {
+          if (t.docRead.found && t.docRead.found.length) {
+            readLines += '<div class="b">📄 Read: ' + esc(t.docRead.found.join(' · ')) + '</div>';
+          }
+          if (t.docRead.missing && t.docRead.missing.length) {
+            readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(t.docRead.missing.join(', ')) + '</div>';
+          }
+        }
+        var inputs = '';
+        if (t.ocrType === 'scale_ticket') {
+          inputs = '<label class="f">Net weight (tonnes)</label>' +
+            '<input id="dp_cf_net" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(t.netWeight || '') + '">';
+        } else {
+          inputs = '<label class="f">Foreman hours (from the card)</label>' +
+            '<input id="dp_cf_hours" type="number" inputmode="decimal" min="0" step="0.25" value="' + esc(t.foremanHours || '') + '" placeholder="e.g. 9.5">';
+          if (t.ocrType === 'haul_card') {
+            inputs += '<label class="f">Payment unit (checked on card)</label><select id="dp_cf_punit">' +
+              ['HOUR', 'TONNE', 'TONNE / KM', 'OTHER'].map(function (x) {
+                return '<option' + (t.paymentUnit === x ? ' selected' : '') + '>' + x + '</option>';
+              }).join('') + '</select>';
+          }
+        }
+        wrap.innerHTML =
+          '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
+          (t.photo ? '<img src="' + t.photo + '" style="width:100%;border-radius:10px;margin-bottom:8px" alt="Ticket photo">' : '') +
+          '<div class="kv"><span>Ticket</span><b>' + esc(closeTicketDesc(t) + ' ' + closeTicketNum(t)) + '</b></div>' +
+          readLines +
+          inputs +
+          '<div id="dp_cf_plan" style="margin-top:8px"></div>' +
+          '<div id="dp_cf_err"></div>' +
+          '<div class="row" style="margin-top:10px">' +
+          '<button type="button" class="btn primary" id="dp_cf_confirm">✅ Confirm — close this dispatch</button>' +
+          '<button type="button" class="btn ghost" id="dp_cf_back">Cancel</button></div></div>';
+        ['#dp_cf_hours', '#dp_cf_net', '#dp_cf_punit'].forEach(function (id) {
+          var n = wrap.querySelector(id);
+          if (n) { n.addEventListener('input', paintClosePlan); n.addEventListener('change', paintClosePlan); }
+        });
+        wrap.querySelector('#dp_cf_back').onclick = function () { closeState = null; paintCloseFlow(); };
+        wrap.querySelector('#dp_cf_confirm').onclick = confirmClose;
+        paintClosePlan();
+      }
+      /* the ticket as it stands in the confirm view, typed values in */
+      function currentCloseTicket() {
+        var wrap = closeFlowEl();
+        var t = {};
+        for (var k in closeState.ticket) { if (Object.prototype.hasOwnProperty.call(closeState.ticket, k)) t[k] = closeState.ticket[k]; }
+        if (!wrap) return t;
+        var hEl = wrap.querySelector('#dp_cf_hours'); if (hEl) t.foremanHours = hEl.value.trim();
+        var pEl = wrap.querySelector('#dp_cf_punit'); if (pEl) t.paymentUnit = pEl.value;
+        var nEl = wrap.querySelector('#dp_cf_net'); if (nEl) t.netWeight = nEl.value.trim();
+        return t;
+      }
+      /* the confirm view's promise — computed by the SAME assembly
+         Confirm will log with, so the two can never drift apart */
+      function paintClosePlan() {
+        var wrap = closeFlowEl();
+        var el = wrap ? wrap.querySelector('#dp_cf_plan') : null;
+        if (!el || !closeState || closeState.step !== 'confirm') return;
+        var cur = active();
+        if (!cur || cur.id !== closeState.targetId) { el.innerHTML = ''; return; }
+        var preview = dspBuildClosed(cur, currentCloseTicket(), Date.now());
+        var plan = dspCompletionFor(preview, completionSettings(preview)).plan;
+        var h = '<div class="kv"><span>Dispatch</span><b>' + esc(cur.jobSite || cur.pickup || '—') + '</b></div>';
+        if (plan.entry) {
+          h += '<div class="kv"><span>Logs to Revenue</span><b>$' + esc(plan.entry.amount) + '</b></div>' +
+               '<div class="b">' + esc(plan.entry.note) + '</div>';
+        } else {
+          h += '<div class="b" style="color:var(--orange)">No earnings entry will be logged — no hours or amount on the ticket yet. The ticket still attaches as the record, and the dispatch still closes.</div>';
+        }
+        if (plan.disclosure) h += '<div class="b">' + esc(plan.disclosure) + '</div>';
+        el.innerHTML = h;
+      }
+      function showCloseError(msg) {
+        var wrap = closeFlowEl();
+        var e = wrap ? wrap.querySelector('#dp_cf_err') : null;
+        if (e) e.innerHTML = '<div style="border:2px solid #c0392b;background:#fdecea;border-radius:10px;padding:10px;margin:8px 0;color:#7b1d12">' + esc(msg) + '</div>';
+      }
+      function confirmClose() {
+        var cur = active();
+        if (!cur || !closeState || cur.id !== closeState.targetId) {
+          showCloseError('⚠️ This dispatch changed while you were closing it — nothing was closed. Reopen the dispatch and try again.');
+          return;
+        }
+        var blocked = dspCloseBlocked(dspLoadDraft(), cur.id);
+        if (blocked) { showCloseError(blocked); return; }
+        var t = currentCloseTicket();
+        closeState.ticket = t;
+        var doneRec = dspBuildClosed(cur, t, Date.now());
+        var res = dspCloseRecord(doneRec);
+        if (!res.ok) {
+          showCloseError('⚠️ That close did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was closed and nothing was logged. Your dispatch is still active and this ticket is still here. Free up some phone space, then tap Confirm again.');
+          return;
+        }
+        fbSave(doneRec);
+        applyCompletion(doneRec);
+        closeState = null;
+        api.render(body);
+      }
+      function closeToConfirm(ticket, readFail) {
+        if (!closeState) return; // cancelled while the read was running
+        closeState.ticket = ticket;
+        closeState.readFail = !!readFail;
+        closeState.step = 'confirm';
+        paintCloseFlow();
+      }
+      /* the shared ticket reader — the same engine the form uses
+         (recognizeWithRotation → parse → toDispatchForm) */
+      function runCloseOCR(ocrUrl, photoUrl) {
+        var wrap = closeFlowEl();
+        var statusEl = wrap ? wrap.querySelector('#dp_ct_status') : null;
+        if (!window.TicketOCR || !TicketOCR.recognizeWithRotation) {
+          closeToConfirm({ id: ticketId(), photo: photoUrl, ocrType: 'unknown', date: App._today() }, true);
+          return;
+        }
+        TicketOCR.recognizeWithRotation(ocrUrl || photoUrl, function (p) {
+          try { if (statusEl) statusEl.textContent = 'Reading ticket… ' + Math.round(p * 100) + '%'; } catch (e) {}
+        }).then(function (text) {
+          var parsed = TicketOCR.parse(text);
+          var form = TicketOCR.toDispatchForm(parsed);
+          var docRead = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(parsed, form) : null;
+          closeToConfirm({
+            id: ticketId(),
+            photo: photoUrl,
+            ocrType: parsed._type,
+            ticketNo: parsed.ticketNo || form.ticketNo || null,
+            orderNo: parsed.orderNo || null,
+            docRead: docRead,
+            cardNumber: parsed.cardNumber || null,
+            foremanHours: null, // handwritten on haul cards — confirmed in the view
+            paymentUnit: null,  // checkbox state — confirmed in the view
+            netWeight: form.netWeight || null,
+            grossWeight: form.grossWeight || null,
+            tareWeight: form.tareWeight || null,
+            date: App._today()
+          }, false);
+        }).catch(function () {
+          closeToConfirm({ id: ticketId(), photo: photoUrl, ocrType: 'unknown', date: App._today() }, true);
+        });
+      }
+      function handleClosePhoto(ev) {
+        var f = ev.target.files[0]; if (!f) return;
+        var wrap = closeFlowEl();
+        var statusEl = wrap ? wrap.querySelector('#dp_ct_status') : null;
+        if (statusEl) statusEl.textContent = 'Reading ticket…';
+        fileToThumb(f, function (thumbUrl) {
+          var pv = wrap ? wrap.querySelector('#dp_ct_preview') : null;
+          if (pv) pv.innerHTML = '<img src="' + thumbUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">';
+          fileToOCRImage(f, function (ocrUrl) {
+            runCloseOCR(ocrUrl || thumbUrl, thumbUrl);
+          });
+        });
+      }
+      var closeBtn = body.querySelector('#dp_close_ticket');
+      if (closeBtn) closeBtn.onclick = function () {
+        var cur = active(); if (!cur) return;
+        var blocked = dspCloseBlocked(dspLoadDraft(), cur.id);
+        if (blocked) { paintCloseNote(blocked); return; }
+        paintCloseNote('');
+        closeState = { targetId: cur.id, step: 'capture', ticket: null, readFail: false };
+        paintCloseFlow();
       };
       var cancelBtn = body.querySelector('#dp_cancel');
       if (cancelBtn) cancelBtn.onclick = function () {
