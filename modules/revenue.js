@@ -300,7 +300,202 @@
     return any ? Math.round(km * 100) / 100 : null;
   }
 
+  /* v43: two-tap in-app delete confirm — the native confirm dialog
+     freezes the page renderer in automated Chromium (the Oct 13 data
+     load died twice on exactly that click) and is clunky on mobile.
+     First tap ARMS the button for ~3.5s ("Sure? Tap again to delete",
+     app-red); a second tap while armed runs the delete. Arm state
+     lives on the button element itself, so a fresh render (new DOM)
+     always starts every button unarmed.
+     v47: moved to module scope (was a render-local helper) so the Day
+     Details view binds its entry/extra deletes identically. */
+  function bindTwoTapDelete(body, sel, del) {
+    body.querySelectorAll(sel).forEach(function (b) {
+      b.onclick = function () {
+        if (b.getAttribute('data-armed') === '1') {
+          if (b._armT) clearTimeout(b._armT);
+          del(b);
+          return;
+        }
+        var label = b.textContent;
+        b.setAttribute('data-armed', '1');
+        b.textContent = 'Sure? Tap again to delete';
+        b.style.background = '#e74c3c';
+        b.style.color = '#fff';
+        b._armT = setTimeout(function () {
+          if (!document.body.contains(b)) return;
+          b.removeAttribute('data-armed');
+          b.textContent = label;
+          b.style.background = '';
+          b.style.color = '';
+        }, 3500);
+      };
+    });
+  }
+
+  /* DAY-DETAIL-BEGIN — v47: everything the Day Details view shows
+     for one date, assembled from the existing stores only — no new
+     data model. Day totals come from dayAgg() itself, so the detail
+     page can never disagree with the Month row that led to it; entry
+     amounts are priced with the same payCtx and payFor pair dayAgg
+     uses. Sessions return raw millisecond stamps (start derived as
+     endedAt minus seconds — the only start the record supports) and
+     the renderer formats them; fields the record does not carry come
+     back null and are omitted at render, never shown blank.
+     Harness-extractable: may use entries, extras, dayAgg, payCtx,
+     payFor, App._store and App._odoDailyKm. */
+  function dayDetailData(ds) {
+    var agg = dayAgg()[ds] || { hours: 0, base: 0, extrasAmt: 0, amount: 0, hasEntry: false, live: false };
+    var ctx = payCtx();
+    var o = App._store.get('onboarding', {});
+    var ents = [];
+    entries().forEach(function (e, i) {
+      if (!e || e.date !== ds) return;
+      ents.push({
+        index: i, type: e.type || 'load',
+        hours: parseFloat(e.hours) || 0, miles: parseFloat(e.miles) || 0,
+        tons: parseFloat(e.tons) || 0, trips: parseFloat(e.trips) || 0,
+        loads: parseInt(e.loads, 10) || 0,
+        amount: payFor(e, ctx.std, o.payRate),
+        note: e.note || '', auto: !!e.auto
+      });
+    });
+    var xtras = [];
+    extras().forEach(function (x, i) {
+      if (!x || x.date !== ds) return;
+      xtras.push({ index: i, type: x.type || 'other', amount: parseFloat(x.amount) || 0, note: x.note || '' });
+    });
+    var sessions = [];
+    (App._store.get('sessions', []) || []).forEach(function (s) {
+      if (!s || s.date !== ds) return;
+      var endMs = s.endedAt ? Date.parse(s.endedAt) : null;
+      if (!(endMs > 0)) endMs = null;
+      var sec = parseFloat(s.seconds) || 0;
+      sessions.push({
+        startMs: (endMs !== null && sec > 0) ? endMs - sec * 1000 : null,
+        endMs: endMs, seconds: sec,
+        startOdo: parseFloat(s.startOdo) > 0 ? parseFloat(s.startOdo) : null,
+        endOdo: parseFloat(s.endOdo) > 0 ? parseFloat(s.endOdo) : null,
+        odoKm: (window.App && App._odoDailyKm) ? App._odoDailyKm(s) : null,
+        liveKm: (typeof s.liveKm === 'number') ? s.liveKm : null,
+        milesStatus: s.milesStatus || null
+      });
+    });
+    var fuel = [];
+    (App._store.get('fuel_fills', []) || []).forEach(function (f) {
+      if (!f || f.date !== ds) return;
+      fuel.push({
+        litres: parseFloat(f.litres) || 0, cost: parseFloat(f.cost) || 0,
+        station: f.station || '', odo: parseFloat(f.odo) > 0 ? parseFloat(f.odo) : null
+      });
+    });
+    var dispatches = [];
+    (App._store.get('dsp_list', []) || []).forEach(function (d) {
+      if (!d || d.date !== ds) return;
+      dispatches.push({ jobSite: d.jobSite || d.pickup || 'Dispatch', status: d.status || '', ticketNo: d.ticketNo || '' });
+    });
+    return {
+      date: ds, hours: agg.hours, amount: agg.amount, extrasAmt: agg.extrasAmt, live: !!agg.live,
+      entries: ents, extras: xtras, sessions: sessions, fuel: fuel, dispatches: dispatches
+    };
+  }
+  /* DAY-DETAIL-END */
+
+  /* v47: Day Details — opened by tapping a day row in the Month view
+     (Asjad, Oct 14: "Why can I not click on a specific day and see the
+     details of that day?"). Renders into the same module body; Back
+     clears dayDetailDate and re-renders Revenue, and because view and
+     month live in the store (rev_view, rev_monthCur), the driver
+     lands on the same Month view and month they left. Entry and extra
+     deletes wire the SAME two-tap confirm the main lists use — there
+     is no entry edit UI anywhere in Revenue (entries are add/delete
+     only), so deletes are the wiring there is to reuse. */
+  function fmtClockTime(ms) {
+    return new Date(ms).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
+  }
+  function renderDayDetail(body) {
+    var ds = dayDetailDate;
+    var d = dayDetailData(ds);
+    var title = new Date(ds + 'T12:00:00').toLocaleDateString('en',
+      { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    var h = '<button class="btn small ghost" id="rv_day_back" style="margin-bottom:10px">‹ Back</button>';
+    h += '<div class="card"><h3>🗓 ' + esc(title) + '</h3>' +
+      '<div class="kv"><span>Hours</span><b>' + fmtH(d.hours) + '</b></div>' +
+      '<div class="kv"><span>Earnings</span><b>$' + d.amount.toFixed(2) + '</b></div>' +
+      (d.extrasAmt > 0 ? '<div class="note" style="margin-top:6px">Earnings include $' + d.extrasAmt.toFixed(2) + ' in extras (listed below).</div>' : '') +
+      (d.live ? '<div class="note" style="margin-top:6px">● Tracker still running — this day is counted live; the finished session lands here when you stop.</div>' : '') +
+      '</div>';
+    if (d.entries.length) {
+      h += '<div class="card"><h3>📒 Entries</h3>' + d.entries.map(function (e) {
+        var parts = [];
+        if (e.hours > 0) parts.push(fmtH(e.hours) + 'h');
+        if (e.miles > 0) parts.push(e.miles + ' km');
+        if (e.tons > 0) parts.push(e.tons + 't');
+        if (e.trips > 0) parts.push(e.trips + ' trip' + (e.trips === 1 ? '' : 's'));
+        if (e.type === 'load' && e.loads > 0) parts.push(e.loads + ' load' + (e.loads === 1 ? '' : 's'));
+        if (e.note) parts.push(e.note);
+        if (e.auto) parts.push('auto');
+        return '<div class="listitem"><div class="a">$' + e.amount.toFixed(2) + ' <span class="pill">' + esc(e.type) + '</span></div>' +
+          (parts.length ? '<div class="b">' + esc(parts.join(' · ')) + '</div>' : '') +
+          '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + e.index + '">Delete</button></div></div>';
+      }).join('') + '</div>';
+    }
+    if (d.extras.length) {
+      h += '<div class="card"><h3>✨ Extras</h3>' + d.extras.map(function (x) {
+        return '<div class="listitem"><div class="a">' + esc(x.type) + ' — $' + x.amount.toFixed(2) + '</div>' +
+          (x.note ? '<div class="b">' + esc(x.note) + '</div>' : '') +
+          '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + x.index + '">Delete</button></div></div>';
+      }).join('') + '</div>';
+    }
+    if (d.sessions.length) {
+      h += '<div class="card"><h3>⏱ Tracker session' + (d.sessions.length > 1 ? 's' : '') + '</h3>' +
+        d.sessions.map(function (s, si) {
+          var rows = '';
+          if (d.sessions.length > 1) rows += '<div class="note" style="margin:8px 0 2px">Session ' + (si + 1) + '</div>';
+          if (s.startMs !== null) rows += '<div class="kv"><span>Started</span><b>' + fmtClockTime(s.startMs) + '</b></div>';
+          if (s.endMs !== null) rows += '<div class="kv"><span>Ended</span><b>' + fmtClockTime(s.endMs) + '</b></div>';
+          if (s.seconds > 0) rows += '<div class="kv"><span>Duration</span><b>' + fmtH(s.seconds / 3600) + 'h</b></div>';
+          if (s.startOdo !== null) rows += '<div class="kv"><span>Start odometer</span><b>' + s.startOdo + ' km</b></div>';
+          if (s.endOdo !== null) rows += '<div class="kv"><span>End odometer</span><b>' + s.endOdo + ' km</b></div>';
+          if (s.odoKm !== null && s.odoKm !== undefined) rows += '<div class="kv"><span>Odometer distance</span><b>🛣 ' + (+s.odoKm.toFixed(1)) + ' km</b></div>';
+          if (s.liveKm !== null) rows += '<div class="kv"><span>Live GPS distance</span><b>' + (+s.liveKm.toFixed(1)) + ' km</b></div>';
+          if (s.milesStatus) rows += '<div class="kv"><span>Miles check</span><b>' + (s.milesStatus === 'confirmed' ? '✓ Matches odometer' : '⚠️ Differs from odometer') + '</b></div>';
+          return rows;
+        }).join('') + '</div>';
+    }
+    if (d.fuel.length) {
+      h += '<div class="card"><h3>⛽ Fuel</h3>' + d.fuel.map(function (f) {
+        var b = [];
+        if (f.litres > 0) b.push(f.litres + ' L');
+        if (f.odo !== null) b.push('odo ' + f.odo);
+        return '<div class="listitem"><div class="a">' + esc(f.station || 'Fill-up') + ' — $' + f.cost.toFixed(2) + '</div>' +
+          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') + '</div>';
+      }).join('') + '</div>';
+    }
+    if (d.dispatches.length) {
+      h += '<div class="card"><h3>🚚 Dispatches (' + d.dispatches.length + ')</h3>' + d.dispatches.map(function (x) {
+        var b = [];
+        if (x.status) b.push(x.status);
+        if (x.ticketNo) b.push('ticket #' + x.ticketNo);
+        return '<div class="listitem"><div class="a">' + esc(x.jobSite) + '</div>' +
+          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') + '</div>';
+      }).join('') + '</div>';
+    }
+    if (!d.entries.length && !d.extras.length && !d.sessions.length && !d.fuel.length && !d.dispatches.length) {
+      h += '<div class="card"><div class="empty">Nothing recorded for this day.</div></div>';
+    }
+    body.innerHTML = h;
+    body.querySelector('#rv_day_back').onclick = function () { dayDetailDate = null; api.render(body); };
+    bindTwoTapDelete(body, '[data-rvdel]', function (b) {
+      var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
+    });
+    bindTwoTapDelete(body, '[data-rxdel]', function (b) {
+      var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
+    });
+  }
+
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
+  var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
 
   var api = {
     status: function () {
@@ -388,6 +583,9 @@
        reported, never silently dropped. */
     importDays: function (text) { return importDays(text); },
     render: function (body) {
+      /* v47: a tapped Month day shows its Day Details instead of the
+         normal Revenue view (Back clears dayDetailDate). */
+      if (dayDetailDate) { renderDayDetail(body); return; }
       var o = App._store.get('onboarding', {});
       var period = S('period', '30');
       var view = S('view', 'period');
@@ -451,13 +649,17 @@
 
       if (view === 'month') {
         /* v38 (B1): per-day breakdown, newest first — date, hours, amount.
-           No travel line: the recorded hours already include travel. */
+           No travel line: the recorded hours already include travel.
+           v47: rows are tappable — a tap opens the Day Details view for
+           that date (renderDayDetail below); the › + "tap for details"
+           is the only visual change. */
         h += '<div class="card"><h3>🗓 Days in ' + esc(monthLabel(ym)) + '</h3>' +
           (ms.days.length ? ms.days.map(function (d) {
             var dl = new Date(d.date + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
-            return '<div class="listitem"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) + '</div>' +
+            return '<div class="listitem" data-day="' + d.date + '" style="cursor:pointer"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) +
+              '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
               '<div class="b">' + fmtH(d.hours) + 'h' +
-              (d.live ? ' · ● still running' : '') + '</div></div>';
+              (d.live ? ' · ● still running' : '') + ' · tap for details</div></div>';
           }).join('') : '<div class="empty">No days recorded this month yet. Import below or run the tracker.</div>') + '</div>';
 
         /* v38 (B2): paste-import from the hours sheet. */
@@ -523,6 +725,10 @@
       });
       body.querySelectorAll('[data-mstep]').forEach(function (b) {
         b.onclick = function () { W('monthCur', shiftYM(ym, parseInt(b.getAttribute('data-mstep'), 10) || 0)); api.render(body); };
+      });
+      /* v47: tapping a Month day row opens its Day Details view. */
+      body.querySelectorAll('[data-day]').forEach(function (b) {
+        b.onclick = function () { dayDetailDate = b.getAttribute('data-day'); api.render(body); };
       });
       var impBtn = body.querySelector('#rv_imp_btn');
       if (impBtn) impBtn.onclick = function () {
@@ -591,40 +797,12 @@
         manifestFeedPush('revenue', 'Extra (' + body.querySelector('#rx_type').value + '): $' + amt.toFixed(2));
         api.render(body);
       };
-      /* v43: two-tap in-app delete confirm — the native confirm dialog
-         freezes the page renderer in automated Chromium (the Oct 13 data
-         load died twice on exactly that click) and is clunky on mobile.
-         First tap ARMS the button for ~3.5s ("Sure? Tap again to delete",
-         app-red); a second tap while armed runs the delete. Arm state
-         lives on the button element itself, so api.render() (fresh DOM)
-         always starts every button unarmed. */
-      function bindTwoTapDelete(sel, del) {
-        body.querySelectorAll(sel).forEach(function (b) {
-          b.onclick = function () {
-            if (b.getAttribute('data-armed') === '1') {
-              if (b._armT) clearTimeout(b._armT);
-              del(b);
-              return;
-            }
-            var label = b.textContent;
-            b.setAttribute('data-armed', '1');
-            b.textContent = 'Sure? Tap again to delete';
-            b.style.background = '#e74c3c';
-            b.style.color = '#fff';
-            b._armT = setTimeout(function () {
-              if (!document.body.contains(b)) return;
-              b.removeAttribute('data-armed');
-              b.textContent = label;
-              b.style.background = '';
-              b.style.color = '';
-            }, 3500);
-          };
-        });
-      }
-      bindTwoTapDelete('[data-rvdel]', function (b) {
+      /* v43: two-tap in-app delete confirm — see bindTwoTapDelete at
+         module scope (moved out in v47 so Day Details reuses it). */
+      bindTwoTapDelete(body, '[data-rvdel]', function (b) {
         var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
       });
-      bindTwoTapDelete('[data-rxdel]', function (b) {
+      bindTwoTapDelete(body, '[data-rxdel]', function (b) {
         var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
       });
       body.querySelector('#rv_export').onclick = function () {

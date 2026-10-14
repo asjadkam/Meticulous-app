@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 46,
+  "webVersion": 47,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -33,7 +33,7 @@
     "modules/pnl.js": "151dbffce1c4e52bff2cef99b0abefabf1f3f6a88559c3e740b6e0789c01d49e",
     "modules/preferences.js": "b7cf24f5c940ede4a818a6b8a4ad96361fba1af354b444b6f390e975bacc747a",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
-    "modules/revenue.js": "fb7ae94ac2ecdb47facc22e32e85608544d03e2ba7daadcb5fb990bf87bce7c9",
+    "modules/revenue.js": "9c1a79fdc47f4ac801895435e01f471e2efc4c6655ce855f5e0017226a9774a7",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }
