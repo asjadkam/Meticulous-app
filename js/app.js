@@ -1272,18 +1272,33 @@
   }
 
   /* auth first, then onboarding: after any sign-in, route based on onboarded flag */
+  /* v45: EVERY Firebase auth error maps to plain English — the raw code
+     and raw Firebase message must never reach the screen (new users read
+     "auth/invalid-credential" as gibberish and give up). */
   function friendlyAuthError(e) {
     var code = (e && e.code) || '';
-    var msg = (e && e.message) || 'Sign in failed.';
-    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found')
-      return 'Wrong email or password. If you just reset your password, make sure you are typing the new one. (' + code + ')';
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found' || code === 'auth/invalid-password')
+      return 'Wrong email or password. If you just reset your password, make sure you are typing the new one.';
+    if (code === 'auth/email-already-in-use')
+      return 'That email already has an account. Tap Back and choose Sign in instead — or use Forgot password on the sign-in screen.';
+    if (code === 'auth/invalid-email')
+      return 'That email address doesn\'t look right. Check it and try again.';
+    if (code === 'auth/weak-password')
+      return 'That password is too weak. Use at least 6 characters.';
+    if (code === 'auth/missing-password')
+      return 'Enter your password.';
     if (code === 'auth/too-many-requests')
-      return 'Too many tries — Firebase locked this for a bit. Wait 10 minutes and try again. (' + code + ')';
+      return 'Too many tries — sign-in is paused for a bit. Wait about 10 minutes and try again.';
     if (code === 'auth/network-request-failed')
-      return 'Could not reach the server. Check your internet and try again. (' + code + ')';
+      return 'Could not reach the server. Check your internet and try again.';
     if (code === 'auth/user-disabled')
-      return 'This account is disabled. Contact support. (' + code + ')';
-    return msg + (code ? ' (' + code + ')' : '');
+      return 'This account has been disabled. Please contact support.';
+    if (code === 'auth/requires-recent-login')
+      return 'For security, sign out and sign back in, then try again right away.';
+    if (code === 'auth/operation-not-allowed')
+      return 'Email sign-in is not available right now. Please try again later.';
+    return 'Something went wrong. Please try again.';
   }
   /* v16: show auth errors visibly. The authErr box is hidden on the landing
      view, so failures there were invisible. If the form is hidden, use alert. */
@@ -1334,9 +1349,21 @@
   /* v15: strip invisible characters glitchy keyboards insert into passwords
      (zero-width spaces etc. are invisible even with the eye toggle on,
      so the password looks right but never matches). Applied on both
-     signup and sign-in so they always agree. */
+     signup and sign-in so they always agree.
+     v45: ALSO trim ordinary leading/trailing spaces — a trailing space
+     typed at registration or sign-in caused a real auth/invalid-credential
+     lockout (Oct 12). Firebase passwords are exact-match; trimming at BOTH
+     ends keeps register and sign-in in agreement. */
   function cleanPw(pw) {
-    return String(pw || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, '');
+    return String(pw || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, '').trim();
+  }
+  /* v45: emails are case-insensitive identities — trim + lowercase
+     everywhere so Register and Sign in always agree. */
+  function cleanEmail(em) {
+    return String(em || '').trim().toLowerCase();
+  }
+  function looksLikeEmail(em) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em);
   }
   function authError(msg, ok) {
     var e = el('authErr'); e.textContent = msg; e.style.display = 'block';
@@ -1350,19 +1377,21 @@
       el('btnShowPass').innerHTML = show ? '&#128064;' : '&#128065;';
     };
     if (el('btnForgot')) el('btnForgot').onclick = function () {
-      var em = el('authEmail').value.trim();
+      var em = cleanEmail(el('authEmail').value);
       if (!em) return authError('Enter your email first, then tap Forgot password.');
+      if (!looksLikeEmail(em)) return authError('That email address doesn\'t look right. Check it and try again.');
       if (!window.FB || !FB.ready || !FB.auth) return authError('Could not reach the server. Try again.');
-      authError('Sending reset email...');
+      authError('Sending reset email...', true);
       FB.sendReset(em).then(function () {
-        authError('Reset email sent! Check your inbox (and spam folder).');
+        authError('Reset email sent! Check your inbox (and spam folder).', true);
       }).catch(function (e) {
-        authError((e && e.message) || 'Could not send reset email.');
+        authError(friendlyAuthError(e));
       });
     };
     el('btnSignIn').onclick = function () {
-      var em = el('authEmail').value.trim(), pw = cleanPw(el('authPass').value);
+      var em = cleanEmail(el('authEmail').value), pw = cleanPw(el('authPass').value);
       if (!em || !pw) return authError('Enter email and password.');
+      if (!looksLikeEmail(em)) return authError('That email address doesn\'t look right. Check it and try again.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
       var btn = el('btnSignIn');
       btn.disabled = true; btn.textContent = 'Signing in...';
@@ -1374,9 +1403,12 @@
       } catch (e) { done(); authError(e.message || 'Sign in failed.'); }
     };
     el('btnSignUp').onclick = function () {
-      var em = el('authEmail').value.trim(), pw = cleanPw(el('authPass').value);
+      var em = cleanEmail(el('authEmail').value), pw = cleanPw(el('authPass').value);
+      var pw2 = el('authPass2') ? cleanPw(el('authPass2').value) : pw;
       if (!em || !pw) return authError('Enter email and password.');
+      if (!looksLikeEmail(em)) return authError('That email address doesn\'t look right. Check it and try again.');
       if (pw.length < 6) return authError('Password must be at least 6 characters.');
+      if (pw !== pw2) return authError('Passwords do not match. Type the same password in both boxes.');
       if (!window.FB || !FB.ready) return authError('Could not reach the server. Try "Continue without an account".');
       var btn = el('btnSignUp');
       btn.disabled = true; btn.textContent = 'Creating...';
@@ -1392,7 +1424,7 @@
        errors, so check the view and force minimal navigation if stuck. */
     function enterLocalMode() {
       var em = '';
-      try { em = el('authEmail').value.trim(); } catch (e) {}
+      try { em = cleanEmail(el('authEmail').value); } catch (e) {}
       if (em) { try { store.set('localEmail', em); } catch (e) {} }
       try { afterAuth(); } catch (e) {}
       /* v28: routing after sign-in waits for the first cloud pull (async), so
@@ -1419,6 +1451,9 @@
       el('authTitle').textContent = isUp ? 'Create account' : 'Sign in';
       el('btnSignIn').classList.toggle('hidden', isUp);
       el('btnSignUp').classList.toggle('hidden', !isUp);
+      /* v45: confirm-password box exists only when creating an account */
+      if (el('authPass2Wrap')) el('authPass2Wrap').classList.toggle('hidden', !isUp);
+      el('authPass').setAttribute('autocomplete', isUp ? 'new-password' : 'current-password');
       el('authErr').style.display = 'none';
     }
     function showAuthLand() {

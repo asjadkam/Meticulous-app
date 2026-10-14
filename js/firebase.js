@@ -42,24 +42,29 @@
     }
   }
 
+  /* v45: normalize at the boundary too — trim + lowercase the email and
+     trim the password, so no caller can re-introduce the trailing-space
+     lockout (auth/invalid-credential, Oct 12) below the UI layer. */
+  function normEmail(email) { return String(email || '').trim().toLowerCase(); }
+  function normPw(password) { return String(password || '').trim(); }
   FB.signUp = function (email, password) {
-    return FB.auth.createUserWithEmailAndPassword(email, password);
+    return FB.auth.createUserWithEmailAndPassword(normEmail(email), normPw(password));
   };
   FB.signIn = function (email, password) {
-    return FB.auth.signInWithEmailAndPassword(email, password);
+    return FB.auth.signInWithEmailAndPassword(normEmail(email), normPw(password));
   };
   FB.sendReset = function (email) {
-    return FB.auth.sendPasswordResetEmail(email);
+    return FB.auth.sendPasswordResetEmail(normEmail(email));
   };
   /* v34: in-app password change (Preferences > Security). updatePassword
      can reject with auth/requires-recent-login; reauthenticate covers it. */
   FB.changePassword = function (newPassword) {
     if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
-    return FB.auth.currentUser.updatePassword(newPassword);
+    return FB.auth.currentUser.updatePassword(normPw(newPassword));
   };
   FB.reauthenticate = function (password) {
     if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
-    var cred = firebase.auth.EmailAuthProvider.credential(FB.auth.currentUser.email, password);
+    var cred = firebase.auth.EmailAuthProvider.credential(FB.auth.currentUser.email, normPw(password));
     return FB.auth.currentUser.reauthenticateWithCredential(cred);
   };
   FB.signOut = function () {

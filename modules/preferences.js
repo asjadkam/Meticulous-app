@@ -148,8 +148,9 @@
       var pwBtn = body.querySelector('#pf_pw_btn');
       if (pwBtn) pwBtn.onclick = function () {
         var note = body.querySelector('#pf_pw_note');
-        // same invisible-character strip as sign-in, so the passwords agree
-        var clean = function (p) { return String(p || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, ''); };
+        // same cleaning as sign-in (invisible-char strip + v45 trim), so
+        // the passwords agree — a stray trailing space must not fail reauth
+        var clean = function (p) { return String(p || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, '').trim(); };
         var cur = clean(body.querySelector('#pf_pw_cur').value);
         var nw = clean(body.querySelector('#pf_pw_new').value);
         var conf = clean(body.querySelector('#pf_pw_conf').value);
@@ -167,11 +168,15 @@
         }
         function fail(e) {
           pwBtn.disabled = false;
+          /* v45: plain English only — never show the raw Firebase message */
           var code = (e && e.code) || '';
           note.textContent = (code === 'auth/wrong-password' || code === 'auth/invalid-credential')
             ? 'Current password is wrong.'
             : code === 'auth/weak-password' ? 'New password is too weak — use at least 6 characters.'
-            : 'Could not change password: ' + ((e && e.message) || e);
+            : code === 'auth/requires-recent-login' ? 'For security, sign out and sign back in, then change your password right after signing in.'
+            : code === 'auth/too-many-requests' ? 'Too many tries. Wait about 10 minutes and try again.'
+            : code === 'auth/network-request-failed' ? 'Could not reach the server. Check your internet and try again.'
+            : 'Could not change password. Please try again.';
         }
         FB.changePassword(nw).then(ok).catch(function (e) {
           if (e && e.code === 'auth/requires-recent-login') {
