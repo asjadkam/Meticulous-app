@@ -1,1 +1,39 @@
-{"background_color":"#1F3764","description":"The dump truck driver's companion. Track work, revenue, fuel, and more.","display":"standalone","icons":[{"sizes":"192x192","src":"/assets/icon-192.png","type":"image/png"},{"sizes":"512x512","src":"/assets/icon-512.png","type":"image/png"},{"purpose":"maskable","sizes":"512x512","src":"/assets/icon-maskable-512.png","type":"image/png"}],"name":"Meticulous","orientation":"portrait","scope":"/","short_name":"Meticulous","start_url":"/","theme_color":"#1F3764"}
+{
+"background_color": "#1F3764",
+"description": "The dump truck driver's companion. Track work, revenue, fuel, and more.",
+"display": "standalone",
+"icons": [
+{
+"sizes": "192x192",
+"src": "/assets/icon-192.png",
+"type": "image/png"
+},
+{
+"sizes": "512x512",
+"src": "/assets/icon-512.png",
+"type": "image/png"
+},
+{
+"purpose": "maskable",
+"sizes": "512x512",
+"src": "/assets/icon-maskable-512.png",
+"type": "image/png"
+}
+],
+"name": "Meticulous",
+"orientation": "portrait",
+"scope": "/",
+"short_name": "Meticulous",
+"start_url": "/",
+"theme_color": "#1F3764",
+"share_target": {
+"action": "/?share=1",
+"method": "GET",
+"enctype": "application/x-www-form-urlencoded",
+"params": {
+"title": "title",
+"text": "text",
+"url": "url"
+}
+}
+}

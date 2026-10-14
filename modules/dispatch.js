@@ -328,6 +328,16 @@
     catch (e) { return ''; }
   }
 
+  /* v65: dispatch INGESTION — a one-shot note for the "📩 Suggested
+     dispatches" card (set by an intake action or the share drain,
+     shown once by paintIngest inside render, then cleared). All
+     ingestion state/logic lives in js/dispatch-ingest.js
+     (window.DispatchIngest): suggestions are dsp_suggest entries —
+     never dispatches — and "Use" loads one into the form via
+     dsp_draft, so the verified Save below remains the only way a
+     dispatch record is ever created. */
+  var ingestFlash = '';
+
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
   function fileToThumb(file, cb) {
     var r = new FileReader();
@@ -402,6 +412,17 @@
          drivers. It is how a dispatch "identifies a driver", which the
          travel-bonus routing needs when an office user completes the
          dispatch (the travel hours become that driver's wage claim). */
+      /* v65: drain any "Share → Meticulous" messages into suggestions
+         (the inbox empties, so this fires once per share) and carry a
+         one-line note if a share didn't read as a dispatch. */
+      try {
+        if (window.DispatchIngest) {
+          var dr65 = DispatchIngest.drainShareInbox();
+          if (dr65 && dr65.failed > 0 && !ingestFlash) {
+            ingestFlash = 'A shared message didn\'t look like a dispatch — nothing was added from it.';
+          }
+        }
+      } catch (e) {}
       var drvList = App._store.get('pnl_drivers', []) || [];
       var drvField = '';
       if (drvList.length) {
@@ -428,6 +449,12 @@
           '<button class="btn ghost" id="dp_edit_active">✏️ Edit</button>' +
           '<button class="btn ghost" id="dp_cancel">Cancel</button></div></div>';
       }
+
+      /* ---- v65: 📩 Suggested dispatches + "Add from a message" ----
+           Filled and wired by paintIngest() at the end of render. When
+           there are no suggestions the card is just the quiet paste
+           box; suggestions never touch the form until "Use". */
+      h += '<div id="dp_ingest"></div>';
 
       /* ---- New dispatch form (v56: the same form is the EDIT form
            when editingId is set — one form, prefilled either way) ---- */
@@ -488,6 +515,89 @@
         }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
 
       body.innerHTML = h;
+
+      /* ---- v65: ingestion card (suggestions + paste box) ----
+         Rebuilt in place by paintIngest so Dismiss / paste feedback
+         never disturb the form; "Use" goes through DispatchIngest.use
+         (draft machinery) and then a full render, whose draft restore
+         fills the form — the same path a kept draft takes. */
+      function ingestHTML() {
+        var sug = [];
+        try { if (window.DispatchIngest) sug = DispatchIngest.list(); } catch (e) {}
+        var h = '<div class="card">';
+        if (sug.length) {
+          h += '<h3>📩 Suggested dispatches <span class="pill">' + sug.length + '</span></h3>' +
+            '<p class="note">From messages you pasted or shared — whoever sent them. Tap <b>Use</b> to put one in the form below. Nothing is saved until you tap Save there.</p>' +
+            sug.map(function (e) {
+              var f = e.fields || {};
+              var title = f.jobSite || f.destination || 'Dispatch';
+              var bits = [];
+              if (f.timeLabel) bits.push('🕗 ' + esc(f.timeLabel));
+              else if (f.scheduledAt) bits.push('🕗 ' + esc(String(f.scheduledAt).replace('T', ' ')));
+              if (f.equipment) bits.push('🚛 ' + esc(f.equipment));
+              if (f.type === 'empty') bits.push('Travel empty');
+              if (f.type === 'loaded') bits.push('Loaded haul');
+              if (f.destination && f.destination !== f.jobSite) bits.push('→ ' + esc(f.destination));
+              var raw = String(e.rawText || '');
+              if (raw.length > 140) raw = raw.slice(0, 140) + '…';
+              return '<div class="listitem"><div style="flex:1"><div class="a">' + esc(title) + '</div>' +
+                (bits.length ? '<div class="b">' + bits.join(' · ') + '</div>' : '') +
+                (f.notes ? '<div class="b">📝 ' + esc(f.notes) + '</div>' : '') +
+                '<div class="b" style="color:var(--muted)">' + esc(raw) + '</div>' +
+                '<div class="b" style="color:var(--muted);font-size:11px">From a ' + esc(e.source || 'paste') + (e.senderHint ? ' · ' + esc(e.senderHint) : '') + '</div></div>' +
+                '<div style="display:flex;flex-direction:column;gap:6px">' +
+                '<button class="btn small primary" data-suguse="' + esc(e.id) + '">Use</button>' +
+                '<button class="btn small ghost" data-sugdismiss="' + esc(e.id) + '">Dismiss</button></div></div>';
+            }).join('') +
+            '<div style="margin-top:12px">';
+        } else {
+          h += '<h3>📩 Add from a message</h3><div>';
+        }
+        h += '<p class="note">Paste a dispatch from a text, email or WhatsApp — whoever sent it. If it reads like a dispatch, it becomes a suggestion for you to confirm.</p>' +
+          '<textarea id="dp_paste" rows="3" placeholder="Paste the message here…" style="width:100%"></textarea>' +
+          '<div class="row" style="margin-top:6px"><button class="btn secondary" id="dp_paste_btn">Read message</button></div>' +
+          (ingestFlash ? '<p class="note" style="margin-top:6px">' + ingestFlash + '</p>' : '') +
+          '</div></div>';
+        return h;
+      }
+      function paintIngest() {
+        var wrap = body.querySelector('#dp_ingest');
+        if (!wrap) return;
+        wrap.innerHTML = ingestHTML();
+        ingestFlash = '';
+        var pb = wrap.querySelector('#dp_paste_btn');
+        if (pb) pb.onclick = function () {
+          var ta = wrap.querySelector('#dp_paste');
+          var entry = null;
+          try { if (window.DispatchIngest) entry = DispatchIngest.intake(ta ? ta.value : '', 'paste'); } catch (e) {}
+          ingestFlash = entry
+            ? '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.'
+            : 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
+          paintIngest();
+        };
+        wrap.querySelectorAll('[data-sugdismiss]').forEach(function (b) {
+          b.onclick = function () {
+            try { if (window.DispatchIngest) DispatchIngest.dismiss(b.getAttribute('data-sugdismiss')); } catch (e) {}
+            paintIngest();
+          };
+        });
+        wrap.querySelectorAll('[data-suguse]').forEach(function (b) {
+          b.onclick = function () {
+            var res = null;
+            try { if (window.DispatchIngest) res = DispatchIngest.use(b.getAttribute('data-suguse')); } catch (e) {}
+            if (res && res.ok) {
+              api.render(body); // draft restore fills the form from dsp_draft
+              var siteEl = body.querySelector('#dp_site');
+              if (siteEl && siteEl.scrollIntoView) { try { siteEl.scrollIntoView({ block: 'start' }); } catch (e2) {} }
+              return;
+            }
+            ingestFlash = (res && res.reason === 'editing')
+              ? 'Finish or cancel the edit in the form below first — then tap Use.'
+              : 'You have an unsaved dispatch in the form below — save it first (or clear the form), then tap Use.';
+            paintIngest();
+          };
+        });
+      }
 
       /* v26: Multi-ticket — drivers can have MULTIPLE haul cards per day.
          Each ticket: photo + OCR data + manually-confirmed hours/payment unit.
@@ -1052,6 +1162,8 @@
       body.querySelectorAll('[data-edit]').forEach(function (b) {
         b.onclick = function () { startEdit(list()[+b.getAttribute('data-edit')]); };
       });
+
+      paintIngest(); // v65: suggestions + paste box (see above)
     }
   };
 

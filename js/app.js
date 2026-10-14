@@ -2048,6 +2048,12 @@
       }
     } catch (e) {}
 
+    // v65: Web Share Target capture — "Share → Meticulous" from any
+    // app lands on /?share=1&text=… ; stash the text for the Dispatch
+    // module's ingestion drain (it becomes a suggestion there, never
+    // a dispatch). Inert without the share params.
+    try { if (window.DispatchIngest && DispatchIngest.captureShare) DispatchIngest.captureShare(); } catch (e) {}
+
     el('onbBack').onclick = function () { collectOnbInputs(); if (App.onbStep > 0) { App.onbStep--; renderOnbStep(); } };
     el('onbNext').onclick = function () {
       collectOnbInputs();
