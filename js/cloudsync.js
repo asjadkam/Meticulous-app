@@ -156,7 +156,7 @@
     var origSet = store.set, origDel = store.del;
 
     store.set = function (k, v) {
-      origSet(k, v);
+      var _ok = origSet(k, v); // v48: pass the write result through (see js/app.js)
       if (isSyncable(k)) {
         var km = keyMeta(k);
         km.t = Date.now();
@@ -166,9 +166,10 @@
         scheduleFlush();
       }
       refreshDot();
+      return _ok;
     };
     store.del = function (k) {
-      origDel(k);
+      var _ok = origDel(k); // v48: pass the result through, same as set
       if (isSyncable(k)) {
         var km = keyMeta(k);
         km.d = Date.now(); km.t = 0; // tombstone; flush() deletes the cloud doc
@@ -177,6 +178,7 @@
         scheduleFlush();
       }
       refreshDot();
+      return _ok;
     };
 
     // Upgrade path: this code is new, so existing local data has no metadata.

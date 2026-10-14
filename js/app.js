@@ -10,8 +10,12 @@
       try { var v = localStorage.getItem('mt_' + k); return v === null || v === undefined ? d : JSON.parse(v); }
       catch (e) { return d; }
     },
-    set: function (k, v) { try { localStorage.setItem('mt_' + k, JSON.stringify(v)); } catch (e) {} },
-    del: function (k) { try { localStorage.removeItem('mt_' + k); } catch (e) {} }
+    /* v48: set/del REPORT success (true) or failure (false) — a failed
+       write (e.g. storage full) used to be silently swallowed, making a
+       lost save look exactly like a good one. Returning a boolean is
+       backward-compatible: existing callers ignore it. */
+    set: function (k, v) { try { localStorage.setItem('mt_' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+    del: function (k) { try { localStorage.removeItem('mt_' + k); return true; } catch (e) { return false; } }
   };
 
   var TIERS = { none: -1, basic: 0, pro: 1, premium: 2 };
