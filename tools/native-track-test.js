@@ -198,6 +198,21 @@ console.log('miles engine: mergeCrumbs');
   ok(res.accepted === 0 && tr.totalM() === 0, '(h) crumbs before begin() change nothing');
 }
 
+/* (h2) v69: snapshot -> begin restores the total exactly — the
+   primitive both the plain relaunch restore and the glue's orphan
+   adoption (Oct 14 force-close bug) stand on */
+{
+  const tr = M.createMilesTracker();
+  tr.begin('s1', null);
+  const pts = drive([LAT, LNG], 100, 7, 30);
+  pts.forEach((p, i) => tr.ingest(fixAt(i * 30, p)));
+  const snap = tr.snapshot();
+  const tr2 = M.createMilesTracker();
+  tr2.begin('s1', snap);
+  ok(TOT(tr2) === TOT(tr) && tr2.crumbs().length === tr.crumbs().length,
+    '(h2) snapshot round-trip restores total + crumbs exactly');
+}
+
 console.log('geoloads engine: background cycle via crumbs');
 
 /* (i) full load->dump cycle completed "while dead" counts once */
@@ -244,9 +259,104 @@ console.log('glue: static checks');
   ok(/id=\\"pf_bgtrack\\"|pf_bgtrack/.test(pref) && /pf_bgallow/.test(pref) && /pf_bgbatt/.test(pref),
     '(j) Preferences carries the background-tracking status block');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  ok(/js\/shifttrack\.js\?v=64/.test(html) && /id="trkBgAsk"/.test(html),
+  ok(/js\/shifttrack\.js\?v=69/.test(html) && /id="trkBgAsk"/.test(html),
     '(j) index.html loads shifttrack.js and hosts the ask banner');
+  ok(/js\/miles\.js\?v=69/.test(html), '(j) index.html loads the v69 miles glue');
+  ok(app.includes('function trackerSessionKeyMs()') && app.includes('sessionId = trackerSessionStartMs()') &&
+     (app.match(/LiveMiles\.startDay\('s' \+ trackerSessionKeyMs\(\)/g) || []).length === 3,
+    '(j) v69: app.js pins the session record key and all start paths use it');
+  const mjs = fs.readFileSync(path.join(ROOT, 'js', 'miles.js'), 'utf8');
+  ok(/dayKey: function/.test(mjs) && /adoptableFragments/.test(mjs),
+    '(j) v69: LiveMiles exposes dayKey() and the orphan adoption');
+  ok(/LiveMiles\.dayKey/.test(st), '(j) v69: the drain ack gate consults LiveMiles.dayKey()');
 }
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+console.log('shifttrack glue: the v69 ack gate (real js/shifttrack.js, fake plugin)');
+
+/* (k) A drain must never ack crumbs the live engine is not yet
+   there to fold (the old ack-before-fold hole): while LiveMiles
+   has no day begun, the drain leaves the crumbs in the native
+   file; once the engine is up, the next drain folds them and only
+   then acks, up to the newest crumb folded. */
+const glueSection = (async function () {
+  const stSrc = fs.readFileSync(path.join(ROOT, 'js', 'shifttrack.js'), 'utf8');
+  const KEY = 's' + T0;
+  let pluginCrumbs = [
+    { t: T0 + 60000, a: LAT, o: LNG, c: 8 },
+    { t: T0 + 120000, a: LAT + 0.01, o: LNG, c: 8 }
+  ];
+  const acked = [];
+  const fakePlugin = {
+    start: function () { return Promise.resolve({}); },
+    stop: function () { return Promise.resolve({}); },
+    status: function () {
+      return Promise.resolve({ sessionActive: true, sessionKey: KEY, fineLocation: true, backgroundLocation: true });
+    },
+    readCrumbs: function () { return Promise.resolve({ crumbs: pluginCrumbs.slice(), more: false }); },
+    ack: function (o) {
+      acked.push(o);
+      pluginCrumbs = pluginCrumbs.filter(function (c) { return c.t > o.upTo; });
+      return Promise.resolve({});
+    },
+    requestBackground: function () { return Promise.resolve({}); },
+    openAppSettings: function () {},
+    openBatterySettings: function () {}
+  };
+  const liveState = { key: null, merged: [] };
+  const storeData = {};
+  const sb = {
+    console: console, Promise: Promise, setInterval: setInterval, clearInterval: clearInterval,
+    JSON: JSON, Math: Math, Date: Date,
+    document: {
+      addEventListener: function () {},
+      getElementById: function () { return null; },
+      visibilityState: 'visible'
+    },
+    Capacitor: { Plugins: { ShiftTrack: fakePlugin } },
+    App: {
+      _store: {
+        get: function (k, d) { return storeData[k] === undefined ? d : storeData[k]; },
+        set: function (k, v) { storeData[k] = v; }
+      },
+      tracker: { status: 'running' }
+    },
+    LiveMiles: {
+      dayKey: function () { return liveState.key; },
+      mergeNativeCrumbs: function (c) { liveState.merged.push(c); return { accepted: c.length, addedM: 0 }; },
+      _engine: null,
+      recordKmFor: function () { return null; },
+      reconcileSession: function () { return false; }
+    },
+    GeoLoads: { ingestNativeCrumbs: function () {} }
+  };
+  sb.window = sb;
+  vm.createContext(sb);
+  vm.runInContext(stSrc, sb);
+  const ST = sb.ShiftTrack;
+  ok(!!ST && typeof ST.syncOnBoot === 'function' && typeof ST.drainNow === 'function',
+    '(k) shifttrack glue loads against the fake plugin');
+
+  async function settle() { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); }
+
+  ST.syncOnBoot();           // boot reconcile -> drain with the engine NOT yet begun
+  await settle();
+  ok(acked.length === 0 && pluginCrumbs.length === 2,
+    '(k) no ack while LiveMiles has no day begun — crumbs stay in the native file');
+
+  liveState.key = KEY;       // the boot-time startDay lands; engine is up
+  ST.drainNow();
+  await settle();
+  ok(liveState.merged.length === 1 && liveState.merged[0].length === 2,
+    '(k) once begun, the next drain folds the retained crumbs');
+  ok(acked.length === 1 && acked[0].upTo === T0 + 120000 && pluginCrumbs.length === 0,
+    '(k) the ack follows the fold, up to the newest crumb folded');
+})();
+
+glueSection.then(function () {
+  console.log('\n' + pass + ' passed, ' + fail + ' failed');
+  process.exit(fail ? 1 : 0);
+}).catch(function (e) {
+  console.log('  NOT OK - (k) glue section error: ' + (e && e.stack || e));
+  console.log('\n' + pass + ' passed, ' + (fail + 1) + ' failed');
+  process.exit(1);
+});

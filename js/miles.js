@@ -27,6 +27,16 @@
  *    is never counted", and only when the service's own record proves
  *    it was running across the kill. True gaps (no observer at all)
  *    are still never guessed.
+ *  - v69: the session key is PINNED at session start (app.js
+ *    trackerSessionKeyMs). Before that, the key was re-derived from
+ *    the tracker's whole-second elapsed on every call, so it
+ *    jittered between the start tap and any later relaunch: the
+ *    relaunched app found no record under the re-derived key and
+ *    "Miles (live)" restarted from 0.0 km while the timer restored
+ *    fine (field bug, Oct 14). The glue now also ADOPTS record
+ *    fragments the old derivation orphaned under drifted keys —
+ *    same day, activity window belonging to this session — folding
+ *    them under the live key exactly once (see adoptableFragments).
  */
 (function () {
   'use strict';
@@ -544,6 +554,59 @@
     var d = loadAll();
     return d.days[key] || null;
   }
+
+  /* v69: orphan adoption (see the header note). A record fragment is
+     adoptable when ALL of these hold:
+       - it is not the live key's own record;
+       - it belongs to the SAME day (its stored date matches);
+       - it holds real observed distance (a fix-backed total or
+         breadcrumbs);
+       - its activity window belongs to THIS session: the last
+         activity is at/after the session's start (10 min slack),
+         and the first activity is not long before it (1 h slack —
+         a driver may have begun shortly before the backdated start
+         an Edit produced). An earlier, already-finished session's
+         record therefore never leaks into a later one.
+     Returns [{ key, rec, totalM, lastT }] — possibly empty. */
+  var ADOPT_LAST_SLACK_MS = 10 * 60 * 1000;
+  var ADOPT_FIRST_SLACK_MS = 60 * 60 * 1000;
+  function adoptableFragments(dateStr, sessionStartMs, ownKey) {
+    var d = loadAll();
+    var out = [];
+    Object.keys(d.days).forEach(function (k) {
+      if (k === ownKey) return;
+      var rec = d.days[k];
+      if (!rec || rec.date !== dateStr || !rec.hasFix) return;
+      var total = (typeof rec.totalM === 'number' && rec.totalM > 0) ? rec.totalM : 0;
+      var crumbs = (rec.crumbs && rec.crumbs.length) ? rec.crumbs : [];
+      if (!total && !crumbs.length) return;
+      var firstT = Infinity, lastT = 0;
+      for (var i = 0; i < crumbs.length; i++) {
+        var ct = crumbs[i] && crumbs[i].t;
+        if (typeof ct === 'number' && ct > 0) {
+          if (ct < firstT) firstT = ct;
+          if (ct > lastT) lastT = ct;
+        }
+      }
+      if (rec.anchor && typeof rec.anchor.time === 'number' && rec.anchor.time > 0) {
+        if (rec.anchor.time < firstT) firstT = rec.anchor.time;
+        if (rec.anchor.time > lastT) lastT = rec.anchor.time;
+      }
+      if (!lastT) return;
+      if (!isFinite(firstT)) firstT = lastT;
+      if (lastT < sessionStartMs - ADOPT_LAST_SLACK_MS) return;
+      if (firstT < sessionStartMs - ADOPT_FIRST_SLACK_MS) return;
+      out.push({ key: k, rec: rec, totalM: total, lastT: lastT });
+    });
+    return out;
+  }
+  function dropRecords(keys) {
+    var s = store();
+    if (!s || !keys || !keys.length) return;
+    var d = loadAll(), moved = false;
+    keys.forEach(function (k) { if (d.days[k]) { delete d.days[k]; moved = true; } });
+    if (moved) { try { s.set(STORE_KEY, d); } catch (e) {} }
+  }
   function persist(force) {
     var s = store();
     if (!s || !dayKey) return;
@@ -632,15 +695,45 @@
       }
       dayKey = key;
       broken = false;
+      var keyMs = parseInt(String(key).slice(1), 10) || Date.now();
       var saved = recordFor(key);
-      dayDate = saved && saved.date ? saved.date
-        : (function () { var d = new Date(parseInt(String(key).slice(1), 10) || Date.now()); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })();
+      dayDate = (function () { var d = new Date(keyMs); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })();
+      // v69: no record under this session's (pinned) key — the old
+      // drifting key derivation may have orphaned this session's
+      // record under a start-tap key earlier today. Adopt those
+      // fragments (adoptableFragments): the largest supplies the
+      // saved snapshot; the rest contribute only breadcrumbs through
+      // mergeCrumbs, whose timestamp dedupe keeps the fold
+      // exactly-once. The healed record is then persisted under the
+      // live key and the fragment keys retired, so no later relaunch
+      // can fold the same miles twice.
+      var adoptedFrom = [];
+      if (!saved) {
+        var frags = adoptableFragments(dayDate, keyMs, key);
+        if (frags.length) {
+          frags.sort(function (x, y) { return (y.totalM - x.totalM) || (y.lastT - x.lastT); });
+          saved = frags[0].rec;
+          adoptedFrom = frags;
+        }
+      }
+      if (saved && saved.date) dayDate = saved.date;
       // A record under this key can only belong to THIS session (the key
-      // is its start timestamp), so restoring it is always right — the
-      // engine's join rule keeps a relaunch from double-counting.
+      // is its pinned start identity), so restoring it is always right —
+      // the engine's join rule keeps a relaunch from double-counting.
       engine.begin(key, saved);
       watching = true;
       paint();
+      if (adoptedFrom.length) {
+        for (var fi = 1; fi < adoptedFrom.length; fi++) {
+          var frec = adoptedFrom[fi].rec;
+          if (frec.crumbs && frec.crumbs.length) {
+            try { engine.mergeCrumbs(frec.crumbs); } catch (e) {}
+          }
+        }
+        persist(true);
+        dropRecords(adoptedFrom.map(function (f) { return f.key; }));
+        paint();
+      }
       g.start(onFix, onGeoError).then(function (ok) {
         if (!ok) { watching = false; broken = true; paint(); }
         else { watchBornAt = Date.now(); }
@@ -672,6 +765,13 @@
 
     flush: function () { persist(true); },
     paint: paint,
+
+    /* v69: the live session's record key, or null when no day has
+       been begun in this page life. js/shifttrack.js checks it
+       before acking native breadcrumbs: a drain that wins the race
+       against the boot-time startDay must not delete crumbs the
+       live engine is not yet there to fold. */
+    dayKey: function () { return dayKey; },
 
     /* v62: app.js calls this after every tracker transition so the
        screen hold tracks the session exactly: running holds it,

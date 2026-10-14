@@ -225,7 +225,9 @@ function makeWorld(opts) {
   opts = opts || {};
   let fakeNow = opts.now || 1760455200000; // 2026-10-14 ~08:00 MDT
   class FakeDate extends Date { static now() { return fakeNow; } }
-  const data = {};
+  /* v69: opts.backing lets several page lives share ONE persisted
+     store — a force-close is just a new world over the same backing. */
+  const data = opts.backing || {};
   const memStore = {
     get(k, d) { const v = data['mt_' + k]; return v === undefined ? d : JSON.parse(v); },
     set(k, v) { data['mt_' + k] = JSON.stringify(v); return true; },
@@ -274,7 +276,7 @@ function makeWorld(opts) {
   vm.createContext(sandbox);
   vm.runInContext(milesSrc, sandbox);
   return {
-    LiveMiles: sandbox.LiveMiles, App, geo, wake, els, documentStub,
+    LiveMiles: sandbox.LiveMiles, App, geo, wake, els, documentStub, backing: data,
     setNow(ms) { fakeNow = ms; }, now() { return fakeNow; }
   };
 }
@@ -423,6 +425,139 @@ async function partB() {
   }
 }
 
+/* ============ Part B2 — force-close / relaunch restore (v69) ============
+   The Oct 14 field bug: mid-session the owner force-closed the app
+   and relaunched; the timer restored (it needs only elapsed+startTs)
+   but "Miles (live)" showed 0.0 km — the session's record key had
+   been re-derived from whole-second elapsed and no longer matched
+   the key the record was persisted under, so startDay began at zero
+   while ~45.7 km sat orphaned in the store. These cases drive the
+   REAL glue across simulated page deaths (a new vm world over the
+   SAME persisted store): same-key restore, crumb fold after
+   relaunch, orphan adoption (with its guards), and the stop total. */
+async function partB2() {
+  console.log('Part B2 — force-close → relaunch → restore (v69)');
+  const T0 = 1760455200000;
+  const C = { latitude: 51.07, longitude: -114.07 };          // ~2.22 km north of A
+
+  // R1. same pinned key: the accumulated total is back BEFORE any new fix
+  {
+    const backing = {};
+    const key = 's' + T0;
+    const w1 = makeWorld({ trackerStatus: 'running', now: T0, backing });
+    check('R1 setup: startDay begins', w1.LiveMiles.startDay(key) === true);
+    w1.geo.deliver(fixAt(A, T0));
+    w1.setNow(T0 + 60000); w1.geo.deliver(fixAt(B, T0 + 60000));
+    w1.setNow(T0 + 120000); w1.geo.deliver(fixAt(C, T0 + 120000));
+    await flush();
+    const km1 = w1.LiveMiles.currentKm();
+    check('R1 setup: world 1 accumulates ~2.22 km', km1 > 2.1 && km1 < 2.35, 'km=' + km1);
+    // FORCE-CLOSE: a brand-new page life over the same persisted store.
+    const w2 = makeWorld({ trackerStatus: 'running', now: T0 + 3600000, backing });
+    w2.LiveMiles.startDay(key, { resume: true }); await flush();
+    const km2 = w2.LiveMiles.currentKm();
+    check('R1: relaunch restores the total BEFORE any new fix (no 0.0 km)',
+      km2 !== null && Math.abs(km2 - km1) < 0.02, 'km2=' + km2 + ' km1=' + km1);
+    check('R1: the painted line shows the restored total',
+      w2.els.trkMiles.textContent.indexOf(km1.toFixed(1)) >= 0, w2.els.trkMiles.textContent);
+    const fin2 = w2.LiveMiles.stopDay(); await flush();
+    check('R1: stop after relaunch saves the restored total',
+      !!fin2 && Math.abs(fin2.liveKm - km1) < 0.02, 'fin=' + (fin2 && fin2.liveKm));
+  }
+
+  // R2. crumbs the service observed while the page was dead fold in
+  // after the relaunch — exactly once, however often they are re-fed
+  {
+    const backing = {};
+    const key = 's' + T0;
+    const w1 = makeWorld({ trackerStatus: 'running', now: T0, backing });
+    w1.LiveMiles.startDay(key); await flush();
+    w1.geo.deliver(fixAt(A, T0));
+    w1.setNow(T0 + 60000); w1.geo.deliver(fixAt(B, T0 + 60000));
+    await flush();
+    const kmLive = w1.LiveMiles.currentKm();
+    const w2 = makeWorld({ trackerStatus: 'running', now: T0 + 1800000, backing });
+    w2.LiveMiles.startDay(key, { resume: true }); await flush();
+    const crumbs = [
+      { t: T0 + 120000, a: 51.07, o: -114.07, c: 8 },
+      { t: T0 + 180000, a: 51.08, o: -114.07, c: 8 },
+      { t: T0 + 240000, a: 51.09, o: -114.07, c: 8 }
+    ];
+    const r1 = w2.LiveMiles.mergeNativeCrumbs(crumbs);
+    const kmAfter = w2.LiveMiles.currentKm();
+    check('R2: dead-period crumbs fold in after relaunch',
+      !!r1 && r1.accepted === 3 && kmAfter > kmLive + 3.2, 'km=' + kmAfter);
+    const r2 = w2.LiveMiles.mergeNativeCrumbs(crumbs);
+    check('R2: re-feeding the same crumbs changes nothing (exactly once)',
+      !!r2 && r2.accepted === 0 && Math.abs(w2.LiveMiles.currentKm() - kmAfter) < 0.001);
+    check('R2: the persisted record carries the folded total',
+      Math.abs(w2.LiveMiles.recordKmFor(key) - kmAfter) < 0.02);
+  }
+
+  // R3. the field shape itself: the afternoon's record sits under the
+  // start-tap key (orphan); the relaunched app derives a DIFFERENT
+  // key (~the backdated 8:00 start) and must ADOPT the orphan
+  {
+    const backing = {};
+    const tTap = T0 + 5 * 3600000 + 25 * 60000;              // the 13:25 restart tap
+    const K_ORPHAN = 's' + (tTap + 123);                     // key the record was persisted under
+    const K_NEW = 's' + (T0 + 457);                          // key the next boot re-derives
+    const wA = makeWorld({ trackerStatus: 'running', now: tTap, backing });
+    wA.LiveMiles.startDay(K_ORPHAN); await flush();
+    wA.geo.deliver(fixAt(A, tTap));
+    wA.setNow(tTap + 120000); wA.geo.deliver(fixAt(B, tTap + 120000));
+    wA.setNow(tTap + 240000); wA.geo.deliver(fixAt(C, tTap + 240000));
+    await flush();
+    const kmA = wA.LiveMiles.currentKm();
+    check('R3 setup: the miles exist only under the orphan key',
+      !!wA.LiveMiles.recordKmFor(K_ORPHAN) && wA.LiveMiles.recordKmFor(K_NEW) === null,
+      'kmA=' + kmA);
+    const wB = makeWorld({ trackerStatus: 'running', now: T0 + 8 * 3600000, backing });
+    wB.LiveMiles.startDay(K_NEW, { resume: true }); await flush();
+    const kmB = wB.LiveMiles.currentKm();
+    check('R3: relaunch ADOPTS the orphan — total restored, not 0.0',
+      kmB !== null && Math.abs(kmB - kmA) < 0.02, 'kmB=' + kmB + ' kmA=' + kmA);
+    const days = JSON.parse(backing['mt_livemiles']).days;
+    check('R3: healed record lives under the live key; orphan key retired',
+      !!days[K_NEW] && !days[K_ORPHAN]);
+    const finB = wB.LiveMiles.stopDay(); await flush();
+    check('R3: stop after adoption saves the full best-known total',
+      !!finB && Math.abs(finB.liveKm - kmA) < 0.02, 'fin=' + (finB && finB.liveKm));
+    const wC = makeWorld({ trackerStatus: 'running', now: T0 + 9 * 3600000, backing });
+    wC.LiveMiles.startDay(K_NEW, { resume: true }); await flush();
+    check('R3: a second relaunch keeps the same total (no double fold)',
+      Math.abs(wC.LiveMiles.currentKm() - kmA) < 0.02);
+  }
+
+  // R4. adoption guards: another day's record, and an earlier
+  // finished session the same day, are never adopted
+  {
+    const backing = {};
+    const yKey = 's' + (T0 - 86400000);
+    const wY = makeWorld({ trackerStatus: 'running', now: T0 - 86400000, backing });
+    wY.LiveMiles.startDay(yKey); await flush();
+    wY.geo.deliver(fixAt(A, T0 - 86400000));
+    wY.setNow(T0 - 86400000 + 60000); wY.geo.deliver(fixAt(B, T0 - 86400000 + 60000));
+    await flush();
+    const wT = makeWorld({ trackerStatus: 'running', now: T0, backing });
+    wT.LiveMiles.startDay('s' + T0, { resume: true }); await flush();
+    check('R4: a previous day\'s record is NOT adopted', wT.LiveMiles.currentKm() === null);
+  }
+  {
+    const backing = {};
+    const wE = makeWorld({ trackerStatus: 'running', now: T0, backing });
+    wE.LiveMiles.startDay('s' + T0); await flush();
+    wE.geo.deliver(fixAt(A, T0));
+    wE.setNow(T0 + 60000); wE.geo.deliver(fixAt(B, T0 + 60000));
+    await flush();
+    wE.LiveMiles.stopDay(); await flush();
+    const wL = makeWorld({ trackerStatus: 'running', now: T0 + 5 * 3600000, backing });
+    wL.LiveMiles.startDay('s' + (T0 + 5 * 3600000), { resume: true }); await flush();
+    check('R4: an earlier finished session\'s miles are NOT adopted by a later session',
+      wL.LiveMiles.currentKm() === null);
+  }
+}
+
 /* ================= Part C — static wiring ================= */
 function partC() {
   console.log('Part C — wiring');
@@ -440,11 +575,18 @@ function partC() {
   check('no-backfill invariant text intact (join segment never counted)', /join segment/.test(milesSrc) && /never invented|never guessed|not counted/.test(milesSrc));
   check('watch restart goes through startDay reattach', /LiveMiles\.startDay\(dayKey, \{ resume: true \}\)/.test(milesSrc));
   check('no native dialogs added to miles.js', !/[^a-z]alert\(/.test(milesSrc));
+  check('v69: the session record key is pinned (trackerSessionKeyMs + sessionId)',
+    appSrc.includes('function trackerSessionKeyMs()') && appSrc.includes('sessionId = trackerSessionStartMs()'));
+  check('v69: all three session-start paths key records by the pinned id',
+    (appSrc.match(/LiveMiles\.startDay\('s' \+ trackerSessionKeyMs\(\)/g) || []).length === 3);
+  check('v69: LiveMiles exposes dayKey() for the drain ack gate', milesSrc.includes('dayKey: function'));
+  check('v69: orphan adoption present in the glue', milesSrc.includes('adoptableFragments'));
 }
 
 (async function main() {
   await partA();
   await partB();
+  await partB2();
   partC();
   console.log('\nwake-hold: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

@@ -151,6 +151,24 @@
         if (t > maxT) maxT = t;
         if (!startMs || t >= startMs - 60000) fresh.push(crumbs[i]);
       }
+      if (trackerActive()) {
+        // v69: while the tracker is live, these crumbs fold through
+        // the LIVE engines — which exist only once LiveMiles has
+        // begun the session's day (dayKey set). If this drain won
+        // the race against the boot-time startDay (or the engine is
+        // otherwise not up), folding would go nowhere — and the ack
+        // below would delete crumbs nobody folded (the old
+        // ack-before-fold hole). Leave them in the native file
+        // untouched; the next drain (45 s loop / foreground / end
+        // sheet) folds them once the engine is ready. When the
+        // tracker is NOT active the foldIntoRecord path below is
+        // self-contained and needs no such gate.
+        var liveReady = false;
+        try {
+          liveReady = !!(window.LiveMiles && typeof LiveMiles.dayKey === 'function' && LiveMiles.dayKey());
+        } catch (e) {}
+        if (!liveReady) return false;
+      }
       var moved = false;
       if (fresh.length) {
         if (trackerActive()) {

@@ -725,6 +725,27 @@
     var live = t.elapsed + (t.status === 'running' ? Math.floor((now - t.startTs) / 1000) : 0);
     return now - live * 1000;
   }
+  /* v69: the session's STABLE record identity, in ms. trackerSessionStartMs()
+     above is a DISPLAY value ("Counting from …"): it is re-derived from
+     whole-second elapsed on every call, so it jitters by up to a second
+     between calls — and walks forward in real time while paused. Keying
+     the miles / geofence / native-service records by it meant a
+     relaunched app looked its record up under a key that had never
+     been written and began at zero (field bug, Oct 14: force-close
+     mid-shift -> the timer restored fine but "Miles (live)" came back
+     0.0 km; the day's 45.7 km record sat orphaned under the start-tap
+     key). sessionId is pinned ONCE when a session starts (manual and
+     auto-start paths below), persisted with the tracker, and never
+     moves again for that session — a start-time Edit moves the clock,
+     not the session. Sessions restored from before v69 pin it lazily
+     here on first use. LiveMiles additionally ADOPTS orphaned records
+     the old derivation left behind (js/miles.js). */
+  function trackerSessionKeyMs() {
+    var t = App.tracker;
+    if (!t || t.status === 'idle') return trackerSessionStartMs();
+    if (!t.sessionId) { t.sessionId = trackerSessionStartMs(); trackerSave(); }
+    return t.sessionId;
+  }
   function closeTrackerStartSheet() {
     el('trkStartSheet').classList.remove('open');
     el('scrim').classList.remove('show');
@@ -776,11 +797,17 @@
     // starting odometer — by-mile pay, or any pay mode with the v46
     // "Daily odometer photos" preference on; non-blocking either way.
     if (wasIdle) {
-      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+      // v69: pin the session's stable record identity BEFORE anything
+      // keys a record by it (see trackerSessionKeyMs) — pinned to the
+      // effective start instant at this moment; it never moves again,
+      // even if the driver edits the start clock afterwards.
+      t.sessionId = trackerSessionStartMs();
+      trackerSave();
+      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v50: geofence load counting rides the same session (js/geoloads.js)
-      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v63: native background tracking (new shell only) rides it too
-      try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionStartMs()); } catch (e) {}
+      try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
     }
     // v62: the screen wake lock follows the session state — a pause
@@ -1224,13 +1251,17 @@
         App.tracker.elapsed = anchored ? Math.max(0, Math.floor((Date.now() - anchorMs) / 1000)) : 0;
         resetAccum(); // v41: fresh auto-started shift, fresh totals
         trackerSave(); trackerPaint();
+        // v69: pin the session's stable record identity before the
+        // tracking hooks key anything by it (see trackerSessionKeyMs).
+        App.tracker.sessionId = trackerSessionStartMs();
+        trackerSave();
         autoStartNotify('Tracker auto-started at ' + label +
           (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
         // v40: an auto-started shift tracks live miles like any other.
-        try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
-        try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+        try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
+        try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
         // v63: native background tracking rides an auto-started shift too
-        try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionStartMs()); } catch (e) {}
+        try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
         // v39: auto-start is a shift start too — same by-mile odometer
         // prompt as the manual play button (non-blocking).
         try { maybePromptOdo('start'); } catch (e) {}
@@ -2030,8 +2061,8 @@
     // persisted before the kill; the engine restores it and does not
     // count the unobserved join segment.
     if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
-      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
-      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
+      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
+      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
     }
     // v63: reconcile with the native background tracker — it may hold
     // breadcrumbs (or a whole orphaned session) from while we were dead.
