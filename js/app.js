@@ -1534,8 +1534,12 @@
   }
   /* v31: onbWirePhoto now accepts an optional persistFn(kind, value) so
      Preferences can reuse the same OCR wiring with its own save logic.
-     Exposed as App._wirePhotoOCR for the preferences module. */
-  function onbWirePhoto(prefix, kind, persistFn) {
+     Exposed as App._wirePhotoOCR for the preferences module.
+     v61: a fourth, optional opts.origin lets another host screen
+     (Maintenance) label its v59 power-read escalations as its own;
+     hosts that pass nothing keep the historical 'preferences' origin,
+     byte-identical to v59 behaviour. */
+  function onbWirePhoto(prefix, kind, persistFn, opts) {
     var persist = persistFn || onbPersistPhoto;
     var camBtn = el(prefix + '_cam'), pickBtn = el(prefix + '_pick');
     var camIn = el(prefix + '_cam_in'), pickIn = el(prefix + '_in');
@@ -1657,7 +1661,7 @@
       function go(img) {
         if (token !== _onbOcrToken) return;
         PowerRead.escalate({
-          reader: 'odometer', image: img, origin: { module: 'preferences', label: 'Preferences' },
+          reader: 'odometer', image: img, origin: (opts && opts.origin) || { module: 'preferences', label: 'Preferences' },
           onStatus: function (s) {
             if (token !== _onbOcrToken) return;
             if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');

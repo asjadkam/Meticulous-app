@@ -262,7 +262,17 @@
         (ms.legs > 0 ? '<div class="kv"><span>Tracked over</span><b>' + kmStr(ms.kmTracked) + ' (' + ms.legs + ' legs)</b></div>' : '') +
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +
         '<div class="row"><div><label class="f">Update odometer (km)</label><input id="mt_odo" type="number" inputmode="decimal" placeholder="' + (d.odo > 0 ? Math.round(d.odo) : '') + '"></div>' +
-        '<div><label class="f">&nbsp;</label><button class="btn secondary" id="mt_odo_save">Save</button></div></div>' +
+        '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_odo_save">Save</button></div></div>' +
+        /* v61: snap the dash instead of typing — two small quiet
+           buttons (camera / file, owner's standing two-button rule)
+           wired to the shared odometer photo pipeline below. The
+           field id doubles as the pipeline prefix: mt_odo_cam /
+           mt_odo_pick / mt_odo_cam_in / mt_odo_in / mt_odo_status. */
+        '<input type="file" id="mt_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="mt_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div class="row"><button type="button" class="btn small ghost" id="mt_odo_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn small ghost" id="mt_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<div id="mt_odo_prev"></div><div id="mt_odo_status" class="note"></div>' +
         '</div>';
 
       /* --- Upcoming --- */
@@ -535,6 +545,50 @@
           }
         }).catch(function () {});
       }
+
+      /* v61 (owner, Oct 14, from his phone screenshot): "This update
+         button should also have a lil camera button to just snap a
+         picture" — the Update odometer field gets the SAME photo
+         pipeline as onboarding/Preferences (App._wirePhotoOCR:
+         local read → v58 tap-to-pick hunt chips → v59 power-read
+         escalation on a local miss), with origin 'maintenance'.
+         One deliberate difference from the other hosts: the persist
+         callback is a NO-OP. Every read path only FILLS #mt_odo —
+         nothing writes mt_odo until the card's own Save below is
+         tapped, so the master-odometer save path and its rules
+         (upward-only via the normal confirmed save) are untouched. */
+      try {
+        if (App._wirePhotoOCR) {
+          App._wirePhotoOCR('mt_odo', 'odometer', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
+        }
+      } catch (e) {}
+      /* v61: a power read queued from an earlier dash photo snapped
+         HERE may have finished since — offer it in the status line
+         as a tap-to-use button (peek, not take). The tap only FILLS
+         the field; Save still confirms. Scoped to origin
+         'maintenance' so Preferences keeps offering its own. */
+      try {
+        if (window.PowerRead && PowerRead.peekResult) {
+          var prMtOdo = PowerRead.peekResult('odometer', 'maintenance');
+          if (prMtOdo && prMtOdo.fields && prMtOdo.fields.value) {
+            var mtOdoSt = body.querySelector('#mt_odo_status');
+            if (mtOdoSt) {
+              mtOdoSt.innerHTML = '⚡ <b>Power read — check before saving:</b> from your earlier dash photo: ';
+              var mtOdoBtn = document.createElement('button');
+              mtOdoBtn.type = 'button';
+              mtOdoBtn.className = 'btn small';
+              mtOdoBtn.textContent = 'Use ' + Number(prMtOdo.fields.value).toLocaleString('en-CA') + ' km';
+              mtOdoBtn.onclick = function () {
+                var inp = body.querySelector('#mt_odo');
+                if (inp) inp.value = prMtOdo.fields.value;
+                try { PowerRead.takeResult('odometer', 'maintenance'); } catch (e) {}
+                mtOdoSt.innerHTML = '⚡ Power read: <b>' + Number(prMtOdo.fields.value).toLocaleString('en-CA') + ' km</b> filled in — tap Save to keep it.';
+              };
+              mtOdoSt.appendChild(mtOdoBtn);
+            }
+          }
+        }
+      } catch (e) {}
 
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);
