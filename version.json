@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 36,
+  "webVersion": 37,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck-v2.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -14,10 +14,11 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "3e4c3e0963ec81d4fd188b1f8eac000af190873d299fae58d52b4601f28a5c99",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "44f4b731e8e35d3a84989504e358de35d5b3ed7b01098d088cfd603ac6460a8a",
+    "index.html": "71c375349f45e8a4c4a3044acb383026325233120ccbb718c2003c30b3991031",
     "js/app.js": "7c90bb791491feb2bd00073ba3925d75116397d84ae4e753110bbfa604ebe22d",
     "js/cloudsync.js": "2a487ed1a3413e8735b7a0679eea7248fe5c34365c7542e25e8b6040164bf23b",
     "js/firebase.js": "ac691acf6df80abbf4903745282b33972672f6922c996908f3d3695a1439bc8a",
+    "js/geo.js": "576f01137f292f4bda45a912509b14a8e8b1c8c58287ef75e8c1072fc11e4122",
     "js/ota.js": "f4465cb36b8b7dc9400b5b3cb369a0129f1ff2ec5a4996ffec8a62f612925ccb",
     "js/ticket-ocr.js": "0382127f79867e546c8d631459807b62138802d0474235f7603005d86c53efbd",
     "modules/autostart.js": "334b7bc0be79d7c324416c2d05df82f69d4df62d460332868b75847ccbeb0d9e",
