@@ -174,6 +174,15 @@
   <p class="note" style="margin:0 0 8px">When did you actually finish? If you forgot to stop at the end, set the real finish time — your hours adjust.</p>
   <label class="f">End time</label>
   <input id="trkEndTime" type="time">
+  <label class="f" for="trkEndOdo" style="margin-top:10px">End odometer (km) — optional</label>
+  <input id="trkEndOdo" type="number" inputmode="numeric" min="0" placeholder="e.g. 168685">
+  <div style="display:flex;gap:10px;margin:8px 0;">
+    <button type="button" class="btn secondary" id="trkEndOdoCam" style="flex:1;">📷 Snap end odometer</button>
+    <button type="button" class="btn secondary" id="trkEndOdoPick" style="flex:1;">📁 Choose file</button>
+  </div>
+  <input type="file" id="trkEndOdoCamIn" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+  <input type="file" id="trkEndOdoIn" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+  <div id="trkEndOdoStatus" style="font-size:14px;margin:6px 0;"></div>
   <div class="row">
     <button class="btn ghost" id="trkEndCancel">Cancel</button>
     <button class="btn primary" id="trkEndSave">Stop &amp; save</button>
@@ -235,7 +244,7 @@
 <script src="modules/autostart.js?v=30"></script>
 <script src="modules/preferences.js?v=64"></script>
 <script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=69"></script>
+<script src="js/app.js?v=70"></script>
 <script src="js/geo.js?v=37"></script>
 <script src="js/miles.js?v=69"></script>
 <script src="js/geoloads.js?v=68"></script>

@@ -158,5 +158,92 @@ function eq(name, got, want) {
   eq('skip leaves the master odometer untouched', w.masterOdometer(), null);
 })();
 
+/* 7 — end-of-shift sheet reading (owner, Oct 14): the value handed in
+ * WITH the stop lands on the entry stopSessionAt is saving. No start
+ * reading required, works for an HOURLY day with the v46 toggle OFF
+ * (the sheet asks every driver; the toggle gates only the old prompt),
+ * and it feeds the same store field the Manifest reads (s.endOdo). */
+(function () {
+  const w = makeWorld({ payStandard: 'Hourly' }); // toggle unset/OFF
+  const entry = { date: w._today, seconds: 3600, endedAt: new Date().toISOString() };
+  eq('end-sheet read applies with no start reading at all', w.applyEndOdoToEntry(entry, 168685), true);
+  eq('entry carries endOdo (the Manifest field)', entry.endOdo, 168685);
+  eq('master odometer bumped by the end-sheet read', w.masterOdometer(), 168685);
+  // the sheet field hands in a string
+  const e2 = { date: w._today, seconds: 60 };
+  eq('string value from the field accepted', w.applyEndOdoToEntry(e2, '168700'), true);
+  eq('string value stored as a number', e2.endOdo, 168700);
+  // with a start reading present, the pair completes the day's km
+  const e3 = { date: w._today, seconds: 60, startOdo: 168400 };
+  eq('end-sheet read completes the pair', w.applyEndOdoToEntry(e3, 168685), true);
+  eq('daily km from the completed pair', w.odoDailyKm(e3), 285);
+})();
+
+/* 8 — end-sheet skip + a low reading never drags the master down */
+(function () {
+  const w = makeWorld({ payStandard: 'Hourly', odoDailyPhotos: true });
+  w.applyOdoReading('start', 168614); // master now sits at 168614
+  const entry = { date: w._today, seconds: 1800 };
+  eq('blank field (skipped) applies nothing', w.applyEndOdoToEntry(entry, ''), false);
+  ok('skipped entry has no endOdo field', !('endOdo' in entry));
+  eq('garbage applies nothing', w.applyEndOdoToEntry(entry, 'abc'), false);
+  eq('missing entry applies nothing', w.applyEndOdoToEntry(null, 168700), false);
+  eq('low reading still lands on the entry (driver\'s word)', w.applyEndOdoToEntry(entry, 168500), true);
+  eq('low reading stored as given', entry.endOdo, 168500);
+  eq('master not dragged down by the low reading', w.masterOdometer(), 168614);
+})();
+
+/* 9 — the End shift sheet itself: markup, placement and wiring.
+ * The snap actions live INSIDE #trkEndSheet, are quiet secondaries,
+ * and the sheet's primary (Stop & save) stays last — the owner's
+ * button-safety law. The end-sheet flow must NOT consult the v46
+ * prompt gating (pay mode / toggle): it is offered to every driver. */
+(function () {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const mani = fs.readFileSync(path.join(ROOT, 'modules', 'manifest.js'), 'utf8');
+  const a = html.indexOf('id="trkEndSheet"'), b = html.indexOf('id="odoSheet"');
+  const sheet = (a !== -1 && b > a) ? html.slice(a, b) : '';
+  ok('end sheet markup located', !!sheet);
+  ['trkEndOdo', 'trkEndOdoCam', 'trkEndOdoPick', 'trkEndOdoCamIn', 'trkEndOdoIn', 'trkEndOdoStatus'].forEach(function (id) {
+    ok('end sheet contains #' + id, sheet.indexOf('id="' + id + '"') !== -1);
+  });
+  ok('camera action labelled "📷 Snap end odometer"', sheet.indexOf('📷 Snap end odometer') !== -1);
+  ok('file action labelled "📁 Choose file"', sheet.indexOf('📁 Choose file') !== -1);
+  ok('both actions are quiet secondaries',
+    /class="btn secondary" id="trkEndOdoCam"/.test(sheet) && /class="btn secondary" id="trkEndOdoPick"/.test(sheet));
+  const camInAt = sheet.indexOf('id="trkEndOdoCamIn"');
+  ok('camera input captures from the camera', camInAt !== -1 && sheet.slice(camInAt, camInAt + 120).indexOf('capture="environment"') !== -1);
+  ok('odo controls sit above the primary button', sheet.indexOf('id="trkEndOdoCam"') !== -1 &&
+    sheet.indexOf('id="trkEndOdoCam"') < sheet.indexOf('id="trkEndSave"'));
+  ok('primary label intact (Stop & save)', sheet.indexOf('Stop &amp; save') !== -1);
+
+  ok('app wires the camera button', src.indexOf("el('trkEndOdoCam').onclick") !== -1);
+  ok('app wires the file button', src.indexOf("el('trkEndOdoPick').onclick") !== -1);
+  ok('app wires both file inputs to the handler',
+    src.indexOf('endSheetOdoHandleFile(el(\'trkEndOdoCamIn\').files[0])') !== -1 &&
+    src.indexOf('endSheetOdoHandleFile(el(\'trkEndOdoIn\').files[0])') !== -1);
+  const hAt = src.indexOf('function endSheetOdoHandleFile');
+  const hBody = hAt !== -1 ? src.slice(hAt, hAt + 2600) : '';
+  ok('photo handler goes through the shared OCR image step', hBody.indexOf('TicketOCR.fileToOCRImage') !== -1);
+  ok('photo handler parses an odometer reading', hBody.indexOf('parseOdometerReading') !== -1);
+  ok('photo handler applies the plausibility gate', hBody.indexOf('odoLocalFailed') !== -1);
+  ok('photo handler fills the sheet field, not the store',
+    hBody.indexOf("el('trkEndOdo')") !== -1 && hBody.indexOf('applyOdoReading') === -1 && hBody.indexOf('store.set') === -1);
+  ok('local miss escalates to the power read', hBody.indexOf('endSheetOdoPowerRead') !== -1);
+  const pAt = src.indexOf('function endSheetOdoPowerRead');
+  const pBody = pAt !== -1 ? src.slice(pAt, pAt + 1600) : '';
+  ok('power read uses the odometer reader', pBody.indexOf("reader: 'odometer'") !== -1);
+  ok('stopSessionAt lands the handed-in reading on the entry',
+    src.indexOf('applyEndOdoToEntry(entry, endOdoVal)') !== -1);
+  ok('trackerSaveEnd hands the field value to the stop',
+    src.indexOf("stopSessionAt(end.getTime(), endOdoVal)") !== -1 && src.indexOf("stopSessionAt(Date.now(), endOdoVal)") !== -1);
+  const spAt = src.indexOf('App.trackerStopPrompt = function');
+  const spBody = spAt !== -1 ? src.slice(spAt, src.indexOf('App.trackerSaveEnd', spAt)) : '';
+  ok('sheet open resets the odometer field', spBody.indexOf("el('trkEndOdo')") !== -1);
+  ok('sheet open is NOT gated by pay mode / the v46 toggle',
+    spBody.indexOf('shouldPromptOdo') === -1 && spBody.indexOf('isByMile') === -1 && spBody.indexOf('odoDailyPhotosOn') === -1);
+  ok('manifest reads the same field the sheet writes', mani.indexOf('s.endOdo') !== -1);
+})();
+
 console.log('\nodo-photos test: ' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);
