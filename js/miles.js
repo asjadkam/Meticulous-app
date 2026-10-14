@@ -521,17 +521,50 @@
     },
     onState: function () { paintWake(); }
   });
+  /* v70: the wake chip is DYNAMIC, not a snapshot. It is re-derived
+     from the wake hold's LIVE state on every paint — the onState
+     notify above for instant response to acquire/release, and
+     LiveMiles.paint() (driven by app.js's 1s tracker tick and by
+     every incoming fix) for continuous reconciliation while the
+     dashboard sits open. Before v70 the chip was only repainted on
+     discrete events, so a state change no event announced (the
+     anti-flap throttle swallowing a release-driven re-acquire, a
+     refused request, any drift at all) left it frozen at whatever
+     it last said — a label that never changes teaches the driver
+     to ignore it. Three truthful states now:
+       held -> "🔒 Screen held" (paints the moment the hold lands)
+       wanted + supported + NOT held, persisting past the v62
+         re-acquire grace (WAKE_REACQUIRE_MIN_MS — the same
+         anti-flap window, so a release already being re-taken
+         never strobes a warning) ->
+         "🔓 Screen not held — the app may sleep"
+       anything else (no session, lock API unsupported — the v62
+         clean no-op — or inside the grace window) -> nothing.
+     The chip never claims "held" for a lock that is not held. */
   var lastWakePaint = '';
+  var wakeUnheldSince = 0;
   function paintWake() {
     var elm = null;
     try { elm = document.getElementById('trkWake'); } catch (e) {}
     if (!elm) return;
-    var heldNow = wakeHold.held();
-    var sig = heldNow ? '1' : '0';
+    var st = wakeHold.state();
+    var mode = '', txt = '';
+    if (st.wanted && st.held) {
+      wakeUnheldSince = 0;
+      mode = 'held'; txt = '🔒 Screen held';
+    } else if (st.wanted && st.supported) {
+      if (!wakeUnheldSince) wakeUnheldSince = Date.now();
+      if (Date.now() - wakeUnheldSince >= WAKE_REACQUIRE_MIN_MS) {
+        mode = 'unheld'; txt = '🔓 Screen not held — the app may sleep';
+      }
+    } else {
+      wakeUnheldSince = 0;
+    }
+    var sig = mode + '|' + txt;
     if (sig === lastWakePaint) return;
     lastWakePaint = sig;
-    elm.textContent = heldNow ? '🔒 Screen held' : '';
-    elm.classList.toggle('hidden', !heldNow);
+    elm.textContent = txt;
+    elm.classList.toggle('hidden', !mode);
   }
   function sessionRunning() {
     try { var t = window.App && App.tracker; return !!(t && t.status === 'running'); } catch (e) { return false; }
@@ -655,6 +688,7 @@
   }
 
   function paint() {
+    paintWake(); // v70: reconcile the wake chip from live state on every paint
     var elm = null;
     try { elm = document.getElementById('trkMiles'); } catch (e) {}
     if (!elm) return;

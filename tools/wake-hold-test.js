@@ -276,7 +276,7 @@ function makeWorld(opts) {
   vm.createContext(sandbox);
   vm.runInContext(milesSrc, sandbox);
   return {
-    LiveMiles: sandbox.LiveMiles, App, geo, wake, els, documentStub, backing: data,
+    LiveMiles: sandbox.LiveMiles, App, geo, wake, els, documentStub, backing: data, nav,
     setNow(ms) { fakeNow = ms; }, now() { return fakeNow; }
   };
 }
@@ -558,6 +558,123 @@ async function partB2() {
   }
 }
 
+/* ============ Part B3 — the wake chip is DYNAMIC (v70) ============
+   The owner's rule: a label that never changes teaches the driver
+   to ignore the screen — the chip must follow the LIVE wake-lock
+   state, not sit as fixed text painted when the session changed.
+   These cases drive the real glue and read the real #trkWake
+   element. The reconciliation driver is LiveMiles.paint() — the
+   same call app.js's 1s trackerTick makes — so "call paint()" here
+   is exactly "the dashboard ticked" on the phone. */
+const HELD_TXT = '🔒 Screen held';
+const UNHELD_TXT = '🔓 Screen not held — the app may sleep';
+async function partB3() {
+  console.log('Part B3 — dynamic wake chip (v70)');
+  const T0 = 1760455200000;
+  const chip = w => w.els.trkWake;
+
+  // D1. OS release while visible: chip drops "held" the moment the
+  // lock goes, and follows the re-acquire back — no reload anywhere
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0 });
+    w.LiveMiles.startDay('s' + T0); await flush();
+    check('D1: session start paints "held"', chip(w).textContent === HELD_TXT && !chip(w).classList.contains('hidden'));
+    w.setNow(T0 + 5000); // past the anti-flap window
+    w.wake.sentinels[0].fireRelease();
+    check('D1: the release event drops the "held" claim at once', chip(w).textContent !== HELD_TXT);
+    await flush();
+    check('D1: re-acquire paints "held" again without a reload', chip(w).textContent === HELD_TXT && w.LiveMiles._wakeHold.held() === true);
+  }
+
+  // D2. SILENT DRIFT — the sentinel dies and NO event reaches the
+  // app (the stale-snapshot case): only the periodic paint can save
+  // the label, and it does
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0 });
+    w.LiveMiles.startDay('s' + T0); await flush();
+    check('D2: held before the drift', chip(w).textContent === HELD_TXT);
+    w.wake.sentinels[0].released = true; // OS took it; our listener never ran
+    check('D2: no event fired (chip is stale until the next paint)', chip(w).textContent === HELD_TXT);
+    w.LiveMiles.paint(); // the 1s tracker tick
+    check('D2: the tick reconciles — "held" claim gone', chip(w).textContent !== HELD_TXT);
+    w.setNow(T0 + 1500); // past the re-acquire grace
+    w.LiveMiles.paint();
+    check('D2: past grace, the tick paints the truthful not-held line',
+      chip(w).textContent === UNHELD_TXT && !chip(w).classList.contains('hidden'));
+    w.LiveMiles.onVisible(); await flush(); // explicit return retries the acquire
+    check('D2: recovery repaints "held"', chip(w).textContent === HELD_TXT && w.LiveMiles._wakeHold.held() === true);
+  }
+
+  // D3. the lock cannot be re-held (requests now refuse — e.g. the
+  // battery saver denies them): after the grace the chip SAYS SO
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0 });
+    w.LiveMiles.startDay('s' + T0); await flush();
+    w.nav.wakeLock.request = function () { w.wake.requests++; return Promise.reject(new Error('NotAllowedError')); };
+    w.setNow(T0 + 5000);
+    w.wake.sentinels[0].fireRelease(); await flush();
+    check('D3: refused re-acquire leaves the hold unheld', w.LiveMiles._wakeHold.held() === false && w.wake.requests === 2);
+    check('D3: inside the grace the chip is blank, never a stale "held"', chip(w).textContent === '');
+    w.setNow(T0 + 6500);
+    w.LiveMiles.paint();
+    check('D3: past grace the chip shows the truthful degraded line',
+      chip(w).textContent === UNHELD_TXT && !chip(w).classList.contains('hidden'));
+    w.nav.wakeLock.request = function () { w.wake.requests++; const s = makeSentinel(); w.wake.sentinels.push(s); return Promise.resolve(s); };
+    w.LiveMiles.onVisible(); await flush();
+    check('D3: when the lock lands again the chip follows back to "held"', chip(w).textContent === HELD_TXT);
+  }
+
+  // D4. anti-flap: a fast release/re-acquire flap never strobes
+  // the degraded line
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0 });
+    w.LiveMiles.startDay('s' + T0); await flush();
+    w.setNow(T0 + 200); // inside WAKE_REACQUIRE_MIN_MS of the acquire
+    w.wake.sentinels[0].fireRelease(); await flush();
+    check('D4: throttled flap — no re-request, chip blank (not held, not degraded)',
+      w.wake.requests === 1 && chip(w).textContent === '');
+    w.setNow(T0 + 700);
+    w.LiveMiles.paint();
+    check('D4: mid-grace tick still shows no degraded line', chip(w).textContent === '');
+    w.LiveMiles._wakeHold.visible(); await flush();
+    check('D4: explicit visible() recovers and the chip follows', w.wake.requests === 2 && chip(w).textContent === HELD_TXT);
+  }
+
+  // D5. stop (and pause) end the story: chip gone, and the degraded
+  // line never appears afterwards however long the dashboard sits
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0 });
+    w.LiveMiles.startDay('s' + T0); await flush();
+    w.App.tracker.status = 'paused';
+    w.LiveMiles.syncWake(); await flush();
+    w.setNow(T0 + 10000);
+    w.LiveMiles.paint();
+    check('D5: paused long past grace — chip stays empty (no session, no warning)', chip(w).textContent === '' && chip(w).classList.contains('hidden'));
+    w.App.tracker.status = 'running';
+    w.LiveMiles.syncWake(); await flush();
+    check('D5: resume repaints "held"', chip(w).textContent === HELD_TXT);
+    w.LiveMiles.stopDay(); await flush();
+    w.setNow(T0 + 20000);
+    w.LiveMiles.paint();
+    check('D5: after stop the chip is gone for good', chip(w).textContent === '' && chip(w).classList.contains('hidden'));
+  }
+
+  // D6. unsupported environment (no Wake Lock API): no indicator
+  // in ANY state, no errors — the v62 clean no-op survives v70
+  {
+    const w = makeWorld({ trackerStatus: 'running', now: T0, wakeLock: false });
+    let threw = false;
+    try {
+      w.LiveMiles.startDay('s' + T0); await flush();
+      w.setNow(T0 + 60000);
+      w.LiveMiles.paint(); w.LiveMiles.syncWake(); w.LiveMiles.paint();
+      w.LiveMiles.stopDay(); await flush();
+    } catch (e) { threw = true; }
+    check('D6: no API — chip never appears, nothing throws',
+      !threw && chip(w).textContent === '' && chip(w).classList.contains('hidden'));
+  }
+}
+
 /* ================= Part C — static wiring ================= */
 function partC() {
   console.log('Part C — wiring');
@@ -581,12 +698,17 @@ function partC() {
     (appSrc.match(/LiveMiles\.startDay\('s' \+ trackerSessionKeyMs\(\)/g) || []).length === 3);
   check('v69: LiveMiles exposes dayKey() for the drain ack gate', milesSrc.includes('dayKey: function'));
   check('v69: orphan adoption present in the glue', milesSrc.includes('adoptableFragments'));
+  check('v70: the truthful not-held line exists', milesSrc.includes("'🔓 Screen not held — the app may sleep'"));
+  check('v70: paint() reconciles the wake chip on every paint', /function paint\(\) \{\s*\n\s*paintWake\(\);/.test(milesSrc));
+  check('v70: the degraded line waits out the v62 anti-flap grace', milesSrc.includes('Date.now() - wakeUnheldSince >= WAKE_REACQUIRE_MIN_MS'));
+  check('v70: the chip is derived from the hold\'s live state()', milesSrc.includes('var st = wakeHold.state();'));
 }
 
 (async function main() {
   await partA();
   await partB();
   await partB2();
+  await partB3();
   partC();
   console.log('\nwake-hold: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

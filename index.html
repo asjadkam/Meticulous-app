@@ -123,7 +123,7 @@
         </div>
         <!-- v40: live miles (js/miles.js) — stays hidden unless live location is actually flowing; never a fake zero -->
         <div class="miles hidden" id="trkMiles"></div>
-        <!-- v62: session wake lock status (js/miles.js) — shown only while the screen is actually held; nothing at all when the hold is unavailable -->
+        <!-- v62/v70: session wake lock status (js/miles.js) — DYNAMIC: re-derived from the live wake-lock state on every paint ("🔒 Screen held" only while actually held; a truthful "not held" line when a running session's hold is lost for good; nothing at all when the hold is unavailable) -->
         <div class="wake hidden" id="trkWake"></div>
         <!-- v63: native background tracking ask (js/shifttrack.js) — shown only on the new shell when a running session lacks "Allow all the time" location; filled and wired by shifttrack.js -->
         <div class="wake hidden" id="trkBgAsk"></div>
@@ -235,9 +235,9 @@
 <script src="modules/autostart.js?v=30"></script>
 <script src="modules/preferences.js?v=64"></script>
 <script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=69"></script>
+<script src="js/app.js?v=70"></script>
 <script src="js/geo.js?v=37"></script>
-<script src="js/miles.js?v=69"></script>
+<script src="js/miles.js?v=70"></script>
 <script src="js/geoloads.js?v=68"></script>
 <script src="js/shifttrack.js?v=69"></script>
 <script>
