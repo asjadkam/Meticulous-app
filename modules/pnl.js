@@ -478,6 +478,15 @@
         BIZ_CATS.map(function (x) { return '<option>' + x + '</option>'; }).join('') + '</select></div></div>' +
         '<div class="row"><div><label class="f">What</label><input id="pnl_what" placeholder="e.g. Oil change"></div>' +
         '<div><label class="f">Cost $</label><input id="pnl_cost" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
+        '<label class="f">📷 Receipt photo</label>' +
+        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+        '<button type="button" class="btn secondary" id="pnl_rc_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="pnl_rc_pick" style="flex:1;">📁 Choose file</button>' +
+        '</div>' +
+        '<input type="file" id="pnl_rc_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="pnl_rc_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="pnl_rc_prev"></div>' +
+        '<div id="pnl_rc_read" style="font-size:14px;margin-top:8px;"></div>' +
         '<button class="btn primary" id="pnl_add">Add expense</button>' +
         '<div id="pnl_list">' + bizExpenses().slice().reverse().map(function (x, ri) {
           return '<div class="listitem"><div class="a">' + esc(x.what || x.category) + ' — $' + esc(x.cost) + '</div>' +
@@ -518,6 +527,75 @@
           api.render(body);
         };
       });
+
+      /* v42: receipt photo → OCR on the Business expense form — same
+         shared pipeline as Fuel (TicketOCR.fileToOCRImage 1600px +
+         recognizeWithRotation), fields the user typed in are never
+         overwritten, and the read is always reported. Never silent. */
+      ['#pnl_date', '#pnl_what', '#pnl_cost'].forEach(function (id) {
+        var e = body.querySelector(id);
+        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
+      });
+      var pnlCat = body.querySelector('#pnl_cat');
+      if (pnlCat) pnlCat.addEventListener('change', function () { pnlCat.setAttribute('data-touched', '1'); });
+      function pnlFillField(id, v) {
+        var e = body.querySelector(id);
+        if (!e || !v) return;
+        if (e.getAttribute('data-touched')) return;
+        if (e.value && id !== '#pnl_date') return;
+        e.value = v;
+      }
+      var pnlRcCamInput = body.querySelector('#pnl_rc_img_cam');
+      var pnlRcPickInput = body.querySelector('#pnl_rc_img');
+      body.querySelector('#pnl_rc_cam').onclick = function () { pnlRcCamInput.click(); };
+      body.querySelector('#pnl_rc_pick').onclick = function () { pnlRcPickInput.click(); };
+      var pnlOcrToken = 0;
+      function pnlSetRead(html) { var d = body.querySelector('#pnl_rc_read'); if (d) d.innerHTML = html; }
+      function pnlHandlePhoto(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++pnlOcrToken;
+        var r = new FileReader();
+        r.onload = function () { body.querySelector('#pnl_rc_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
+        r.readAsDataURL(file);
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseExpenseReceipt) {
+          pnlSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
+          return;
+        }
+        pnlSetRead('📖 Reading receipt…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== pnlOcrToken) return;
+          if (!ocrUrl) { pnlSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== pnlOcrToken) return;
+            try { pnlSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== pnlOcrToken) return;
+            var parsed = TicketOCR.parseExpenseReceipt(text);
+            var rep = TicketOCR.describeExpenseRead(parsed);
+            pnlFillField('#pnl_cost', parsed.total);
+            pnlFillField('#pnl_what', parsed.vendor);
+            pnlFillField('#pnl_date', parsed.date);
+            if (parsed.category && pnlCat && !pnlCat.getAttribute('data-touched')) {
+              for (var oi = 0; oi < pnlCat.options.length; oi++) {
+                if (pnlCat.options[oi].value === parsed.category || pnlCat.options[oi].text === parsed.category) {
+                  pnlCat.selectedIndex = oi; break;
+                }
+              }
+            }
+            if (rep.found.length) {
+              pnlSetRead('🧾 Read: ' + esc(rep.found.join(' · ')) +
+                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+            } else {
+              pnlSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
+            }
+          }).catch(function () {
+            if (token !== pnlOcrToken) return;
+            pnlSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
+          });
+        });
+      }
+      pnlRcCamInput.onchange = pnlHandlePhoto;
+      pnlRcPickInput.onchange = pnlHandlePhoto;
 
       body.querySelector('#pnl_add').onclick = function () {
         var what = body.querySelector('#pnl_what').value.trim();

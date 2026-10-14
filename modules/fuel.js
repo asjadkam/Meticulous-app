@@ -84,6 +84,15 @@
       h += '<div class="card"><h3>🧾 Other expenses</h3>' +
         '<div class="row"><div><label class="f">What</label><input id="fx_what" placeholder="e.g. DEF fluid"></div>' +
         '<div><label class="f">Cost $</label><input id="fx_cost" type="number" inputmode="decimal"></div></div>' +
+        '<label class="f">📷 Receipt photo</label>' +
+        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+        '<button type="button" class="btn secondary" id="fx_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="fx_pick" style="flex:1;">📁 Choose file</button>' +
+        '</div>' +
+        '<input type="file" id="fx_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="fx_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="fx_prev"></div>' +
+        '<div id="fx_read" style="font-size:13px;margin-top:4px;"></div>' +
         '<button class="btn navy" id="fx_add">Add expense</button>' +
         '<div id="fx_list">' + S('expenses', []).slice().reverse().map(function (x) {
           return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
@@ -219,10 +228,72 @@
         saveNote = masterOnSave(odo);
         Meticulous.modules.fuel.render(body);
       };
+      /* v42: receipt photo → OCR on the Other-expenses card — same
+         shared pipeline as the fill-up form above (1600px rendition +
+         rotation retry). Fills only untouched fields; a date read from
+         the receipt is used for the saved entry (this card has no date
+         field of its own). Never silent. */
+      ['#fx_what', '#fx_cost'].forEach(function (id) {
+        var e = body.querySelector(id);
+        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
+      });
+      function fxFillField(id, v) {
+        var e = body.querySelector(id);
+        if (!e || !v) return;
+        if (e.getAttribute('data-touched')) return;
+        if (e.value) return;
+        e.value = v;
+      }
+      var fxOcrDate = '';
+      var fxCamInput = body.querySelector('#fx_img_cam');
+      var fxPickInput = body.querySelector('#fx_img');
+      body.querySelector('#fx_cam').onclick = function () { fxCamInput.click(); };
+      body.querySelector('#fx_pick').onclick = function () { fxPickInput.click(); };
+      var fxOcrToken = 0;
+      function fxSetRead(html) { var d = body.querySelector('#fx_read'); if (d) d.innerHTML = html; }
+      function fxHandlePhoto(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++fxOcrToken;
+        var r = new FileReader();
+        r.onload = function () { body.querySelector('#fx_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
+        r.readAsDataURL(file);
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseExpenseReceipt) {
+          fxSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
+          return;
+        }
+        fxSetRead('📖 Reading receipt…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== fxOcrToken) return;
+          if (!ocrUrl) { fxSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== fxOcrToken) return;
+            try { fxSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== fxOcrToken) return;
+            var parsed = TicketOCR.parseExpenseReceipt(text);
+            var rep = TicketOCR.describeExpenseRead(parsed);
+            fxFillField('#fx_cost', parsed.total);
+            fxFillField('#fx_what', parsed.vendor);
+            if (parsed.date) fxOcrDate = parsed.date;
+            if (rep.found.length) {
+              fxSetRead('🧾 Read: ' + esc(rep.found.join(' · ')) +
+                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+            } else {
+              fxSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
+            }
+          }).catch(function () {
+            if (token !== fxOcrToken) return;
+            fxSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
+          });
+        });
+      }
+      fxCamInput.onchange = fxHandlePhoto;
+      fxPickInput.onchange = fxHandlePhoto;
+
       body.querySelector('#fx_add').onclick = function () {
         var what = body.querySelector('#fx_what').value.trim(), cost = body.querySelector('#fx_cost').value;
         if (!what || !cost) return;
-        var x = S('expenses', []); x.push({ what: what, cost: cost, date: App._today() }); W('expenses', x);
+        var x = S('expenses', []); x.push({ what: what, cost: cost, date: fxOcrDate || App._today() }); W('expenses', x);
         Meticulous.modules.fuel.render(body);
       };
     }

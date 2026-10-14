@@ -1066,4 +1066,170 @@
     return { found: found, missing: missing };
   };
 
+  /* ---------- v42: EXPENSE RECEIPT parser ----------
+     Generic store/service receipts (parts stores, restaurants, phone
+     bills, permit offices…) for the expense forms: Fuel → "Other
+     expenses" and P&L → "Business expense". Extract: total, date,
+     vendor, and a category hint (one of the P&L BIZ_CATS labels, only
+     on an obvious keyword).
+
+     The total is anchored on TOTAL / AMOUNT DUE / BALANCE DUE lines.
+     Tax and subtotal lines are never the total: "GST included in
+     total $9.11" must not win over the real "TOTAL $191.36", and an
+     HST line is an amount ON THE WAY to the total, not the total.
+     When a subtotal and tax lines are both printed, an anchored value
+     that satisfies subtotal + tax ≈ total is trusted first; otherwise
+     the largest anchored value that is at least the subtotal wins. */
+  TicketOCR.parseExpenseReceipt = function (text) {
+    var f = { _type: 'expense_receipt' };
+    var t = String(text || '');
+    function num(s) { return parseFloat(String(s).replace(/,/g, '')); }
+    function clean2(n) { return isFinite(n) && n > 0 ? n.toFixed(2) : null; }
+    var lines = t.split('\n');
+
+    /* Money printed on a line: "$12.34" preferred, else a trailing
+       bare "12.34" (many receipts right-align amounts without $). */
+    function moneyOf(line) {
+      var m = line.match(/\$\s*([\d,]+\.\d{2})/) ||
+              line.match(/\b([\d,]+\.\d{2})\s*(?:CAD)?\s*$/i);
+      return m ? num(m[1]) : null;
+    }
+    var TAXWORD = /\b(GST|HST|PST|QST|TAX)\b/i;
+    var STRONGTOTAL = /GRAND\s+TOTAL|TOTAL\s+DUE|AMOUNT\s+DUE|BALANCE\s+DUE|TOTAL\s+CAD|TOTAL\s+SALE|^\s*TOTAL\b/i;
+    var totalCands = [], bareMoney = [], subtotal = null, taxSum = 0, sawTax = false;
+    lines.forEach(function (ln) {
+      var v = moneyOf(ln);
+      if (v === null) return;
+      if (/SUB\s*TOTAL/i.test(ln)) { subtotal = v; return; }
+      if (/CHANGE|TENDERED|CASH\s*TENDER/i.test(ln)) return;
+      if (STRONGTOTAL.test(ln)) { totalCands.push(v); return; }
+      if (TAXWORD.test(ln)) { taxSum += v; sawTax = true; return; }
+      if (/\bTOTAL\b/i.test(ln)) { totalCands.push(v); return; }
+      bareMoney.push(v);
+    });
+    var expected = (subtotal !== null && sawTax) ? subtotal + taxSum : null;
+    var total = null, i, c;
+    if (expected !== null) {
+      for (i = 0; i < totalCands.length; i++) {
+        c = totalCands[i];
+        if (Math.abs(c - expected) <= 0.06 + c * 0.01) { total = c; break; }
+      }
+    }
+    if (total === null && totalCands.length) {
+      var pool = totalCands;
+      if (subtotal !== null) {
+        var ge = totalCands.filter(function (v) { return v >= subtotal; });
+        if (ge.length) pool = ge;
+      }
+      total = Math.max.apply(null, pool);
+    }
+    if (total === null && expected !== null) {
+      for (i = 0; i < bareMoney.length; i++) {
+        if (Math.abs(bareMoney[i] - expected) <= 0.06 + bareMoney[i] * 0.01) { total = bareMoney[i]; break; }
+      }
+    }
+    if (total === null && bareMoney.length) total = Math.max.apply(null, bareMoney);
+    if (total !== null) f.total = clean2(total);
+
+    /* Date — ISO as printed, YYYY/MM/DD, else normDate (label first,
+       then anywhere in the text), same strategy as the fuel parser. */
+    var iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+    if (iso) f.date = iso[1];
+    else {
+      var ymd = t.match(/\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/);
+      if (ymd) {
+        var yi = isoDate(parseInt(ymd[1], 10), parseInt(ymd[2], 10), parseInt(ymd[3], 10));
+        if (yi) f.date = yi;
+      }
+      if (!f.date) {
+        var draw = firstMatch(t, [/DATE[\s:]*([A-Za-z0-9\/\- ]{6,14})/i]);
+        var nd = normDate(draw) || normDate(t);
+        if (nd) f.date = nd;
+      }
+    }
+
+    /* Vendor — known brands first (header lines win, like the fuel
+       parser), then the first name-like line near the top. */
+    var VENDORS = [
+      ['NAPA Auto Parts', /\bnapa\b/i],
+      ['Princess Auto', /princess\s*auto/i],
+      ['Canadian Tire', /canadian\s*tire/i],
+      ['PartSource', /\bpartsource\b/i],
+      ['Bumper to Bumper', /bumper\s*to\s*bumper/i],
+      ['Kal Tire', /kal\s*tire/i],
+      ['Fountain Tire', /fountain\s*tire/i],
+      ['OK Tire', /\bok\s*tire\b/i],
+      ['Mr. Lube', /mr\.?\s*lube/i],
+      ['Jiffy Lube', /jiffy\s*lube/i],
+      ['Midas', /\bmidas\b/i],
+      ['Walmart', /wal\s*-?\s*mart/i],
+      ['Costco', /\bcostco\b/i],
+      ['Home Depot', /home\s*depot/i],
+      ['RONA', /\brona\b/i],
+      ["Lowe's", /lowe'?s\b/i],
+      ['Staples', /\bstaples\b/i],
+      ['Tim Hortons', /tim\s*hortons/i],
+      ["McDonald's", /mcdonald/i],
+      ['Subway', /\bsubway\b/i],
+      ['Starbucks', /starbucks/i],
+      ['TELUS', /\btelus\b/i],
+      ['Rogers', /\brogers\b/i],
+      ['Koodo', /\bkoodo\b/i],
+      ['Mobil', /\bmobil\b/i],
+      ['Shell', /\bshell\b/i],
+      ['Esso', /\besso\b/i],
+      ['Petro-Canada', /petro[\s\-–]?canada/i],
+      ['Husky', /\bhusky\b/i],
+      ['Co-op', /\bco[\s\-]?op\b/i]
+    ];
+    var head8 = lines.slice(0, 8).join('\n');
+    for (var vi = 0; vi < VENDORS.length && !f.vendor; vi++) {
+      if (VENDORS[vi][1].test(head8) || VENDORS[vi][1].test(t)) f.vendor = VENDORS[vi][0];
+    }
+    if (!f.vendor) {
+      for (var li = 0; li < Math.min(6, lines.length) && !f.vendor; li++) {
+        var ln = lines[li].replace(/\s+/g, ' ').trim();
+        if (ln.length < 3 || ln.length > 48) continue;
+        if (!/[A-Za-z]{2,}/.test(ln)) continue;
+        if (/^\d/.test(ln)) continue;                       // street address
+        if (/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/.test(ln)) continue; // phone
+        if (/receipt|invoice|welcome|thank|cashier|server|order\s|gst|hst|www\.|@|tel\b|phone|fax/i.test(ln)) continue;
+        if (normDate(ln) && ln.length < 22) continue;       // a bare date line
+        ln = ln.replace(/\s+(#\d+|store\s*\d+)$/i, '');
+        var cc = cleanCompany(ln);
+        if (cc) f.vendor = cc;
+      }
+    }
+
+    /* Category hint — ONLY an obvious keyword, mapped to the P&L
+       module's own category labels (BIZ_CATS in modules/pnl.js).
+       Anything less obvious is left for the user to pick. */
+    if (/kal\s*tire|fountain\s*tire|ok\s*tire|\b(tire|tyre|tires|tyres)\b/i.test(t)) f.category = 'Tires';
+    else if (/\binsurance\b/i.test(t)) f.category = 'Insurance';
+    else if (/\b(telus|rogers|koodo|fido|freedom\s*mobile|virgin\s*mobile|bell\s*mobility)\b/i.test(t)) f.category = 'Phone';
+    else if (/\b(permit|licen[cs]e|registration|plate\s*renewal|\birp\b)\b/i.test(t)) f.category = 'Permits & Licenses';
+    else if (/\bnapa\b|princess\s*auto|\bpartsource\b|bumper\s*to\s*bumper|mr\.?\s*lube|jiffy\s*lube|\bmidas\b|oil\s*change|auto\s*parts|\brepair\b/i.test(t)) f.category = 'Maintenance';
+
+    var count = 0;
+    ['total', 'vendor', 'date'].forEach(function (k) { if (f[k]) count++; });
+    f._confidence = count;
+    f._raw = text;
+    return f;
+  };
+
+  /* What the expense reader found / missed, for the expense forms'
+     read line. Category is a bonus — reported when found, never
+     listed as "missing" (it is the user's call by default). */
+  TicketOCR.describeExpenseRead = function (parsed) {
+    var found = [], missing = [];
+    function add(ok, foundLabel, missingLabel) {
+      if (ok) found.push(foundLabel); else missing.push(missingLabel);
+    }
+    add(!!parsed.total, parsed.total ? '$' + parsed.total : '', 'cost');
+    add(!!parsed.vendor, parsed.vendor || '', 'store');
+    add(!!parsed.date, parsed.date || '', 'date');
+    if (parsed.category) found.push(parsed.category);
+    return { found: found, missing: missing };
+  };
+
 })();
