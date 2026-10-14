@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 53,
+  "webVersion": 54,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     ".gitignore": "92473056db0816ef5a56a2b5b70e8856048a10292a2a04307fd79c3138954c68",
@@ -34,7 +34,7 @@
     "modules/manifest.js": "43cae4b2b5399030b6a1823768f9a2de511f29e074366e917960bf5294fb75e7",
     "modules/navigation.js": "3b437cfc38ba0791818ba77fa39653114e0be65a0195d9cf953d03ffc5d77d2e",
     "modules/pnl.js": "2b9d2aab1cf447bc4f0ca283492a5aafe6cd90638979d2e436fc079fb45b62e1",
-    "modules/preferences.js": "59b92fe5677bfa86fb5295a7fe2cdf8ceaee44ed2324ad3d52d458c9707c4482",
+    "modules/preferences.js": "5960da65c7bc45c2441c0eb7ebf1329456eeb367bfc1fd62e8834268492a8c77",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
     "modules/revenue.js": "a0f858a0cdec79e26a75a0ab68df107207dac5cade52c49ff9e5ca7df8c103bc",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",

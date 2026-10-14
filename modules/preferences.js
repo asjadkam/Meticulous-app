@@ -108,9 +108,11 @@
         '<input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
         '<p class="note">We remind you 30 days before it expires.</p></div>';
 
-      h += '<div class="card"><h3>🔔 Notifications</h3>' +
-        '<button class="btn ghost" id="pf_push">Enable push notifications</button>' +
-        '<p class="note" id="pf_pushnote"></p></div>';
+      /* v54 (owner, Oct 14): the standalone Notifications card is gone —
+         "Updates and notifications should also be in advanced features!
+         These are plumbings a user doesn't click on daily." The push
+         button + note now live as a row inside Advanced below (same
+         pf_push / pf_pushnote ids and wiring — layout only). */
 
       /* v52 layout (owner, Oct 14): "Save preferences" used to sit here,
          mid-list, above a crowd of similar big navy buttons — "a user
@@ -123,6 +125,15 @@
       h += '<div class="card"><h3>⚙️ Advanced</h3>' +
         '<button class="btn ghost" id="pf_checkupd">Check for updates</button>' +
         '<p class="note" id="pf_updnote"></p>' +
+        /* v54 (owner, Oct 14): Notifications row — plumbing a user
+           doesn't click daily, so it lives here in Advanced, in the
+           same pattern as the cloud-sync troubleshooting row below.
+           (The push wiring still uses the same pf_push / pf_pushnote
+           ids.) */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">🔔 Notifications</p>' +
+        '<button class="btn ghost" id="pf_push">Enable push notifications</button>' +
+        '<p class="note" id="pf_pushnote"></p></div>' +
         /* v52 (owner, Oct 14): cloud sync is not a feature card — it is a
            troubleshooting tool, so its status + retry live here in
            Advanced. (The sync status wiring below still uses the same

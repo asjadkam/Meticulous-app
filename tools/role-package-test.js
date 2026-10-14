@@ -9,7 +9,10 @@
  * and exercised via its own _driverWages / _calc test hooks. Source
  * assertions cover the Preferences layout (stub card removed, cloud
  * sync in Advanced, Security last card, one bottom Save, role control
- * in the Account card) and onboarding step placement.
+ * in the Account card) and onboarding step placement. v54 extended the
+ * layout assertions: standalone Notifications card removed, its push
+ * button a row inside Advanced (updates → notifications → sync →
+ * reset).
  * Run: node tools/role-package-test.js
  *
  * Owner's rules under test (Oct 14, 2026):
@@ -298,6 +301,8 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(pref.indexOf('Auto tracker settings live in') === -1, 'prefs: Tracker auto-start stub card REMOVED');
   ok(pref.indexOf('<h3>☁️ Cloud sync</h3>') === -1, 'prefs: standalone Cloud sync card REMOVED');
   ok(pref.indexOf('☁️ Cloud sync — troubleshooting') >= 0, 'prefs: cloud-sync troubleshooting row lives in Advanced');
+  ok(pref.indexOf('<h3>🔔 Notifications</h3>') === -1, 'prefs: standalone Notifications card REMOVED (v54)');
+  eq((pref.match(/id="pf_push"/g) || []).length, 1, 'prefs: exactly one Enable push button (moved into Advanced, not duplicated)');
   eq((pref.match(/id="pf_syncnow"/g) || []).length, 1, 'prefs: exactly one Retry sync button (moved, not duplicated)');
   eq((pref.match(/id="pf_role"/g) || []).length, 1, 'prefs: exactly one role control');
   eq((pref.match(/id="pf_save"/g) || []).length, 1, 'prefs: exactly one Save preferences button');
@@ -310,6 +315,11 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   const iSyncRow = pref.indexOf('☁️ Cloud sync — troubleshooting');
   const iReset = pref.indexOf('id="pf_resetonb"');
   const iUpd = pref.indexOf('id="pf_checkupd"');
+  const iPushRow = pref.indexOf('🔔 Notifications');
+  ok(iPushRow > iAdv, 'prefs: Notifications row is inside Advanced (v54)');
+  ok(iPushRow > iUpd, 'prefs Advanced order: Check for updates … then Notifications');
+  ok(iSyncRow > iPushRow, 'prefs Advanced order: Notifications … then cloud-sync troubleshooting');
+  ok(iReset > iSyncRow, 'prefs Advanced order: cloud sync … then Reset onboarding (fenced danger, last)');
   ok(iSyncRow > iAdv, 'prefs: sync troubleshooting row is inside Advanced');
   ok(iReset > iUpd, 'prefs: Reset onboarding fenced below Check for updates');
   ok(iSec > iSyncRow, 'prefs order: … Advanced (incl. sync troubleshooting) … then Security');
