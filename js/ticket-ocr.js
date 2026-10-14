@@ -910,4 +910,160 @@
     };
   };
 
+  /* ---------- v39: shared OCR rendition ----------
+     OCR needs resolution: a full-page document at the 640px storage size
+     is unreadable. Build a larger rendition (max 1600px) purely for OCR;
+     callers keep/store their own smaller copy. (Dispatch has used this
+     recipe since v35; it lives here now so Fuel and future modules share
+     one implementation instead of growing private copies.) */
+  TicketOCR.fileToOCRImage = function (file, cb) {
+    var r = new FileReader();
+    r.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var max = 1600, w = img.width, h = img.height;
+        if (w > max || h > max) {
+          var s = Math.min(max / w, max / h);
+          w = Math.round(w * s); h = Math.round(h * s);
+        }
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        cb(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = function () { cb(null); };
+      img.src = r.result;
+    };
+    r.onerror = function () { cb(null); };
+    r.readAsDataURL(file);
+  };
+
+  /* ---------- v39: FUEL RECEIPT parser ----------
+     Pump receipts (Mobil / Petro-Canada / Shell …) print the sale as a
+     column row — litres × price/L = line total — plus a TOTAL line, the
+     station brand in the header, and the date. Extract: litres, total
+     cost, price per litre, station, date. The column triple is only
+     trusted when its own arithmetic checks out (litres × price ≈ total),
+     which also makes it immune to random number triples elsewhere. */
+  TicketOCR.parseFuelReceipt = function (text) {
+    var f = { _type: 'fuel_receipt' };
+    var t = String(text || '');
+    function num(s) { return parseFloat(String(s).replace(/,/g, '')); }
+    function clean(n, dp) {
+      if (!isFinite(n)) return null;
+      return String(Math.round(n * Math.pow(10, dp)) / Math.pow(10, dp));
+    }
+
+    /* Column triple: "83.965 (L)  2.279 ($/L)  191.36 ($)" — the unit
+       markers may sit between the numbers or be absent entirely. */
+    var trip = null;
+    var tm = t.match(/([\d,]+\.\d{3})\s*(?:\(L\))?\s*\$?\s*([\d,]+\.\d{3})\s*(?:\(\$\/L\))?\s*\$?\s*([\d,]+\.\d{2})\b/);
+    if (tm) {
+      var tL = num(tm[1]), tP = num(tm[2]), tC = num(tm[3]);
+      if (tL > 0 && tP > 0.3 && tP < 6 && Math.abs(tL * tP - tC) <= 0.06 + tC * 0.01) {
+        trip = { litres: tL, price: tP, total: tC };
+      }
+    }
+
+    /* Total cost — the TOTAL line wins; \b keeps SUBTOTAL out. GST/HST
+       lines never carry the TOTAL label, so they can't be picked up. */
+    var cost = firstMatch(t, [
+      /\bTOTAL\b[\s:]*CAD\s*\$\s*([\d,]+\.\d{2})/i,
+      /\bTOTAL\b[\s:]*\$\s*([\d,]+\.\d{2})/i,
+      /\bTOTAL\b[\s:]+\$?\s*([\d,]+\.\d{2})/i,
+      /\bPURCHASE\b[\s:]*\$\s*([\d,]+\.\d{2})/i,
+      /\bAMOUNT\s+DUE\b[\s:]*\$?\s*([\d,]+\.\d{2})/i
+    ]);
+    if (cost) f.cost = clean(num(cost), 2);
+    else if (trip) f.cost = clean(trip.total, 2);
+
+    /* Litres — labeled first, then the verified column triple, then
+       "45.2 L @ 1.939" and "83.965 L" shapes. */
+    var lit = firstMatch(t, [
+      /(?:LITRES|LITERS|VOLUME|QTY|QUANTITY)[\s:]*([\d,]+\.\d{1,3})/i
+    ]);
+    if (lit) f.litres = clean(num(lit), 3);
+    else if (trip) f.litres = clean(trip.litres, 3);
+    else {
+      var at = t.match(/([\d,]+\.\d{1,3})\s*L\s*@\s*\$?\s*([\d,]+\.\d{3})/i);
+      if (at) { f.litres = clean(num(at[1]), 3); f.pricePerLitre = clean(num(at[2]), 3); }
+      else {
+        var lu = t.match(/([\d,]+\.\d{2,3})\s*(?:LITRES|LITERS)\b/i) || t.match(/([\d,]+\.\d{3})\s*L\b/i);
+        if (lu) f.litres = clean(num(lu[1]), 3);
+      }
+    }
+
+    /* Price per litre — from the triple or an explicit $/L figure. */
+    if (!f.pricePerLitre) {
+      if (trip) f.pricePerLitre = clean(trip.price, 3);
+      else {
+        var pp = firstMatch(t, [
+          /\$\s*([\d,]+\.\d{3})\s*\/\s*L\b/i,
+          /([\d,]+\.\d{3})\s*\(\$\/L\)/i,
+          /\bPRICE\s*\/\s*L\b[\s:]*\$?\s*([\d,]+\.\d{3})/i,
+          /\bPRICE\b[\s:]*\$?\s*([\d,]+\.\d{3})/i
+        ]);
+        if (pp) { var pv = num(pp); if (pv > 0.3 && pv < 6) f.pricePerLitre = clean(pv, 3); }
+      }
+    }
+
+    /* Station — brand in the header (first lines win over body text). */
+    var BRANDS = [
+      ['Petro-Pass', /petro[\s\-–]?pass/i],
+      ['Petro-Canada', /petro[\s\-–]?canada/i],
+      ['Mobil', /\bmobil\b/i],
+      ['Shell', /\bshell\b/i],
+      ['Esso', /\besso\b/i],
+      ['Husky', /\bhusky\b/i],
+      ['Co-op', /\bco[\s\-]?op\b/i],
+      ['Canadian Tire', /canadian\s+tire/i],
+      ['Costco', /\bcostco\b/i],
+      ['Fas Gas', /fas\s*gas/i],
+      ['Domo', /\bdomo\b/i],
+      ['Centex', /\bcentex\b/i],
+      ['Ultramar', /\bultramar\b/i],
+      ['Irving', /\birving\b/i],
+      ['Circle K', /circle\s*k\b/i],
+      ['7-Eleven', /7[\s\-]?eleven/i],
+      ['Safeway', /\bsafeway\b/i],
+      ['Superstore', /\bsuperstore\b/i]
+    ];
+    var head = t.split('\n').slice(0, 10).join('\n');
+    for (var bi = 0; bi < BRANDS.length && !f.station; bi++) {
+      if (BRANDS[bi][1].test(head) || BRANDS[bi][1].test(t)) f.station = BRANDS[bi][0];
+    }
+
+    /* Date — ISO as printed, else the DATE: label via normDate, else any
+       date normDate can find in the text. */
+    var iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+    if (iso) f.date = iso[1];
+    else {
+      var draw = firstMatch(t, [/DATE[\s:]*([A-Za-z0-9\/\- ]{6,14})/i]);
+      f.date = normDate(draw) || normDate(t);
+    }
+
+    var count = 0;
+    ['litres', 'cost', 'station', 'date'].forEach(function (k) { if (f[k]) count++; });
+    f._confidence = count;
+    f._raw = text;
+    return f;
+  };
+
+  /* What the fuel reader found / missed, for the Fuel form read line.
+     Found entries carry values in display form; missing are field names.
+     Price per litre has no form field — reported when found, never as
+     "missing". */
+  TicketOCR.describeFuelRead = function (parsed) {
+    var found = [], missing = [];
+    function add(ok, foundLabel, missingLabel) {
+      if (ok) found.push(foundLabel); else missing.push(missingLabel);
+    }
+    add(!!parsed.litres, parsed.litres ? parsed.litres + ' L' : '', 'litres');
+    add(!!parsed.cost, parsed.cost ? '$' + parsed.cost : '', 'cost');
+    add(!!parsed.station, parsed.station || '', 'station');
+    add(!!parsed.date, parsed.date || '', 'date');
+    if (parsed.pricePerLitre) found.push('@ ' + parsed.pricePerLitre + '/L');
+    return { found: found, missing: missing };
+  };
+
 })();

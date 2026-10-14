@@ -388,6 +388,7 @@
   };
   App.trackerToggle = function () {
     var t = App.tracker;
+    var wasIdle = t.status === 'idle';
     if (t.status === 'idle') {
       t.status = 'running'; t.startTs = Date.now();
       // v28: if a start time was preset ("I actually started at 8:30"), count from there
@@ -397,6 +398,9 @@
     else if (t.status === 'running') { t.elapsed += Math.floor((Date.now() - t.startTs) / 1000); t.status = 'paused'; }
     else { t.status = 'running'; t.startTs = Date.now(); }
     trackerSave(); trackerPaint();
+    // v39: a fresh shift start (not a resume) may prompt for the
+    // starting odometer — by-mile pay only, non-blocking.
+    if (wasIdle) { try { maybePromptOdo('start'); } catch (e) {} }
   };
   /* v34: stop with an explicit end time. Asjad often forgets to press STOP
      when the shift actually ends, so the recorded end overshot. The STOP
@@ -412,6 +416,10 @@
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
+      // v39: carry the by-mile starting-odometer reading (captured at
+      // shift start, pending on the tracker) onto the day's session.
+      var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
+      if (pendingStart) entry.startOdo = pendingStart;
       sessions.push(entry); store.set('sessions', sessions);
       if (window.FB && FB.saveDoc) FB.saveDoc('sessions', 's' + Date.now(), entry);
       if (Meticulous.modules.revenue && Meticulous.modules.revenue.onSession) {
@@ -420,6 +428,9 @@
     }
     App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
     trackerSave(); trackerPaint();
+    // v39: shift stopped — by-mile days with a start reading and no end
+    // reading get the closing-odometer prompt (once per day).
+    try { maybePromptOdo('end'); } catch (e) {}
   }
   App.trackerStop = function () { stopSessionAt(Date.now()); };
   function closeTrackerEndSheet() {
@@ -448,6 +459,145 @@
     closeTrackerEndSheet();
     stopSessionAt(end.getTime());
   };
+
+  /* ODO-PROMPT-BEGIN — paid-by-mile day odometer prompts (v39).
+     Decision + record-keeping only (DOM lives in maybePromptOdo below).
+     Harness-extractable: may use `store`, `App.tracker`, `todayStr`,
+     `trackerSave` and the ODO-MASTER helpers.
+     Rules (Asjad, Oct 13): pay mode is onboarding.payStandard; 'Miles'
+     means by-mile. By-mile days prompt once at shift start and once at
+     stop; hourly/trip/weight NEVER prompt. The prompt is non-blocking —
+     the timer runs regardless — and shows at most once per day per kind.
+     Readings live on the day's session entry (startOdo/endOdo); while a
+     shift is running the start reading waits on the tracker state. */
+  function isByMile() {
+    var o = store.get('onboarding', {});
+    return String((o && o.payStandard) || '').toLowerCase() === 'miles';
+  }
+  function odoPromptShown(kind, dateStr) {
+    var rec = store.get('odoPrompt', {});
+    return !!(rec && rec[dateStr] && rec[dateStr][kind]);
+  }
+  function markOdoPromptShown(kind, dateStr) {
+    var rec = store.get('odoPrompt', {});
+    if (!rec[dateStr]) rec[dateStr] = {};
+    rec[dateStr][kind] = true;
+    store.set('odoPrompt', rec);
+  }
+  function sessionWithStartOdo(dateStr) {
+    var ss = store.get('sessions', []);
+    for (var i = ss.length - 1; i >= 0; i--) {
+      if (ss[i].date === dateStr && ss[i].startOdo) return ss[i];
+    }
+    return null;
+  }
+  function shouldPromptOdo(kind) {
+    if (!isByMile()) return false;
+    var today = todayStr(new Date());
+    if (odoPromptShown(kind, today)) return false;
+    if (kind === 'start') {
+      if (App.tracker && App.tracker.odoStart && App.tracker.odoStart.date === today) return false;
+      if (sessionWithStartOdo(today)) return false;
+      return true;
+    }
+    var s = sessionWithStartOdo(today);
+    return !!(s && !s.endOdo);
+  }
+  /* A successful photo read. Start readings wait on the tracker state
+     (persisted) until stopSessionAt moves them onto the session; end
+     readings patch the day's session directly. Every read also bumps
+     the master odometer (upward only, addition #2 rule). */
+  function applyOdoReading(kind, value) {
+    var n = parseFloat(value);
+    if (!(n > 0)) return false;
+    bumpOdometer(n);
+    var today = todayStr(new Date());
+    if (kind === 'start') {
+      App.tracker.odoStart = { date: today, value: n };
+      trackerSave();
+      return true;
+    }
+    var ss = store.get('sessions', []);
+    for (var i = ss.length - 1; i >= 0; i--) {
+      if (ss[i].date === today && ss[i].startOdo && !ss[i].endOdo) {
+        ss[i].endOdo = n;
+        store.set('sessions', ss);
+        return true;
+      }
+    }
+    return false;
+  }
+  /* stopSessionAt: move the pending start reading onto the new session
+     entry. Matches on the session's START date, so an overnight shift
+     still lands its reading on the entry (the entry itself is dated by
+     its end day, per the existing session convention). */
+  function takePendingStartOdo(sessionStartDate) {
+    var t = App.tracker;
+    if (t && t.odoStart && t.odoStart.date === sessionStartDate) {
+      var v = t.odoStart.value;
+      delete t.odoStart;
+      return v;
+    }
+    return null;
+  }
+  /* ODO-PROMPT-END */
+
+  /* v39: the prompt sheet itself (index.html #odoSheet) — mirrors the
+     tracker start/end sheets. Shown from trackerToggle (manual start),
+     checkAutoStart (timed start) and stopSessionAt (stop). */
+  var _odoPromptKind = null;
+  function closeOdoSheet() {
+    var s = el('odoSheet');
+    if (s) s.classList.remove('open');
+    el('scrim').classList.remove('show');
+    el('scrim').onclick = closeSidebar;
+  }
+  function maybePromptOdo(kind) {
+    if (!shouldPromptOdo(kind)) return false;
+    var sheet = el('odoSheet');
+    if (!sheet) return false;
+    // Mark BEFORE showing: once per day per kind, even if skipped.
+    markOdoPromptShown(kind, todayStr(new Date()));
+    _odoPromptKind = kind;
+    el('odoSheetTitle').textContent = kind === 'start' ? '📸 Starting odometer' : '📸 Ending odometer';
+    el('odoSheetNote').textContent = kind === 'start'
+      ? 'Paid by the mile — snap the dash for your starting reading. Your timer is already running.'
+      : 'Paid by the mile — snap the dash for your closing reading.';
+    el('odoSheetStatus').innerHTML = '';
+    sheet.classList.add('open');
+    el('scrim').classList.add('show');
+    el('scrim').onclick = function () { closeOdoSheet(); };
+    return true;
+  }
+  App.odoSheetSkip = function () { closeOdoSheet(); };
+  function odoSheetHandleFile(file) {
+    if (!file || !_odoPromptKind) return;
+    var kind = _odoPromptKind;
+    var st = el('odoSheetStatus');
+    function setStatus(html) { if (st) st.innerHTML = html; }
+    if (!window.TicketOCR || !TicketOCR.fileToOCRImage) {
+      setStatus('⚠️ Photo reader not ready — skip for now; you can add the reading in Fuel.');
+      return;
+    }
+    setStatus('📖 Reading photo…');
+    TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+      if (!ocrUrl) { setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.'); return; }
+      TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+        try { setStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
+      }).then(function (text) {
+        var km = parseOdometerReading(text);
+        if (km) {
+          applyOdoReading(kind, km);
+          setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b>');
+          setTimeout(closeOdoSheet, 1200);
+        } else {
+          setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.');
+        }
+      }).catch(function () {
+        setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.');
+      });
+    });
+  }
 
   /* ---------------- timed auto-start ---------------- */
   // v27: start the tracker by itself at a set time on chosen days.
@@ -508,6 +658,9 @@
         App.tracker.elapsed = 0;
         trackerSave(); trackerPaint();
         autoStartNotify('Tracker auto-started at ' + label);
+        // v39: auto-start is a shift start too — same by-mile odometer
+        // prompt as the manual play button (non-blocking).
+        try { maybePromptOdo('start'); } catch (e) {}
         return 'started';
       }
       // Time passed long ago (app was closed), or tracker was paused mid-shift: ask.
@@ -686,6 +839,9 @@
     App.onb = o;
     store.set('onboarding', o);
   }
+  /* ODO-MASTER-BEGIN — the odometer reader + the single master odometer
+     store (v39). Harness-extractable: functions in this region may use
+     only `store` and pure JS. */
   function parseOdometerReading(text) {
     if (!text) return null;
     /* v34: prefer the TOTAL odometer over the trip meter. On Asjad's dash
@@ -724,6 +880,27 @@
     var pick = largest(onKm.filter(isTotal)) || largest(all.filter(isTotal)) || largest(all);
     return pick ? String(pick.v) : null;
   }
+  /* v39: ONE master odometer, stored once in the synced store key
+     'mt_odo' (the key onboarding/Preferences/Maintenance already use).
+     Every capture point (onboarding, Preferences, Fuel, the by-mile day
+     prompts) writes through bumpOdometer — UPWARD ONLY: a lower OCR
+     misread or typo must never drag the master down. Everything
+     mileage-based reads masterOdometer() live at render/fire time. */
+  function masterOdometer() {
+    var v = parseFloat(store.get('mt_odo', ''));
+    return (isFinite(v) && v > 0) ? v : null;
+  }
+  function bumpOdometer(v) {
+    var n = parseFloat(v);
+    var prev = masterOdometer();
+    if (!(n > 0)) return { value: prev, raised: false, previous: prev };
+    if (prev === null || n > prev) {
+      store.set('mt_odo', String(n));
+      return { value: n, raised: true, previous: prev };
+    }
+    return { value: prev, raised: false, previous: prev };
+  }
+  /* ODO-MASTER-END */
   var _ONB_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
   function parseStickerExpiry(text) {
     if (!text) return null;
@@ -1054,6 +1231,12 @@
     el('trkStartSave').onclick = App.trackerSaveStart;
     el('trkEndCancel').onclick = closeTrackerEndSheet;
     el('trkEndSave').onclick = App.trackerSaveEnd;
+    // v39: by-mile odometer prompt sheet controls
+    el('odoSheetSkip').onclick = function () { App.odoSheetSkip(); };
+    el('odoSheetCam').onclick = function () { el('odoSheetCamIn').click(); };
+    el('odoSheetPick').onclick = function () { el('odoSheetIn').click(); };
+    el('odoSheetCamIn').onchange = function () { odoSheetHandleFile(el('odoSheetCamIn').files[0]); el('odoSheetCamIn').value = ''; };
+    el('odoSheetIn').onchange = function () { odoSheetHandleFile(el('odoSheetIn').files[0]); el('odoSheetIn').value = ''; };
     el('fbFab').onclick = App.openFeedback;
     el('fbCancel').onclick = function () { el('fbSheet').classList.remove('open'); el('scrim').classList.remove('show'); el('scrim').onclick = closeSidebar; };
     el('fbSend').onclick = sendFeedback;
@@ -1138,6 +1321,9 @@
 
   App._store = store; App._esc = esc; App._today = todayStr; App._fmtClock = fmtClock;
   App._wirePhotoOCR = onbWirePhoto; // v31: reused by Preferences for odometer/safety retakes
+  App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
+  App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
+  App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
   try { if (window.CloudSync) CloudSync.attach(store); } catch (e) {} // v27: Firestore mirror
   /* v30 OTA: wait for the over-the-air updater before booting. OTA.ready()
      resolves when it is safe to start (update applied or not needed / offline).

@@ -7,6 +7,30 @@
 
   function fills() { return S('fills', []); }
 
+  /* v39: note from the most recent save (e.g. the master-odometer
+     outcome), shown at the top of the Fuel-up card after re-render. */
+  var saveNote = '';
+  function fmtKm(v) { return Number(v).toLocaleString('en-CA'); }
+
+  /* v39 (addition #2): a saved fill-up's odometer feeds the ONE master
+     odometer (mt_odo) — upward only. A lower saved reading (OCR misread
+     or typo) never drags the master down; the returned note says which
+     way it went so the driver sees it after the save re-render. */
+  function masterOnSave(odoVal) {
+    var n = parseFloat(odoVal);
+    if (!(n > 0)) return '';
+    if (!(window.App && App._bumpOdometer)) return '';
+    var res = App._bumpOdometer(n);
+    if (!res || res.value === null || res.value === undefined) return '';
+    if (res.raised) {
+      return res.previous
+        ? '✓ Master odometer updated to ' + fmtKm(res.value) + ' km.'
+        : '✓ Master odometer set to ' + fmtKm(res.value) + ' km.';
+    }
+    return 'Odometer kept at ' + fmtKm(res.value) + ' km — the reading you saved (' +
+      fmtKm(n) + ') was lower, so the master was not changed.';
+  }
+
   function mpgTrend() {
     var f = fills().filter(function (x) { return x.odo && x.litres; })
       .sort(function (a, b) { return a.odo - b.odo; });
@@ -19,6 +43,7 @@
   }
 
   Meticulous.modules.fuel = {
+    _masterOnSave: masterOnSave,
     status: function () {
       var t = mpgTrend();
       return t.length ? 'MPG: ' + t[t.length - 1].mpg + ' km/L' : fills().length + ' entries';
@@ -32,8 +57,16 @@
           : '<div class="empty">Add 2+ fill-ups with odometer readings to see MPG.</div>') + '</div>';
 
       h += '<div class="card"><h3>＋ Fuel-up</h3>' +
+        (saveNote ? '<p class="note" style="color:var(--navy);font-weight:600">' + esc(saveNote) + '</p>' : '') +
         '<label class="f">Date</label><input type="date" id="fu_date" value="' + App._today() + '">' +
-        '<div class="row"><div><label class="f">Odometer (km)</label><input id="fu_odo" type="number" inputmode="decimal"></div>' +
+        '<div class="row"><div><label class="f">Odometer (km)</label><input id="fu_odo" type="number" inputmode="decimal">' +
+        '<div style="display:flex;gap:8px;margin-top:6px;">' +
+        '<button type="button" class="btn secondary small" id="fu_odo_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary small" id="fu_odo_pick" style="flex:1;">📁 Choose file</button>' +
+        '</div>' +
+        '<input type="file" id="fu_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="fu_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="fu_odo_read" style="font-size:13px;margin-top:4px;"></div></div>' +
         '<div><label class="f">Litres</label><input id="fu_l" type="number" inputmode="decimal"></div></div>' +
         '<div class="row"><div><label class="f">Cost $</label><input id="fu_cost" type="number" inputmode="decimal"></div>' +
         '<div><label class="f">Station</label><input id="fu_stn" placeholder="e.g. Petro-Pass"></div></div>' +
@@ -45,6 +78,7 @@
         '<input type="file" id="fu_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<input type="file" id="fu_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="fu_prev"></div>' +
+        '<div id="fu_read" style="font-size:14px;margin-top:8px;"></div>' +
         '<button class="btn primary" id="fu_add">Save fill-up</button></div>';
 
       h += '<div class="card"><h3>🧾 Other expenses</h3>' +
@@ -67,14 +101,113 @@
       var fuPickInput = body.querySelector('#fu_img');
       body.querySelector('#fu_cam').onclick = function () { fuCamInput.click(); };
       body.querySelector('#fu_pick').onclick = function () { fuPickInput.click(); };
-      function fuPreview(ev) {
-        var f = ev.target.files[0]; if (!f) return;
+
+      /* v39: fields the user has typed in are never overwritten by OCR.
+         (The date field starts pre-filled with today by the app — that
+         default is NOT a user entry, so a receipt's date may replace it
+         until the user actually edits the field.) */
+      ['#fu_date', '#fu_l', '#fu_cost', '#fu_stn'].forEach(function (id) {
+        var e = body.querySelector(id);
+        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
+      });
+      function fillField(id, v) {
+        var e = body.querySelector(id);
+        if (!e || !v) return;
+        if (e.getAttribute('data-touched')) return;
+        if (e.value && id !== '#fu_date') return;
+        e.value = v;
+      }
+
+      /* v39: receipt photo → OCR (same engine as Dispatch: 1600px
+         rendition + recognizeWithRotation) → fill the form, and SAY
+         what was read / missed. Never silent. */
+      var fuOcrToken = 0;
+      function fuSetRead(html) { var d = body.querySelector('#fu_read'); if (d) d.innerHTML = html; }
+      function fuHandlePhoto(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++fuOcrToken;
         var r = new FileReader();
         r.onload = function () { body.querySelector('#fu_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
-        r.readAsDataURL(f);
+        r.readAsDataURL(file);
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseFuelReceipt) {
+          fuSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
+          return;
+        }
+        fuSetRead('📖 Reading receipt…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== fuOcrToken) return;
+          if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== fuOcrToken) return;
+            try { fuSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== fuOcrToken) return;
+            var parsed = TicketOCR.parseFuelReceipt(text);
+            var rep = TicketOCR.describeFuelRead(parsed);
+            fillField('#fu_l', parsed.litres);
+            fillField('#fu_cost', parsed.cost);
+            fillField('#fu_stn', parsed.station);
+            fillField('#fu_date', parsed.date);
+            if (rep.found.length) {
+              fuSetRead('⛽ Read: ' + esc(rep.found.join(' · ')) +
+                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+            } else {
+              fuSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
+            }
+          }).catch(function () {
+            if (token !== fuOcrToken) return;
+            fuSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
+          });
+        });
       }
-      fuCamInput.onchange = fuPreview;
-      fuPickInput.onchange = fuPreview;
+      fuCamInput.onchange = fuHandlePhoto;
+      fuPickInput.onchange = fuHandlePhoto;
+
+      /* v39 (addition #1): odometer photo beside the Odometer field —
+         snap the dash instead of typing. Reuses the v34 odometer parser
+         (App._parseOdometerReading: total over trip). The photo tap IS
+         the user's intent, so a good read replaces the field value —
+         always with the visible read-back line; a failed read leaves
+         the field untouched. */
+      var fuOdoCamInput = body.querySelector('#fu_odo_cam_in');
+      var fuOdoPickInput = body.querySelector('#fu_odo_in');
+      body.querySelector('#fu_odo_cam').onclick = function () { fuOdoCamInput.click(); };
+      body.querySelector('#fu_odo_pick').onclick = function () { fuOdoPickInput.click(); };
+      var fuOdoToken = 0;
+      function fuOdoHandle(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++fuOdoToken;
+        var st = body.querySelector('#fu_odo_read');
+        function setStatus(html) { if (st) st.innerHTML = html; }
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !(window.App && App._parseOdometerReading)) {
+          setStatus('<span style="color:#e67e22">Photo reader not ready — type the odometer.</span>');
+          return;
+        }
+        setStatus('📖 Reading odometer…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== fuOdoToken) return;
+          if (!ocrUrl) { setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== fuOdoToken) return;
+            try { setStatus('📖 Reading odometer… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== fuOdoToken) return;
+            var km = App._parseOdometerReading(text);
+            if (km) {
+              body.querySelector('#fu_odo').value = km;
+              setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
+            } else {
+              setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
+            }
+          }).catch(function () {
+            if (token !== fuOdoToken) return;
+            setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
+          });
+        });
+      }
+      fuOdoCamInput.onchange = fuOdoHandle;
+      fuOdoPickInput.onchange = fuOdoHandle;
+
       body.querySelector('#fu_add').onclick = function () {
         var odo = parseFloat(body.querySelector('#fu_odo').value);
         if (!odo) { alert('Enter the odometer reading.'); return; }
@@ -82,6 +215,8 @@
         var rec = { date: body.querySelector('#fu_date').value || App._today(), odo: odo, litres: body.querySelector('#fu_l').value, cost: body.querySelector('#fu_cost').value, station: body.querySelector('#fu_stn').value.trim() };
         f.push(rec); W('fills', f);
         if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), rec);
+        // v39: feed the master odometer (upward only) + show the outcome
+        saveNote = masterOnSave(odo);
         Meticulous.modules.fuel.render(body);
       };
       body.querySelector('#fx_add').onclick = function () {

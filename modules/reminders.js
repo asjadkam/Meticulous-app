@@ -15,7 +15,30 @@
   };
 
   function list() { return S('list', []); }
-  function odo() { return S('odo', ''); }
+  /* v39 (addition #2): the PM math runs off the ONE master odometer
+     (store key 'mt_odo', written upward-only by onboarding / Preferences
+     / Fuel / the by-mile prompts) read LIVE — not this module's old
+     private copy, which only changed when someone typed on this screen
+     and silently went stale. The legacy rem_odo value is still honored
+     as a floor so no pre-v39 reading is lost. */
+  function odo() {
+    var m = parseFloat(App._store.get('mt_odo', ''));
+    var r = parseFloat(S('odo', ''));
+    var v = Math.max(isFinite(m) ? m : 0, isFinite(r) ? r : 0);
+    return v > 0 ? String(v) : '';
+  }
+  /* v39 (addition #2): the annual-safety expiry lives in the master key
+     'mt_annualDate' (onboarding/Preferences/Maintenance). The reminder
+     seeded at onboarding carries a COPY in expiryDate, which went stale
+     whenever Preferences updated the master — so the live master wins
+     whenever it is set. */
+  function effExpiry(r) {
+    if (r.type === 'safety') {
+      var m = App._store.get('mt_annualDate', '');
+      if (m) return m;
+    }
+    return r.expiryDate || '';
+  }
   function distUnit() { var u = App._store.get('units', {}); return u.distance === 'mi' ? 'mi' : 'km'; }
 
   function daysUntil(iso) {
@@ -29,7 +52,7 @@
   function statusOf(r) {
     var o = odo();
     if (r.type === 'safety') {
-      var d = daysUntil(r.expiryDate);
+      var d = daysUntil(effExpiry(r));
       if (d === null) return { level: 'nodate', text: 'No date set' };
       if (d < 0) return { level: 'overdue', text: Math.abs(d) + 'd overdue' };
       if (d <= 14) return { level: 'soon', text: 'Due in ' + d + 'd' };
@@ -55,6 +78,7 @@
 
   function sortKey(r) {
     if (r.type === 'location') return '9999-99-99';
+    if (r.type === 'safety') return effExpiry(r) || '9999-99-99';
     return r.expiryDate || r.dueDate || '9999-99-99';
   }
 
@@ -139,7 +163,19 @@
 
       function wire() {
         var odoInput = body.querySelector('#rm_odo');
-        odoInput.addEventListener('change', function () { W('odo', odoInput.value.trim()); draw(); });
+        odoInput.addEventListener('change', function () {
+          /* v39: typing a current odometer here writes the MASTER
+             (upward only, via App._bumpOdometer) and mirrors the result
+             locally — this screen no longer keeps a private reading. */
+          var v = odoInput.value.trim();
+          if (v && window.App && App._bumpOdometer) {
+            var res = App._bumpOdometer(parseFloat(v));
+            if (res && res.value) W('odo', String(res.value));
+          } else if (v) {
+            W('odo', v);
+          }
+          draw();
+        });
         var nb = body.querySelector('#rm_new');
         if (nb) nb.onclick = function () { W('editing', null); W('showForm', true); draw(); };
         var cb = body.querySelector('#rm_cancel');
