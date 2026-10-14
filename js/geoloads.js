@@ -42,6 +42,13 @@
  *  - This is GPS-tracked counting, NOT OS-level geofencing — the
  *    phone OS does not watch these fences while the app is dead.
  *    Native-shell geofences are a later stage.
+ *  - v63 (native v34): on the new shell, the native foreground
+ *    service keeps recording GPS breadcrumbs while the app is
+ *    backgrounded or dead; on resume they replay through the same
+ *    fix path (ingestNativeCrumbs), so a load<->dump cycle completed
+ *    while the app was closed still counts. Stretches with NO
+ *    breadcrumb at all (phone off, service killed) stay unobserved
+ *    and are never reconstructed.
  */
 (function () {
   'use strict';
@@ -446,9 +453,9 @@
   }
 
   function onFix(fix) {
-    if (!watching || !counter) return;
+    if (!watching || !counter) return null;
     var r = counter.ingest(fix);
-    if (!r.accepted) return;
+    if (!r.accepted) return r;
     // A dump event belongs to the date it happened on (overnight
     // shifts): if midnight passed, roll the day record forward.
     var fd = dateStrOf(fix.time || Date.now());
@@ -503,6 +510,30 @@
     },
 
     flush: function () { if (sessionKey) persist(true); },
+
+    /* v63 (native v34): feed NATIVE-SERVICE breadcrumbs (recorded
+       while the app was backgrounded or dead) through the very same
+       fix path as live fixes — same dwell/depart rules, same midnight
+       roll-over. The counter ignores fixes at or before the last one
+       it saw, so crumbs that overlap the live stream can never
+       double-count a cycle. Returns how many fixes were accepted. */
+    ingestNativeCrumbs: function (crumbs) {
+      if (!watching || !counter || !crumbs || !crumbs.length) return 0;
+      var list = crumbs.slice().sort(function (x, y) { return (+x.t || 0) - (+y.t || 0); });
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if (!c || !isFinite(+c.t)) continue;
+        var r = onFix({
+          latitude: +c.a, longitude: +c.o,
+          accuracy: (c.c === null || c.c === undefined || +c.c < 0) ? null : +c.c,
+          time: +c.t
+        });
+        if (r && r.accepted) n++;
+      }
+      if (sessionKey) persist(true);
+      return n;
+    },
 
     /* The day's record for the Manifest: { count, events, sites,
        blocked } or null when counting never ran that day. */

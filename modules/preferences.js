@@ -154,6 +154,18 @@
         '<label class="f">Gemini API key</label>' +
         '<input id="pf_pr_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key here">' +
         '<p class="note" id="pf_pr_note"></p></div>' +
+        /* v63 (native v34): Background tracking status — plumbing like
+           the rows above, not a feature card. On the new Android shell
+           it reports, in plain words, whether miles keep counting with
+           the app closed ("Allow all the time" location) and whether
+           battery saver can stop the tracker mid-shift, with one-tap
+           fixes. On any other build it says so in one quiet line.
+           Status is READ live at render; nothing nags anywhere else. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">🛰️ Background tracking</p>' +
+        '<p class="note" id="pf_bgtrack">Checking…</p>' +
+        '<button class="btn ghost hidden" id="pf_bgallow">Allow location all the time</button>' +
+        '<button class="btn ghost hidden" id="pf_bgbatt">Open battery settings</button></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
@@ -417,6 +429,53 @@
         if (keyEl) keyEl.onchange = function () {
           if (window.PowerRead) PowerRead.setKey(keyEl.value);
           paint(keyEl.value ? '✓ Key saved.' : 'Key cleared — power read will stay off until a key is pasted.');
+        };
+        paint();
+      })();
+      /* v63: background-tracking status (native v34 shell). Reads the
+         live plugin status at render and re-reads after a fix tap.
+         Inert everywhere else — one honest line, no dead buttons. */
+      (function () {
+        var note = body.querySelector('#pf_bgtrack');
+        if (!note) return;
+        var allowBtn = body.querySelector('#pf_bgallow');
+        var battBtn = body.querySelector('#pf_bgbatt');
+        function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
+        function paint() {
+          var ST = window.ShiftTrack;
+          if (!ST || !ST.available()) {
+            note.textContent = 'Not in this build — live miles count only while the app is open. Background tracking comes with the newest Android app.';
+            show(allowBtn, false); show(battBtn, false);
+            return;
+          }
+          ST.status(true).then(function (s) {
+            if (!s) { note.textContent = 'Could not read tracking status.'; return; }
+            var lines = [];
+            if (!s.fineLocation) {
+              lines.push('Location is off for Meticulous — miles can\'t be counted at all. Turn location on for the app, then allow it below.');
+            } else if (s.backgroundLocation) {
+              lines.push('Background location: Allowed — miles keep counting with the app closed. ✓');
+            } else {
+              lines.push('Background location: Not allowed — counting stops when the app closes.');
+            }
+            lines.push(s.batteryExempt
+              ? 'Battery: Unrestricted — battery saver can\'t stop tracking mid-shift. ✓'
+              : 'Battery: Battery saver can stop tracking mid-shift. Set Meticulous to “Unrestricted” battery so a shift is never cut short.');
+            if (s.sessionActive) lines.push('Right now: a shift is being tracked in the background.');
+            note.textContent = lines.join(' ');
+            show(allowBtn, !s.backgroundLocation);
+            show(battBtn, !s.batteryExempt);
+          }).catch(function () { note.textContent = 'Could not read tracking status.'; });
+        }
+        if (allowBtn) allowBtn.onclick = function () {
+          var ST = window.ShiftTrack;
+          if (!ST) return;
+          ST.requestBackground().then(function () { setTimeout(paint, 600); });
+        };
+        if (battBtn) battBtn.onclick = function () {
+          var ST = window.ShiftTrack;
+          if (ST) ST.openBatterySettings();
+          setTimeout(paint, 1500);
         };
         paint();
       })();

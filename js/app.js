@@ -175,7 +175,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 30; // <- bump on every native (APK) release
+      var APK_VERSION = 34; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -779,6 +779,8 @@
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
       // v50: geofence load counting rides the same session (js/geoloads.js)
       try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+      // v63: native background tracking (new shell only) rides it too
+      try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionStartMs()); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
     }
     // v62: the screen wake lock follows the session state — a pause
@@ -801,6 +803,8 @@
     var milesFin = null;
     try { if (window.LiveMiles) milesFin = LiveMiles.stopDay(); } catch (e) {}
     try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
+    // v63: native background tracking — final crumb drain + service stop
+    try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (e) {}
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
@@ -840,6 +844,9 @@
     el('scrim').onclick = closeSidebar;
   }
   App.trackerStopPrompt = function () {
+    // v63: fold the native service's latest breadcrumbs while the
+    // end-time sheet is open, so the saved entry carries them.
+    try { if (window.ShiftTrack) ShiftTrack.drainNow(); } catch (e) {}
     var now = new Date();
     el('trkEndTime').value = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
     el('trkEndSheet').classList.add('open');
@@ -1222,6 +1229,8 @@
         // v40: an auto-started shift tracks live miles like any other.
         try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
         try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+        // v63: native background tracking rides an auto-started shift too
+        try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionStartMs()); } catch (e) {}
         // v39: auto-start is a shift start too — same by-mile odometer
         // prompt as the manual play button (non-blocking).
         try { maybePromptOdo('start'); } catch (e) {}
@@ -2024,6 +2033,9 @@
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
       try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
     }
+    // v63: reconcile with the native background tracker — it may hold
+    // breadcrumbs (or a whole orphaned session) from while we were dead.
+    try { if (window.ShiftTrack) ShiftTrack.syncOnBoot(); } catch (e) {}
     // v27: if the auto-start time passed while the app was closed, start or prompt now
     try { App.checkAutoStart(); } catch (e) {}
 

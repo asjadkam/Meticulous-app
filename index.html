@@ -125,6 +125,8 @@
         <div class="miles hidden" id="trkMiles"></div>
         <!-- v62: session wake lock status (js/miles.js) — shown only while the screen is actually held; nothing at all when the hold is unavailable -->
         <div class="wake hidden" id="trkWake"></div>
+        <!-- v63: native background tracking ask (js/shifttrack.js) — shown only on the new shell when a running session lacks "Allow all the time" location; filled and wired by shifttrack.js -->
+        <div class="wake hidden" id="trkBgAsk"></div>
         <div>
           <button class="tbtn play" id="trkMain">▶<br>START</button>
           <button class="tbtn stop hidden" id="trkStop">■<br>STOP</button>
@@ -230,12 +232,13 @@
 <script src="modules/connect.js?v=25"></script>
 <script src="modules/reminders.js?v=25"></script>
 <script src="modules/autostart.js?v=30"></script>
-<script src="modules/preferences.js?v=59"></script>
+<script src="modules/preferences.js?v=64"></script>
 <script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=63"></script>
+<script src="js/app.js?v=64"></script>
 <script src="js/geo.js?v=37"></script>
-<script src="js/miles.js?v=62"></script>
-<script src="js/geoloads.js?v=50"></script>
+<script src="js/miles.js?v=64"></script>
+<script src="js/geoloads.js?v=64"></script>
+<script src="js/shifttrack.js?v=64"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

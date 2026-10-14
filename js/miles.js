@@ -21,6 +21,12 @@
  *    NO liveKm field at all — never a fake zero.
  *  - Reconciliation runs only when a session has BOTH sources: a real
  *    liveKm AND both odometer readings.
+ *  - v63 (native v34): breadcrumbs the native foreground service
+ *    OBSERVED while the app was backgrounded/dead are merged back in
+ *    (mergeCrumbs) — that is the one exception to "the join segment
+ *    is never counted", and only when the service's own record proves
+ *    it was running across the kill. True gaps (no observer at all)
+ *    are still never guessed.
  */
 (function () {
   'use strict';
@@ -37,6 +43,13 @@
                                  //    whichever comes later
   var GAP_MIN_MS = 10 * 60 * 1000; // a coverage hole longer than 10 minutes …
   var GAP_MIN_KM = 1;              // … spanning >= 1 km counts as a gap
+  var OBS_GAP_MAX_MS = 10 * 60 * 1000; // v63: a native-service breadcrumb
+                                 // run bridges the relaunch join ONLY when
+                                 // its first crumb lands within this of the
+                                 // last web-observed fix — proof the service
+                                 // was already recording when the app died.
+                                 // A later first crumb means the stretch
+                                 // before it was NOT observed: never counted.
   var TOL_MIN_KM = 2;              // reconciliation tolerance:
   var TOL_PCT = 0.03;              //   max(2 km, 3% of odometer miles)
 
@@ -133,6 +146,66 @@
         S.hasFix = true;
         maybeCrumb(f);
         return { accepted: true, addedM: d };
+      },
+      /* v63: fold a run of NATIVE-SERVICE breadcrumbs into the total.
+         The Android foreground service (native v34) records timestamped
+         fixes { t, a, o, c } to app-local storage while the session
+         runs — including while the WebView is dead. On resume the glue
+         hands the unprocessed run here.
+         Merge rules (idempotent — safe to re-feed the same run):
+          - crumbs are normalized to fixes and sorted by time;
+          - a crumb at or before the current anchor's time was already
+            observed (by the live stream or an earlier merge): skipped.
+            Segments are always counted anchor -> next point in time
+            order, so two streams can never double-count a stretch;
+          - the relaunch JOIN (joinZero, set by begin() on a saved
+            record) is counted ONLY when the run proves the service
+            observed it: the first newer crumb lands within
+            OBS_GAP_MAX_MS of the anchor. Otherwise ingest's own join
+            rule applies — re-anchor, count nothing for the join;
+          - every later segment goes through the SAME filters as a
+            live fix (accuracy, jitter, teleport), so a hole inside
+            the service's own run is treated exactly like a hole in
+            the live stream (counted only if speed-plausible; the gap
+            finder still reports it).
+         Returns { accepted, addedM, skipped, gapJoins }. */
+      mergeCrumbs: function (crumbsIn) {
+        var res = { accepted: 0, addedM: 0, skipped: 0, gapJoins: 0 };
+        if (!crumbsIn || !crumbsIn.length) return res;
+        if (!S || !S.active) { res.skipped = crumbsIn.length; return res; }
+        var list = [];
+        for (var i = 0; i < crumbsIn.length; i++) {
+          var c = crumbsIn[i];
+          if (!c || !isFinite(+c.t) || !(+c.t > 0) || !isFinite(+c.a) || !isFinite(+c.o)) {
+            res.skipped++; continue;
+          }
+          var acc = (c.c === null || c.c === undefined || +c.c < 0) ? null : +c.c;
+          list.push({ time: +c.t, latitude: +c.a, longitude: +c.o, accuracy: acc });
+        }
+        list.sort(function (x, y) { return x.time - y.time; });
+        var joinPending = !!S.joinZero;
+        for (var j = 0; j < list.length; j++) {
+          var f = list[j];
+          if (S.anchor && isFinite(f.time) && f.time <= S.anchor.time) {
+            res.skipped++; // already observed — dedupe by timestamp
+            continue;
+          }
+          if (joinPending) {
+            joinPending = false;
+            if (S.anchor && f.time - S.anchor.time <= OBS_GAP_MAX_MS) {
+              // The service was recording across the kill: the join
+              // segment was genuinely observed. Clear the join flag so
+              // ingest counts it like any other observed segment.
+              S.joinZero = false;
+            } else {
+              res.gapJoins++; // unobserved stretch: ingest re-anchors free
+            }
+          }
+          var r = this.ingest(f);
+          if (r.accepted) { res.accepted++; res.addedM += r.addedM || 0; }
+          else res.skipped++;
+        }
+        return res;
       },
       /* Append the final position as a crumb so the gap finder has an
          end point for the day. */
@@ -277,7 +350,8 @@
     reportLines: reportLines,
     ACC_MAX_M: ACC_MAX_M, MIN_STEP_M: MIN_STEP_M, MAX_SPEED_KMH: MAX_SPEED_KMH,
     CRUMB_MIN_MS: CRUMB_MIN_MS, CRUMB_MIN_M: CRUMB_MIN_M,
-    GAP_MIN_MS: GAP_MIN_MS, GAP_MIN_KM: GAP_MIN_KM
+    GAP_MIN_MS: GAP_MIN_MS, GAP_MIN_KM: GAP_MIN_KM,
+    OBS_GAP_MAX_MS: OBS_GAP_MAX_MS
   };
   /* MILES-ENGINE-END */
 
@@ -663,6 +737,29 @@
     crumbsFor: function (key) {
       var rec = recordFor(key);
       return rec && rec.crumbs ? rec.crumbs : [];
+    },
+
+    /* v63 (native v34): fold native-service breadcrumbs for the LIVE
+       session into the engine. Only meaningful while this session's
+       day is active — the native run belongs to the session the
+       service is recording, and the glue (js/shifttrack.js) drains it
+       for exactly that key. Persists + repaints when anything landed.
+       Returns the engine's merge result, or null when inert. */
+    mergeNativeCrumbs: function (crumbs) {
+      if (!dayKey || !crumbs || !crumbs.length) return null;
+      var r = engine.mergeCrumbs(crumbs);
+      if (r.accepted > 0) { persist(true); paint(); }
+      return r;
+    },
+
+    /* v63: the persisted live-km total for a session key (2dp), from
+       the stored record — used by the stop-time patch in
+       js/shifttrack.js when a final drain lands after the session
+       entry was already written. null when no record / no fix. */
+    recordKmFor: function (key) {
+      var rec = recordFor(key);
+      if (!rec || !rec.hasFix || typeof rec.totalM !== 'number') return null;
+      return Math.round(rec.totalM / 10) / 100;
     },
 
     /* Run the reconciliation on a session entry (mutates it: sets
