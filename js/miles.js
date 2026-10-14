@@ -281,6 +281,124 @@
   };
   /* MILES-ENGINE-END */
 
+  /* WAKE-HOLD-BEGIN — session screen wake lock (v62) + geo-watch
+     liveness verdict. Pure logic; the environment is injected so the
+     harness can drive it:
+       env.supported()  -> bool   (Screen Wake Lock API present)
+       env.request()    -> Promise<sentinel>  (wakeLock.request('screen'))
+       env.isVisible()  -> bool   (document currently visible)
+       env.now()        -> ms     (optional; defaults to Date.now)
+       env.onState()    -> void   (optional paint hook)
+     sentinel shape: { released, release(), addEventListener? }.
+     Rules:
+      - The lock is wanted ONLY while a work session is running —
+        holding the screen of a dash-mounted phone is what keeps the
+        app (and its GPS watch) alive for by-the-mile drivers.
+      - The OS drops the lock whenever the document hides, and may
+        drop it while still visible (battery saver): the release
+        event clears our handle, and a still-wanted, still-visible
+        session takes it back (rate-limited so a flapping sentinel
+        cannot spin). A hidden document is re-acquired on return
+        via visible().
+      - A refused or unsupported request is silent — never an
+        exception, never a fake "held" state (old browsers and
+        iPhone/Safari simply have no lock; everything else works). */
+  var WAKE_REACQUIRE_MIN_MS = 1000;   // release-driven re-acquire throttle
+  var WATCH_QUIET_MS = 5 * 60 * 1000; // a fix stream silent this long is "quiet"
+
+  function createWakeHold(env) {
+    var wanted = false;
+    var sentinel = null;
+    var lastTry = 0;
+
+    function nowMs() { return (env && typeof env.now === 'function') ? env.now() : Date.now(); }
+    function notify() { if (env && typeof env.onState === 'function') { try { env.onState(); } catch (e) {} } }
+    function held() { return !!(wanted && sentinel && !sentinel.released); }
+
+    function onRelease() {
+      sentinel = null;
+      notify();
+      if (wanted && env.isVisible()) acquire(true);
+    }
+    function acquire(fromRelease) {
+      if (!wanted) return;
+      if (sentinel && !sentinel.released) return;
+      sentinel = null;
+      if (!env.supported()) return;
+      if (!env.isVisible()) return; // the OS refuses hidden requests anyway
+      var t = nowMs();
+      if (fromRelease && t - lastTry < WAKE_REACQUIRE_MIN_MS) return;
+      lastTry = t;
+      var p;
+      try { p = env.request(); } catch (e) { return; }
+      if (!p || typeof p.then !== 'function') return;
+      p.then(function (s) {
+        if (!s) { notify(); return; }
+        if (!wanted) {
+          // The session ended while the request was in flight: hand
+          // the lock straight back instead of holding the screen.
+          try { var r = s.release(); if (r && typeof r.catch === 'function') r.catch(function () {}); } catch (e) {}
+          notify();
+          return;
+        }
+        sentinel = s;
+        if (typeof s.addEventListener === 'function') {
+          try { s.addEventListener('release', onRelease); } catch (e) {}
+        } else if ('onrelease' in s) {
+          try { s.onrelease = onRelease; } catch (e) {}
+        }
+        notify();
+      }).catch(function () { notify(); }); // refused: stay unheld, no noise
+    }
+
+    return {
+      /* A session is running: hold the screen. */
+      want: function () { wanted = true; acquire(false); notify(); },
+      /* Session paused / stopped / gone: let the screen sleep. */
+      unwant: function () {
+        wanted = false;
+        var s = sentinel; sentinel = null;
+        if (s) {
+          try { var r = s.release(); if (r && typeof r.catch === 'function') r.catch(function () {}); } catch (e) {}
+        }
+        notify();
+      },
+      /* The document is visible again: the OS will have dropped the
+         lock while we were hidden — take it back if still wanted. */
+      visible: function () { if (wanted) acquire(false); },
+      held: held,
+      wanted: function () { return wanted; },
+      state: function () {
+        var sup = false;
+        try { sup = !!env.supported(); } catch (e) {}
+        return { wanted: wanted, held: held(), supported: sup };
+      }
+    };
+  }
+
+  /* Watch-liveness verdict for a live session's geo stream, from
+     readings the glue supplies. Dead when our own flag says the
+     watcher stopped (or errored), when the geo layer reports no
+     watcher beneath us, or when no fix has arrived for WATCH_QUIET_MS
+     since the later of (stream start, last fix). A null geoWatching
+     (the geo layer can't say) never convicts on its own. */
+  function watchLooksDead(r) {
+    if (!r || !r.dayActive) return false;
+    if (!r.watching || r.broken) return true;
+    if (r.geoWatching === false) return true;
+    var ref = Math.max(r.lastFixAt || 0, r.watchBornAt || 0);
+    if (ref > 0 && r.now - ref > WATCH_QUIET_MS) return true;
+    return false;
+  }
+
+  var WAKEHOLD = {
+    createWakeHold: createWakeHold,
+    watchLooksDead: watchLooksDead,
+    WAKE_REACQUIRE_MIN_MS: WAKE_REACQUIRE_MIN_MS,
+    WATCH_QUIET_MS: WATCH_QUIET_MS
+  };
+  /* WAKE-HOLD-END */
+
   /* ---------------- browser glue ----------------
      Store key 'livemiles' (mt_livemiles, synced via cloudsync):
        { days: { 's<sessionStartMs>': { key, date, totalM, anchor,
@@ -299,6 +417,41 @@
   var dayDate = null;
   var lastPersist = 0;
   var lastPaint = '';
+  var lastFixAt = 0;       // v62: arrival time of the last watcher fix
+  var watchBornAt = 0;     // v62: when the current watch (re)started
+
+  /* v62: the session wake lock (see WAKE-HOLD above). The lock belongs
+     to the SESSION, not the watcher: while a session runs, the screen
+     stays lit so a dash-mounted phone does not sleep the app — and
+     with it the GPS watch — away mid-shift. Geo availability does NOT
+     gate it; where the API does not exist (older browsers, iPhone
+     Safari) the hold is a clean no-op and everything else is unchanged. */
+  var wakeHold = createWakeHold({
+    supported: function () {
+      try { return !!('wakeLock' in navigator && navigator.wakeLock && typeof navigator.wakeLock.request === 'function'); }
+      catch (e) { return false; }
+    },
+    request: function () { return navigator.wakeLock.request('screen'); },
+    isVisible: function () {
+      try { return document.visibilityState === 'visible'; } catch (e) { return true; }
+    },
+    onState: function () { paintWake(); }
+  });
+  var lastWakePaint = '';
+  function paintWake() {
+    var elm = null;
+    try { elm = document.getElementById('trkWake'); } catch (e) {}
+    if (!elm) return;
+    var heldNow = wakeHold.held();
+    var sig = heldNow ? '1' : '0';
+    if (sig === lastWakePaint) return;
+    lastWakePaint = sig;
+    elm.textContent = heldNow ? '🔒 Screen held' : '';
+    elm.classList.toggle('hidden', !heldNow);
+  }
+  function sessionRunning() {
+    try { var t = window.App && App.tracker; return !!(t && t.status === 'running'); } catch (e) { return false; }
+  }
 
   function store() {
     try { return (window.App && App._store) || null; } catch (e) { return null; }
@@ -351,6 +504,7 @@
   }
 
   function onFix(fix) {
+    lastFixAt = Date.now(); // v62: the stream is alive — remember when
     notifySubs(fix);
     var r = engine.ingest(fix);
     if (r.accepted) { persist(false); paint(); }
@@ -389,6 +543,11 @@
        record — the join segment is not counted (see engine.begin). */
     startDay: function (key, opts) {
       if (!key) return false;
+      // v62: the screen hold follows the SESSION (see the glue note
+      // above), so it is wanted here — before the geo checks — and a
+      // build without live location still keeps a running shift's
+      // screen lit. sessionRunning() is the only gate.
+      if (sessionRunning()) wakeHold.want();
       if (watching && dayKey === key && !broken) { paint(); return true; }
       var g = geoApi();
       if (!g || !g.available()) return false; // inert — no watcher, no display
@@ -410,6 +569,7 @@
       paint();
       g.start(onFix, onGeoError).then(function (ok) {
         if (!ok) { watching = false; broken = true; paint(); }
+        else { watchBornAt = Date.now(); }
       }).catch(function () { watching = false; broken = true; paint(); });
       return true;
     },
@@ -418,6 +578,7 @@
        persisted. Returns { liveKm, key } — liveKm is null when no fix
        was ever accepted (no data is NOT 0 miles). */
     stopDay: function () {
+      wakeHold.unwant(); // v62: the session is over — the screen may sleep
       var out = { liveKm: null, key: dayKey };
       if (dayKey) {
         try { engine.flushCrumb(); } catch (e) {}
@@ -437,6 +598,50 @@
 
     flush: function () { persist(true); },
     paint: paint,
+
+    /* v62: app.js calls this after every tracker transition so the
+       screen hold tracks the session exactly: running holds it,
+       paused / idle releases it. startDay/stopDay already want/unwant
+       at the ends of a shift; this covers pause and resume. */
+    syncWake: function () {
+      if (sessionRunning()) wakeHold.want();
+      else wakeHold.unwant();
+      paintWake();
+    },
+
+    /* v62: the app returned to the foreground (app.js's
+       visibilitychange handler calls this). Two revivals for a
+       RUNNING session:
+        1. The wake lock — the OS dropped it while we were hidden;
+           wakeHold.visible() takes it back.
+        2. The geo watch — if it died underneath us or its fix stream
+           went quiet while we were away, restart it through the
+           ordinary reattach path. State is persisted first, and the
+           restart goes through engine.begin(), so the join segment
+           across the restart is NOT counted: unobserved distance is
+           never guessed, exactly as a relaunch is treated. */
+    onVisible: function () {
+      wakeHold.visible();
+      paintWake();
+      if (!dayKey || !sessionRunning()) return;
+      var g = geoApi();
+      var dead = watchLooksDead({
+        dayActive: true,
+        watching: watching, broken: broken,
+        geoWatching: (g && typeof g.isWatching === 'function') ? !!g.isWatching() : null,
+        lastFixAt: lastFixAt, watchBornAt: watchBornAt, now: Date.now()
+      });
+      if (!dead) return;
+      persist(true); // freshest snapshot for the reattach to restore
+      watching = false;
+      broken = false;
+      if (g) { try { g.stop(); } catch (e) {} }
+      LiveMiles.startDay(dayKey, { resume: true });
+    },
+
+    /* Harness handle (mirrors LiveMiles._engine): the wake-hold state
+       machine this build is actually running. */
+    _wakeHold: wakeHold,
 
     /* v50: subscribe to the raw watcher fix stream (see notifySubs).
        Fires only while a session watcher is live — the same window

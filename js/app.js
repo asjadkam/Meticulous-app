@@ -781,6 +781,9 @@
       try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
     }
+    // v62: the screen wake lock follows the session state — a pause
+    // releases the hold, a resume takes it back (js/miles.js owns it).
+    try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
   };
   /* v34: stop with an explicit end time. Asjad often forgets to press STOP
      when the shift actually ends, so the recorded end overshot. The STOP
@@ -2066,6 +2069,9 @@
         try { App.checkAutoStart(); } catch (e2) {}
         // v59: resume is also a power-read retry point
         try { if (window.PowerRead) PowerRead.processQueue(); } catch (e3) {}
+        // v62: foreground return — re-hold the screen for a running
+        // session and revive a geo watch that died while we were away
+        try { if (window.LiveMiles && LiveMiles.onVisible) LiveMiles.onVisible(); } catch (e4) {}
       }
     });
 

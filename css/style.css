@@ -49,6 +49,8 @@ body{
 .tracker .clock{font-size:36px;font-weight:700;letter-spacing:1px;margin:8px 0 16px;font-variant-numeric:tabular-nums;}
 .tracker .meta{font-size:13px;opacity:.8;margin-bottom:14px;}
 .tracker .miles{font-size:15px;font-weight:600;margin:0 0 12px;}
+/* v62: wake-lock status — deliberately tiny; on screen only while the hold is real */
+.tracker .wake{font-size:12px;opacity:.75;margin:-6px 0 10px;}
 /* v41: dynamic tracker — sub-line under the hero, tappable weight unit, mode buttons */
 .tracker .trksub{font-size:13px;opacity:.85;margin:-8px 0 12px;font-variant-numeric:tabular-nums;}
 .tracker .trkUnit{font-size:22px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:5px;}

@@ -26,8 +26,9 @@
  *      collectOnbInputs, like the in-app Back button) and exitApp; the
  *      old unconditional main-exit handler is gone; the new code adds
  *      no alert() and never calls tracker stop/toggle/save paths.
- *   5. Release coherence: index.html loads js/app.js?v=<webVersion>
- *      and webVersion is 60.
+ *   5. Release coherence: index.html loads js/app.js?v=<webVersion>,
+ *      the cache-buster always matching version.json (checked
+ *      dynamically since v62 — a hard pin rotted at the v61 ship).
  */
 const fs = require('fs');
 const path = require('path');
@@ -170,8 +171,8 @@ check('v60 segment never calls tracker stop/toggle/save',
 /* ---------- 5. release coherence ---------- */
 const idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const ver = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
-check('webVersion is 60', ver.webVersion === 60, 'got ' + ver.webVersion);
-check('index.html loads js/app.js?v=60', idx.indexOf('js/app.js?v=60') >= 0);
+check('webVersion is a positive integer', Number.isInteger(ver.webVersion) && ver.webVersion > 0, 'got ' + ver.webVersion);
+check('index.html loads js/app.js?v=<webVersion>', idx.indexOf('js/app.js?v=' + ver.webVersion) >= 0);
 
 console.log('\nback-button-test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
