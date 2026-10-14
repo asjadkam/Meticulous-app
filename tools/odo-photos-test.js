@@ -245,5 +245,29 @@ function eq(name, got, want) {
   ok('manifest reads the same field the sheet writes', mani.indexOf('s.endOdo') !== -1);
 })();
 
+/* 10 — owner refinement (Oct 14): the sheet must NOT hand the
+ * driver "the extra job of snapping the odometer". It leads with the
+ * app's OWN counted miles for the shift; the snap/type field is an
+ * optional override (the dash's word instead), quiet and un-nagged,
+ * and the sheet closes identically with the field untouched. */
+(function () {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const a = html.indexOf('id="trkEndSheet"'), b = html.indexOf('id="odoSheet"');
+  const sheet = (a !== -1 && b > a) ? html.slice(a, b) : '';
+  ok('counted line element present, ahead of the odometer field',
+    sheet.indexOf('id="trkEndCounted"') !== -1 &&
+    sheet.indexOf('id="trkEndCounted"') < sheet.indexOf('id="trkEndOdo"'));
+  ok('snap framed as an optional override (the dash\'s word instead)',
+    sheet.indexOf('Snap the dash only if you want its word instead') !== -1 &&
+    sheet.indexOf('End odometer (km) — optional') !== -1);
+  ok('no nag copy anywhere on the sheet', !/required|must snap|don.t forget to snap/i.test(sheet));
+  const spAt = src.indexOf('App.trackerStopPrompt = function');
+  const spBody = spAt !== -1 ? src.slice(spAt, src.indexOf('App.trackerSaveEnd', spAt)) : '';
+  ok('counted line is filled from the app\'s own live count at open',
+    spBody.indexOf("el('trkEndCounted')") !== -1 &&
+    spBody.indexOf('LiveMiles.currentKm') !== -1 &&
+    spBody.indexOf('The app counted') !== -1);
+})();
+
 console.log('\nodo-photos test: ' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);

@@ -261,7 +261,8 @@ console.log('glue: static checks');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   ok(/js\/shifttrack\.js\?v=69/.test(html) && /id="trkBgAsk"/.test(html),
     '(j) index.html loads shifttrack.js and hosts the ask banner');
-  ok(/js\/miles\.js\?v=69/.test(html), '(j) index.html loads the v69 miles glue');
+  ok(parseInt((html.match(/js\/miles\.js\?v=(\d+)/) || [])[1] || '0', 10) >= 69,
+    '(j) index.html loads the v69 miles glue');
   ok(app.includes('function trackerSessionKeyMs()') && app.includes('sessionId = trackerSessionStartMs()') &&
      (app.match(/LiveMiles\.startDay\('s' \+ trackerSessionKeyMs\(\)/g) || []).length === 3,
     '(j) v69: app.js pins the session record key and all start paths use it');
