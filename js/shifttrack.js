@@ -174,6 +174,7 @@
         if (trackerActive()) {
           try { if (window.LiveMiles) moved = !!LiveMiles.mergeNativeCrumbs(fresh) || moved; } catch (e) {}
           try { if (window.GeoLoads) GeoLoads.ingestNativeCrumbs(fresh); } catch (e) {}
+          try { if (window.ParkPlace) ParkPlace.ingestCrumbs(fresh); } catch (e) {}
         } else {
           moved = foldIntoRecord(key, fresh);
           if (moved) patchSessionEntry(key);

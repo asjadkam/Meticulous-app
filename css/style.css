@@ -64,6 +64,11 @@ body{
 .tbtn.pause{background:var(--yellow);color:#4a3c00;}
 .tbtn.stop{background:var(--red);margin-left:14px;width:68px;height:68px;font-size:13px;}
 .modgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:6px 16px 100px;}
+/* v74: park-place nudge card (js/parkplace.js) — sits under the tracker card; asks once, never acts */
+.parkcard{background:#fff;border:2px solid var(--navy);border-radius:var(--radius);margin:0 16px 4px;padding:16px;box-shadow:var(--shadow);}
+.parkcard .parkTxt{font-size:16px;font-weight:600;color:var(--navy);margin-bottom:12px;}
+.parkcard .parkRow{display:flex;gap:10px;}
+.parkcard .parkRow .btn{flex:1;}
 .modcard{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px 14px 20px;
   text-align:center;cursor:pointer;border:1px solid #e8ecf6;position:relative;}
 .modcard:active{transform:scale(.97);}

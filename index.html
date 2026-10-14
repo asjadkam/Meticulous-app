@@ -9,7 +9,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=62">
+<link rel="stylesheet" href="css/style.css?v=74">
 <style>
 /* critical splash: visible before style.css / JS load */
 #splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
@@ -134,6 +134,8 @@
         <!-- v41: dynamic tracker mode controls (+ Add load / + Load), rendered by js/app.js per pay method -->
         <div id="trkExtra"></div>
       </div>
+      <!-- v74: park-place nudge card (js/parkplace.js) — "Start your shift?" / "Close your day?" at the learned park place; filled and wired by parkplace.js, hidden otherwise -->
+      <div class="parkcard hidden" id="parkCard"></div>
       <div class="modgrid" id="modGrid"></div>
     </div>
 
@@ -234,24 +236,25 @@
 <script src="js/dispatch-ingest.js?v=66"></script>
 <script src="js/pdfexport.js?v=71"></script>
 <script src="modules/revenue.js?v=41"></script>
-<script src="modules/dispatch.js?v=73"></script>
+<script src="modules/dispatch.js?v=74"></script>
 <script src="modules/navigation.js?v=25"></script>
 <script src="modules/fuel.js?v=63"></script>
 <script src="modules/pnl.js?v=26"></script>
 <script src="modules/maintenance.js?v=63"></script>
 <script src="modules/damage.js?v=25"></script>
-<script src="modules/manifest.js?v=73"></script>
+<script src="modules/manifest.js?v=74"></script>
 <script src="modules/invoice.js?v=71"></script>
 <script src="modules/connect.js?v=25"></script>
 <script src="modules/reminders.js?v=25"></script>
 <script src="modules/autostart.js?v=30"></script>
-<script src="modules/preferences.js?v=64"></script>
+<script src="modules/preferences.js?v=74"></script>
 <script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=73"></script>
+<script src="js/app.js?v=74"></script>
 <script src="js/geo.js?v=37"></script>
 <script src="js/miles.js?v=70"></script>
 <script src="js/geoloads.js?v=68"></script>
-<script src="js/shifttrack.js?v=69"></script>
+<script src="js/shifttrack.js?v=74"></script>
+<script src="js/parkplace.js?v=74"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

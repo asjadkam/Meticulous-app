@@ -259,7 +259,7 @@ console.log('glue: static checks');
   ok(/id=\\"pf_bgtrack\\"|pf_bgtrack/.test(pref) && /pf_bgallow/.test(pref) && /pf_bgbatt/.test(pref),
     '(j) Preferences carries the background-tracking status block');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  ok(/js\/shifttrack\.js\?v=69/.test(html) && /id="trkBgAsk"/.test(html),
+  ok(parseInt((html.match(/js\/shifttrack\.js\?v=(\d+)/) || [])[1] || '0', 10) >= 69 && /id="trkBgAsk"/.test(html),
     '(j) index.html loads shifttrack.js and hosts the ask banner');
   ok(parseInt((html.match(/js\/miles\.js\?v=(\d+)/) || [])[1] || '0', 10) >= 69,
     '(j) index.html loads the v69 miles glue');

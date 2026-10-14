@@ -166,6 +166,20 @@
         '<p class="note" id="pf_bgtrack">Checking…</p>' +
         '<button class="btn ghost hidden" id="pf_bgallow">Allow location all the time</button>' +
         '<button class="btn ghost hidden" id="pf_bgbatt">Open battery settings</button></div>' +
+        /* v74 (owner, Oct 14): Park-place nudges — plumbing like the
+           rows above. The app learns where the truck sleeps (from
+           shift starts/ends) and ASKS once each way: "Start your
+           shift?" in the morning, "Close your day?" in the evening.
+           It never starts or stops anything by itself. Status +
+           manual set/forget live here; the asks themselves appear
+           as a card under the tracker (and as real notifications
+           on the Android app when allowed). */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">📍 Park-place nudges</p>' +
+        '<p class="note" id="pf_parknote">Checking…</p>' +
+        '<button class="btn ghost" id="pf_parkset">📍 Set where I park (use my location now)</button>' +
+        '<button class="btn ghost hidden" id="pf_parknn">Allow notifications</button>' +
+        '<button class="btn ghost hidden" id="pf_parkforget">Forget this place</button></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
@@ -477,6 +491,71 @@
           if (ST) ST.openBatterySettings();
           setTimeout(paint, 1500);
         };
+        paint();
+      })();
+      /* v74: park-place nudges status + manual set/forget + the
+         notifications permission (js/parkplace.js). Reads live state
+         at render; learning a place repaints via onPlaceChange. */
+      (function () {
+        var note = body.querySelector('#pf_parknote');
+        if (!note) return;
+        var setBtn = body.querySelector('#pf_parkset');
+        var nnBtn = body.querySelector('#pf_parknn');
+        var forgetBtn = body.querySelector('#pf_parkforget');
+        function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
+        function paint() {
+          var PP = window.ParkPlace;
+          if (!PP) {
+            note.textContent = 'Park-place nudges are not in this build.';
+            show(setBtn, false); show(nnBtn, false); show(forgetBtn, false);
+            return;
+          }
+          var info = PP.info();
+          var lines = [];
+          if (info.place) {
+            lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
+              (info.place.source === 'manual' ? 'you set it.' : 'learned from your shift starts and ends.'));
+          } else {
+            lines.push('No park place yet. The app learns where the truck sleeps from a few shift starts and ends — or set it now while you are parked there.');
+          }
+          lines.push('The app asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
+          if (!info.notificationsAvailable) {
+            lines.push('Notifications are not in this build, so the asks show as a card in the app.');
+            show(nnBtn, false);
+          } else if (info.notificationsGranted) {
+            lines.push('Notifications: allowed ✓ — the asks also arrive as notifications.');
+            show(nnBtn, false);
+          } else if (info.notificationsGranted === false) {
+            lines.push('Notifications: not allowed — the asks will show as a card in the app instead.');
+            show(nnBtn, true);
+          } else {
+            lines.push('Notifications: checking…');
+            show(nnBtn, false);
+            PP.refreshNotifications().then(function () { paint(); }).catch(function () {});
+          }
+          lines.push('Honest limit: an ask can only appear while the app is open or a shift is running. A future app update will watch while the app is fully closed.');
+          note.textContent = lines.join(' ');
+          show(forgetBtn, !!info.place);
+        }
+        if (setBtn) setBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (!PP) return;
+          note.textContent = 'Getting your location…';
+          PP.setPlaceHere().then(function () { paint(); }).catch(function () {
+            note.textContent = 'Could not get your location. Location may be off for Meticulous, or this build has no location. Nothing was set.';
+          });
+        };
+        if (nnBtn) nnBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (!PP) return;
+          PP.requestNotifications().then(function () { setTimeout(paint, 400); });
+        };
+        if (forgetBtn) forgetBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (PP) PP.forgetPlace();
+          paint();
+        };
+        try { if (window.ParkPlace) ParkPlace.onPlaceChange(paint); } catch (e) {}
         paint();
       })();
       // v24: pf_wipe handler removed (button removed above)
