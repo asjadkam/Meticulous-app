@@ -617,6 +617,8 @@
     // "Daily odometer photos" preference on; non-blocking either way.
     if (wasIdle) {
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+      // v50: geofence load counting rides the same session (js/geoloads.js)
+      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
     }
   };
@@ -635,6 +637,7 @@
     // crumb + total persisted) so the finished entry can carry the day.
     var milesFin = null;
     try { if (window.LiveMiles) milesFin = LiveMiles.stopDay(); } catch (e) {}
+    try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
@@ -942,6 +945,7 @@
         autoStartNotify('Tracker auto-started at ' + label);
         // v40: an auto-started shift tracks live miles like any other.
         try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+        try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
         // v39: auto-start is a shift start too — same by-mile odometer
         // prompt as the manual play button (non-blocking).
         try { maybePromptOdo('start'); } catch (e) {}
@@ -1529,6 +1533,7 @@
     // count the unobserved join segment.
     if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
+      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
     }
     // v27: if the auto-start time passed while the app was closed, start or prompt now
     try { App.checkAutoStart(); } catch (e) {}
@@ -1602,6 +1607,7 @@
         try { trackerSave(); } catch (e) {}
         // v40: persist live-miles state before a possible kill
         try { if (window.LiveMiles) LiveMiles.flush(); } catch (e) {}
+        try { if (window.GeoLoads) GeoLoads.flush(); } catch (e) {}
       }
       // v27: when the app comes back, check whether the auto-start time arrived
       if (document.visibilityState === 'visible') { try { App.checkAutoStart(); } catch (e2) {} }

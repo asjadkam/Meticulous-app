@@ -7,8 +7,17 @@
   var SECTIONS = [
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
     ['incident', 'Incident list'], ['start', 'Start Time'], ['end', 'End Time'],
-    ['odoStart', 'Start Odometer'], ['odoEnd', 'End Odometer'], ['earned', 'Total Earned Income']
+    ['odoStart', 'Start Odometer'], ['odoEnd', 'End Odometer'], ['geoloads', 'GPS-counted loads'],
+    ['earned', 'Total Earned Income']
   ];
+
+  /* v50: why GPS load counting could not run for a day (stored on the
+     geoloads day record by js/geoloads.js). Plain words, shown once. */
+  var GEOLOAD_BLOCKED = {
+    'no-site-coords': 'GPS load counting needs site coordinates on the dispatch — none were set, so no loads were GPS-counted this day.',
+    'one-site': 'GPS load counting needs BOTH site pins on the dispatch (load site and dump site) — this dispatch has only one, so no loads were GPS-counted this day.',
+    'sites-too-close': 'The load-site and dump-site pins on this dispatch are too close together to tell apart, so no loads were GPS-counted this day.'
+  };
 
   function dayStr() { return G('mani_date', App._today()); }
 
@@ -36,6 +45,10 @@
        (by-mile day photos, v39), and so do live miles + the miles
        reconciliation verdict (js/miles.js). First start reading and
        last end reading of the day win; live miles sum across sessions. */
+    /* v50: GPS/geofence load counting for the day (js/geoloads.js) —
+       count + dump events + the site pair used, or the reason counting
+       could not run. Shown separately; ticket loads stay the pay record. */
+    var geoDay = ((G('geoloads', { days: {} }).days) || {})[d] || null;
     var odoStart = null, odoEnd = null, liveKm = 0, liveKmAny = false, milesIssues = [];
     sessions.forEach(function (s) {
       if (odoStart === null && s.startOdo) odoStart = s.startOdo;
@@ -43,12 +56,14 @@
       if (typeof s.liveKm === 'number') { liveKm += s.liveKm; liveKmAny = true; }
       if (s.milesStatus === 'discrepancy' && s.milesReport) milesIssues.push(s);
     });
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues };
+    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay };
   }
 
   function toggles() {
     var t = G('mani_toggles', null);
-    if (!t) { t = {}; SECTIONS.forEach(function (s) { t[s[0]] = true; }); }
+    if (!t) { t = {}; }
+    // sections added after a user's toggles were saved default ON
+    SECTIONS.forEach(function (s) { if (t[s[0]] === undefined) t[s[0]] = true; });
     return t;
   }
 
@@ -125,6 +140,24 @@
             lines.map(function (ln) { return '<div style="margin:3px 0">' + esc(ln) + '</div>'; }).join('') +
             '</div></details>';
         });
+      }
+      /* v50: GPS-counted loads — counted from the truck's GPS cycling
+         between the active dispatch's load-site and dump-site pins
+         while the tracker ran. Deliberately separate from the ticket
+         loads in the dispatch entries above: tickets stay the record
+         for pay; this is the location proof alongside them. */
+      if (t.geoloads && c.geoDay && c.geoDay.sites) {
+        h += '<div class="kv"><span>🚛 Loads counted by GPS</span><b>' + (c.geoDay.count || 0) + '</b></div>';
+        h += '<div class="note" style="margin:2px 0 6px">Counted between the load site (' +
+          esc((c.geoDay.sites.load && c.geoDay.sites.load.label) || 'load site') + ') and the dump site (' +
+          esc((c.geoDay.sites.dump && c.geoDay.sites.dump.label) || 'dump site') +
+          ') while the tracker was running. Ticket loads above stay the record for pay.</div>';
+        (c.geoDay.events || []).forEach(function (ev, i) {
+          h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
+            esc(new Date(ev.t).toLocaleTimeString()) + '</b></div>';
+        });
+      } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
+        h += '<div class="note" style="margin:6px 0">🚛 ' + esc(GEOLOAD_BLOCKED[c.geoDay.blocked]) + '</div>';
       }
       if (t.earned) h += '<div class="kv"><span>Total Earned Income</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';

@@ -337,7 +337,21 @@
     try { s.set(STORE_KEY, d); } catch (e) {}
   }
 
+  /* v50: raw-fix subscribers (geofence load counting, js/geoloads.js).
+     Subscribers receive EVERY watcher fix BEFORE the miles engine's
+     own filtering — the miles engine drops sub-10 m "jitter" fixes,
+     which would starve a dwell timer parked at a site. Each consumer
+     applies its own accuracy/stale rules (the geoloads engine does).
+     A throwing subscriber must never break miles tracking. */
+  var fixSubs = [];
+  function notifySubs(fix) {
+    for (var i = 0; i < fixSubs.length; i++) {
+      try { fixSubs[i](fix); } catch (e) {}
+    }
+  }
+
   function onFix(fix) {
+    notifySubs(fix);
     var r = engine.ingest(fix);
     if (r.accepted) { persist(false); paint(); }
   }
@@ -423,6 +437,13 @@
 
     flush: function () { persist(true); },
     paint: paint,
+
+    /* v50: subscribe to the raw watcher fix stream (see notifySubs).
+       Fires only while a session watcher is live — the same window
+       LiveMiles itself tracks in. */
+    subscribe: function (fn) {
+      if (typeof fn === 'function' && fixSubs.indexOf(fn) === -1) fixSubs.push(fn);
+    },
 
     /* v41: the live total for the dynamic tracker's Miles dial.
        Returns km (2dp) once at least one fix has been accepted; null

@@ -21,6 +21,10 @@
  *   MeticulousGeo.isWatching()           -> boolean
  *   MeticulousGeo.last()                 -> last fix {latitude, longitude, accuracy, altitude, speed, bearing, time} | null
  *   MeticulousGeo.getCurrent(timeoutMs)  -> Promise<fix> (one-shot; background-capable watcher, removed after first fix)
+ *   MeticulousGeo.geocode(address)       -> Promise<{latitude, longitude, label} | null>
+ *                                           (free one-shot address lookup via OpenStreetMap
+ *                                           Nominatim — no key, no plugin; callers persist the
+ *                                           result so each address is looked up exactly once)
  * Also attached as App.geo when App is present.
  */
 (function () {
@@ -151,6 +155,30 @@
           if (!done) { done = true; clearTimeout(timer); reject(err); }
         });
       });
+    },
+
+    /* Free address -> coordinates lookup (OpenStreetMap Nominatim; no
+       API key, $0). Works anywhere fetch works — this is NOT the
+       native location plugin, so it is available on web too. Always
+       resolves (null on any failure / no match) so callers can treat
+       a miss as "no coordinates", never an error state. Callers are
+       responsible for asking rarely: geocode once, persist the
+       result on the record it belongs to. */
+    geocode: function (address) {
+      if (!address || typeof address !== 'string' || typeof fetch !== 'function') {
+        return Promise.resolve(null);
+      }
+      var url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' +
+        encodeURIComponent(address);
+      return fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.length) return null;
+          var lat = parseFloat(j[0].lat), lng = parseFloat(j[0].lon);
+          if (!isFinite(lat) || !isFinite(lng)) return null;
+          return { latitude: lat, longitude: lng, label: j[0].display_name || address };
+        })
+        .catch(function () { return null; });
     }
   };
 
