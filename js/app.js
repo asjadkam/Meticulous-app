@@ -1034,15 +1034,18 @@
         try { setStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
       }).then(function (text) {
         var km = parseOdometerReading(text);
-        if (km) {
+        if (km && !odoLocalFailed(km)) {
           var inp = el('odoSheetVal');
           if (inp) inp.value = km;
           setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.');
         } else {
-          setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
           /* v59: local read found nothing → power-read escalation.
              The value fills this same field; the sheet's Save reading
-             stays the confirm. Silent when power read is off/keyless. */
+             stays the confirm. v63: an impossible below-master value
+             (odoLocalFailed) takes the same path — never filled into
+             the sheet — and a skip is reported, never silent. */
+          if (km) setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
+          else setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
           odoSheetPowerRead(ocrUrl, kindAtStart);
         }
       }).catch(function () {
@@ -1061,6 +1064,7 @@
         if (_odoPromptKind !== kindAtStart) return;
         var st = el('odoSheetStatus'); if (!st) return;
         if (s.state === 'waiting') st.innerHTML = '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the reading, or tap Skip.';
+        else if (s.state === 'unavailable') st.innerHTML = s.message + ' Type the reading below, or tap Skip.';
         else if (s.state === 'error') st.innerHTML = s.message + ' Type the reading below, or tap Skip.';
       },
       onResult: function (res) {
@@ -1542,6 +1546,28 @@
      (Maintenance) label its v59 power-read escalations as its own;
      hosts that pass nothing keep the historical 'preferences' origin,
      byte-identical to v59 behaviour. */
+  /* v63: odometer plausibility gate, shared by the day start/end
+     sheet and the photo pipeline below. A local odometer read counts
+     as FAILED when it found nothing, OR when it found a value BELOW
+     the master odometer — odometers never run backwards, so a lower
+     number is a misread (Oct 14 live test: the dash read 45,100
+     against the 168,518 master and was accepted as a success, which
+     blocked the power-read escalation entirely). Plausible values
+     pass untouched: escalate only the impossible-or-absent. The
+     gate only distrusts the silent auto-fill — the user can always
+     still type or tap a value themselves. */
+  function odoMasterNow() {
+    var v = parseFloat(store.get('mt_odo', ''));
+    return (isFinite(v) && v > 0) ? v : null;
+  }
+  function odoLocalFailed(km) {
+    if (!km) return true;
+    var v = parseFloat(km);
+    if (!(v > 0)) return true;
+    var m = odoMasterNow();
+    return !!(m && v < m);
+  }
+
   function onbWirePhoto(prefix, kind, persistFn, opts) {
     var persist = persistFn || onbPersistPhoto;
     var camBtn = el(prefix + '_cam'), pickBtn = el(prefix + '_pick');
@@ -1567,10 +1593,18 @@
           if (token !== _onbOcrToken) return;
           if (kind === 'odometer') {
             var km = parseOdometerReading(text);
-            if (km && fieldEl) {
+            if (km && fieldEl && !odoLocalFailed(km)) {
               fieldEl.value = km;
               persist(kind, km);
               onbSetStatus(prefix, '✓ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
+            } else if (km && odoLocalFailed(km)) {
+              /* v63 plausibility gate: the value exists but sits
+                 BELOW the master odometer — physically impossible,
+                 so it counts as a FAILED read: never filled, never
+                 persisted, and the power read gets its crack at the
+                 photo below (its answer still lands as a tap-to-use
+                 chip, never auto-applied). */
+              onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but the odometer is already at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right. Trying the power read…');
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
             }
@@ -1582,8 +1616,11 @@
             /* v59: local read AND the primary parse found nothing →
                power-read escalation. The cloud value arrives as a
                tap-to-use chip (never auto-filled, never persisted by
-               the escalation itself). Silent when off/keyless. */
-            if (!km) odoPowerRead(prefix, file, token);
+               the escalation itself). v63: the trigger is now the
+               plausibility gate — nothing found OR an impossible
+               below-master value both escalate; a skip (off / no key
+               on this device) is reported in-page, never silent. */
+            if (odoLocalFailed(km)) odoPowerRead(prefix, file, token);
           } else {
             var iso = parseStickerExpiry(text);
             if (iso && fieldEl) {
@@ -1669,6 +1706,7 @@
             if (token !== _onbOcrToken) return;
             if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');
             else if (s.state === 'waiting') onbSetStatus(prefix, '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still enter the mileage below.');
+            else if (s.state === 'unavailable') onbSetStatus(prefix, s.message + ' You can still enter the mileage below.');
             else if (s.state === 'error') onbSetStatus(prefix, s.message + ' You can still enter the mileage below.');
           },
           onResult: function (res) {
@@ -1705,7 +1743,12 @@
         });
       }
       if (window.TicketOCR && TicketOCR.fileToOCRImage && file) {
-        TicketOCR.fileToOCRImage(file, function (u) { if (u) go(u); });
+        TicketOCR.fileToOCRImage(file, function (u) {
+          if (u) { go(u); return; }
+          /* v63: a rendition failure used to end the flow in total
+             silence — say so, with the manual fallback. */
+          if (token === _onbOcrToken) onbSetStatus(prefix, '⚡ Power read didn\'t run — that photo couldn\'t be prepared for it. You can still enter the mileage below.');
+        });
       }
     }
   }

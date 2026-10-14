@@ -453,6 +453,10 @@
             if (token !== nsOcrToken) return;
             if (s.state === 'working') nsSetRead('⚡ Asking the power read…');
             else if (s.state === 'waiting') nsSetRead('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the values in.');
+            /* v63: a skip (off / no key on this device) used to be
+               total silence — the Oct 14 live test failed exactly
+               here, invisibly. Say why, in the same line. */
+            else if (s.state === 'unavailable') nsSetRead('<span style="color:#e67e22">' + esc(s.message) + ' You can still type the values in.</span>');
             else if (s.state === 'error') nsSetRead('<span style="color:#e67e22">' + esc(s.message) + '</span>');
           },
           onResult: function (res) {

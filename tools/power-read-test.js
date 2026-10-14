@@ -88,13 +88,31 @@ async function main() {
   check('localFailed text: found 0 → true', PowerRead.localFailed('text', { found: 0 }) === true);
   check('localFailed text: found 2 → false', PowerRead.localFailed('text', { found: 2 }) === false);
 
+  /* v63 plausibility gate (master seeded at 168518 above): the real
+     Oct 14 dash case — a WRONG value that exists must count as failed. */
+  check('localFailed odometer: 45100 below master 168518 → true (v63 gate)', PowerRead.localFailed('odometer', { value: '45100' }) === true);
+  check('localFailed odometer: equal to master → false', PowerRead.localFailed('odometer', { value: '168518' }) === false);
+  check('localFailed odometer: 182345 above master → false', PowerRead.localFailed('odometer', { value: '182345' }) === false);
+  check('masterOdo reads mt_odo', PowerRead.masterOdo() === 168518);
+  check('odoReadFailed: empty/null → true', PowerRead.odoReadFailed('') === true && PowerRead.odoReadFailed(null) === true && PowerRead.odoReadFailed(undefined) === true);
+  check('odoReadFailed: 1 below master → true', PowerRead.odoReadFailed(168517) === true);
+  check('odoReadFailed: above master → false', PowerRead.odoReadFailed(200000) === false);
+
   fetchCalls = [];
   let out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('no key → skipped, zero fetch calls', out.status === 'skipped' && fetchCalls.length === 0);
+  /* v63: a host that ASKED (passed onStatus) is told why it skipped —
+     the v59 total silence is what hid the Oct 14 sticker failure. */
+  let un = null;
+  out = await PowerRead.escalate({ reader: 'sticker', image: IMG, onStatus: s => { un = s; } });
+  check('no key + onStatus → unavailable(nokey) surfaced, still skipped, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'nokey' && /THIS device/.test(un.message || '') && fetchCalls.length === 0, JSON.stringify(un));
   PowerRead.setKey('TESTKEY-123');
   PowerRead.setOn(false);
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('switch off → skipped, zero fetch calls', out.status === 'skipped' && fetchCalls.length === 0);
+  un = null;
+  out = await PowerRead.escalate({ reader: 'sticker', image: IMG, onStatus: s => { un = s; } });
+  check('switch off + onStatus → unavailable(off) surfaced, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'off' && fetchCalls.length === 0, JSON.stringify(un));
   PowerRead.setOn(true);
   check('enabled with key + on', PowerRead.enabled() === true);
 

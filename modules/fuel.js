@@ -197,6 +197,7 @@
             if (token !== fuOcrToken) return;
             if (s.state === 'working') fuSetRead('⚡ Asking the power read…');
             else if (s.state === 'waiting') fuSetRead('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still fill the form by hand.');
+            else if (s.state === 'unavailable') fuSetRead('<span style="color:#e67e22">' + esc(s.message) + ' You can still fill the form by hand.</span>');
             else if (s.state === 'error') fuSetRead('<span style="color:#e67e22">' + esc(s.message) + '</span>');
           },
           onResult: function (res) {
@@ -254,11 +255,19 @@
           }).then(function (text) {
             if (token !== fuOdoToken) return;
             var km = App._parseOdometerReading(text);
-            if (km) {
+            /* v63 plausibility gate: a value BELOW the master
+               odometer is a misread, not a reading — it counts as a
+               failed read (never filled) and escalates, same as an
+               empty parse. Falls back to the v59 empty-only rule if
+               the power-read module is somehow absent. */
+            var odoFailed = (window.PowerRead && PowerRead.odoReadFailed)
+              ? PowerRead.odoReadFailed(km) : !km;
+            if (km && !odoFailed) {
               body.querySelector('#fu_odo').value = km;
               setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
             } else {
-              setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
+              if (km) setStatus('<span style="color:#e67e22">That read (<b>' + fmtKm(km) + ' km</b>) is below your current odometer — it can\'t be right. Trying the power read…</span>');
+              else setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
               /* v59: power-read escalation — fills this same field
                  only; Save fill-up remains the confirm and the master
                  odometer still moves solely through that save. */
@@ -282,6 +291,7 @@
             if (token !== fuOdoToken) return;
             if (s.state === 'working') setStatus('⚡ Asking the power read…');
             else if (s.state === 'waiting') setStatus('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the odometer.');
+            else if (s.state === 'unavailable') setStatus('<span style="color:#e67e22">' + esc(s.message) + ' You can still type the odometer.</span>');
             else if (s.state === 'error') setStatus('<span style="color:#e67e22">' + esc(s.message) + '</span>');
           },
           onResult: function (res) {

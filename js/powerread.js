@@ -81,10 +81,33 @@
 
   /* ---------- trigger: did the local read produce nothing usable? ---------- */
   PowerRead.localFailed = function (reader, fields) {
-    if (reader === 'odometer') return !(fields && fields.value);
+    if (reader === 'odometer') return PowerRead.odoReadFailed(fields && fields.value);
     if (reader === 'sticker') return !(fields && (fields.odo || fields.date));
     /* 'text' (generic): callers pass the parser's found-count */
     return !(fields && fields.found > 0);
+  };
+
+  /* ---------- v63: odometer plausibility gate ----------
+   * ONE master odometer (store key mt_odo, upward-only). A local
+   * odometer read counts as FAILED when it produced nothing, OR when
+   * a master exists and the value sits BELOW it — odometers never
+   * run backwards, so a lower value is a misread, not a bargain.
+   * (Oct 14 live test: the dash photo read 45,100 against a 168,518
+   * master; because a value existed, v59 called the read a success
+   * and never escalated.) A plausible value (>= master, or no master
+   * yet — first-run onboarding) passes: the power read costs per
+   * call, and cost discipline says escalate only the
+   * impossible-or-absent. */
+  PowerRead.masterOdo = function () {
+    var s = store(); if (!s) return null;
+    var v = parseFloat(s.get('mt_odo', ''));
+    return (isFinite(v) && v > 0) ? v : null;
+  };
+  PowerRead.odoReadFailed = function (value) {
+    var v = parseFloat(value);
+    if (!(v > 0)) return true;
+    var m = PowerRead.masterOdo();
+    return !!(m && v < m);
   };
   PowerRead.hasFields = function (reader, fields) {
     if (!fields) return false;
@@ -295,12 +318,36 @@
               onStatus({state,message}), onResult({fields, reader}) }
      States: 'working' → 'waiting' (queued; will retry) | 'error'
      (plain message; nothing queued) — success fires onResult.
-     Disabled (off / no key) → resolves {status:'skipped'} silently:
-     NO callbacks, NO network — local behaviour is untouched. */
+     Disabled (off / no key) or no usable photo → resolves
+     {status:'skipped'} with NO network and nothing written — but
+     v63: a host that explicitly asked for an escalation (it passed
+     onStatus) is told WHY via state 'unavailable', so the failure
+     surfaces in-page instead of vanishing. (In v59 the skip was
+     total silence — no callback, no trace — which is how the
+     Oct 14 live sticker test failed invisibly: the escalation
+     fired, found no usable key on that device, and the user saw
+     only the local failure text.) Callers without onStatus stay
+     silent, exactly as v59 intended for passive paths. */
   PowerRead.escalate = function (opts) {
     opts = opts || {};
     var reader = opts.reader || 'text';
-    if (!PowerRead.enabled() || !opts.image) return Promise.resolve({ status: 'skipped' });
+    if (!PowerRead.enabled() || !opts.image) {
+      if (opts.onStatus) {
+        var reason, message;
+        if (!opts.image) {
+          reason = 'noimage';
+          message = '⚡ Power read didn\'t run — the photo couldn\'t be prepared for it.';
+        } else if (!PowerRead.isOn()) {
+          reason = 'off';
+          message = '⚡ Power read is turned off — switch it on in Preferences → Advanced and tough photos get a second, stronger read.';
+        } else {
+          reason = 'nokey';
+          message = '⚡ Power read didn\'t run — no Gemini key is saved on THIS device yet. Paste your free key in Preferences → Advanced once, and tough photos get a second, stronger read.';
+        }
+        try { opts.onStatus({ state: 'unavailable', reason: reason, message: message }); } catch (e) {}
+      }
+      return Promise.resolve({ status: 'skipped' });
+    }
     function status(state, message) { try { if (opts.onStatus) opts.onStatus({ state: state, message: message }); } catch (e) {} }
     if (isOffline()) {
       enqueue(reader, opts.image, opts.origin);
