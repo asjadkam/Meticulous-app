@@ -24,7 +24,7 @@
     "modules/autostart.js": "334b7bc0be79d7c324416c2d05df82f69d4df62d460332868b75847ccbeb0d9e",
     "modules/connect.js": "80665c22d1f3602d8af333307ae7907dcfd019c1b1b00155d18084194ab4aa74",
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
-    "modules/dispatch.js": "8de3bf2a4ada06208bce83737d23d602d3be305a6eb1e37bdf3321802d554a7e",
+    "modules/dispatch.js": "dc9bbb529dac1ff6c0fb7bba393ec0731c29b382d4847470a2844c1703824727",
     "modules/fuel.js": "f6bca45dd4cb83696e644e4db08dec2856afff25b94f44eb3633b48b65af7f5c",
     "modules/invoice.js": "382ef2b63a7f8cddd9331187ca7fb0f36742272a65e7933af97f02827051d446",
     "modules/maintenance.js": "fd140e039885815ae3b184a247d1a9263b69b7ce4ef3daa603416a8da158b848",

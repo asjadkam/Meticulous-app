@@ -57,6 +57,7 @@ function makeWorld(backing) {
     getItem: function (k) { return backing.map.has(k) ? backing.map.get(k) : null; },
     setItem: function (k, v) {
       if (backing.fail) { const e = new Error('QuotaExceededError'); e.name = 'QuotaExceededError'; throw e; }
+      if (backing.cap && String(v).length > backing.cap) { const e2 = new Error('QuotaExceededError'); e2.name = 'QuotaExceededError'; throw e2; }
       backing.map.set(k, String(v));
     },
     removeItem: function (k) { backing.map.delete(k); }
@@ -173,6 +174,26 @@ function eq(name, got, want) {
   eq('d: active id matches the saved dispatch', a && a.id, 'd-start-1');
   eq('d: verifySaved(id, active) confirms both', w.dspVerifySaved('d-start-1', true), true);
   eq('d: verifySaved with a wrong id fails', w.dspVerifySaved('d-nope', true), false);
+})();
+
+/* (e) storage-full fallback: the photo-carrying draft will not fit,
+ *     but the photo-less slim draft does — the typed entry survives */
+(function () {
+  const b = freshBacking();
+  const w = makeWorld(b);
+  const bigPhoto = 'data:image/jpeg;base64,' + 'A'.repeat(5000);
+  const draft = { fields: { jobSite: FIELDS.jobSite, notes: 'Go Empty To' }, tickets: [{ id: 't-big', photo: bigPhoto, ocrType: 'document', ticketNo: '48213' }], photo: bigPhoto, savedAt: 3 };
+  b.cap = 2000; // this key may hold at most 2000 chars — the photo draft is far bigger
+  eq('e: full draft with photo does not fit', w.dspSaveDraft(draft), false);
+  const slim = w.dspSlimDraft(draft);
+  eq('e: slim draft strips the ticket photo', slim.tickets[0].photo, null);
+  eq('e: slim draft strips the top-level photo', slim.photo, null);
+  eq('e: slim draft is flagged photoDropped', slim.photoDropped, true);
+  eq('e: slim draft keeps the ticket metadata', slim.tickets[0].ticketNo, '48213');
+  eq('e: slim draft fits where the full one could not', w.dspSaveDraft(slim), true);
+  const back = w.dspLoadDraft();
+  eq('e: restored slim draft keeps the form words', back && back.fields.jobSite, FIELDS.jobSite);
+  eq('e: restored slim draft discloses the dropped photo', back && back.photoDropped, true);
 })();
 
 console.log('\ndispatch-save test: ' + pass + '/' + (pass + fail) + ' passed');

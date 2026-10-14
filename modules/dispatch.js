@@ -58,6 +58,21 @@
     return d;
   }
   function dspSaveDraft(draft) { return dspSet('draft', draft); }
+  /* Fallback for a full/failing local store: the same draft with the
+     ticket photos stripped (metadata kept). Much smaller, so it can
+     still land when the photo-carrying draft cannot — the typed entry
+     survives even when the photo cannot be kept. */
+  function dspSlimDraft(draft) {
+    if (!draft) return draft;
+    var out = { fields: draft.fields || {}, tickets: [], photo: null, photoDropped: true, savedAt: draft.savedAt || 0 };
+    (draft.tickets || []).forEach(function (t) {
+      var c = {};
+      for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k]; }
+      c.photo = null;
+      out.tickets.push(c);
+    });
+    return out;
+  }
   function dspLoadDraft() {
     var d = dspGet('draft', null);
     return (d && typeof d === 'object') ? d : null;
@@ -186,6 +201,7 @@
       /* ---- New dispatch form ---- */
       h += '<div class="card"><h3>＋ New dispatch</h3>' +
         '<div id="dp_draft_note"></div>' +
+        '<div id="dp_draft_warn"></div>' +
         '<div id="dp_save_err"></div>' +
         '<label class="f">Job site</label><input id="dp_site" placeholder="e.g. Aecon — Deerfoot site">' +
         '<div class="row"><div><label class="f">Scheduled</label><input id="dp_when" type="datetime-local"></div>' +
@@ -268,10 +284,27 @@
                   f.ticketNo || f.amount || f.notes || f.lat || f.lng;
         return !any && !(d.tickets && d.tickets.length) && !d.photo;
       }
+      function showDraftWarn(msg) {
+        var e = body.querySelector('#dp_draft_warn');
+        if (e) e.innerHTML = msg ?
+          '<div style="border:2px solid #c0392b;background:#fdecea;border-radius:10px;padding:10px;margin-bottom:10px;color:#7b1d12">' + esc(msg) + '</div>' : '';
+      }
+      /* v48: a failed local write is DETECTED and said out loud, never
+         silent. If the full draft (with photo) will not write — app
+         storage full/failing — fall back to the photo-less slim draft
+         so the typed entry still survives, and tell the user plainly.
+         If even that fails, warn that the entry lives only on this
+         screen until space is freed and Save succeeds. */
       function persistDraft() {
         var d = collectDraft();
-        if (draftIsEmpty(d)) { dspClearDraft(); return true; }
-        return dspSaveDraft(d);
+        if (draftIsEmpty(d)) { dspClearDraft(); showDraftWarn(''); return 'empty'; }
+        if (dspSaveDraft(d) !== false) { showDraftWarn(''); return 'full'; }
+        if (dspSaveDraft(dspSlimDraft(d)) !== false) {
+          showDraftWarn('⚠️ The app storage on your phone looks full — your dispatch words are safe as a draft, but the ticket photo could not be kept. Free up some phone space, then add the photo again and tap Save.');
+          return 'slim';
+        }
+        showDraftWarn('⚠️ The app storage on your phone is full — even the draft could not be saved. Keep this screen open, free up some phone space, and tap Save. If you close the app now, this entry could be lost.');
+        return 'failed';
       }
       function showSaveError(msg) {
         var e = body.querySelector('#dp_save_err');
@@ -295,7 +328,8 @@
         }
         if (!draftIsEmpty({ fields: f, tickets: pendingTickets, photo: pendingPhoto })) {
           body.querySelector('#dp_draft_note').innerHTML =
-            '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">📝 <b>Draft restored</b> — this unsaved dispatch was kept from last time. Check it, then tap Save.</div>';
+            '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">📝 <b>Draft restored</b> — this unsaved dispatch was kept from last time. Check it, then tap Save.' +
+            (draft0.photoDropped ? '<br>⚠️ The ticket photo could not be kept (the app storage on your phone was full) — please add the photo again.' : '') + '</div>';
         }
       }
       ['#dp_site', '#dp_when', '#dp_equip', '#dp_mat', '#dp_ticket', '#dp_amt', '#dp_loads', '#dp_notes'].forEach(function (id) {
@@ -574,7 +608,7 @@
         var res = dspSaveRecord(d, start);
         if (!res.ok) {
           persistDraft(); // best effort — the on-screen form is untouched either way
-          showSaveError('⚠️ That save did NOT go through — your dispatch was not saved. Your entry is kept as a draft below, so nothing is lost. Free up some phone space, then tap ' + (start ? '“Save & start”' : '“Save dispatch”') + ' again.');
+          showSaveError('⚠️ That save did NOT go through — the app storage on your phone looks full, or the write failed, so your dispatch was not saved. Your entry is kept as a draft below, so nothing is lost. Free up some phone space, then tap ' + (start ? '“Save & start”' : '“Save dispatch”') + ' again.');
           return;
         }
         lastSaveTry = null;
