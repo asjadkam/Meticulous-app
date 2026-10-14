@@ -115,6 +115,8 @@
           <span id="trkStartLabel">Starts from now</span>
           <button class="trkEdit" id="trkEditStart">✎ Edit</button>
         </div>
+        <!-- v40: live miles (js/miles.js) — stays hidden unless live location is actually flowing; never a fake zero -->
+        <div class="miles hidden" id="trkMiles"></div>
         <div>
           <button class="tbtn play" id="trkMain">▶<br>START</button>
           <button class="tbtn stop hidden" id="trkStop">■<br>STOP</button>
@@ -205,6 +207,7 @@
 <script src="modules/subscription.js?v=25"></script>
 <script src="js/app.js?v=27"></script>
 <script src="js/geo.js?v=37"></script>
+<script src="js/miles.js?v=40"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

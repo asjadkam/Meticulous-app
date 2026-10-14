@@ -307,6 +307,8 @@
     var t = App.tracker, sec = t.elapsed;
     if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
     el('trkClock').textContent = fmtClock(sec);
+    // v40: keep the "Miles (live)" dashboard line current
+    try { if (window.LiveMiles) LiveMiles.paint(); } catch (e) {}
     // v27: minute check — start the tracker by itself when the auto-start time arrives
     // while the app is open (covers "set 6 AM and forget").
     if (!trackerTick._as || Date.now() - trackerTick._as > 60000) {
@@ -398,9 +400,14 @@
     else if (t.status === 'running') { t.elapsed += Math.floor((Date.now() - t.startTs) / 1000); t.status = 'paused'; }
     else { t.status = 'running'; t.startTs = Date.now(); }
     trackerSave(); trackerPaint();
+    // v40: a fresh shift start also starts live-miles tracking (inert
+    // when the build has no live location — js/miles.js).
     // v39: a fresh shift start (not a resume) may prompt for the
     // starting odometer — by-mile pay only, non-blocking.
-    if (wasIdle) { try { maybePromptOdo('start'); } catch (e) {} }
+    if (wasIdle) {
+      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
+      try { maybePromptOdo('start'); } catch (e) {}
+    }
   };
   /* v34: stop with an explicit end time. Asjad often forgets to press STOP
      when the shift actually ends, so the recorded end overshot. The STOP
@@ -413,6 +420,10 @@
   }
   function stopSessionAt(endMs) {
     var sec = trackedSecondsAt(endMs);
+    // v40: close out live-miles tracking first (watcher off, final
+    // crumb + total persisted) so the finished entry can carry the day.
+    var milesFin = null;
+    try { if (window.LiveMiles) milesFin = LiveMiles.stopDay(); } catch (e) {}
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
@@ -420,7 +431,17 @@
       // shift start, pending on the tracker) onto the day's session.
       var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
       if (pendingStart) entry.startOdo = pendingStart;
+      // v40: live miles for the day (only when fixes actually flowed —
+      // no field at all when location was unavailable; never a fake 0).
+      if (milesFin && typeof milesFin.liveKm === 'number') {
+        entry.liveKm = milesFin.liveKm;
+        entry.milesKey = milesFin.key;
+      }
       sessions.push(entry); store.set('sessions', sessions);
+      // v40: both odometer readings already on the entry -> reconcile
+      // now (the usual path reconciles when the end reading lands via
+      // applyOdoReading, since the end prompt follows the stop).
+      try { if (window.LiveMiles && LiveMiles.reconcileSession(entry)) store.set('sessions', sessions); } catch (e) {}
       if (window.FB && FB.saveDoc) FB.saveDoc('sessions', 's' + Date.now(), entry);
       if (Meticulous.modules.revenue && Meticulous.modules.revenue.onSession) {
         try { Meticulous.modules.revenue.onSession(entry); } catch (e) {}
@@ -521,6 +542,9 @@
     for (var i = ss.length - 1; i >= 0; i--) {
       if (ss[i].date === today && ss[i].startOdo && !ss[i].endOdo) {
         ss[i].endOdo = n;
+        // v40: the end reading completes the pair — reconcile live
+        // miles against the odometer (Asjad's confirmation rule).
+        try { if (window.LiveMiles) LiveMiles.reconcileSession(ss[i]); } catch (e) {}
         store.set('sessions', ss);
         return true;
       }
@@ -658,6 +682,8 @@
         App.tracker.elapsed = 0;
         trackerSave(); trackerPaint();
         autoStartNotify('Tracker auto-started at ' + label);
+        // v40: an auto-started shift tracks live miles like any other.
+        try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
         // v39: auto-start is a shift start too — same by-mile odometer
         // prompt as the manual play button (non-blocking).
         try { maybePromptOdo('start'); } catch (e) {}
@@ -1204,6 +1230,13 @@
       App.tracker.startTs = Date.now();
       trackerSave(); // persist updated startTs so a quick re-close doesn't double-count
     }
+    // v40: the tracker survived a relaunch (or an OTA reload) — reattach
+    // live-miles tracking to the SAME session. Its breadcrumb record was
+    // persisted before the kill; the engine restores it and does not
+    // count the unobserved join segment.
+    if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
+      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs(), { resume: true }); } catch (e) {}
+    }
     // v27: if the auto-start time passed while the app was closed, start or prompt now
     try { App.checkAutoStart(); } catch (e) {}
 
@@ -1256,7 +1289,11 @@
 
     // v26: save tracker state when app goes to background (Android WebView may be killed)
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') { try { trackerSave(); } catch (e) {} }
+      if (document.visibilityState === 'hidden') {
+        try { trackerSave(); } catch (e) {}
+        // v40: persist live-miles state before a possible kill
+        try { if (window.LiveMiles) LiveMiles.flush(); } catch (e) {}
+      }
       // v27: when the app comes back, check whether the auto-start time arrived
       if (document.visibilityState === 'visible') { try { App.checkAutoStart(); } catch (e2) {} }
     });

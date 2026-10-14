@@ -32,7 +32,18 @@
     extras.forEach(function (x) { earned += parseFloat(x.amount) || 0; });
     var startT = sessions.length ? new Date(sessions[0].endedAt - sessions[0].seconds * 1000).toLocaleTimeString() : '—';
     var endT = sessions.length ? new Date(sessions[sessions.length - 1].endedAt).toLocaleTimeString() : '—';
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT };
+    /* v40: the day's odometer readings live on the session entries
+       (by-mile day photos, v39), and so do live miles + the miles
+       reconciliation verdict (js/miles.js). First start reading and
+       last end reading of the day win; live miles sum across sessions. */
+    var odoStart = null, odoEnd = null, liveKm = 0, liveKmAny = false, milesIssues = [];
+    sessions.forEach(function (s) {
+      if (odoStart === null && s.startOdo) odoStart = s.startOdo;
+      if (s.endOdo) odoEnd = s.endOdo;
+      if (typeof s.liveKm === 'number') { liveKm += s.liveKm; liveKmAny = true; }
+      if (s.milesStatus === 'discrepancy' && s.milesReport) milesIssues.push(s);
+    });
+    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues };
   }
 
   function toggles() {
@@ -101,6 +112,20 @@
       }
       if (t.start) h += '<div class="kv"><span>Start Time</span><b>' + esc(c.startT) + '</b></div>';
       if (t.end) h += '<div class="kv"><span>End Time</span><b>' + esc(c.endT) + '</b></div>';
+      /* v40: odometer readings + live miles ride together — the live
+         number is the tracking, the odometer only confirms it. */
+      if (t.odoStart && c.odoStart !== null) h += '<div class="kv"><span>Start Odometer</span><b>' + Number(c.odoStart).toLocaleString('en-CA') + ' km</b></div>';
+      if (t.odoEnd && c.odoEnd !== null) h += '<div class="kv"><span>End Odometer</span><b>' + Number(c.odoEnd).toLocaleString('en-CA') + ' km</b></div>';
+      if (t.odoEnd && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
+      if (t.odoEnd && c.milesIssues.length && window.LiveMiles) {
+        c.milesIssues.forEach(function (s) {
+          var lines = LiveMiles.reportLines(s.milesReport);
+          h += '<details style="margin:8px 0"><summary style="color:#c2410c;font-weight:700;cursor:pointer">⚠️ Miles discrepancy — tap for details</summary>' +
+            '<div style="font-size:13px;margin:6px 0 0 4px">' +
+            lines.map(function (ln) { return '<div style="margin:3px 0">' + esc(ln) + '</div>'; }).join('') +
+            '</div></details>';
+        });
+      }
       if (t.earned) h += '<div class="kv"><span>Total Earned Income</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
