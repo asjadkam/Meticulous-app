@@ -246,5 +246,159 @@ console.log('(f) relaunch restore');
   ok(c3.count() === 0 && c3.phase() === 'away', 'foreign snapshot is ignored');
 }
 
+/* ============ (g) dump-site learning: the teaching cycle ============ */
+console.log('(g) learning: load visit -> departure -> 3 min dwell teaches the dump site');
+/* tight wander — a candidate dwell must hold one place (cluster) */
+const STILL = [[0, 0], [15, 10], [-12, 8], [10, -14], [-8, -10], [18, -4]];
+function stayStill(c, clock, center, durS, stepS, flags) {
+  const steps = Math.floor(durS / stepS);
+  for (let k = 0; k <= steps; k++) {
+    const w = STILL[k % STILL.length];
+    const ll = off(center[0], center[1], w[0], w[1]);
+    const r = c.ingest(mkFix(clock.t, ll));
+    if (flags && r) { if (r.learned) flags.learned = r.learned; if (r.contested) flags.contested = r.contested; if (r.altCandidate) flags.altCandidate = r.altCandidate; }
+    clock.t += stepS;
+  }
+}
+{
+  const LOAD = site(0, 0), DUMP = site(2200, 800);
+  const L = E.createDumpLearner({ load: LOAD, dump: null });
+  L.begin(null);
+  const clock = { t: 0 };
+  const flags = {};
+  stay(L, clock, llOf(LOAD), 70, 10);                 // confirmed load visit
+  drive(L, clock, llOf(LOAD), llOf(DUMP), 240, 10);   // departure + drive
+  ok(!L.learned(), 'nothing learned before the dwell completes');
+  stayStill(L, clock, llOf(DUMP), 120, 10, flags);
+  ok(!flags.learned, 'a 2-minute dwell does not teach yet');
+  stayStill(L, clock, llOf(DUMP), 120, 10, flags);
+  ok(!!flags.learned, 'the ~3-minute dwell teaches');
+  const got = L.learned();
+  ok(Math.abs(got.lat - DUMP.lat) < 0.0005 && Math.abs(got.lng - DUMP.lng) < 0.0005,
+    'learned site is the dwell place (~within 50 m)');
+  ok(!L.isAmbiguous(), 'a single clean candidate is not ambiguous');
+  // the glue's contract: a counter begun from the teaching snapshot
+  // credits the teaching cycle as load #1 and counts on from there
+  const key = 'g-learn';
+  const c = E.createGeoLoadCounter({ load: LOAD, dump: { lat: got.lat, lng: got.lng } });
+  c.begin(key, { sitesKey: key, zone: 'dump', phase: 'at-dump', armed: false, count: 1, events: [{ t: got.t, site: 'dump', n: 1 }], lastT: got.t });
+  ok(c.count() === 1, 'teaching cycle credited as load #1');
+  drive(c, clock, llOf(DUMP), llOf(LOAD), 240, 10);
+  stay(c, clock, llOf(LOAD), 70, 10);
+  drive(c, clock, llOf(LOAD), llOf(DUMP), 240, 10);
+  stay(c, clock, llOf(DUMP), 70, 10);
+  ok(c.count() === 2, 'post-teaching cycles count normally');
+}
+
+/* ============ (h) a dwell before any load visit teaches nothing ============ */
+console.log('(h) learning: lunch BEFORE the load visit teaches nothing');
+{
+  const LOAD = site(0, 0), DUMP = site(2200, 800), LUNCH = site(1500, -900);
+  const L = E.createDumpLearner({ load: LOAD, dump: null });
+  L.begin(null);
+  const clock = { t: 0 };
+  const flags = {};
+  stayStill(L, clock, llOf(LUNCH), 300, 10, flags);   // 5 min parked, never loaded
+  ok(!flags.learned && !L.learned(), 'pre-load dwell teaches nothing');
+  const BAD = site(-1600, 1400);
+  drive(L, clock, llOf(LUNCH), llOf(BAD), 240, 10);
+  for (let k = 0; k <= 20; k++) {                      // wild accuracy at a "place"
+    L.ingest(mkFix(clock.t, llOf(BAD), 300)); clock.t += 10;
+  }
+  ok(!L.learned(), 'bad-accuracy fixes never teach');
+  drive(L, clock, llOf(BAD), llOf(LOAD), 240, 10);
+  stay(L, clock, llOf(LOAD), 70, 10);
+  drive(L, clock, llOf(LOAD), llOf(DUMP), 240, 10);
+  stayStill(L, clock, llOf(DUMP), 200, 10, flags);
+  ok(!!L.learned(), 'after a real load visit, the dump dwell teaches');
+}
+
+/* ============ (i) two rival candidates = ambiguous ============ */
+console.log('(i) learning: a rival candidate before the cycle closes contests the teaching');
+{
+  const LOAD = site(0, 0), FUEL = site(2600, -400), REAL = site(4200, 900), NEAR = site(2750, -400);
+  const L = E.createDumpLearner({ load: LOAD, dump: null });
+  L.begin(null);
+  const clock = { t: 0 };
+  const flags = {};
+  stay(L, clock, llOf(LOAD), 70, 10);
+  drive(L, clock, llOf(LOAD), llOf(FUEL), 240, 10);
+  stayStill(L, clock, llOf(FUEL), 200, 10, flags);
+  ok(!!flags.learned, 'first dwell teaches (the fuel stop, wrongly but honestly)');
+  drive(L, clock, llOf(FUEL), llOf(NEAR), 60, 10);
+  const flags2 = {};
+  stayStill(L, clock, llOf(NEAR), 200, 10, flags2);   // 150 m from the taught place
+  ok(!flags2.contested && !flags2.altCandidate, 'a dwell at the SAME place (150 m) is no rival');
+  drive(L, clock, llOf(NEAR), llOf(REAL), 240, 10);
+  const flags3 = {};
+  stayStill(L, clock, llOf(REAL), 200, 10, flags3);
+  ok(!!flags3.contested, 'a second, different place contests the teaching');
+  ok(Math.abs(flags3.contested.taught.lat - FUEL.lat) < 0.0005, 'the contested pair names the taught site');
+  ok(Math.abs(flags3.contested.rival.lat - REAL.lat) < 0.0005, 'and the rival site');
+  ok(L.isAmbiguous(), 'the day is ambiguous — it teaches nothing');
+}
+
+/* ============ (j) lock() + observe mode: rivals become alternates ============ */
+console.log('(j) learning: after the cycle closes / in observe mode, rivals are alternates only');
+{
+  const LOAD = site(0, 0), DUMP = site(2200, 800), OTHER = site(4000, -1200);
+  // teach, then complete the cycle (dumped + back at the load site)
+  const L = E.createDumpLearner({ load: LOAD, dump: null });
+  L.begin(null);
+  const clock = { t: 0 };
+  stay(L, clock, llOf(LOAD), 70, 10);
+  drive(L, clock, llOf(LOAD), llOf(DUMP), 240, 10);
+  stayStill(L, clock, llOf(DUMP), 200, 10, {});
+  ok(!!L.learned(), 'taught');
+  L.lock(); // the glue calls this when the counter confirms the return
+  drive(L, clock, llOf(DUMP), llOf(LOAD), 240, 10);
+  stay(L, clock, llOf(LOAD), 70, 10);
+  drive(L, clock, llOf(LOAD), llOf(OTHER), 240, 10);
+  const flags = {};
+  stayStill(L, clock, llOf(OTHER), 200, 10, flags);
+  ok(!!flags.altCandidate && !flags.contested, 'post-lock rival is an alternate, not a contest');
+  ok(!L.isAmbiguous(), 'a locked day never turns ambiguous');
+
+  // observe mode (dump known up front): the same trail reports once
+  const O = E.createDumpLearner({ load: LOAD, dump: DUMP });
+  O.begin(null);
+  const clock2 = { t: 0 };
+  stay(O, clock2, llOf(LOAD), 70, 10);
+  drive(O, clock2, llOf(LOAD), llOf(OTHER), 240, 10);
+  const f1 = {};
+  stayStill(O, clock2, llOf(OTHER), 200, 10, f1);
+  ok(!!f1.altCandidate && !O.learned(), 'observe mode reports the rival, learns nothing');
+  drive(O, clock2, llOf(OTHER), llOf(LOAD), 240, 10);
+  stay(O, clock2, llOf(LOAD), 70, 10);
+  drive(O, clock2, llOf(LOAD), llOf(DUMP), 240, 10);
+  const f2 = {};
+  stayStill(O, clock2, llOf(DUMP), 200, 10, f2);
+  ok(!f2.altCandidate && !f2.contested, 'dwelling at the KNOWN dump is not a rival');
+}
+
+/* ============ (k) learner snapshot / restore ============ */
+console.log('(k) learning: snapshot/restore keeps the leg, drops the half-built dwell');
+{
+  const LOAD = site(0, 0), DUMP = site(2200, 800);
+  const L1 = E.createDumpLearner({ load: LOAD, dump: null });
+  L1.begin(null);
+  const clock = { t: 0 };
+  stay(L1, clock, llOf(LOAD), 70, 10);
+  drive(L1, clock, llOf(LOAD), llOf(DUMP), 240, 10);
+  stayStill(L1, clock, llOf(DUMP), 100, 10, {});      // half a dwell, then "killed"
+  const snap = L1.snapshot();
+  const L2 = E.createDumpLearner({ load: LOAD, dump: null });
+  L2.begin(snap);
+  const flags = {};
+  stayStill(L2, clock, llOf(DUMP), 120, 10, flags);
+  ok(!flags.learned, 'restored learner does not inherit the half-built dwell');
+  stayStill(L2, clock, llOf(DUMP), 120, 10, flags);
+  ok(!!flags.learned, 'a full fresh dwell after restore teaches');
+  const snap2 = L2.snapshot();
+  const L3 = E.createDumpLearner({ load: LOAD, dump: null });
+  L3.begin(snap2);
+  ok(!!L3.learned() && Math.abs(L3.learned().lat - DUMP.lat) < 0.0005, 'a taught site survives restore');
+}
+
 console.log('\ngeofence-loads: ' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);

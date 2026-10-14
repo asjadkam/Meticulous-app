@@ -49,6 +49,22 @@
  *    while the app was closed still counts. Stretches with NO
  *    breadcrumb at all (phone off, service killed) stay unobserved
  *    and are never reconstructed.
+ *  - v68 (learning): the two-pin assumption above rarely fires in
+ *    real dump work — the dump location is almost NEVER on the
+ *    dispatch, because the operator gives it verbally on site
+ *    (owner, Oct 14). So when a dispatch has a load pin but no dump
+ *    pin, a pure learner (createDumpLearner, in the engine below)
+ *    learns the dump site from the driving itself: the first full
+ *    load-visit -> departure -> ~3 min dwell >= 300 m away teaches
+ *    the site, the teaching cycle is credited as load #1, and the
+ *    pair is remembered in the synced key 'geoload_pairs' (keyed by
+ *    the load site) so later days with the same load site start
+ *    counting from the first load. Two rival candidates before the
+ *    first cycle completes = an ambiguous day that teaches nothing.
+ *    On a remembered-pair day, a different candidate is RECORDED
+ *    on the day (altDump) but never overwrites the pair. The user
+ *    is never asked for the dump location — figuring it out is the
+ *    app's job, not his (invisible-complexity rule).
  */
 (function () {
   'use strict';
@@ -225,14 +241,189 @@
     };
   }
 
+  /* ---- dump-site learning (v68) ----
+     Dump work almost never puts the dump location on the dispatch —
+     the operator tells the driver verbally, ON SITE (owner, Oct 14).
+     So when a dispatch carries a load pin but NO dump pin, the app
+     learns the dump site from the driving itself instead of asking
+     the user for data he does not have (the invisible-complexity
+     rule: our problem to figure out, never the user's homework).
+     The learner watches the same fix stream and applies the same
+     visit discipline as the counter:
+       confirmed load-site visit (45 s dwell in the 120 m fence)
+       -> confirmed departure (30 s out)
+       -> a stationary dwell of ~3 min (LEARN_DWELL_MS) at one place
+          (fixes staying within LEARN_CLUSTER_M) that is >= 300 m
+          (LEARN_MIN_SEP_M) from the load site = a dump candidate.
+     Modes, set by cfg.dump:
+       dump == null  TEACH — the first candidate is the day's learned
+         dump site (the caller arms the counter with it and credits
+         the teaching cycle as load #1). If a SECOND, different
+         candidate (>250 m from the first) shows up before the caller
+         locks the teaching — lock() = the truck completed the cycle
+         back at the load site — the teaching is CONTESTED: the day
+         is ambiguous and must teach nothing.
+       dump != null  OBSERVE — counting is already armed (pin or a
+         remembered pair); a candidate >250 m from the known dump is
+         reported ONCE as an alternate. The known site is NEVER
+         overwritten from driving alone.
+     After lock(), teach mode behaves like observe mode against the
+     taught site. The learner never counts anything itself, and bad
+     fixes (accuracy/stale/teleport) are ignored exactly as in the
+     counter. */
+  var LEARN_DWELL_MS = 3 * 60 * 1000; // stationary dwell that makes a candidate
+  var LEARN_MIN_SEP_M = 300;          // candidate must be this far from load
+  var LEARN_CLUSTER_M = 75;           // a "place": fixes stay within this
+  var CONTEST_SEP_M = MIN_SITE_SEP_M; // 250 m: closer = the SAME place
+
+  function createDumpLearner(cfg) {
+    var LOAD = { lat: +cfg.load.lat, lng: +cfg.load.lng };
+    var DUMP = (cfg.dump && isCoord(cfg.dump)) ? { lat: +cfg.dump.lat, lng: +cfg.dump.lng } : null;
+    var radiusM = cfg.radiusM || RADIUS_M;
+    var dwellMs = cfg.dwellMs || DWELL_MS;
+    var departMs = cfg.departMs || DEPART_MS;
+    var learnDwellMs = cfg.learnDwellMs || LEARN_DWELL_MS;
+    var learnMinSepM = cfg.learnMinSepM || LEARN_MIN_SEP_M;
+    var clusterM = cfg.clusterM || LEARN_CLUSTER_M;
+    var accMaxM = cfg.accMaxM || ACC_MAX_M;
+    var S = null;
+
+    function knownDump() { return S.learned || DUMP; }
+
+    function resolveCandidate(cand, res) {
+      // too close to the load site: never a dump candidate at all
+      if (haversineM(cand.lat, cand.lng, LOAD.lat, LOAD.lng) < learnMinSepM) return;
+      var known = knownDump();
+      if (!known) {
+        S.learned = cand;
+        res.learned = cand;
+        return;
+      }
+      if (haversineM(cand.lat, cand.lng, known.lat, known.lng) <= CONTEST_SEP_M) {
+        return; // the same place again — nothing to decide
+      }
+      if (!DUMP && !S.locked) {
+        S.ambiguous = true;
+        res.contested = { taught: S.learned, rival: cand };
+      } else if (!S.altDone) {
+        S.altDone = true;
+        res.altCandidate = cand;
+      }
+    }
+
+    return {
+      /* saved: a previous snapshot() from the same day/session. The
+         confirmed zone, leg, teaching and verdicts carry over; a
+         half-built dwell cluster is dropped — the truck must dwell
+         again, so a relaunch can never invent a dump site. */
+      begin: function (saved) {
+        S = {
+          active: true, zone: 'out', zoneCand: null,
+          atLoad: false, legArmed: false, cluster: null,
+          learned: null, locked: false, ambiguous: false, altDone: false,
+          lastT: 0, lastLat: null, lastLng: null
+        };
+        if (saved && typeof saved === 'object') {
+          if (saved.zone === 'load' || saved.zone === 'out') S.zone = saved.zone;
+          S.atLoad = !!saved.atLoad;
+          S.legArmed = !!saved.legArmed;
+          if (saved.learned && isCoord(saved.learned)) {
+            S.learned = { lat: +saved.learned.lat, lng: +saved.learned.lng, t: +saved.learned.t || 0 };
+          }
+          S.locked = !!saved.locked;
+          S.ambiguous = !!saved.ambiguous;
+          S.altDone = !!saved.altDone;
+          if (typeof saved.lastT === 'number') S.lastT = saved.lastT;
+        }
+        return true;
+      },
+      ingest: function (fix) {
+        var res = { accepted: false };
+        if (!S || !S.active) { res.why = 'inactive'; return res; }
+        if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) { res.why = 'bad-fix'; return res; }
+        if (fix.accuracy !== null && fix.accuracy !== undefined && fix.accuracy > accMaxM) { res.why = 'accuracy'; return res; }
+        var t = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : 0;
+        if (!t) { res.why = 'no-time'; return res; }
+        if (S.lastT && t <= S.lastT) { res.why = 'stale'; return res; }
+        if (S.lastLat !== null) {
+          var dJump = haversineM(S.lastLat, S.lastLng, fix.latitude, fix.longitude);
+          var dtH = (t - S.lastT) / 3600000;
+          if (dtH > 0 && (dJump / 1000) / dtH > MAX_SPEED_KMH) { res.why = 'teleport'; return res; }
+        }
+        S.lastT = t; S.lastLat = +fix.latitude; S.lastLng = +fix.longitude;
+        res.accepted = true;
+
+        var raw = haversineM(+fix.latitude, +fix.longitude, LOAD.lat, LOAD.lng) <= radiusM ? 'load' : 'out';
+        if (raw === S.zone) {
+          S.zoneCand = null;
+        } else {
+          if (!S.zoneCand || S.zoneCand.zone !== raw) S.zoneCand = { zone: raw, since: t };
+          var need = (raw === 'out') ? departMs : dwellMs;
+          if (t - S.zoneCand.since >= need) {
+            S.zone = raw; S.zoneCand = null;
+            if (raw === 'load') {
+              S.atLoad = true; S.legArmed = false; S.cluster = null;
+            } else if (S.atLoad) {
+              S.atLoad = false; S.legArmed = true; S.cluster = null;
+            }
+          }
+        }
+        res.zone = S.zone;
+
+        /* Candidate watching: only on a loaded leg (confirmed load
+           visit, then confirmed departure) and only while confirmed
+           OUT of the load fence. */
+        if (S.legArmed && S.zone === 'out' && !S.ambiguous) {
+          var cl = S.cluster;
+          if (!cl) {
+            S.cluster = { lat: +fix.latitude, lng: +fix.longitude, sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t };
+          } else if (haversineM(cl.lat, cl.lng, +fix.latitude, +fix.longitude) <= clusterM) {
+            cl.sumLat += +fix.latitude; cl.sumLng += +fix.longitude; cl.n++;
+            if (t - cl.since >= learnDwellMs) {
+              var cand = { lat: cl.sumLat / cl.n, lng: cl.sumLng / cl.n, t: t };
+              S.cluster = null;
+              /* The leg stays armed: a SECOND, different candidate
+                 on this same loaded leg (a fuel stop can precede the
+                 real dump) is exactly the ambiguity the contest rule
+                 exists for. The leg ends only at the load fence. */
+              resolveCandidate(cand, res);
+            }
+          } else {
+            S.cluster = { lat: +fix.latitude, lng: +fix.longitude, sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t };
+          }
+        }
+        return res;
+      },
+      /* The truck completed the cycle (dumped, returned, confirmed
+         back at the load site): the teaching is proven for the day —
+         later odd dwells become alternates, never contests. */
+      lock: function () { if (S && S.learned && !S.ambiguous) S.locked = true; },
+      stop: function () { if (S) S.active = false; },
+      snapshot: function () {
+        if (!S) return null;
+        return {
+          zone: S.zone, atLoad: S.atLoad, legArmed: S.legArmed,
+          learned: S.learned ? { lat: S.learned.lat, lng: S.learned.lng, t: S.learned.t } : null,
+          locked: S.locked, ambiguous: S.ambiguous, altDone: S.altDone, lastT: S.lastT
+        };
+      },
+      learned: function () { return S ? S.learned : null; },
+      isAmbiguous: function () { return !!(S && S.ambiguous); },
+      isActive: function () { return !!(S && S.active); }
+    };
+  }
+
   var ENGINE = {
     haversineM: haversineM,
     isCoord: isCoord,
     sitesCheck: sitesCheck,
     looksLikeAddress: looksLikeAddress,
     createGeoLoadCounter: createGeoLoadCounter,
+    createDumpLearner: createDumpLearner,
     RADIUS_M: RADIUS_M, DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
-    ACC_MAX_M: ACC_MAX_M, MIN_SITE_SEP_M: MIN_SITE_SEP_M
+    ACC_MAX_M: ACC_MAX_M, MIN_SITE_SEP_M: MIN_SITE_SEP_M,
+    LEARN_DWELL_MS: LEARN_DWELL_MS, LEARN_MIN_SEP_M: LEARN_MIN_SEP_M,
+    LEARN_CLUSTER_M: LEARN_CLUSTER_M, CONTEST_SEP_M: CONTEST_SEP_M
   };
   /* GEOLOADS-ENGINE-END */
 
@@ -242,14 +433,33 @@
                                  sites: { load: {lat,lng,label,src},
                                           dump: {lat,lng,label,src} } | null,
                                  blocked: null | 'no-dispatch' | 'no-site-coords'
-                                          | 'one-site' | 'sites-too-close',
+                                          | 'one-site' | 'sites-too-close'
+                                          | 'learning' | 'ambiguous-dump',
                                  count, events: [{t, site, n}],
-                                 state: <engine snapshot>,
+                                 state: <counter snapshot>,
+                                 learn: <learner snapshot>,
+                                 learnedDump: { lat, lng, learnedAt,
+                                                source: 'learned' } (v68),
+                                 altDump: { lat, lng, t } (v68 — a rival
+                                          candidate seen on a day whose
+                                          dump site was already known;
+                                          recorded, never applied),
+                                 dumpContested: { taught, rival, t }
+                                          (v68 — the teaching was
+                                          retracted; day counts nothing
+                                          learned),
                                  updatedAt } } }
      One record per date: a day's cycles belong to the day each dump
      event happened (event timestamps carry their own date). Records
-     are pruned after 30 days. */
+     are pruned after 30 days.
+     Store key 'geoload_pairs' (v68, synced): the learned load<->dump
+     memory — { pairs: { '<loadKey>': { load: {lat,lng,label},
+                                        dump: {lat,lng,label,learnedAt,
+                                               source},
+                                        updatedAt } } } — keyed by the
+     load site's coordinates, matched by proximity (<= 250 m). */
   var STORE_KEY = 'geoloads';
+  var PAIRS_KEY = 'geoload_pairs';
   var PERSIST_MIN_MS = 10000;
   var PRUNE_MS = 30 * 86400000;
 
@@ -262,6 +472,12 @@
   var geocodeTried = {};     // dispatchId -> true (once per record per session)
   var lastPersist = 0;
   var subscribed = false;
+  /* v68 learning state */
+  var learner = null;            // ENGINE.createDumpLearner instance
+  var learnMode = null;          // 'teach' | 'observe' | null
+  var curLoad = null;            // today's load site (survives curSites resets)
+  var taughtOutstanding = false; // taught today; first cycle not closed yet
+  var wasDumpSinceTeach = false; // counter confirmed the dump zone since then
 
   function store() {
     try { return (window.App && App._store) || null; } catch (e) { return null; }
@@ -292,6 +508,64 @@
       if (!r || !r.updatedAt || now - r.updatedAt > PRUNE_MS) delete d.days[k];
     });
     try { s.set(STORE_KEY, d); } catch (e) {}
+  }
+
+  /* ----- v68: the learned load<->dump pair memory ----- */
+
+  function loadPairs() {
+    var s = store();
+    var d = s ? s.get(PAIRS_KEY, null) : null;
+    if (!d || typeof d !== 'object' || !d.pairs) d = { pairs: {} };
+    return d;
+  }
+  function pairKeyFor(site) { return site.lat.toFixed(3) + ',' + site.lng.toFixed(3); }
+  /* The remembered pair for this load site, if any: the stored pair
+     whose load pin sits within 250 m of today's pin (one pit, one
+     memory, even if the pin was dropped at the other end of it). */
+  function findPair(loadSite) {
+    if (!loadSite) return null;
+    var d = loadPairs();
+    var best = null, bestDist = 250;
+    Object.keys(d.pairs).forEach(function (k) {
+      var p = d.pairs[k];
+      if (!p || !p.load || !p.dump || !ENGINE.isCoord(p.load) || !ENGINE.isCoord(p.dump)) return;
+      var dist = ENGINE.haversineM(loadSite.lat, loadSite.lng, p.load.lat, p.load.lng);
+      if (dist <= bestDist) { bestDist = dist; best = { key: k, pair: p }; }
+    });
+    return best;
+  }
+  function rememberPair(loadSite, dumpSite) {
+    var s = store();
+    if (!s || !loadSite || !dumpSite) return;
+    var d = loadPairs();
+    var found = findPair(loadSite);
+    var key = found ? found.key : pairKeyFor(loadSite);
+    d.pairs[key] = {
+      load: { lat: loadSite.lat, lng: loadSite.lng, label: loadSite.label || '' },
+      dump: {
+        lat: dumpSite.lat, lng: dumpSite.lng, label: dumpSite.label || '',
+        learnedAt: dumpSite.learnedAt || Date.now(), source: 'learned'
+      },
+      updatedAt: Date.now()
+    };
+    try { s.set(PAIRS_KEY, d); } catch (e) {}
+  }
+  /* Undo a pair written at teaching time when the SAME day contests
+     it — memory keeps only teachings the day itself stood behind. */
+  function forgetPair(loadSite, taughtDump) {
+    var s = store();
+    if (!s || !loadSite || !taughtDump) return;
+    var found = findPair(loadSite);
+    if (!found) return;
+    if (ENGINE.haversineM(found.pair.dump.lat, found.pair.dump.lng, taughtDump.lat, taughtDump.lng) > 100) return;
+    var d = loadPairs();
+    delete d.pairs[found.key];
+    try { s.set(PAIRS_KEY, d); } catch (e) {}
+  }
+
+  function sitesKeyFor(id, load, dump) {
+    return 'g' + id + '@' + load.lat.toFixed(5) + ',' + load.lng.toFixed(5) +
+           '>' + dump.lat.toFixed(5) + ',' + dump.lng.toFixed(5);
   }
 
   /* ----- site resolution from the active dispatch ----- */
@@ -415,6 +689,7 @@
       rec.state = counter.snapshot();
       rec.blocked = null;
     }
+    if (learner) rec.learn = learner.snapshot();
     writeDay(rec);
   }
 
@@ -423,11 +698,71 @@
   function configure() {
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
+    learner = null; learnMode = null; curLoad = null;
+    taughtOutstanding = false; wasDumpSinceTeach = false;
     if (!d) { counter = null; curSites = null; return false; }
     var sites = sitesFromDispatch(d);
+    curLoad = sites.load || null;
     var why = blockedWhy(d, sites);
+
+    /* v68: a load pin with NO dump pin is the normal dump-work case —
+       the dump location is given verbally on site and never written
+       on the dispatch. The dump site then comes from today's own
+       teaching, from the remembered pairs, or from learning — never
+       from asking the user for data he does not have. */
+    if (why === 'one-site' && sites.load && !sites.dump) {
+      var prevDay = recordFor(curDate);
+      if (prevDay && prevDay.blocked === 'ambiguous-dump') {
+        // This day already proved it cannot tell its dump places
+        // apart — it teaches nothing more, whichever session asks.
+        counter = null; curSites = null;
+        return false;
+      }
+      var resolvedDump = null;
+      // (1) taught earlier today (say, before an app relaunch)
+      if (prevDay && prevDay.learnedDump && ENGINE.isCoord(prevDay.learnedDump) &&
+          prevDay.sites && prevDay.sites.load &&
+          ENGINE.haversineM(prevDay.sites.load.lat, prevDay.sites.load.lng, sites.load.lat, sites.load.lng) <= 250 &&
+          ENGINE.sitesCheck(sites.load, prevDay.learnedDump).ok) {
+        resolvedDump = { lat: +prevDay.learnedDump.lat, lng: +prevDay.learnedDump.lng, label: 'Dump site', src: 'learned' };
+      }
+      // (2) remembered pair from an earlier day at this load site
+      if (!resolvedDump) {
+        var found = findPair(sites.load);
+        if (found) {
+          var pc = { lat: +found.pair.dump.lat, lng: +found.pair.dump.lng };
+          if (ENGINE.isCoord(pc) && ENGINE.sitesCheck(sites.load, pc).ok) {
+            resolvedDump = { lat: pc.lat, lng: pc.lng, label: found.pair.dump.label || 'Dump site', src: 'remembered' };
+          }
+        }
+      }
+      if (resolvedDump) { sites.dump = resolvedDump; why = null; learnMode = 'observe'; }
+      else learnMode = 'teach';
+    }
+
     if (why) {
       counter = null;
+      if (learnMode === 'teach') {
+        /* No counter yet — but the learner watches the driving from
+           the first fix, and the day record honestly says counting
+           is still learning rather than failed. */
+        curSites = null;
+        learner = ENGINE.createDumpLearner({ load: sites.load, dump: null });
+        var prevT = recordFor(curDate);
+        var sameT = !!(prevT && prevT.sessionKey === sessionKey);
+        learner.begin(sameT ? prevT.learn : null);
+        baseCount = (!sameT && prevT) ? (prevT.count || 0) : 0;
+        baseEvents = (!sameT && prevT && prevT.events) ? prevT.events.slice() : [];
+        var recT = prevT || blankDay(curDate);
+        recT.dispatchId = d.id; recT.sessionKey = sessionKey;
+        recT.sites = null; recT.blocked = 'learning'; recT.updatedAt = Date.now();
+        recT.learn = learner.snapshot();
+        // an earlier session's count for the day stays untouched —
+        // counted loads are never erased by a reconfigure
+        writeDay(recT);
+        maybeGeocode(d, sites);
+        return false;
+      }
       curSites = null;
       var rec = recordFor(curDate) || blankDay(curDate);
       rec.dispatchId = d.id; rec.sessionKey = sessionKey;
@@ -439,8 +774,7 @@
       return false;
     }
     curSites = sites;
-    var key = 'g' + d.id + '@' + sites.load.lat.toFixed(5) + ',' + sites.load.lng.toFixed(5) +
-              '>' + sites.dump.lat.toFixed(5) + ',' + sites.dump.lng.toFixed(5);
+    var key = sitesKeyFor(d.id, sites.load, sites.dump);
     var prev = recordFor(curDate);
     var sameSession = !!(prev && prev.sessionKey === sessionKey);
     var saved = (sameSession && prev.state) ? prev.state : null;
@@ -448,14 +782,117 @@
     baseEvents = (!sameSession && prev && prev.events) ? prev.events.slice() : [];
     counter = ENGINE.createGeoLoadCounter({ load: sites.load, dump: sites.dump });
     counter.begin(key, saved);
+    if (learnMode === 'observe') {
+      // Counting is armed from memory; the learner only watches for
+      // a rival candidate to note on the day — never to apply.
+      learner = ENGINE.createDumpLearner({ load: sites.load, dump: sites.dump });
+      learner.begin(sameSession ? prev.learn : null);
+    }
     persist(true);
     return true;
   }
 
+  /* The learner's first full load->dump trip taught the dump site:
+     arm the counter with it and credit the teaching cycle as load
+     #1 — the truck demonstrably picked up at the load site, left,
+     and then sat at the dump place for minutes. The pair is written
+     to memory now (and retracted again if the day contests it). */
+  function onLearned(cand) {
+    if (!curLoad || !cand) return;
+    var dump = { lat: cand.lat, lng: cand.lng, label: 'Dump site', src: 'learned' };
+    curSites = { load: curLoad, dump: dump };
+    var taught = { lat: cand.lat, lng: cand.lng, learnedAt: cand.t, source: 'learned' };
+    rememberPair(curLoad, taught);
+    var key = sitesKeyFor(curDispatchId, curLoad, dump);
+    counter = ENGINE.createGeoLoadCounter({ load: curLoad, dump: dump });
+    counter.begin(key, {
+      sitesKey: key, zone: 'dump', phase: 'at-dump', armed: false,
+      count: 1, events: [{ t: cand.t, site: 'dump', n: 1 }], lastT: cand.t
+    });
+    taughtOutstanding = true;
+    wasDumpSinceTeach = true;
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = curSites; rec.blocked = null; rec.updatedAt = Date.now();
+    rec.learnedDump = taught;
+    if (learner) rec.learn = learner.snapshot();
+    writeDay(rec);
+    persist(true);
+  }
+
+  /* Two different places both looked like the dump before the first
+     cycle completed — the day cannot tell them apart, so the
+     teaching is retracted in full: no learned site, no learned
+     count (any non-learned count from an earlier session stands),
+     and the pair written at teaching time is forgotten. */
+  function onContested(info) {
+    if (curLoad && info && info.taught) forgetPair(curLoad, info.taught);
+    if (counter) counter.stop();
+    counter = null;
+    taughtOutstanding = false; wasDumpSinceTeach = false;
+    learnMode = null;
+    curSites = null;
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = null; rec.blocked = 'ambiguous-dump'; rec.updatedAt = Date.now();
+    rec.count = baseCount;
+    rec.events = baseEvents.slice();
+    rec.state = null;
+    delete rec.learnedDump;
+    rec.dumpContested = {
+      taught: (info && info.taught) ? { lat: info.taught.lat, lng: info.taught.lng, t: info.taught.t } : null,
+      rival: (info && info.rival) ? { lat: info.rival.lat, lng: info.rival.lng, t: info.rival.t } : null,
+      t: (info && info.rival && info.rival.t) || Date.now()
+    };
+    if (learner) rec.learn = learner.snapshot();
+    writeDay(rec);
+  }
+
+  /* A different place looked like a dump stop on a day whose dump
+     site is already known (pin or remembered pair). It is recorded
+     on the day — the Manifest can mention it — but the known site
+     and the pair memory are never changed by driving alone. */
+  function onAltCandidate(cand) {
+    if (!cand) return;
+    var rec = recordFor(curDate) || blankDay(curDate);
+    if (rec.altDump) return;
+    rec.altDump = { lat: cand.lat, lng: cand.lng, t: cand.t };
+    rec.updatedAt = Date.now();
+    writeDay(rec);
+  }
+
+  /* Feed one fix to whatever is running — the counter (when a site
+     pair is armed) and/or the learner (while it watches) — and act
+     on the learner's verdicts. Returns the counter's ingest result
+     when there is a counter, else the learner's. */
+  function feedFix(fix) {
+    var r = null;
+    if (counter) {
+      r = counter.ingest(fix);
+      if (r.accepted && taughtOutstanding && learner) {
+        if (counter.zone() === 'dump') wasDumpSinceTeach = true;
+        else if (wasDumpSinceTeach && counter.zone() === 'load') {
+          // dumped, and now confirmed back at the load site: the
+          // first cycle is complete — the teaching is proven.
+          learner.lock();
+          taughtOutstanding = false;
+          wasDumpSinceTeach = false;
+        }
+      }
+    }
+    if (learner) {
+      var lr = learner.ingest(fix);
+      if (lr && lr.learned) onLearned(lr.learned);
+      else if (lr && lr.contested) onContested(lr.contested);
+      else if (lr && lr.altCandidate) onAltCandidate(lr.altCandidate);
+      if (!r) r = lr;
+    }
+    return r;
+  }
+
   function onFix(fix) {
-    if (!watching || !counter) return null;
-    var r = counter.ingest(fix);
-    if (!r.accepted) return r;
+    if (!watching || (!counter && !learner)) return null;
+    var r = feedFix(fix);
     // A dump event belongs to the date it happened on (overnight
     // shifts): if midnight passed, roll the day record forward.
     var fd = dateStrOf(fix.time || Date.now());
@@ -463,10 +900,10 @@
       persist(true);
       curDate = fd;
       configure();
-      if (!counter) return;
-      counter.ingest(fix);
+      if (counter || learner) r = feedFix(fix);
     }
-    if (r.counted) persist(true); else persist(false);
+    if (r && r.counted) persist(true); else persist(false);
+    return r;
   }
 
   function subscribe() {
@@ -501,10 +938,16 @@
     stopDay: function () {
       if (sessionKey) persist(true);
       if (counter) counter.stop();
+      if (learner) learner.stop();
       watching = false;
       sessionKey = null;
       counter = null;
+      learner = null;
+      learnMode = null;
       curSites = null;
+      curLoad = null;
+      taughtOutstanding = false;
+      wasDumpSinceTeach = false;
       baseCount = 0;
       baseEvents = [];
     },
@@ -518,7 +961,7 @@
        it saw, so crumbs that overlap the live stream can never
        double-count a cycle. Returns how many fixes were accepted. */
     ingestNativeCrumbs: function (crumbs) {
-      if (!watching || !counter || !crumbs || !crumbs.length) return 0;
+      if (!watching || (!counter && !learner) || !crumbs || !crumbs.length) return 0;
       var list = crumbs.slice().sort(function (x, y) { return (+x.t || 0) - (+y.t || 0); });
       var n = 0;
       for (var i = 0; i < list.length; i++) {
@@ -545,7 +988,10 @@
         events: rec.events || [],
         sites: rec.sites || null,
         blocked: rec.blocked || null,
-        dispatchId: rec.dispatchId || null
+        dispatchId: rec.dispatchId || null,
+        learnedDump: rec.learnedDump || null,
+        altDump: rec.altDump || null,
+        dumpContested: rec.dumpContested || null
       };
     },
 

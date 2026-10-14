@@ -16,7 +16,15 @@
   var GEOLOAD_BLOCKED = {
     'no-site-coords': 'GPS load counting needs site coordinates on the dispatch — none were set, so no loads were GPS-counted this day.',
     'one-site': 'GPS load counting needs BOTH site pins on the dispatch (load site and dump site) — this dispatch has only one, so no loads were GPS-counted this day.',
-    'sites-too-close': 'The load-site and dump-site pins on this dispatch are too close together to tell apart, so no loads were GPS-counted this day.'
+    'sites-too-close': 'The load-site and dump-site pins on this dispatch are too close together to tell apart, so no loads were GPS-counted this day.',
+    /* v68: the dispatch had a load pin but no dump pin (the normal
+       dump-work case — the dump is given verbally on site), so the
+       app set out to learn the dump site from the driving itself
+       and no complete load-and-dump trip was seen. */
+    'learning': 'GPS load counting is still learning where this run dumps — the dump site is given out loud on site, so the app learns it from the driving, and no complete load-and-dump trip was seen yet this day, so no loads were GPS-counted.',
+    /* v68: two different places both looked like the dump site
+       before the first round trip was finished. */
+    'ambiguous-dump': 'GPS load counting found two different places that both looked like the dump site this day and could not tell which one was right, so it counted nothing and learned nothing — ticket loads stay the record for pay.'
   };
 
   function dayStr() { return G('mani_date', App._today()); }
@@ -175,6 +183,22 @@
           esc((c.geoDay.sites.load && c.geoDay.sites.load.label) || 'load site') + ') and the dump site (' +
           esc((c.geoDay.sites.dump && c.geoDay.sites.dump.label) || 'dump site') +
           ') while the tracker was running. Ticket loads above stay the record for pay.</div>';
+        /* v68: honesty about WHERE the dump site came from — a site
+           the app learned or remembered from driving is a cross-check
+           aid, never as certain as a pin the office put on the
+           dispatch, and the Manifest says which kind it was. */
+        if (c.geoDay.learnedDump) {
+          h += '<div class="note" style="margin:2px 0 6px">📍 The dump site was not on the dispatch — the app learned it from today’s driving (' +
+            Number(c.geoDay.learnedDump.lat).toFixed(5) + ', ' + Number(c.geoDay.learnedDump.lng).toFixed(5) +
+            ') and will remember it for this load site. Learned counts are a cross-check only; ticket loads stay the record for pay.</div>';
+        } else if (c.geoDay.sites.dump && c.geoDay.sites.dump.src === 'remembered') {
+          h += '<div class="note" style="margin:2px 0 6px">📍 The dump site was remembered from an earlier day’s driving to this load site — the app learned it from the truck’s trips; nobody had to type it in.</div>';
+        }
+        if (c.geoDay.altDump) {
+          h += '<div class="note" style="margin:2px 0 6px">📍 Another place also looked like a dump stop this day (' +
+            Number(c.geoDay.altDump.lat).toFixed(5) + ', ' + Number(c.geoDay.altDump.lng).toFixed(5) +
+            '). The dump site already on record was kept.</div>';
+        }
         (c.geoDay.events || []).forEach(function (ev, i) {
           h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
             esc(new Date(ev.t).toLocaleTimeString()) + '</b></div>';
