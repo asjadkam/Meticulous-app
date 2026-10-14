@@ -101,7 +101,7 @@
       h += '<div class="card"><h3>📒 Fill-ups</h3>' +
         (fills().length ? fills().slice().reverse().map(function (f) {
           return '<div class="listitem"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) + '</div>' +
-            '<div class="b">' + esc(f.date) + ' · odo ' + esc(f.odo) + (f.station ? ' · ' + esc(f.station) : '') + '</div></div>';
+            '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + '</div></div>';
         }).join('') : '<div class="empty">No fill-ups yet.</div>') + '</div>';
 
       body.innerHTML = h;
@@ -218,14 +218,24 @@
       fuOdoPickInput.onchange = fuOdoHandle;
 
       body.querySelector('#fu_add').onclick = function () {
+        // v44: odometer is OPTIONAL — many fuel receipts show no reading,
+        // and the user wants those entered as-is. Empty/invalid → the
+        // record is saved with NO odo field at all; the master odometer
+        // and MPG/trend ignore odo-less rows (they filter on x.odo).
         var odo = parseFloat(body.querySelector('#fu_odo').value);
-        if (!odo) { alert('Enter the odometer reading.'); return; }
+        var hasOdo = odo > 0;
         var f = fills();
-        var rec = { date: body.querySelector('#fu_date').value || App._today(), odo: odo, litres: body.querySelector('#fu_l').value, cost: body.querySelector('#fu_cost').value, station: body.querySelector('#fu_stn').value.trim() };
+        var rec = { date: body.querySelector('#fu_date').value || App._today() };
+        if (hasOdo) rec.odo = odo;
+        rec.litres = body.querySelector('#fu_l').value;
+        rec.cost = body.querySelector('#fu_cost').value;
+        rec.station = body.querySelector('#fu_stn').value.trim();
         f.push(rec); W('fills', f);
         if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), rec);
-        // v39: feed the master odometer (upward only) + show the outcome
-        saveNote = masterOnSave(odo);
+        // v39: feed the master odometer (upward only) + show the outcome —
+        // ONLY when a real reading was entered. An odo-less save never
+        // touches the master (mt_odo) and just confirms the save.
+        saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.';
         Meticulous.modules.fuel.render(body);
       };
       /* v42: receipt photo → OCR on the Other-expenses card — same
