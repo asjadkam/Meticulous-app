@@ -719,6 +719,10 @@
         alert('Auto-start saved.');
       };
 
+      /* v53: wire the card's "Today:" line — the Change-for-today
+         override controls (dispatch-driven auto-start). */
+      try { Meticulous.modules.autostart.wireToday(body, 'rv'); } catch (e) {}
+
       /* v38: view mode toggle + month stepping + paste-import. */
       body.querySelectorAll('[data-view]').forEach(function (b) {
         b.onclick = function () { W('view', b.getAttribute('data-view')); api.render(body); };

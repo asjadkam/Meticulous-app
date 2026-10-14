@@ -949,6 +949,13 @@
   // v27: start the tracker by itself at a set time on chosen days.
   // Time-based ONLY — no location/GPS involved. Runs when the app is open
   // (minute check + resume check); if the app was closed, it prompts on next open.
+  /* AUTOSTART-ENGINE-BEGIN
+     v53: this whole region (prefs -> pure effective-time functions ->
+     App.checkAutoStart + the Revenue-card helpers) is harness-extractable
+     by design — tools/dispatch-autostart-test.js slices it out verbatim
+     and drives it over an in-memory store. Keep it free of DOM access;
+     it may use: store, todayStr, App, confirm, resetAccum, trackerSave,
+     trackerPaint, maybePromptOdo, trackerSessionStartMs. */
   var AUTOSTART_GRACE_MIN = 60; // start silently within 60 min of set time; prompt after that
 
   function autoStartPrefs() {
@@ -981,33 +988,103 @@
     } catch (e2) {}
   }
 
+  /* ------------- v53: dispatch-driven auto-start -------------
+     Asjad (Oct 14, 2026): "whatever the start time says on the Dispatch…
+     It should be automatically set as an auto starter" — refined the
+     same morning: "Can be changed but as a default dispatch time."
+     So TODAY's start time resolves by precedence:
+       1. a per-day manual override (autostart_override for today) —
+          set from the Revenue card's Change affordance, never edits
+          the dispatch or the standing setting;
+       2. today's dispatch scheduled time — the DEFAULT (active
+          dispatch first in spirit, but the earliest of ALL of today's
+          eligible dispatches wins; completed/cancelled records have
+          no claim);
+       3. the standing Revenue setting (autoStartTime).
+     The standing on/off + day-of-week rules still gate WHETHER any
+     auto-start happens at all: a dispatch or override changes the
+     WHEN, never the WHETHER. Pure functions — the caller passes prefs,
+     the dispatch records, the override and today's date string. */
+  function autostartParseSched(s) {
+    // dispatch records carry a datetime-local string "2026-10-14T08:00"
+    if (!s || typeof s !== 'string') return null;
+    var m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/.exec(s);
+    return m ? { date: m[1], time: m[2] + ':' + m[3] } : null;
+  }
+  function autostartDispatchTimeFor(active, list, today) {
+    var best = null, seen = {};
+    function consider(d) {
+      if (!d || typeof d !== 'object') return;
+      if (d.status === 'completed' || d.status === 'cancelled') return;
+      if (d.id) { if (seen[d.id]) return; seen[d.id] = 1; }
+      var p = autostartParseSched(d.scheduledAt);
+      if (!p || p.date !== today) return;
+      if (best === null || p.time < best) best = p.time;
+    }
+    consider(active);
+    if (Array.isArray(list)) for (var i = 0; i < list.length; i++) consider(list[i]);
+    return best; // 'HH:MM' or null
+  }
+  function autostartEffective(prefs, active, list, override, today) {
+    if (override && override.date === today && typeof override.time === 'string' && /^\d{2}:\d{2}$/.test(override.time)) {
+      return { time: override.time, source: 'override' };
+    }
+    var dt = autostartDispatchTimeFor(active, list, today);
+    if (dt) return { time: dt, source: 'dispatch' };
+    return { time: prefs.time, source: 'setting' };
+  }
+  function autostartPlan(prefs, active, list, override, today, dayIdx) {
+    if (!prefs.enabled) return { willStart: false, reason: 'off' };
+    if (!Array.isArray(prefs.days) || prefs.days.indexOf(dayIdx) === -1) return { willStart: false, reason: 'wrong-day' };
+    var eff = autostartEffective(prefs, active, list, override, today);
+    return { willStart: true, reason: 'ok', time: eff.time, source: eff.source };
+  }
+  function autostartTodayMs(today, timeStr) {
+    // ms epoch of `today` ('YYYY-MM-DD') at 'HH:MM' local — the anchor a
+    // backdated (missed) start counts from.
+    var dp = String(today).split('-'), tp = String(timeStr || '00:00').split(':');
+    return new Date(+dp[0] || 1970, (+dp[1] || 1) - 1, +dp[2] || 1, +tp[0] || 0, +tp[1] || 0, 0, 0).getTime();
+  }
+
   App.checkAutoStart = function () {
     try {
       /* v52: office users never drive — no tracker auto-start, and (with
          no tracker card on their home screen) no odometer prompts. */
       if (App.userRole && App.userRole() === 'office') return 'office';
       var p = autoStartPrefs();
-      if (!p.enabled) return 'off';
       var now = new Date();
-      if (p.days.indexOf(now.getDay()) === -1) return 'wrong-day';
       var today = todayStr(now);
+      /* v53: the effective start for today — override > dispatch >
+         standing setting. Recomputed on every check (minute tick, app
+         open, resume), so a dispatch saved or changed for today updates
+         today's start by itself. The plan's willStart gate is the
+         standing on/off + days: 'off' / 'wrong-day' return as before. */
+      var plan = autostartPlan(p, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), today, now.getDay());
+      if (!plan.willStart) return plan.reason;
       if (autoStartFired(today)) return 'fired';
       var t = App.tracker || { status: 'idle' };
       if (t.status === 'running') { markAutoStartFired(today); return 'running'; }
-      var tp = String(p.time).split(':');
+      var tp = String(plan.time).split(':');
       var startMins = (+tp[0] || 0) * 60 + (+tp[1] || 0);
       var nowMins = now.getHours() * 60 + now.getMinutes();
       if (nowMins < startMins) return 'not-yet';
-      var label = autoStartLabel(p.time);
+      var label = autoStartLabel(plan.time);
       markAutoStartFired(today);
+      /* v53: a today-specific time (dispatch or override) ANCHORS the
+         session to its scheduled time — the driver was working from
+         then; the app just woke up. The standing setting keeps the
+         long-standing behavior (count from now). */
+      var anchored = plan.source !== 'setting';
+      var anchorMs = autostartTodayMs(today, plan.time);
       if (t.status === 'idle' && (nowMins - startMins) <= AUTOSTART_GRACE_MIN) {
         // Within grace window: start by itself, no questions.
         App.tracker.status = 'running';
         App.tracker.startTs = Date.now();
-        App.tracker.elapsed = 0;
+        App.tracker.elapsed = anchored ? Math.max(0, Math.floor((Date.now() - anchorMs) / 1000)) : 0;
         resetAccum(); // v41: fresh auto-started shift, fresh totals
         trackerSave(); trackerPaint();
-        autoStartNotify('Tracker auto-started at ' + label);
+        autoStartNotify('Tracker auto-started at ' + label +
+          (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
         // v40: an auto-started shift tracks live miles like any other.
         try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
         try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionStartMs()); } catch (e) {}
@@ -1017,16 +1094,63 @@
         return 'started';
       }
       // Time passed long ago (app was closed), or tracker was paused mid-shift: ask.
+      var srcNote = plan.source === 'dispatch' ? ' from your dispatch' : plan.source === 'override' ? ' (changed for today)' : '';
       var msg = t.status === 'paused'
-        ? 'Auto-start time (' + label + ') has passed and your tracker is paused. Resume it now?'
-        : 'Auto-start time (' + label + ') has passed. Start the tracker now?';
+        ? 'Auto-start time (' + label + srcNote + ') has passed and your tracker is paused. Resume it now?'
+        : 'Auto-start time (' + label + srcNote + ') has passed. Start the tracker now?' +
+          (anchored ? ' It will count from ' + label + '.' : '');
       if (confirm(msg)) {
+        /* v53: an accepted missed start counts from the scheduled time,
+           never silently from the tap — the v28 presetStart mechanism
+           (trackerToggle applies it) does the backdating. */
+        if (anchored && t.status === 'idle') App.tracker.presetStart = anchorMs;
         App.trackerToggle(); // idle -> start fresh; paused -> resume
         return 'prompted-started';
       }
       return 'prompted-declined';
     } catch (e) { return 'error'; }
   };
+
+  /* v53: what will happen today, for the Revenue auto-start card's
+     "Today:" line (modules/autostart.js). One read of the same plan
+     checkAutoStart runs on, so the card can never promise what the
+     engine won't do. */
+  App.autostartTodayInfo = function () {
+    var p = autoStartPrefs();
+    var now = new Date();
+    var today = todayStr(now);
+    var active = store.get('dsp_active', null);
+    var list = store.get('dsp_list', []);
+    var override = store.get('autostart_override', null);
+    var plan = autostartPlan(p, active, list, override, today, now.getDay());
+    var oTime = (override && override.date === today && typeof override.time === 'string' && /^\d{2}:\d{2}$/.test(override.time)) ? override.time : null;
+    return {
+      enabled: p.enabled,
+      dayOk: Array.isArray(p.days) && p.days.indexOf(now.getDay()) !== -1,
+      willStart: plan.willStart,
+      reason: plan.reason || 'ok',
+      time: plan.time || p.time,
+      source: plan.source || 'setting',
+      label: autoStartLabel(plan.time || p.time),
+      settingTime: p.time,
+      dispatchTime: autostartDispatchTimeFor(active, list, today),
+      overrideTime: oTime
+    };
+  };
+  /* v53: the per-day override behind the card's Change affordance.
+     Stored per date in the synced store ({date, time}); the date check
+     in autostartEffective means yesterday's override can never leak
+     into today. Writing one never touches the dispatch or the standing
+     setting. */
+  App.setAutostartOverride = function (timeStr) {
+    if (typeof timeStr !== 'string' || !/^\d{2}:\d{2}$/.test(timeStr)) return false;
+    return store.set('autostart_override', { date: todayStr(new Date()), time: timeStr });
+  };
+  App.clearAutostartOverride = function () {
+    if (store.del) return store.del('autostart_override');
+    return store.set('autostart_override', null);
+  };
+  /* AUTOSTART-ENGINE-END */
 
   /* ---------------- v34: sync status popup (tap the top-bar dot) ----------------
      The dot's state used to live only in its `title` tooltip — invisible on
