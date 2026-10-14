@@ -69,25 +69,99 @@
     try { window.scrollTo(0, 0); } catch (e) {}
   };
 
-  /* v18: Android back button (Capacitor native app). Without this, the system
-     back button either does nothing or kills the app. */
+  /* v60: Android system back button (Capacitor native app). Root cause of
+     "back closes the app": this SPA swaps views without ever pushing
+     WebView history, so the OS back has no history to walk and the
+     activity finishes. The v18 handler made it deterministic — it only
+     knew the top-level view (App.currentView) and called exitApp() for
+     EVERY back press inside 'main', even with a module or a sheet open,
+     because modules/sheets swap inside #main without touching
+     currentView. The in-app back arrow worked because it calls
+     App.showDashboard() directly. The shell needs no change: @capacitor/app
+     is registered in the shell (capacitor.plugins.json) and its
+     backButton events ARE delivered to OTA pages (same bridge the
+     Filesystem/BackgroundGeolocation plugins already use from OTA code).
+     The fix mirrors the app's own navigation, innermost layer first:
+       open sheet -> close it (same closers as each sheet's Cancel)
+       sidebar open -> close it
+       module open -> back to dashboard (App.showDashboard)
+       onboarding -> previous step (same as the in-app Back button),
+                     or auth from step 0 (v25: never strand the user)
+       dashboard root / auth -> exitApp() (the default exit; one press,
+                     never a trap)
+     Navigation ONLY: no branch touches the tracker, so a back press can
+     never start/stop/pause a live session (closing the end-time sheet is
+     its Cancel — the session keeps running). In a plain browser / iPhone
+     install there is no Capacitor bridge, wireSystemBack returns false,
+     and behavior is byte-identical to before. */
+  /* SYS-BACK-BEGIN — harness-extractable (tools/back-button-test.js).
+     Pure decision + listener registration; every DOM read/write lives in
+     the fx object the app passes in below. */
+  App.navBackStep = function (s) {
+    s = s || {};
+    if (s.sheet) return { act: 'sheet', sheet: s.sheet };
+    if (s.sidebar) return { act: 'sidebar' };
+    if (s.view === 'onboarding') {
+      return (s.onbStep || 0) > 0 ? { act: 'onb-prev' } : { act: 'onb-auth' };
+    }
+    if (s.view === 'main' && s.module) return { act: 'module' };
+    return { act: 'exit' };
+  };
+  App.wireSystemBack = function (Cap, fx) {
+    if (!Cap || !Cap.Plugins || !Cap.Plugins.App ||
+        typeof Cap.Plugins.App.addListener !== 'function') return false;
+    Cap.Plugins.App.addListener('backButton', function () {
+      try { fx.perform(App.navBackStep(fx.snapshot())); } catch (e) {}
+    });
+    return true;
+  };
+  /* SYS-BACK-END */
   (function () {
     try {
       var Cap = window.Capacitor;
-      if (!Cap || !Cap.Plugins || !Cap.Plugins.App) return;
-      Cap.Plugins.App.addListener('backButton', function () {
-        var v = App.currentView || 'auth';
-        if (v === 'onboarding' && App.onbStep > 0) {
-          App.onbStep--;
-          try { renderOnbStep(); } catch (e) {}
-        } else if (v === 'onboarding') {
-          // v25: back from onboarding goes to auth (not main) — don't strand user
-          try { App.showView('auth'); } catch (e) {}
-        } else if (v === 'main') {
-          // v25: back from main EXITS the app — never bounce to login screen
-          try { Cap.Plugins.App.exitApp(); } catch (e) {}
-        } else {
-          try { Cap.Plugins.App.exitApp(); } catch (e) {}
+      App.wireSystemBack(Cap, {
+        snapshot: function () {
+          var sheet = null;
+          ['trkStartSheet', 'trkEndSheet', 'odoSheet', 'loadSheet', 'fbSheet'].forEach(function (id) {
+            if (sheet) return;
+            var n = el(id);
+            if (n && n.classList.contains('open')) sheet = id;
+          });
+          var sb = el('sidebar');
+          var mv = el('modView');
+          return {
+            view: App.currentView || 'auth',
+            onbStep: App.onbStep || 0,
+            sheet: sheet,
+            sidebar: !!(sb && sb.classList.contains('open')),
+            module: !!(mv && !mv.classList.contains('hidden'))
+          };
+        },
+        perform: function (a) {
+          if (!a) return;
+          if (a.act === 'sheet') {
+            if (a.sheet === 'trkStartSheet') closeTrackerStartSheet();
+            else if (a.sheet === 'trkEndSheet') closeTrackerEndSheet();
+            else if (a.sheet === 'odoSheet') closeOdoSheet();
+            else if (a.sheet === 'loadSheet') closeLoadSheet();
+            else if (a.sheet === 'fbSheet') {
+              el('fbSheet').classList.remove('open');
+              el('scrim').classList.remove('show');
+              el('scrim').onclick = closeSidebar;
+            }
+          } else if (a.act === 'sidebar') {
+            closeSidebar();
+          } else if (a.act === 'module') {
+            App.showDashboard();
+          } else if (a.act === 'onb-prev') {
+            collectOnbInputs(); // same as the in-app onboarding Back button
+            App.onbStep--;
+            renderOnbStep();
+          } else if (a.act === 'onb-auth') {
+            App.showView('auth');
+          } else { // 'exit' — dashboard root or auth: the default exit
+            try { Cap.Plugins.App.exitApp(); } catch (e) {}
+          }
         }
       });
     } catch (e) {}
