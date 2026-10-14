@@ -404,12 +404,17 @@
             var rep = TicketOCR.describeStickerRead(parsed);
             if (!rep.found.length) {
               nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
-              return;
+            } else {
+              if (parsed.odo) body.querySelector('#mt_ns_odo').value = parsed.odo;
+              if (parsed.date) body.querySelector('#mt_ns_date').value = parsed.date;
+              nsSetRead('📸 Read from sticker: <b>' + esc(rep.found.join(' · ')) + '</b> — check before saving.' +
+                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
             }
-            if (parsed.odo) body.querySelector('#mt_ns_odo').value = parsed.odo;
-            if (parsed.date) body.querySelector('#mt_ns_date').value = parsed.date;
-            nsSetRead('📸 Read from sticker: <b>' + esc(rep.found.join(' · ')) + '</b> — check before saving.' +
-              (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+            /* v58 (Round 2 Lane B): background candidate hunt — pooled
+               extra reads mine ranked miles/date candidates and offer
+               them as tap-to-pick chips. Chips only FILL the inputs;
+               the card's Save stays the confirm, nothing auto-saves. */
+            nsHunt(ocrUrl, token, text);
           }).catch(function () {
             if (token !== nsOcrToken) return;
             nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
@@ -418,6 +423,65 @@
       }
       if (nsCamInput) nsCamInput.onchange = nsHandlePhoto;
       if (nsPickInput) nsPickInput.onchange = nsHandlePhoto;
+
+      /* v58: sticker candidate hunt (see nsHandlePhoto). Renders chips
+         under the read line: miles candidates fill #mt_ns_odo, date
+         candidates fill #mt_ns_date. Fill-only — Save confirms. */
+      function nsHunt(ocrUrl, token, seedText) {
+        if (!window.TicketOCR || !TicketOCR.huntCandidates) return;
+        var readEl = body.querySelector('#mt_ns_read');
+        if (!readEl || !readEl.parentNode) return;
+        var box = body.querySelector('#mt_ns_chips');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'mt_ns_chips';
+          readEl.parentNode.insertBefore(box, readEl.nextSibling);
+        }
+        box.innerHTML = '';
+        var master = parseFloat(S('odo', 0)) || null;
+        TicketOCR.huntCandidates(ocrUrl, {
+          kind: 'sticker',
+          master: master,
+          seedTexts: seedText ? [{ text: seedText, whitelist: false }] : [],
+          onUpdate: function (res) {
+            if (token !== nsOcrToken) return;
+            box.innerHTML = '';
+            var odoEl = body.querySelector('#mt_ns_odo');
+            var dateEl = body.querySelector('#mt_ns_date');
+            function chipGroup(label, items, render, apply) {
+              var cur = render.cur();
+              var list = items.filter(function (c) { return render.val(c) !== cur; }).slice(0, 4);
+              if (!list.length) return;
+              var lbl = document.createElement('div');
+              lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
+              lbl.textContent = label;
+              box.appendChild(lbl);
+              list.forEach(function (c) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'btn small ghost';
+                b.style.margin = '2px 4px 2px 0';
+                b.textContent = render.text(c);
+                b.onclick = function () {
+                  apply(c);
+                  nsSetRead('📸 Filled from your tap — check before saving.');
+                };
+                box.appendChild(b);
+              });
+            }
+            chipGroup('Miles — tap the right one:', res.miles || [],
+              { cur: function () { return odoEl ? String(odoEl.value || '').replace(/[^\d]/g, '') : ''; },
+                val: function (c) { return String(c.value); },
+                text: function (c) { return Number(c.value).toLocaleString('en-CA') + ' km'; } },
+              function (c) { if (odoEl) odoEl.value = c.value; });
+            chipGroup('Date — tap the right one:', res.dates || [],
+              { cur: function () { return dateEl ? String(dateEl.value || '') : ''; },
+                val: function (c) { return c.date; },
+                text: function (c) { return c.date; } },
+              function (c) { if (dateEl) dateEl.value = c.date; });
+          }
+        }).catch(function () {});
+      }
 
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);

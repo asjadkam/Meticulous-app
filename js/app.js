@@ -1440,6 +1440,11 @@
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
             }
+            /* v58 (Round 2 Lane B): keep hunting in the background —
+               pooled extra reads may surface the true value as
+               tap-to-pick chips. Never auto-accepts: a chip fills the
+               field only when the user taps it. */
+            odoHunt(prefix, dataUrl, token, text);
           } else {
             var iso = parseStickerExpiry(text);
             if (iso && fieldEl) {
@@ -1461,6 +1466,53 @@
     }
     if (camIn) camIn.onchange = function () { handleFile(camIn.files[0]); camIn.value = ''; };
     if (pickIn) pickIn.onchange = function () { handleFile(pickIn.files[0]); pickIn.value = ''; };
+
+    /* v58: background candidate hunt for odometer photos (Round 2).
+       Renders up to 4 ranked candidate chips under the status line;
+       a tap fills the field and persists through the SAME persist()
+       the primary read uses — the hunt itself never writes anything. */
+    function odoHunt(prefix, dataUrl, token, seedText) {
+      if (!window.TicketOCR || !TicketOCR.huntCandidates) return;
+      var statusEl = el(prefix + '_status');
+      if (!statusEl || !statusEl.parentNode) return;
+      var box = document.getElementById(prefix + '_chips');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = prefix + '_chips';
+        statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
+      }
+      box.innerHTML = '';
+      TicketOCR.huntCandidates(dataUrl, {
+        kind: 'odometer',
+        parseOdo: parseOdometerReading,
+        seedTexts: seedText ? [{ text: seedText, whitelist: false }] : [],
+        onUpdate: function (res) {
+          if (token !== _onbOcrToken) return;
+          var cur = fieldEl ? String(fieldEl.value || '').replace(/[^\d]/g, '') : '';
+          var list = (res.odo || []).filter(function (c) { return String(c.value) !== cur; }).slice(0, 4);
+          box.innerHTML = '';
+          if (!list.length) return;
+          var lbl = document.createElement('div');
+          lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
+          lbl.textContent = 'Or is it one of these? Tap the right one:';
+          box.appendChild(lbl);
+          list.forEach(function (c) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn small ghost';
+            b.style.margin = '2px 4px 2px 0';
+            b.textContent = Number(c.value).toLocaleString('en-CA') + ' km';
+            b.onclick = function () {
+              if (fieldEl) fieldEl.value = c.value;
+              persist(kind, c.value);
+              box.innerHTML = '';
+              onbSetStatus(prefix, '✓ Using <b>' + Number(c.value).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
+            };
+            box.appendChild(b);
+          });
+        }
+      }).catch(function () {});
+    }
   }
 
   function collectOnbInputs() {

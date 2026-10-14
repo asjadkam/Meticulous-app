@@ -1570,4 +1570,366 @@
     return { found: found, missing: missing };
   };
 
+  /* ================= v58: candidate hunt (Round 2, Lane B) ================
+     Proven on the bench (tools/round2-miner.js + results-round2.json):
+     pooling MANY OCR reads of the same photo (different preprocessing /
+     engine settings) and mining the pooled text for validated numeric
+     candidates recovers values no single read gets — odometer exact
+     top-1 on 2/8 corpus photos and top-4 on 3/8 (single-read baseline
+     0/8); service-sticker miles AND date top-1 on the legible sample.
+     The hunt NEVER auto-accepts: it only produces ranked candidates
+     that the UI offers as tap-to-pick chips. The user taps, or types.
+     (Measured honestly: on the owner's own dash and sticker photos the
+     hunt found no candidates — chips simply don't appear there.) */
+
+  var _R2_CONFUSE = { O: '0', o: '0', Q: '0', l: '1', I: '1', i: '1', '|': '1', Z: '2', z: '2', S: '5', s: '5', G: '6', B: '8', q: '9', A: '4' };
+  function _r2digitizeToken(tok) {
+    var t = String(tok || '').replace(/^[^0-9A-Za-z]+/, '').replace(/[^0-9A-Za-z]+$/, '');
+    if (t.length < 3) return null;
+    var out = '', digits = 0;
+    for (var i = 0; i < t.length; i++) {
+      var c = t[i];
+      if (c >= '0' && c <= '9') { out += c; digits++; }
+      else if (c === ',' || c === '.' || c === ' ') { out += c; }
+      else if (_R2_CONFUSE[c]) { out += _R2_CONFUSE[c]; }
+      else return null;
+    }
+    if (digits < 2) return null;
+    return out;
+  }
+  function _r2extractDigitRuns(text) {
+    var out = [];
+    var lines = String(text || '').split(/\r?\n/);
+    lines.forEach(function (line) {
+      var m, re;
+      var glued = line.replace(/(\d)[ \t]+(?=\d)/g, '$1').replace(/(\d),[ \t]+(?=\d)/g, '$1,');
+      re = /(\d[\d,]*\d|\d)/g;
+      while ((m = re.exec(glued)) !== null) {
+        var raw = m[1];
+        var dec = false;
+        var dm = raw.match(/^([\d,]+)\.(\d)$/);
+        var digits = raw.replace(/,/g, '');
+        if (dm && digits.replace('.', '').length >= 5) { digits = dm[1].replace(/,/g, ''); dec = true; }
+        else digits = digits.replace(/\./g, '');
+        if (digits.length >= 4 && digits.length <= 8) out.push({ digits: digits, repaired: false, decimal: dec });
+      }
+      var toks = line.split(/\s+/);
+      var digToks = toks.map(_r2digitizeToken);
+      digToks.forEach(function (dt) {
+        if (!dt) return;
+        var d = dt.replace(/[,.]/g, '');
+        if (d.length >= 4 && d.length <= 8) out.push({ digits: d, repaired: true, decimal: /\.\d$/.test(dt) });
+      });
+      for (var i = 0; i + 1 < digToks.length; i++) {
+        if (!digToks[i] || !digToks[i + 1]) continue;
+        var a = digToks[i].replace(/[,.]/g, ''), b = digToks[i + 1].replace(/[,.]/g, '');
+        var j = a + b;
+        if (j.length >= 5 && j.length <= 7 && a.length >= 2 && b.length >= 2) out.push({ digits: j, repaired: true, decimal: false });
+      }
+    });
+    return out;
+  }
+  function _r2rankOdo(texts, parseOdo) {
+    var byVal = {};
+    texts.forEach(function (src) {
+      var runs = _r2extractDigitRuns(src.text);
+      var seenHere = {};
+      runs.forEach(function (r) {
+        var v = parseInt(r.digits, 10);
+        if (!(v >= 10000 && v <= 1999999)) return;
+        if (r.digits.length < 5 || r.digits.length > 7) return;
+        var key = String(v);
+        var c = byVal[key] || (byVal[key] = { value: v, digits: String(v), score: 0, sources: 0, repairedOnly: true });
+        if (!seenHere[key]) { c.sources++; c.score += 2; seenHere[key] = 1; if (src.whitelist) c.score += 1; }
+        if (!r.repaired) c.repairedOnly = false;
+      });
+      if (parseOdo) {
+        try {
+          var pv = parseOdo(src.text);
+          if (pv && byVal[String(parseInt(pv, 10))]) byVal[String(parseInt(pv, 10))].score += 3;
+        } catch (e) {}
+      }
+    });
+    var list = Object.keys(byVal).map(function (k) { return byVal[k]; });
+    list.forEach(function (c) {
+      if (c.digits.length === 6) c.score += 2;
+      else if (c.digits.length === 5 || c.digits.length === 7) c.score += 1;
+    });
+    list.sort(function (a, b) { return (b.score - a.score) || (b.sources - a.sources) || (b.value - a.value); });
+    return list;
+  }
+  function _r2rankStickerMiles(texts, master, parseSticker) {
+    var byVal = {};
+    texts.forEach(function (src) {
+      var runs = _r2extractDigitRuns(src.text);
+      var seenHere = {};
+      runs.forEach(function (r) {
+        var v = parseInt(r.digits, 10);
+        if (!(v >= 10000 && v <= 1999999)) return;
+        if (r.digits.length < 5 || r.digits.length > 7) return;
+        var key = String(v);
+        var c = byVal[key] || (byVal[key] = { value: v, digits: String(v), score: 0, sources: 0 });
+        if (!seenHere[key]) { c.sources++; c.score += 2; seenHere[key] = 1; }
+      });
+      var t = String(src.text || '');
+      var am = t.search(/MILES|MILEAGE|KILOMET|KMS?\b|ODOMETER|ODO\b/i);
+      if (am >= 0) {
+        var zone = t.slice(Math.max(0, am - 10), am + 90);
+        _r2extractDigitRuns(zone).forEach(function (r) {
+          var v = parseInt(r.digits, 10);
+          if (byVal[String(v)]) byVal[String(v)].score += 2;
+        });
+      }
+      if (parseSticker) {
+        try {
+          var f = parseSticker(src.text);
+          if (f && f.odo && byVal[String(parseInt(f.odo, 10))]) byVal[String(parseInt(f.odo, 10))].score += 3;
+        } catch (e) {}
+      }
+    });
+    var list = Object.keys(byVal).map(function (k) { return byVal[k]; });
+    list.forEach(function (c) {
+      if (c.digits.length === 6) c.score += 2; else c.score += 1;
+      if (master) {
+        if (c.value > master && c.value <= master + 40000) c.score += 6;
+        else if (c.value <= master) c.score -= 4;
+        else c.score -= 2;
+      }
+    });
+    list.sort(function (a, b) { return (b.score - a.score) || (b.sources - a.sources) || (b.value - a.value); });
+    return list;
+  }
+  var _R2_MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+  function _r2fuzzyMonth(tok) {
+    var t = String(tok || '').toUpperCase().replace(/[^A-Z]/g, '').replace(/0/g, 'O').replace(/5/g, 'S').replace(/1/g, 'I');
+    if (t.length < 3) return null;
+    var keys = Object.keys(_R2_MONTHS);
+    for (var i = 0; i < keys.length; i++) if (t.indexOf(keys[i]) === 0) return _R2_MONTHS[keys[i]];
+    if (t.indexOf('SEPT') === 0 || t.indexOf('SEF') === 0) return 9;
+    return null;
+  }
+  function _r2isoOf(y, mo, d) {
+    if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+    if (!(y >= 2015 && y <= 2045)) return null;
+    return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2);
+  }
+  function _r2dateInterpretations(a, b, y) {
+    var out = [];
+    var yy = parseInt(y, 10); if (String(y).length === 2) yy += 2000;
+    var i1 = _r2isoOf(yy, parseInt(a, 10), parseInt(b, 10)); if (i1) out.push(i1);
+    var i2 = _r2isoOf(yy, parseInt(b, 10), parseInt(a, 10)); if (i2 && i2 !== i1) out.push(i2);
+    if (String(a).length === 2 && parseInt(a, 10) > 31) {
+      var a2 = String(a).slice(1);
+      var i3 = _r2isoOf(yy, parseInt(a2, 10), parseInt(b, 10)); if (i3 && out.indexOf(i3) < 0) out.push(i3);
+      var i4 = _r2isoOf(yy, parseInt(b, 10), parseInt(a2, 10)); if (i4 && out.indexOf(i4) < 0) out.push(i4);
+    }
+    return out;
+  }
+  function _r2rankStickerDates(texts, parseSticker) {
+    var byDate = {};
+    function add(iso, pts) {
+      if (!iso) return;
+      var c = byDate[iso] || (byDate[iso] = { date: iso, score: 0, sources: 0 });
+      c.score += pts;
+    }
+    texts.forEach(function (src) {
+      var t = String(src.text || '');
+      var seenHere = {};
+      var m, re;
+      re = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+      while ((m = re.exec(t)) !== null) { var iso0 = _r2isoOf(+m[1], +m[2], +m[3]); if (iso0 && !seenHere[iso0]) { add(iso0, 2); seenHere[iso0] = 1; } }
+      re = /\b(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})\b/g;
+      while ((m = re.exec(t)) !== null) {
+        _r2dateInterpretations(m[1], m[2], m[3]).forEach(function (iso) { if (!seenHere[iso]) { add(iso, 2); seenHere[iso] = 1; } });
+      }
+      re = /(\d{1,2})\s*[-\s]\s*([A-Za-z]{3,9})\.?,?\s*(\d{2,4})(?!\d)/g;
+      while ((m = re.exec(t)) !== null) {
+        var mo = _r2fuzzyMonth(m[2]); if (!mo) continue;
+        var y = parseInt(m[3], 10); if (String(m[3]).length === 2) y += 2000;
+        var iso = _r2isoOf(y, mo, parseInt(m[1], 10)); if (iso && !seenHere[iso]) { add(iso, 2); seenHere[iso] = 1; }
+      }
+      re = /([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{2,4})(?!\d)/g;
+      while ((m = re.exec(t)) !== null) {
+        var mo2 = _r2fuzzyMonth(m[1]); if (!mo2) continue;
+        var y2 = parseInt(m[3], 10); if (String(m[3]).length === 2) y2 += 2000;
+        var iso2 = _r2isoOf(y2, mo2, parseInt(m[2], 10)); if (iso2 && !seenHere[iso2]) { add(iso2, 2); seenHere[iso2] = 1; }
+      }
+      if (parseSticker) {
+        try {
+          var f = parseSticker(t);
+          if (f && f.date) add(f.date, 4);
+        } catch (e) {}
+      }
+    });
+    var list = Object.keys(byDate).map(function (k) { return byDate[k]; });
+    list.forEach(function (c) {
+      var y = parseInt(c.date.slice(0, 4), 10);
+      if (y >= 2024 && y <= 2030) c.score += 1;
+    });
+    list.sort(function (a, b) { return b.score - a.score; });
+    return list;
+  }
+
+  /* Mine ranked candidates from pooled OCR texts.
+     texts: [{ text, whitelist }] — opts: { kind:'odometer'|'sticker',
+     master, parseOdo, parseSticker }. Returns { odo, miles, dates }. */
+  TicketOCR.mineCandidates = function (texts, opts) {
+    opts = opts || {};
+    var out = { odo: [], miles: [], dates: [] };
+    if (opts.kind === 'sticker') {
+      out.miles = _r2rankStickerMiles(texts, opts.master || null, opts.parseSticker || TicketOCR.parseServiceSticker);
+      out.dates = _r2rankStickerDates(texts, opts.parseSticker || TicketOCR.parseServiceSticker);
+    } else {
+      out.odo = _r2rankOdo(texts, opts.parseOdo || null);
+    }
+    return out;
+  };
+
+  /* ---------- hunt: canvas variants + pooled reads ----------
+     Two workers, mirroring the bench's fix for the tesseract.js
+     empty-whitelist trap: the plain worker NEVER gets setParameters;
+     the param worker only ever gets a NON-EMPTY whitelist. */
+  var _huntWorkers = null;
+  function _huntGetWorkers() {
+    if (_huntWorkers) return _huntWorkers;
+    _huntWorkers = TicketOCR.ensureLoaded().then(function () {
+      if (!Tesseract.createWorker) return null;
+      return Promise.all([
+        Tesseract.createWorker('eng'),
+        Tesseract.createWorker('eng')
+      ]).then(function (ws) { return { plain: ws[0], param: ws[1] }; })
+        .catch(function () { return null; });
+    });
+    return _huntWorkers;
+  }
+  function _huntRead(workers, img, cfg) {
+    if (!workers) {
+      // fallback: plain one-shot reads only (still pools variants)
+      if (cfg !== 'dflt') return Promise.resolve(null);
+      return TicketOCR.recognize(img).catch(function () { return null; });
+    }
+    if (cfg === 'dflt') {
+      return workers.plain.recognize(img).then(function (r) { return r.data.text; }).catch(function () { return null; });
+    }
+    var params = cfg === 'wl7'
+      ? { tessedit_pageseg_mode: '7', tessedit_char_whitelist: '0123456789.,' }
+      : { tessedit_pageseg_mode: '6', tessedit_char_whitelist: '0123456789.,/-' };
+    return workers.param.setParameters(params)
+      .then(function () { return workers.param.recognize(img); })
+      .then(function (r) { return r.data.text; })
+      .catch(function () { return null; });
+  }
+  function _huntLoadImage(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error('hunt: image load failed')); };
+      img.src = src;
+    });
+  }
+  function _huntVariants(img) {
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    var scale = Math.min(1, 1600 / Math.max(w, h));
+    var W = Math.max(2, Math.round(w * scale)), H = Math.max(2, Math.round(h * scale));
+    var base = document.createElement('canvas'); base.width = W; base.height = H;
+    base.getContext('2d').drawImage(img, 0, 0, W, H);
+    function otsuFrom(srcCanvas, invert, preBlur) {
+      var c = document.createElement('canvas'); c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+      if (preBlur) { try { ctx.filter = 'blur(' + preBlur + 'px)'; } catch (e) {} }
+      ctx.drawImage(srcCanvas, 0, 0);
+      try { ctx.filter = 'none'; } catch (e) {}
+      var id = ctx.getImageData(0, 0, W, H), d = id.data;
+      var hist = new Array(256).fill(0), i, v;
+      for (i = 0; i < d.length; i += 4) { v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 | 0; hist[v]++; }
+      var total = W * H, sum = 0;
+      for (i = 0; i < 256; i++) sum += i * hist[i];
+      var sumB = 0, wB = 0, maxVar = -1, thr = 127;
+      for (i = 0; i < 256; i++) {
+        wB += hist[i]; if (!wB) continue;
+        var wF = total - wB; if (!wF) break;
+        sumB += i * hist[i];
+        var mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > maxVar) { maxVar = between; thr = i; }
+      }
+      for (i = 0; i < d.length; i += 4) {
+        v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+        var ink = v <= thr ? 0 : 255;
+        if (invert) ink = 255 - ink;
+        d[i] = d[i + 1] = d[i + 2] = ink;
+      }
+      ctx.putImageData(id, 0, 0);
+      return c;
+    }
+    function adaptFrom(srcCanvas) {
+      var blurC = document.createElement('canvas'); blurC.width = W; blurC.height = H;
+      var bctx = blurC.getContext('2d');
+      try { bctx.filter = 'blur(9px)'; } catch (e) {}
+      bctx.drawImage(srcCanvas, 0, 0);
+      var c = document.createElement('canvas'); c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+      ctx.drawImage(srcCanvas, 0, 0);
+      var id = ctx.getImageData(0, 0, W, H), bd = bctx.getImageData(0, 0, W, H).data, d = id.data;
+      for (var i = 0; i < d.length; i += 4) {
+        var g = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+        var bg = (bd[i] * 299 + bd[i + 1] * 587 + bd[i + 2] * 114) / 1000;
+        var ink = g < bg - 12 ? 0 : 255;
+        d[i] = d[i + 1] = d[i + 2] = ink;
+      }
+      ctx.putImageData(id, 0, 0);
+      return c;
+    }
+    function url(canvas) { return canvas.toDataURL('image/jpeg', 0.92); }
+    var V = [];
+    V.push({ name: 'gray', url: url(base) });
+    V.push({ name: 'otsu', url: url(otsuFrom(base, false, 0)) });
+    V.push({ name: 'adapt', url: url(adaptFrom(base)) });
+    V.push({ name: 'fuse', url: url(otsuFrom(base, false, 1.2)) });
+    V.push({ name: 'inv', url: url(otsuFrom(base, true, 0)) });
+    var offs = [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4]];
+    for (var ti = 0; ti < 4; ti++) {
+      var tc = document.createElement('canvas');
+      tc.width = Math.round(W * 0.6); tc.height = Math.round(H * 0.6);
+      tc.getContext('2d').drawImage(base, Math.round(W * offs[ti][0]), Math.round(H * offs[ti][1]), tc.width, tc.height, 0, 0, tc.width, tc.height);
+      V.push({ name: 'tile' + ti, url: url(tc) });
+    }
+    return V;
+  }
+
+  /* Run the hunt on a photo (data URL). Progressive: opts.onUpdate(result)
+     fires after every read with the current rankings. Resolves with the
+     final { odo, miles, dates }. Never rejects. */
+  TicketOCR.huntCandidates = function (dataUrl, opts) {
+    opts = opts || {};
+    var pool = (opts.seedTexts || []).slice();
+    function current() { return TicketOCR.mineCandidates(pool, opts); }
+    return _huntLoadImage(dataUrl).then(function (img) {
+      var variants = _huntVariants(img);
+      var byName = {};
+      variants.forEach(function (v) { byName[v.name] = v.url; });
+      var plan = [
+        { img: 'gray', cfg: 'dflt' }, { img: 'otsu', cfg: 'dflt' },
+        { img: 'adapt', cfg: 'dflt' }, { img: 'fuse', cfg: 'dflt' },
+        { img: 'inv', cfg: 'dflt' },
+        { img: 'tile0', cfg: 'dflt' }, { img: 'tile1', cfg: 'dflt' },
+        { img: 'tile2', cfg: 'dflt' }, { img: 'tile3', cfg: 'dflt' },
+        { img: 'otsu', cfg: 'wl' }, { img: 'fuse', cfg: 'wl7' }
+      ];
+      return _huntGetWorkers().then(function (workers) {
+        var chain = Promise.resolve();
+        plan.forEach(function (step) {
+          chain = chain.then(function () {
+            return _huntRead(workers, byName[step.img], step.cfg).then(function (text) {
+              if (text) {
+                pool.push({ text: text, whitelist: step.cfg !== 'dflt' });
+                if (opts.onUpdate) { try { opts.onUpdate(current()); } catch (e) {} }
+              }
+            });
+          });
+        });
+        return chain.then(function () { return current(); });
+      });
+    }).catch(function () { return current(); });
+  };
+
 })();

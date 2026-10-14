@@ -1,0 +1,4 @@
+tools/corpus/
+tools/bench-env/
+node_modules/
+*.traineddata
