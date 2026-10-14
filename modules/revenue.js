@@ -570,17 +570,41 @@
         manifestFeedPush('revenue', 'Extra (' + body.querySelector('#rx_type').value + '): $' + amt.toFixed(2));
         api.render(body);
       };
-      body.querySelectorAll('[data-rvdel]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Delete this entry?')) return;
-          var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
-        };
+      /* v43: two-tap in-app delete confirm — the native confirm dialog
+         freezes the page renderer in automated Chromium (the Oct 13 data
+         load died twice on exactly that click) and is clunky on mobile.
+         First tap ARMS the button for ~3.5s ("Sure? Tap again to delete",
+         app-red); a second tap while armed runs the delete. Arm state
+         lives on the button element itself, so api.render() (fresh DOM)
+         always starts every button unarmed. */
+      function bindTwoTapDelete(sel, del) {
+        body.querySelectorAll(sel).forEach(function (b) {
+          b.onclick = function () {
+            if (b.getAttribute('data-armed') === '1') {
+              if (b._armT) clearTimeout(b._armT);
+              del(b);
+              return;
+            }
+            var label = b.textContent;
+            b.setAttribute('data-armed', '1');
+            b.textContent = 'Sure? Tap again to delete';
+            b.style.background = '#e74c3c';
+            b.style.color = '#fff';
+            b._armT = setTimeout(function () {
+              if (!document.body.contains(b)) return;
+              b.removeAttribute('data-armed');
+              b.textContent = label;
+              b.style.background = '';
+              b.style.color = '';
+            }, 3500);
+          };
+        });
+      }
+      bindTwoTapDelete('[data-rvdel]', function (b) {
+        var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
       });
-      body.querySelectorAll('[data-rxdel]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Delete this extra?')) return;
-          var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
-        };
+      bindTwoTapDelete('[data-rxdel]', function (b) {
+        var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
       });
       body.querySelector('#rv_export').onclick = function () {
         api.exportToManifest();
