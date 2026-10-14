@@ -46,6 +46,79 @@
 
   function events() { return S('events', []); }
 
+  /* NEXT-SERVICE-BEGIN (v49) — optional "next service" target for the oil
+     change countdown. From the owner's windshield sticker: an explicit
+     target (odometer and/or date) he can log instead of relying on the
+     interval alone. Both fields are OPTIONAL — empty is valid, and saving
+     anything else in this module never requires them.
+     Keys: mt_nextServiceOdo (number, or '' when unset),
+           mt_nextServiceDate ('YYYY-MM-DD', or '' when unset). */
+  function nextService() {
+    return {
+      odo: parseFloat(S('nextServiceOdo', '')) || 0,
+      date: S('nextServiceDate', '') || ''
+    };
+  }
+
+  function clearNextService() {
+    W('nextServiceOdo', '');
+    W('nextServiceDate', '');
+  }
+
+  /* Pure oil-change countdown state. ivOilKm = oil interval, odo =
+     current odometer, lastOil = last oil event (or null), ns =
+     nextService(), today = 'YYYY-MM-DD'. When a target odometer is set
+     it REPLACES the interval math; a target date then makes the item due
+     at whichever comes first (km reached OR date reached). A date on its
+     own (no target odometer) does not drive the countdown — interval
+     model, unchanged. */
+  function oilDueState(ivOilKm, odo, lastOil, ns, today) {
+    var lastOdo = lastOil ? (parseFloat(lastOil.odo) || 0) : 0;
+    var lastDate = lastOil ? (lastOil.date || '') : '';
+    if (ns && ns.odo > 0) {
+      var remaining = ns.odo - odo;
+      var dueByDate = !!(ns.date && today >= ns.date);
+      return {
+        mode: 'target', dueAt: ns.odo, remaining: remaining,
+        overdue: (remaining <= 0) || dueByDate,
+        dueByKm: remaining <= 0, dueByDate: dueByDate,
+        nextDate: ns.date || '', lastOdo: lastOdo, lastDate: lastDate
+      };
+    }
+    var dueAt = lastOil ? lastOdo + ivOilKm : odo + ivOilKm;
+    return {
+      mode: 'interval', dueAt: dueAt, remaining: dueAt - odo,
+      overdue: (dueAt - odo) <= 0, dueByKm: (dueAt - odo) <= 0,
+      dueByDate: false, nextDate: '', lastOdo: lastOdo, lastDate: lastDate
+    };
+  }
+
+  /* One-time data fix (v49): on Oct 14, 2026 the oil interval was set to
+     6,911 through the UI as a workaround, so the countdown landed on the
+     sticker's next-service target (175,429 km) from the then-current
+     odometer (168,518 km). This moves that target into the proper
+     next-service field and restores the real interval (8,000 km). It
+     fires ONLY when the saved oil interval is exactly the workaround
+     value AND no next-service target is set yet; the synced
+     mt_nsMigrated flag stamps it done so it can never re-fire (e.g. if
+     the interval is hand-set to 6,911 again later). Invoked from
+     dueItems(), i.e. on-device during normal app use; the writes go
+     through App._store, so they cloud-sync like any other mt_ key. */
+  function migrateNextService() {
+    if (S('nsMigrated', 0)) return false;
+    var fired = false;
+    var saved = S('intervals', {});
+    if ((parseInt(saved.oil, 10) || 0) === 6911 && !(nextService().odo > 0)) {
+      saved.oil = 8000;
+      W('intervals', saved);
+      W('nextServiceOdo', 175429);
+      fired = true;
+    }
+    W('nsMigrated', 1);
+    return fired;
+  }
+  /* NEXT-SERVICE-END */
+
   /* ---- Fuel mileage (same math as Fuel module trend) ---- */
   function fills() { return App._store.get('fuel_fills', []) || []; }
 
@@ -81,6 +154,7 @@
 
   /* ---- Due-item computation ---- */
   function dueItems() {
+    migrateNextService();
     var iv = intervals(), odo = currentOdo(), ev = events();
     var lastByType = {};
     ev.forEach(function (x) {
@@ -89,11 +163,28 @@
       if (!lastByType[x.type] || o > (parseFloat(lastByType[x.type].odo) || 0)) lastByType[x.type] = x;
     });
     var out = [];
+    var todayStr = App._today();
     TYPES.forEach(function (t) {
       if (t.dateBased) return; /* handled separately */
       var km = parseInt(iv[t.id], 10) || 0;
-      if (km <= 0) return;
       var last = lastByType[t.id];
+      if (t.id === 'oil') {
+        /* v49: an explicit next-service target (when set) drives the oil
+           countdown instead of the interval math — and shows even if the
+           interval itself is 0/off. Cleared target -> interval model. */
+        var st = oilDueState(km, odo, last, nextService(), todayStr);
+        if (st.mode !== 'target' && km <= 0) return;
+        out.push({
+          id: t.id, name: t.name, km: km, mode: st.mode,
+          lastOdo: st.lastOdo, lastDate: st.lastDate,
+          dueAt: st.dueAt,
+          remaining: st.remaining,
+          overdue: st.overdue,
+          dueByDate: st.dueByDate, dueByKm: st.dueByKm, nextDate: st.nextDate
+        });
+        return;
+      }
+      if (km <= 0) return;
       var dueAt = last ? (parseFloat(last.odo) || 0) + km : odo + km;
       out.push({
         id: t.id, name: t.name, km: km,
@@ -104,7 +195,11 @@
         overdue: (dueAt - odo) <= 0
       });
     });
-    out.sort(function (a, b) { return a.remaining - b.remaining; });
+    /* Overdue items first (same pattern as the annual re-sort below);
+       relative order of everything else is unchanged. */
+    out.sort(function (a, b) {
+      return ((a.overdue ? -1e12 : 0) + a.remaining) - ((b.overdue ? -1e12 : 0) + b.remaining);
+    });
     /* Annual safety inspection (date-based) */
     var annualDate = S('annualDate', '');
     if (annualDate) {
@@ -127,11 +222,15 @@
     _allowed: function () { return true; },
     _dueItems: dueItems,
     _mileageStats: mileageStats,
+    _nextService: nextService,
+    _oilDueState: oilDueState,
+    _migrateNextService: migrateNextService,
 
     status: function () {
       try {
         var d = dueItems();
         var next = d.items.filter(function (i) { return !i.dateBased; })[0];
+        if (next && next.dueByDate) return next.name + ' due (date)';
         if (next && next.overdue) return '⚠️ ' + next.name + ' overdue';
         if (next) return next.name + ' in ' + Math.round(next.remaining).toLocaleString('en-CA') + ' km';
         return events().length + ' services logged';
@@ -180,6 +279,17 @@
               : (i.days <= 30 ? '<span style="color:#b7791f;font-weight:800">Due in ' + i.days + ' days</span>'
                               : '<span>Due in ' + i.days + ' days</span>');
             line = i.annualDate;
+          } else if (i.mode === 'target') {
+            var rt = Math.abs(Math.round(i.remaining));
+            badge = i.dueByDate
+              ? '<span style="color:#c0392b;font-weight:800">⚠️ Due (date)</span>'
+              : (i.overdue
+                ? '<span style="color:#c0392b;font-weight:800">⚠️ OVERDUE by ' + rt.toLocaleString('en-CA') + ' km</span>'
+                : (i.remaining <= 1000 ? '<span style="color:#b7791f;font-weight:800">Due in ' + rt.toLocaleString('en-CA') + ' km</span>'
+                                       : '<span>Due in ' + rt.toLocaleString('en-CA') + ' km</span>'));
+            line = 'Next service at ' + kmStr(i.dueAt) +
+              (i.nextDate ? ' or by ' + esc(i.nextDate) : '') +
+              (i.lastDate ? ' · last done ' + esc(i.lastDate) + ' @ ' + kmStr(i.lastOdo) : ' · not logged yet');
           } else {
             var r = Math.abs(Math.round(i.remaining));
             badge = i.overdue
@@ -193,6 +303,16 @@
         });
       }
       h += '</div>';
+
+      /* --- Next service (optional, v49) --- */
+      var nsNow = nextService();
+      h += '<div class="card"><h3>🎯 Next service <small style="font-weight:400;color:#666">(optional)</small></h3>' +
+        '<p class="note">Got a service sticker? Put the next service from the sticker here and I\'ll count down to it — odometer or date, whichever comes first. Both fields are optional; leave them empty and I use the service interval below instead. Logging an oil change clears these.</p>' +
+        '<div class="row"><div><label class="f">Next service odometer (km)</label><input id="mt_ns_odo" type="number" inputmode="numeric" min="0" placeholder="e.g. 175429" value="' + (nsNow.odo > 0 ? Math.round(nsNow.odo) : '') + '"></div>' +
+        '<div><label class="f">Next service date</label><input type="date" id="mt_ns_date" value="' + esc(nsNow.date) + '"></div></div>' +
+        '<div class="row"><button class="btn navy" id="mt_ns_save">Save next service</button>' +
+        ((nsNow.odo > 0 || nsNow.date) ? '<button class="btn ghost" id="mt_ns_clear">Clear</button>' : '') +
+        '</div></div>';
 
       /* --- Log a service --- */
       h += '<div class="card"><h3>＋ Log service</h3>' +
@@ -228,6 +348,19 @@
 
       body.innerHTML = h;
 
+      var nsSaveBtn = body.querySelector('#mt_ns_save');
+      if (nsSaveBtn) nsSaveBtn.onclick = function () {
+        var o = parseFloat(body.querySelector('#mt_ns_odo').value);
+        W('nextServiceOdo', o > 0 ? Math.round(o) : '');
+        W('nextServiceDate', body.querySelector('#mt_ns_date').value || '');
+        api.render(body);
+      };
+      var nsClearBtn = body.querySelector('#mt_ns_clear');
+      if (nsClearBtn) nsClearBtn.onclick = function () {
+        clearNextService();
+        api.render(body);
+      };
+
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);
         if (!(v > 0)) { alert('Enter a valid odometer reading.'); return; }
@@ -247,6 +380,12 @@
           notes: body.querySelector('#mt_notes').value.trim()
         };
         var l = events(); l.push(rec); W('events', l);
+        if (type === 'oil') {
+          /* v49: the sticker target described THIS service — clear it so a
+             stale target can't keep showing as due. The countdown falls
+             back to last-service + interval from the service just logged. */
+          clearNextService();
+        }
         if (window.FB && FB.saveDoc) { try { FB.saveDoc('maintenance', 'm' + Date.now(), rec); } catch (e) {} }
         api.render(body);
       };
