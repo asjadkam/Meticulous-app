@@ -64,7 +64,42 @@
       if (typeof s.liveKm === 'number') { liveKm += s.liveKm; liveKmAny = true; }
       if (s.milesStatus === 'discrepancy' && s.milesReport) milesIssues.push(s);
     });
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay };
+    /* v69: a session still RUNNING (or paused) has NO saved entry —
+       entries are only written at STOP (app.js stopSessionAt) — so a
+       manifest read from saved entries alone shows Start Time "—"
+       all day while the truck is working (owner, Oct 14: "end time
+       missing is fine mid-day, but why no start time?"). Consult the
+       live tracker the same way Revenue's liveSession() does: the
+       running session's start is now − its live seconds (identical
+       math to how the saved entry's start is later derived as
+       endedAt − seconds, so the mid-day preview and the stopped
+       record agree). End stays honestly open; a by-mile start
+       odometer captured at session start is still pending on the
+       tracker (app.js odoStart) and belongs in the preview too. */
+    var live = null;
+    try {
+      var trk = (window.App && App.tracker) || G('tracker', null);
+      if (d === App._today() && trk && (trk.status === 'running' || trk.status === 'paused')) {
+        var lsec = trk.elapsed || 0;
+        if (trk.status === 'running') lsec += Math.floor((Date.now() - (trk.startTs || Date.now())) / 1000);
+        if (lsec > 0) {
+          var lStartMs = Date.now() - lsec * 1000;
+          var lStart = new Date(lStartMs);
+          var lDateStr = lStart.getFullYear() + '-' + ('0' + (lStart.getMonth() + 1)).slice(-2) + '-' + ('0' + lStart.getDate()).slice(-2);
+          live = { status: trk.status, startMs: lStartMs, startOdo: null };
+          if (trk.odoStart && trk.odoStart.date === lDateStr &&
+              trk.odoStart.value !== null && trk.odoStart.value !== undefined && trk.odoStart.value !== '') {
+            live.startOdo = trk.odoStart.value;
+          }
+        }
+      }
+    } catch (e) { live = null; }
+    if (live) {
+      if (!sessions.length) startT = new Date(live.startMs).toLocaleTimeString();
+      endT = (live.status === 'running') ? 'Still working' : 'Paused';
+      if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
+    }
+    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -96,6 +131,108 @@
     var t = toggles();
     t[key] = !!on;
     App._store.set(SECTIONS_KEY, t);
+  }
+
+  /* v69: the manifest as typed PDF lines (js/pdfexport.js) — built
+     from the SAME collect() result and the SAME toggle set as the
+     on-screen preview, under the same conditions, so the PDF can
+     never disagree with what the driver sees. */
+  function docLines(d, c, t) {
+    var L = [{ k: 'title', a: 'MANIFEST — ' + d }];
+    if (c.live) L.push({ k: 'note', a: 'Shift still in progress — the end time and final numbers land when the shift is stopped.' });
+    if (t.dispatch && c.dispatches.length) {
+      L.push({ k: 'h', a: 'Dispatches' });
+      c.dispatches.forEach(function (x) {
+        L.push({ k: 'kv', a: x.jobSite || x.pickup || 'Dispatch', b: x.material || '' });
+        if (x.tickets && x.tickets.length) {
+          var o = {};
+          try { o = App._store.get('onboarding', {}); } catch (e) {}
+          var tb = parseFloat(o.travelBonus) || 0;
+          x.tickets.forEach(function (tk, ti) {
+            var lbl = tk.cardNumber ? 'Card #' + tk.cardNumber :
+                      tk.ticketNo ? 'Ticket #' + tk.ticketNo : 'Ticket ' + (ti + 1);
+            var det = [];
+            if (tk.foremanHours) det.push(tk.foremanHours + 'h');
+            if (tk.paymentUnit) det.push(tk.paymentUnit);
+            if (tk.netWeight) det.push(tk.netWeight + 't');
+            L.push({ k: 'p', a: '  • ' + lbl + (det.length ? ' — ' + det.join(' · ') : '') });
+          });
+          if (window.TicketOCR) {
+            var s = TicketOCR.summarizeTickets(x.tickets, tb);
+            L.push({ k: 'p', a: '  Foreman total: ' + s.totalForemanHours + 'h' +
+              (tb > 0 ? ' + travel ' + tb + 'h = ' + s.totalPaidHours + 'h paid' : '') });
+            if (s.totalNetWeight > 0) L.push({ k: 'p', a: '  Total weight: ' + s.totalNetWeight + 't' });
+          }
+        }
+      });
+    }
+    if (t.nav && c.navLog.length) {
+      L.push({ k: 'h', a: 'Work travel' });
+      c.navLog.forEach(function (x) {
+        L.push({ k: 'kv', a: x.name, b: new Date(x.at).toLocaleTimeString() });
+      });
+    }
+    if (t.expense && (c.fills.length || c.expenses.length)) {
+      L.push({ k: 'h', a: 'Fuel & expenses' });
+      c.fills.forEach(function (x) { L.push({ k: 'kv', a: 'Fuel — ' + (x.station || ''), b: '$' + x.cost }); });
+      c.expenses.forEach(function (x) { L.push({ k: 'kv', a: x.what, b: '$' + x.cost }); });
+    }
+    if (t.incident && c.incidents.length) {
+      L.push({ k: 'h', a: 'Incidents' });
+      c.incidents.forEach(function (x) { L.push({ k: 'kv', a: x.tab, b: String(x.desc || '').slice(0, 40) }); });
+    }
+    if (t.start) L.push({ k: 'kv', a: 'Start Time', b: c.startT });
+    if (t.end) L.push({ k: 'kv', a: 'End Time', b: c.endT });
+    if (t.odoStart && c.odoStart !== null) L.push({ k: 'kv', a: 'Start Odometer', b: Number(c.odoStart).toLocaleString('en-CA') + ' km' });
+    if (t.odoEnd && c.odoEnd !== null) L.push({ k: 'kv', a: 'End Odometer', b: Number(c.odoEnd).toLocaleString('en-CA') + ' km' });
+    if (t.odoEnd && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
+    if (t.odoEnd && c.milesIssues.length && window.LiveMiles) {
+      c.milesIssues.forEach(function (s) {
+        LiveMiles.reportLines(s.milesReport).forEach(function (ln) {
+          L.push({ k: 'note', a: ln });
+        });
+      });
+    }
+    if (t.geoloads && c.geoDay && c.geoDay.sites) {
+      L.push({ k: 'kv', a: 'Loads counted by GPS', b: String(c.geoDay.count || 0) });
+      L.push({ k: 'note', a: 'Counted between the load site (' +
+        ((c.geoDay.sites.load && c.geoDay.sites.load.label) || 'load site') + ') and the dump site (' +
+        ((c.geoDay.sites.dump && c.geoDay.sites.dump.label) || 'dump site') +
+        ') while the tracker was running. Ticket loads above stay the record for pay.' });
+      if (c.geoDay.learnedDump) {
+        L.push({ k: 'note', a: 'The dump site was not on the dispatch — the app learned it from today’s driving (' +
+          Number(c.geoDay.learnedDump.lat).toFixed(5) + ', ' + Number(c.geoDay.learnedDump.lng).toFixed(5) +
+          ') and will remember it for this load site. Learned counts are a cross-check only; ticket loads stay the record for pay.' });
+      } else if (c.geoDay.sites.dump && c.geoDay.sites.dump.src === 'remembered') {
+        L.push({ k: 'note', a: 'The dump site was remembered from an earlier day’s driving to this load site — the app learned it from the truck’s trips; nobody had to type it in.' });
+      }
+      if (c.geoDay.altDump) {
+        L.push({ k: 'note', a: 'Another place also looked like a dump stop this day (' +
+          Number(c.geoDay.altDump.lat).toFixed(5) + ', ' + Number(c.geoDay.altDump.lng).toFixed(5) +
+          '). The dump site already on record was kept.' });
+      }
+      (c.geoDay.events || []).forEach(function (ev, i) {
+        L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: new Date(ev.t).toLocaleTimeString() });
+      });
+    } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
+      L.push({ k: 'note', a: GEOLOAD_BLOCKED[c.geoDay.blocked] });
+    }
+    if (t.earned) L.push({ k: 'kv', a: 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
+    return L;
+  }
+
+  function saveManifestPdf(body, d, c, t) {
+    var msgEl = null;
+    try { msgEl = body.querySelector('#mn_msg'); } catch (e) {}
+    function say(txt) { if (msgEl) msgEl.textContent = txt; }
+    if (window.MetPdf && typeof MetPdf.savePdf === 'function') {
+      say('Making your PDF…');
+      MetPdf.savePdf({ title: 'Manifest — ' + d, lines: docLines(d, c, t) }, 'manifest-' + d + '.pdf').then(
+        function (r) { say(r.message); },
+        function () { say('The PDF could not be saved. Try again.'); });
+    } else {
+      say('PDF tools are still loading — close and reopen the app, then try again.');
+    }
   }
 
   Meticulous.modules.manifest = {
@@ -209,7 +346,8 @@
       if (t.earned) h += '<div class="kv"><span>Total Earned Income</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
-        '<button class="btn ghost" id="mn_dl">⬇️ Download</button></div></div>';
+        '<button class="btn ghost" id="mn_dl">⬇️ Download</button></div>' +
+        '<div class="note" id="mn_msg"></div></div>';
 
       body.innerHTML = h;
       body.querySelector('#mn_date').onchange = function (e) {
@@ -221,13 +359,18 @@
           Meticulous.modules.manifest.render(body);
         };
       });
-      body.querySelector('#mn_print').onclick = function () { window.print(); };
-      body.querySelector('#mn_dl').onclick = function () {
-        var txt = 'MANIFEST — ' + d + '\n\n' + body.querySelector('#mn_doc').innerText;
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
-        a.download = 'manifest-' + d + '.txt'; a.click();
+      /* v69: window.print() is a silent no-op inside the Android
+         shell (bare WebView, no print bridge) and the old blob-.txt
+         download click is ignored there too (no DownloadListener) —
+         in the shell BOTH buttons now make a real PDF and save it to
+         the device Documents folder via js/pdfexport.js. In a plain
+         browser, Print keeps the system print dialog exactly as
+         before and Download saves the same PDF as a file. */
+      body.querySelector('#mn_print').onclick = function () {
+        if (window.MetPdf && MetPdf.isNativeShell()) saveManifestPdf(body, d, c, t);
+        else window.print();
       };
+      body.querySelector('#mn_dl').onclick = function () { saveManifestPdf(body, d, c, t); };
     }
   };
 })();

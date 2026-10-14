@@ -246,6 +246,23 @@
   }
 
   function printDoc(title, bodyHtml) {
+    /* v69: in the Android shell this popup path is doubly dead —
+       window.open('_blank') goes nowhere in the bare Capacitor
+       WebView and w.print() is a silent no-op there (no print
+       bridge) — the same flaw that killed the Manifest buttons.
+       In the shell, build a real PDF from the same document and
+       save it to the device Documents folder instead (js/pdfexport.js);
+       the browser path below is unchanged. Covers invoices AND pay
+       stubs, which share this function. */
+    if (window.MetPdf && MetPdf.isNativeShell()) {
+      var fname = String(title || 'document').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.pdf';
+      MetPdf.savePdf({ title: title, lines: MetPdf.htmlToLines(bodyHtml) }, fname).then(function (r) {
+        alert(r.message);
+      }, function () {
+        alert('The PDF could not be saved. Try again.');
+      });
+      return;
+    }
     var w = window.open('', '_blank', 'width=800,height=900');
     if (!w) { alert('Pop-up blocked — allow pop-ups to print.'); return; }
     w.document.write('<!DOCTYPE html><html><head><title>' + esc(title) + '</title><style>' +
