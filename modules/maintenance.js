@@ -307,9 +307,15 @@
       /* --- Next service (optional, v49) --- */
       var nsNow = nextService();
       h += '<div class="card"><h3>🎯 Next service <small style="font-weight:400;color:#666">(optional)</small></h3>' +
-        '<p class="note">Got a service sticker? Put the next service from the sticker here and I\'ll count down to it — odometer or date, whichever comes first. Both fields are optional; leave them empty and I use the service interval below instead. Logging an oil change clears these.</p>' +
+        '<p class="note">Got a service sticker? Put the next service from the sticker here and I\'ll count down to it — odometer or date, whichever comes first. Both fields are optional; leave them empty and I use the service interval below instead. Logging an oil change clears these. Or snap the sticker below — the photo fills these boxes; check the read, then Save.</p>' +
         '<div class="row"><div><label class="f">Next service odometer (km)</label><input id="mt_ns_odo" type="number" inputmode="numeric" min="0" placeholder="e.g. 175429" value="' + (nsNow.odo > 0 ? Math.round(nsNow.odo) : '') + '"></div>' +
         '<div><label class="f">Next service date</label><input type="date" id="mt_ns_date" value="' + esc(nsNow.date) + '"></div></div>' +
+        '<label class="f">📷 Sticker photo</label>' +
+        '<input type="file" id="mt_ns_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="mt_ns_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div class="row"><button type="button" class="btn secondary" id="mt_ns_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="mt_ns_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<div id="mt_ns_read"></div>' +
         '<div class="row"><button class="btn navy" id="mt_ns_save">Save next service</button>' +
         ((nsNow.odo > 0 || nsNow.date) ? '<button class="btn ghost" id="mt_ns_clear">Clear</button>' : '') +
         '</div></div>';
@@ -360,6 +366,58 @@
         clearNextService();
         api.render(body);
       };
+
+      /* v51: sticker photo → OCR (same engine as Fuel/Dispatch: 1600px
+         rendition + 180° rotation retry) → PREFILL the next-service
+         fields. NEVER saves: the read lands in the two inputs and the
+         driver checks it and taps "Save next service" himself.
+         Stickers are usually handwritten, and OCR reads handwriting
+         unreliably (proven on the haul card, Oct 13) — the
+         check-before-save step is the safeguard, so there is
+         deliberately no auto-save here. Nothing found = a plain
+         in-page message, never silent, no native dialogs. */
+      var nsCamInput = body.querySelector('#mt_ns_cam_in');
+      var nsPickInput = body.querySelector('#mt_ns_in');
+      var nsCamBtn = body.querySelector('#mt_ns_cam');
+      var nsPickBtn = body.querySelector('#mt_ns_pick');
+      if (nsCamBtn) nsCamBtn.onclick = function () { nsCamInput.click(); };
+      if (nsPickBtn) nsPickBtn.onclick = function () { nsPickInput.click(); };
+      var nsOcrToken = 0;
+      function nsSetRead(html) { var d = body.querySelector('#mt_ns_read'); if (d) d.innerHTML = html; }
+      function nsHandlePhoto(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++nsOcrToken;
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseServiceSticker) {
+          nsSetRead('<span style="color:#e67e22">Photo reader isn\'t ready — type the sticker values in.</span>');
+          return;
+        }
+        nsSetRead('📖 Reading sticker…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== nsOcrToken) return;
+          if (!ocrUrl) { nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== nsOcrToken) return;
+            try { nsSetRead('📖 Reading sticker… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== nsOcrToken) return;
+            var parsed = TicketOCR.parseServiceSticker(text);
+            var rep = TicketOCR.describeStickerRead(parsed);
+            if (!rep.found.length) {
+              nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
+              return;
+            }
+            if (parsed.odo) body.querySelector('#mt_ns_odo').value = parsed.odo;
+            if (parsed.date) body.querySelector('#mt_ns_date').value = parsed.date;
+            nsSetRead('📸 Read from sticker: <b>' + esc(rep.found.join(' · ')) + '</b> — check before saving.' +
+              (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+          }).catch(function () {
+            if (token !== nsOcrToken) return;
+            nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
+          });
+        });
+      }
+      if (nsCamInput) nsCamInput.onchange = nsHandlePhoto;
+      if (nsPickInput) nsPickInput.onchange = nsHandlePhoto;
 
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);

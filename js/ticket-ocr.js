@@ -1,4 +1,4 @@
-/* Meticulous — Tesseract.js OCR ticket parser (v26, doc reader v35)
+/* Meticulous — Tesseract.js OCR ticket parser (v26, doc reader v35, service sticker v51)
    On-device, offline, free. NO Google Vision.
 
    Handles document types:
@@ -1229,6 +1229,175 @@
     add(!!parsed.vendor, parsed.vendor || '', 'store');
     add(!!parsed.date, parsed.date || '', 'date');
     if (parsed.category) found.push(parsed.category);
+    return { found: found, missing: missing };
+  };
+
+  /* ---------- v51: SERVICE STICKER parser ----------
+     Windshield "NEXT SERVICE DUE" stickers (printed shop stickers with
+     a handwritten or printed due date + odometer). Extract:
+       odo  — next-service odometer (string of digits, e.g. '175429')
+       date — next-service date, ISO 'YYYY-MM-DD'
+     These stickers are usually HANDWRITTEN, and this app's own testing
+     (haul card, Oct 13 2026) proved Tesseract reads handwriting poorly.
+     So the parser is deliberately conservative — anchored, validated
+     candidates only — and the caller NEVER auto-saves: the values
+     prefill the Maintenance next-service fields and the driver checks
+     them before tapping Save.
+
+     Traps handled:
+     - "10W30" (oil grade): short digit runs split by a letter — never a
+       5-7 digit odometer, never a date.
+     - Years (2026) and phone numbers (403-555-0182, dashed; spaced
+       1-800 numbers): length/group rules keep them out of the odo pick.
+     - Month names with OCR noise ("5ept", "Sepf", "0ct"): a fuzzy
+       month resolver (digit-confusion fixes + abbrev prefixes +
+       one-edit matches). */
+
+  /* Fuzzy month token -> 1..12 or null. Accepts full names, 3-4 letter
+     abbreviations ("sep", "sept"), and common OCR confusions. */
+  function fuzzyMonth(tok) {
+    if (!tok) return null;
+    var s = String(tok).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!s) return null;
+    var NAMES = ['january', 'february', 'march', 'april', 'may', 'june',
+                 'july', 'august', 'september', 'october', 'november', 'december'];
+    function fromName(w) {
+      for (var i = 0; i < NAMES.length; i++) {
+        if (NAMES[i] === w || NAMES[i].slice(0, 3) === w ||
+            (w.length >= 4 && NAMES[i].indexOf(w) === 0)) return i + 1;
+      }
+      return null;
+    }
+    var m = fromName(s);
+    if (m) return m;
+    // OCR digit confusions inside a month word: 5ept, 0ct, 1an…
+    var fixed = s.replace(/0/g, 'o').replace(/1/g, 'l').replace(/5/g, 's').replace(/8/g, 'b');
+    m = fromName(fixed);
+    if (m) return m;
+    // One-edit distance from a 3-letter abbreviation (Sepf -> Sep)
+    var abbr = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    for (var j = 0; j < abbr.length; j++) {
+      var a = abbr[j], b = fixed.slice(0, 3);
+      if (b.length === 3) {
+        var diff = 0;
+        for (var k = 0; k < 3; k++) if (a[k] !== b[k]) diff++;
+        if (diff <= 1) return j + 1;
+      }
+    }
+    return null;
+  }
+
+  /* Numeric date with slash (or dash) separators. North-American
+     M/D/Y is the house convention (see normDate), but when the first
+     component can't be a month (> 12) it must be the day: D/M/Y —
+     e.g. the owner's "28/09/26". */
+  function stickerSlashDate(a, b, y) {
+    a = parseInt(a, 10); b = parseInt(b, 10); y = parseInt(y, 10);
+    if (y < 100) y += 2000;
+    if (a > 12 && b >= 1 && b <= 12) return isoDate(y, b, a); // D/M/Y
+    return isoDate(y, a, b);                                   // M/D/Y
+  }
+
+  TicketOCR.parseServiceSticker = function (text) {
+    var f = { _type: 'service_sticker' };
+    var t = String(text || '');
+    f._confidence = 0;
+    f._raw = text;
+
+    /* Gate: only read text that looks like a service sticker at all.
+       An unrelated document (a fuel or store receipt) must yield
+       NOTHING here — not even a stray date off its header. Real
+       stickers always carry SERVICE / NEXT / DUE / OIL CHANGE wording
+       (OCR-tolerant on the S in SERVICE). */
+    if (!/SERV[IL1]CE|NEXT|DUE|OIL\s*CHANGE/i.test(t)) return f;
+
+    /* ----- Date ----- */
+    // Prefer the text from the DATE/DUE label onward (stickers put the
+    // value right after the label); fall back to the whole text.
+    var li = t.search(/NEXT|DUE|DATE/i);
+    var zones = li >= 0 ? [t.slice(li), t] : [t];
+    var date = null, zi, m;
+    for (zi = 0; zi < zones.length && !date; zi++) {
+      var z = zones[zi];
+      // "28 Sept 2026" / "28-Sep-26" (day, month name, year)
+      m = z.match(/(\d{1,2})\s*[-\s]\s*([A-Za-z0-9]{3,9})\s*[-\s,]\s*(\d{2,4})(?!\d)/);
+      if (m) {
+        var mo1 = fuzzyMonth(m[2]);
+        var y1 = parseInt(m[3], 10); if (y1 < 100) y1 += 2000;
+        if (mo1 && y1 >= 2015 && y1 <= 2040) date = isoDate(y1, mo1, parseInt(m[1], 10));
+      }
+      // "Sept 28, 2026" (month name, day, year)
+      if (!date) {
+        m = z.match(/([A-Za-z0-9]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s+(\d{2,4})(?!\d)/);
+        if (m) {
+          var mo2 = fuzzyMonth(m[1]);
+          var y2 = parseInt(m[3], 10); if (y2 < 100) y2 += 2000;
+          if (mo2 && y2 >= 2015 && y2 <= 2040) date = isoDate(y2, mo2, parseInt(m[2], 10));
+        }
+      }
+      // ISO "2026-09-28"
+      if (!date) {
+        m = z.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+        if (m) date = isoDate(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+      }
+      // Slash date "03/15/2027" or "28/09/26"
+      if (!date) {
+        m = z.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+        if (m) date = stickerSlashDate(m[1], m[2], m[3]);
+      }
+    }
+    if (date) f.date = date;
+
+    /* ----- Odometer ----- */
+    // Candidates: digit runs with at most ONE internal separator group
+    // ("175429", "175 429", "175,429", "182,000"). Runs with more
+    // groups (spaced phone numbers, account numbers) are rejected, as
+    // are runs under 5 or over 7 digits once cleaned (years, "10W30"
+    // fragments, and litre/price figures never qualify).
+    var cands = [];
+    var re = /(\d{1,3}(?:[,\s]\d{3})|\d{4,7})/g, cm;
+    while ((cm = re.exec(t)) !== null) {
+      var raw = cm[1];
+      var digits = raw.replace(/[,\s]/g, '');
+      if (digits.length < 5 || digits.length > 7) continue;
+      var val = parseInt(digits, 10);
+      if (!(val >= 10000 && val <= 1999999)) continue;
+      cands.push({ raw: raw, val: val, idx: cm.index });
+    }
+    if (cands.length) {
+      // Anchored wins: a candidate within ~24 chars after (or ~8 chars
+      // before) a MILES/KM/ODOMETER label is the sticker's due reading.
+      var anchors = [], am;
+      var are = /(MILES|MILEAGE|KILOMET(?:ER|RE)S?|KMS?|ODOMETER|ODO)\b/gi;
+      while ((am = are.exec(t)) !== null) anchors.push({ idx: am.index, end: am.index + am[0].length });
+      var best = null, bestScore = -1;
+      cands.forEach(function (c) {
+        var score = c.val; // fallback: largest plausible reading wins
+        anchors.forEach(function (a) {
+          var gap = c.idx >= a.end ? c.idx - a.end : (a.idx - (c.idx + c.raw.length));
+          if (gap >= -2 && gap <= 24) score += 10000000 - gap * 1000;
+        });
+        if (score > bestScore) { bestScore = score; best = c; }
+      });
+      f.odo = String(best.val);
+    }
+
+    var count = 0;
+    if (f.odo) count++;
+    if (f.date) count++;
+    f._confidence = count;
+    f._raw = text;
+    return f;
+  };
+
+  /* What the sticker reader found / missed, for the Maintenance
+     next-service read line (same contract as describeFuelRead). */
+  TicketOCR.describeStickerRead = function (parsed) {
+    var found = [], missing = [];
+    if (parsed.odo) found.push('next service ' + Number(parsed.odo).toLocaleString('en-US') + ' km');
+    else missing.push('odometer');
+    if (parsed.date) found.push('due date ' + parsed.date);
+    else missing.push('date');
     return { found: found, missing: missing };
   };
 
