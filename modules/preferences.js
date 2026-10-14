@@ -142,6 +142,18 @@
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote">Checking…</p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
+        /* v59 (owner, Oct 14): Power read is plumbing too — it lives
+           here in Advanced, not as a feature card. The switch + key
+           persist the moment they change (same pattern as the role
+           select), never through Save preferences, so a half-filled
+           form can never clobber them. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">⚡ Power read — cloud help for hard photos</p>' +
+        '<p class="note">When a photo is too hard for the built-in reader (dot-matrix dash, handwritten sticker), the app sends just that photo to Google\'s Gemini AI to read it. The answer always waits for your check — nothing is ever saved by itself.</p>' +
+        '<label class="chk"><input type="checkbox" id="pf_pr_on"> Power read on</label>' +
+        '<label class="f">Gemini API key</label>' +
+        '<input id="pf_pr_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key here">' +
+        '<p class="note" id="pf_pr_note"></p></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
@@ -202,6 +214,39 @@
           };
           App._wirePhotoOCR('pf_odo', 'odometer', prefsPersistPhoto);
           App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
+        }
+      } catch (e) {}
+      /* v59: a queued power read of an earlier dash photo may have
+         finished — offer it in the odometer status line as a tap-to-use
+         button. The button fills the field and persists through the
+         SAME prefsPersistPhoto path as a local read; until it is
+         tapped, nothing is written (peek, not take). */
+      try {
+        if (window.PowerRead && PowerRead.peekResult) {
+          var prOdo = PowerRead.peekResult('odometer');
+          if (prOdo && prOdo.fields && prOdo.fields.value) {
+            var prSt = body.querySelector('#pf_odo_status');
+            if (prSt) {
+              prSt.innerHTML = '⚡ <b>Power read — check before using:</b> from your earlier dash photo: ';
+              var prBtn = document.createElement('button');
+              prBtn.type = 'button';
+              prBtn.className = 'btn small';
+              prBtn.textContent = 'Use ' + Number(prOdo.fields.value).toLocaleString('en-CA') + ' km';
+              prBtn.onclick = function () {
+                var inp = body.querySelector('#pf_odo');
+                if (inp) inp.value = prOdo.fields.value;
+                try { PowerRead.takeResult('odometer'); } catch (e) {}
+                try {
+                  var ob = App._store.get('onboarding', {}) || {};
+                  ob.odometerBaseline = prOdo.fields.value;
+                  if (parseFloat(prOdo.fields.value) > 0) App._store.set('mt_odo', String(prOdo.fields.value));
+                  App._store.set('onboarding', ob);
+                } catch (e) {}
+                prSt.innerHTML = '⚡ Power read: using <b>' + Number(prOdo.fields.value).toLocaleString('en-CA') + ' km</b> — thanks for confirming.';
+              };
+              prSt.appendChild(prBtn);
+            }
+          }
         }
       } catch (e) {}
       /* v52: the role select also persists the moment it changes (same
@@ -342,6 +387,38 @@
           try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
           setTimeout(paint, 4000);
         };
+      })();
+      /* v59: power-read controls — persist on change (never via Save
+         preferences) and always show the month's read count, so the
+         cost (fractions of a cent per read) is visible at a glance. */
+      (function () {
+        var onEl = body.querySelector('#pf_pr_on');
+        var keyEl = body.querySelector('#pf_pr_key');
+        var note = body.querySelector('#pf_pr_note');
+        if (!note) return;
+        function paint(extra) {
+          if (!window.PowerRead) { note.textContent = 'Power read is not loaded in this version.'; return; }
+          var bits = ['Free key: open Google AI Studio → “Get API key” → paste it above. Each read costs a fraction of a cent.'];
+          bits.push('Power reads this month: ' + PowerRead.monthCount() + '.');
+          var q = 0;
+          try { q = PowerRead.queueLength(); } catch (e) {}
+          if (q) bits.push(q + ' power read' + (q === 1 ? '' : 's') + ' waiting for signal.');
+          if (extra) bits.push(extra);
+          note.textContent = bits.join(' ');
+        }
+        if (window.PowerRead) {
+          if (onEl) onEl.checked = PowerRead.isOn();
+          if (keyEl) keyEl.value = PowerRead.getKey();
+        }
+        if (onEl) onEl.onchange = function () {
+          if (window.PowerRead) PowerRead.setOn(!!onEl.checked);
+          paint(onEl.checked ? 'Power read is on.' : 'Power read is off — photos stay on this device only.');
+        };
+        if (keyEl) keyEl.onchange = function () {
+          if (window.PowerRead) PowerRead.setKey(keyEl.value);
+          paint(keyEl.value ? '✓ Key saved.' : 'Key cleared — power read will stay off until a key is pasted.');
+        };
+        paint();
       })();
       // v24: pf_wipe handler removed (button removed above)
     }

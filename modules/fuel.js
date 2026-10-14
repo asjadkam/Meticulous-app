@@ -162,6 +162,12 @@
                 (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
             } else {
               fuSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
+              /* v59: local read found nothing → power-read escalation
+                 (generic path: the cloud transcribes the photo, the
+                 SAME local parser extracts the fields, the same form
+                 is filled — Save fill-up stays the confirm). Silent
+                 when power read is off or no key is set. */
+              fuPowerRead(ocrUrl, token);
             }
           }).catch(function () {
             if (token !== fuOcrToken) return;
@@ -171,6 +177,52 @@
       }
       fuCamInput.onchange = fuHandlePhoto;
       fuPickInput.onchange = fuHandlePhoto;
+
+      /* v59: generic power-read consumer — cloud transcription fed
+         through the existing receipt parser. Fill-only; the form's
+         own Save is the confirm. */
+      function fuFillFromParsed(parsed, rep, label) {
+        fillField('#fu_l', parsed.litres);
+        fillField('#fu_cost', parsed.cost);
+        fillField('#fu_stn', parsed.station);
+        fillField('#fu_date', parsed.date);
+        fuSetRead(label + ' ' + esc(rep.found.join(' · ')) +
+          (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+      }
+      function fuPowerRead(ocrUrl, token) {
+        if (!window.PowerRead || !PowerRead.escalate) return;
+        PowerRead.escalate({
+          reader: 'text', image: ocrUrl, origin: { module: 'fuel', label: 'Fuel' },
+          onStatus: function (s) {
+            if (token !== fuOcrToken) return;
+            if (s.state === 'working') fuSetRead('⚡ Asking the power read…');
+            else if (s.state === 'waiting') fuSetRead('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still fill the form by hand.');
+            else if (s.state === 'error') fuSetRead('<span style="color:#e67e22">' + esc(s.message) + '</span>');
+          },
+          onResult: function (res) {
+            if (token !== fuOcrToken) return;
+            var txt = res.fields && res.fields.rawText;
+            if (!txt) { fuSetRead('<span style="color:#e67e22">⚡ Power read couldn\'t read that receipt either — fill the form by hand.</span>'); return; }
+            var parsed = TicketOCR.parseFuelReceipt(txt);
+            var rep = TicketOCR.describeFuelRead(parsed);
+            if (!rep.found.length) { fuSetRead('<span style="color:#e67e22">⚡ Power read couldn\'t read that receipt either — fill the form by hand.</span>'); return; }
+            fuFillFromParsed(parsed, rep, '⚡ <b>Power read — check before saving:</b>');
+          }
+        });
+      }
+
+      /* v59: a queued power read of an earlier receipt may have
+         finished — peek and prefill (Save fill-up consumes it). */
+      try {
+        if (window.PowerRead && PowerRead.peekResult && window.TicketOCR) {
+          var prFuel = PowerRead.peekResult('text', 'fuel');
+          if (prFuel && prFuel.fields && prFuel.fields.rawText) {
+            var pp = TicketOCR.parseFuelReceipt(prFuel.fields.rawText);
+            var rr = TicketOCR.describeFuelRead(pp);
+            if (rr.found.length) fuFillFromParsed(pp, rr, '⚡ <b>Power read — check before saving:</b> from your earlier receipt photo:');
+          }
+        }
+      } catch (e) {}
 
       /* v39 (addition #1): odometer photo beside the Odometer field —
          snap the dash instead of typing. Reuses the v34 odometer parser
@@ -207,6 +259,10 @@
               setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
             } else {
               setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
+              /* v59: power-read escalation — fills this same field
+                 only; Save fill-up remains the confirm and the master
+                 odometer still moves solely through that save. */
+              fuOdoPowerRead(ocrUrl, token, setStatus);
             }
           }).catch(function () {
             if (token !== fuOdoToken) return;
@@ -216,6 +272,27 @@
       }
       fuOdoCamInput.onchange = fuOdoHandle;
       fuOdoPickInput.onchange = fuOdoHandle;
+
+      /* v59: power-read escalation for the Fuel odometer photo. */
+      function fuOdoPowerRead(ocrUrl, token, setStatus) {
+        if (!window.PowerRead || !PowerRead.escalate) return;
+        PowerRead.escalate({
+          reader: 'odometer', image: ocrUrl, origin: { module: 'fuel', label: 'Fuel' },
+          onStatus: function (s) {
+            if (token !== fuOdoToken) return;
+            if (s.state === 'working') setStatus('⚡ Asking the power read…');
+            else if (s.state === 'waiting') setStatus('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the odometer.');
+            else if (s.state === 'error') setStatus('<span style="color:#e67e22">' + esc(s.message) + '</span>');
+          },
+          onResult: function (res) {
+            if (token !== fuOdoToken) return;
+            var v = res.fields && res.fields.value;
+            if (!v) { setStatus('<span style="color:#e67e22">⚡ Power read couldn\'t read the odometer either — type it in.</span>'); return; }
+            body.querySelector('#fu_odo').value = v;
+            setStatus('⚡ <b>Power read — check before saving:</b> odometer <b>' + fmtKm(v) + ' km</b>');
+          }
+        });
+      }
 
       body.querySelector('#fu_add').onclick = function () {
         // v44: odometer is OPTIONAL — many fuel receipts show no reading,
@@ -231,6 +308,9 @@
         rec.cost = body.querySelector('#fu_cost').value;
         rec.station = body.querySelector('#fu_stn').value.trim();
         f.push(rec); W('fills', f);
+        /* v59: this save confirms the form — consume any power-read
+           result that was waiting for this screen. */
+        try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
         if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), rec);
         // v39: feed the master odometer (upward only) + show the outcome —
         // ONLY when a real reading was entered. An odo-less save never

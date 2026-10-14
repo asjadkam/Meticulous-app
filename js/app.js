@@ -355,8 +355,32 @@
     var body = el('modBody');
     body.innerHTML = '';
     try { mod.render(body); } catch (e) { body.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
+    paintPowerBanner(body);
     window.scrollTo(0, 0);
   };
+
+  /* v59: a queued power read may have finished while this screen was
+     closed. Plain banner at the top of whatever module opens next —
+     it only POINTS at the result; the owning screen still confirms
+     before anything is saved. "Got it" just hides the banner. */
+  function paintPowerBanner(body) {
+    try {
+      if (!window.PowerRead || !body || !body.insertBefore) return;
+      var rs = PowerRead.pendingResults().filter(function (r) { return !r.seen; });
+      if (!rs.length) return;
+      var r = rs[rs.length - 1];
+      var desc = PowerRead.describeResult(r);
+      var d = document.createElement('div');
+      d.className = 'card';
+      d.style.cssText = 'border:2px solid #f5a623;background:#fff8e6';
+      d.innerHTML = '<b>⚡ Power read finished:</b> ' + esc(desc.text) +
+        '<br><span style="color:#555">Open ' + esc(desc.moduleLabel) + ' to check it — nothing was saved yet.</span> ' +
+        '<button type="button" class="btn small ghost" id="prBannerOk">Got it</button>';
+      body.insertBefore(d, body.firstChild);
+      var b = d.querySelector('#prBannerOk');
+      if (b) b.onclick = function () { try { PowerRead.markAllSeen(); } catch (e) {} if (d.parentNode) d.parentNode.removeChild(d); };
+    } catch (e) {}
+  }
 
   function doLogout() {
     if (window.FB && FB.ready && FB.user) {
@@ -919,6 +943,7 @@
   };
   function odoSheetHandleFile(file) {
     if (!file || !_odoPromptKind) return;
+    var kindAtStart = _odoPromptKind;
     var st = el('odoSheetStatus');
     function setStatus(html) { if (st) st.innerHTML = html; }
     if (!window.TicketOCR || !TicketOCR.fileToOCRImage) {
@@ -938,10 +963,38 @@
           setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.');
         } else {
           setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
+          /* v59: local read found nothing → power-read escalation.
+             The value fills this same field; the sheet's Save reading
+             stays the confirm. Silent when power read is off/keyless. */
+          odoSheetPowerRead(ocrUrl, kindAtStart);
         }
       }).catch(function () {
         setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
       });
+    });
+  }
+  /* v59: power-read escalation for the day start/end odometer sheet.
+     Callbacks re-check the sheet is still on the same prompt before
+     touching it — a late answer never hijacks a later prompt. */
+  function odoSheetPowerRead(ocrUrl, kindAtStart) {
+    if (!window.PowerRead || !PowerRead.escalate) return;
+    PowerRead.escalate({
+      reader: 'odometer', image: ocrUrl, origin: { module: 'tracker', label: 'the odometer prompt' },
+      onStatus: function (s) {
+        if (_odoPromptKind !== kindAtStart) return;
+        var st = el('odoSheetStatus'); if (!st) return;
+        if (s.state === 'waiting') st.innerHTML = '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the reading, or tap Skip.';
+        else if (s.state === 'error') st.innerHTML = s.message + ' Type the reading below, or tap Skip.';
+      },
+      onResult: function (res) {
+        if (_odoPromptKind !== kindAtStart) return;
+        var st = el('odoSheetStatus'); if (!st) return;
+        var v = res.fields && res.fields.value;
+        if (!v) { st.innerHTML = '⚡ Power read couldn\'t read it either — type it below, or tap Skip.'; return; }
+        var inp = el('odoSheetVal');
+        if (inp) inp.value = v;
+        st.innerHTML = '⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.';
+      }
     });
   }
 
@@ -1445,6 +1498,11 @@
                tap-to-pick chips. Never auto-accepts: a chip fills the
                field only when the user taps it. */
             odoHunt(prefix, dataUrl, token, text);
+            /* v59: local read AND the primary parse found nothing →
+               power-read escalation. The cloud value arrives as a
+               tap-to-use chip (never auto-filled, never persisted by
+               the escalation itself). Silent when off/keyless. */
+            if (!km) odoPowerRead(prefix, file, token);
           } else {
             var iso = parseStickerExpiry(text);
             if (iso && fieldEl) {
@@ -1512,6 +1570,62 @@
           });
         }
       }).catch(function () {});
+    }
+
+    /* v59: power-read escalation for the odometer photo (onboarding +
+       Preferences share this wiring). Escalates the small OCR
+       rendition, not the full-size photo. The answer renders as ONE
+       labelled chip; tapping it fills the field and persists through
+       the same persist() the local reads use — nothing is written
+       until that tap. */
+    function odoPowerRead(prefix, file, token) {
+      if (!window.PowerRead || !PowerRead.escalate) return;
+      function go(img) {
+        if (token !== _onbOcrToken) return;
+        PowerRead.escalate({
+          reader: 'odometer', image: img, origin: { module: 'preferences', label: 'Preferences' },
+          onStatus: function (s) {
+            if (token !== _onbOcrToken) return;
+            if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');
+            else if (s.state === 'waiting') onbSetStatus(prefix, '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still enter the mileage below.');
+            else if (s.state === 'error') onbSetStatus(prefix, s.message + ' You can still enter the mileage below.');
+          },
+          onResult: function (res) {
+            if (token !== _onbOcrToken) return;
+            var v = res.fields && res.fields.value;
+            if (!v) { onbSetStatus(prefix, '⚡ Power read couldn\'t read it either — enter it manually below.'); return; }
+            var statusEl = el(prefix + '_status');
+            if (!statusEl || !statusEl.parentNode) return;
+            var box = document.getElementById(prefix + '_chips');
+            if (!box) {
+              box = document.createElement('div');
+              box.id = prefix + '_chips';
+              statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
+            }
+            box.innerHTML = '';
+            var lbl = document.createElement('div');
+            lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
+            lbl.textContent = '⚡ Power read — check before using:';
+            box.appendChild(lbl);
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn small';
+            b.style.margin = '2px 4px 2px 0';
+            b.textContent = Number(v).toLocaleString('en-CA') + ' km';
+            b.onclick = function () {
+              if (fieldEl) fieldEl.value = v;
+              persist(kind, v);
+              box.innerHTML = '';
+              onbSetStatus(prefix, '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
+            };
+            box.appendChild(b);
+            onbSetStatus(prefix, '⚡ Power read found a reading — tap it below if it looks right, or type the mileage yourself.');
+          }
+        });
+      }
+      if (window.TicketOCR && TicketOCR.fileToOCRImage && file) {
+        TicketOCR.fileToOCRImage(file, function (u) { if (u) go(u); });
+      }
     }
   }
 
@@ -1789,6 +1903,15 @@
     // v27: if the auto-start time passed while the app was closed, start or prompt now
     try { App.checkAutoStart(); } catch (e) {}
 
+    // v59: power-read queue — retry waiting cloud reads on app open
+    // and the moment connectivity returns. Inert without a key.
+    try {
+      if (window.PowerRead) {
+        PowerRead.processQueue();
+        window.addEventListener('online', function () { try { PowerRead.processQueue(); } catch (e) {} });
+      }
+    } catch (e) {}
+
     el('onbBack').onclick = function () { collectOnbInputs(); if (App.onbStep > 0) { App.onbStep--; renderOnbStep(); } };
     el('onbNext').onclick = function () {
       collectOnbInputs();
@@ -1861,7 +1984,11 @@
         try { if (window.GeoLoads) GeoLoads.flush(); } catch (e) {}
       }
       // v27: when the app comes back, check whether the auto-start time arrived
-      if (document.visibilityState === 'visible') { try { App.checkAutoStart(); } catch (e2) {} }
+      if (document.visibilityState === 'visible') {
+        try { App.checkAutoStart(); } catch (e2) {}
+        // v59: resume is also a power-read retry point
+        try { if (window.PowerRead) PowerRead.processQueue(); } catch (e3) {}
+      }
     });
 
     renderOnbStep();

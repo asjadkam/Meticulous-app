@@ -359,6 +359,9 @@
         var o = parseFloat(body.querySelector('#mt_ns_odo').value);
         W('nextServiceOdo', o > 0 ? Math.round(o) : '');
         W('nextServiceDate', body.querySelector('#mt_ns_date').value || '');
+        /* v59: this Save confirms whatever is in the fields — if a
+           power-read result was waiting, it is now consumed. */
+        try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('sticker'); } catch (e) {}
         api.render(body);
       };
       var nsClearBtn = body.querySelector('#mt_ns_clear');
@@ -415,6 +418,11 @@
                them as tap-to-pick chips. Chips only FILL the inputs;
                the card's Save stays the confirm, nothing auto-saves. */
             nsHunt(ocrUrl, token, text);
+            /* v59: local read found NEITHER miles nor date → power-read
+               escalation. The cloud answer only FILLS the inputs
+               (labelled); this card's Save stays the confirm. Silent
+               when power read is off or no key is set. */
+            if (!rep.found.length) nsPowerRead(ocrUrl, token);
           }).catch(function () {
             if (token !== nsOcrToken) return;
             nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
@@ -423,6 +431,51 @@
       }
       if (nsCamInput) nsCamInput.onchange = nsHandlePhoto;
       if (nsPickInput) nsPickInput.onchange = nsHandlePhoto;
+
+      /* v59: power-read escalation for the sticker photo. Fill-only,
+         exactly like the local read and the hunt chips — the card's
+         Save is the one and only confirm. */
+      function nsPowerRead(ocrUrl, token) {
+        if (!window.PowerRead || !PowerRead.escalate) return;
+        PowerRead.escalate({
+          reader: 'sticker', image: ocrUrl, origin: { module: 'maintenance', label: 'Maintenance' },
+          onStatus: function (s) {
+            if (token !== nsOcrToken) return;
+            if (s.state === 'working') nsSetRead('⚡ Asking the power read…');
+            else if (s.state === 'waiting') nsSetRead('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the values in.');
+            else if (s.state === 'error') nsSetRead('<span style="color:#e67e22">' + esc(s.message) + '</span>');
+          },
+          onResult: function (res) {
+            if (token !== nsOcrToken) return;
+            var f = (res && res.fields) || {};
+            if (!f.odo && !f.date) { nsSetRead('<span style="color:#e67e22">⚡ Power read couldn\'t read that sticker either — type it in.</span>'); return; }
+            if (f.odo) body.querySelector('#mt_ns_odo').value = f.odo;
+            if (f.date) body.querySelector('#mt_ns_date').value = f.date;
+            nsSetRead('⚡ <b>Power read — check before saving:</b> ' + esc(describeStickerPower(f)) + ' filled in above.');
+          }
+        });
+      }
+      function describeStickerPower(f) {
+        var parts = [];
+        if (f.odo) parts.push('next service ' + Number(f.odo).toLocaleString('en-CA') + ' km');
+        if (f.date) parts.push('due date ' + f.date);
+        return parts.join(' · ');
+      }
+
+      /* v59: a power read queued from an earlier sticker photo may
+         have finished since — PEEK (not take): prefill the inputs and
+         label them; it is consumed only when Save next service is
+         tapped, so wandering off loses nothing. */
+      try {
+        if (window.PowerRead && PowerRead.peekResult) {
+          var prSticker = PowerRead.peekResult('sticker');
+          if (prSticker && prSticker.fields && (prSticker.fields.odo || prSticker.fields.date)) {
+            if (prSticker.fields.odo) body.querySelector('#mt_ns_odo').value = prSticker.fields.odo;
+            if (prSticker.fields.date) body.querySelector('#mt_ns_date').value = prSticker.fields.date;
+            nsSetRead('⚡ <b>Power read — check before saving:</b> ' + esc(describeStickerPower(prSticker.fields)) + ' from your earlier sticker photo, filled in above.');
+          }
+        }
+      } catch (e) {}
 
       /* v58: sticker candidate hunt (see nsHandlePhoto). Renders chips
          under the read line: miles candidates fill #mt_ns_odo, date
