@@ -23,7 +23,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 // Files/dirs that are part of the shipped web app (also the OTA payload).
 const EXCLUDE_DIRS = new Set(['.git', '.github', 'node_modules', 'training-data', 'tools']);
-const EXCLUDE_FILES = new Set(['firebase.json', '.firebaserc', 'firestore.rules', 'BUGS.md', 'PRODUCT_REQUIREMENTS.md', 'OTA.md']);
+const EXCLUDE_FILES = new Set(['firebase.json', '.firebaserc', 'firestore.rules', 'BUGS.md', 'PRODUCT_REQUIREMENTS.md', 'OTA.md', '.gitignore']);
 
 function walk(dir, out) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
