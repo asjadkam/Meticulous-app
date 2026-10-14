@@ -3,9 +3,10 @@
  * Thin wrapper over the FREE @capacitor-community/background-geolocation
  * plugin (registered to JS as Capacitor.Plugins.BackgroundGeolocation,
  * identified by its addWatcher/removeWatcher API). This replaced the paid
- * Transistorsoft plugin, which was removed in native v32 (versionCode 8):
- * it ran unlicensed, stamped a "LICENSE VALIDATION FAILURE" box on screen,
- * and never actually delivered locations to this app.
+ * background-geolocation plugin that shipped before native v32
+ * (versionCode 8): it ran unlicensed, stamped a "LICENSE VALIDATION
+ * FAILURE" box on screen at every cold start, and never actually
+ * delivered locations to this app.
  *
  * Safety: the wrapper is FEATURE-DETECTED. On the web/PWA, and on native
  * builds that do not carry the community plugin (e.g. APKs built with the
