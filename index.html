@@ -186,6 +186,9 @@
   <input type="file" id="odoSheetCamIn" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
   <input type="file" id="odoSheetIn" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
   <div id="odoSheetStatus" style="font-size:14px;margin:6px 0;"></div>
+  <label class="f" for="odoSheetVal">Odometer (km)</label>
+  <input id="odoSheetVal" type="number" inputmode="numeric" min="0" placeholder="e.g. 168510">
+  <button type="button" class="btn primary" id="odoSheetSave" style="width:100%;margin:8px 0;">Save reading</button>
   <button type="button" class="btn ghost" id="odoSheetSkip" style="width:100%;">Skip</button>
 </div>
 <!-- v41: manual load entry for the Weight tracker (weight + unit -> kg) -->

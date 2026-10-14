@@ -280,6 +280,26 @@
     } catch (e) {}
   }
 
+  /* v46: the day's odometer kilometres, derived at render time from
+     the day's session records. Readings live on sessions (startOdo /
+     endOdo), and the END reading lands after this module's entry for
+     the day was already created at stop — deriving here, via the same
+     App._odoDailyKm rule the tracker uses, keeps the display from
+     ever drifting from the session record. Sums every session that
+     day with a valid pair (end > start); a bad pair contributes
+     nothing but its readings stay on the session. */
+  function odoKmForDate(ds) {
+    if (!(window.App && App._odoDailyKm)) return null;
+    var ss = App._store.get('sessions', []) || [];
+    var km = 0, any = false;
+    for (var i = 0; i < ss.length; i++) {
+      if (!ss[i] || ss[i].date !== ds) continue;
+      var d = App._odoDailyKm(ss[i]);
+      if (d !== null && d !== undefined) { km += d; any = true; }
+    }
+    return any ? Math.round(km * 100) / 100 : null;
+  }
+
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
 
   var api = {
@@ -479,8 +499,9 @@
         (entries().length ? entries().slice().reverse().map(function (e, ri) {
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
           var amt = payFor(e, std, App._store.get('onboarding', {}).payRate);
+          var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
           return '<div class="listitem"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
-            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + '</div>' +
+            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + '</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + (entries().length - 1 - ri) + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No entries yet. Add one above or run the tracker.</div>') + '</div></div>';
 

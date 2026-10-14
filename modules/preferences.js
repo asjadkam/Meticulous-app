@@ -75,6 +75,12 @@
         '<div id="pf_odo_prev"></div><div id="pf_odo_status" class="note"></div>' +
         '<input id="pf_odo" type="number" inputmode="decimal" value="' + esc(o.odometerBaseline || '') + '">' +
         '<p class="note">Starting point for oil changes and services in Maintenance.</p>' +
+        /* v46: optional start/end-of-day odometer photos for every pay
+           mode (by-mile drivers get the prompts automatically). Stored
+           on onboarding.odoDailyPhotos, default OFF; read live by the
+           tracker's prompt logic in app.js. */
+        '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_odo_photos"' + (o.odoDailyPhotos ? ' checked' : '') + '> 📸 Daily odometer photos</label>' +
+        '<p class="note">When on, starting and stopping the tracker offers a photo of the odometer (morning and end of day — always skippable), and the day\'s kilometres show in Revenue, like the starting-odometer column on a paper hour sheet.</p>' +
         '<label class="f">Safety sticker expiry</label>' +
         '<div style="display:flex;gap:8px;margin:6px 0;">' +
         '<button type="button" class="btn secondary" id="pf_safety_cam" style="flex:1;">📷 Retake photo</button>' +
@@ -112,6 +118,7 @@
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont');
         o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype');
         o.odometerBaseline = g('pf_odo'); o.safetyExpiry = g('pf_safety');
+        o.odoDailyPhotos = body.querySelector('#pf_odo_photos').checked; // v46
         // v28: push through to Maintenance stores so PM baselines stay in sync
         try {
           if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) App._store.set('mt_odo', String(o.odometerBaseline));
@@ -143,6 +150,18 @@
           App._wirePhotoOCR('pf_odo', 'odometer', prefsPersistPhoto);
           App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
         }
+      } catch (e) {}
+      /* v46: the Daily-odometer-photos toggle also persists the moment
+         it changes (like the photo retakes above), so it takes effect
+         even if the user leaves without pressing "Save preferences".
+         The Save handler reads the same checkbox, so the two agree. */
+      try {
+        var odoTgl = body.querySelector('#pf_odo_photos');
+        if (odoTgl) odoTgl.onchange = function () {
+          var ob = App._store.get('onboarding', {}) || {};
+          ob.odoDailyPhotos = odoTgl.checked;
+          App._store.set('onboarding', ob);
+        };
       } catch (e) {}
       /* v34: change-password handler (Security card, signed-in only) */
       var pwBtn = body.querySelector('#pf_pw_btn');

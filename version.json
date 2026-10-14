@@ -1,7 +1,7 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 45,
+  "webVersion": 46,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -13,8 +13,8 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "889ad973d324e9cc8f431577f8eb46c5180c0e3c2fb5e0935fa83ffca7b296b1",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "a37c8548a9f2b40762ca789a0e466fa1bb4fa2b27ebcae383f1d219a60fe9dce",
-    "js/app.js": "53202582f15ca1228a670b9cdb4eb2d23bf7be2d5d472ef013bdd95e5f2ab12e",
+    "index.html": "098b97841f6cee61707779a4a5a1e001aaceb5bae6c15d3cded64a8964a3ab3f",
+    "js/app.js": "b89d5fcd7980e2819961c6b307c0108f9a7ef025cd4a5ffd833ef7b0c5a61d68",
     "js/cloudsync.js": "2a487ed1a3413e8735b7a0679eea7248fe5c34365c7542e25e8b6040164bf23b",
     "js/firebase.js": "f84ead208f9cf4df529752d1ce8a943dfbc690b83d9b1be20b4c2299fe4543ac",
     "js/geo.js": "534e2e4a632d1ab988e04b47feece7487563fec0e3ef698bb431266699f48e1c",
@@ -31,9 +31,9 @@
     "modules/manifest.js": "e00b17fc8fca0a3c76c6a7abd5bcf66b3b22af3703b7129f91c331e8be936ddd",
     "modules/navigation.js": "3b437cfc38ba0791818ba77fa39653114e0be65a0195d9cf953d03ffc5d77d2e",
     "modules/pnl.js": "151dbffce1c4e52bff2cef99b0abefabf1f3f6a88559c3e740b6e0789c01d49e",
-    "modules/preferences.js": "eb5abd21bf53caf1be0ee430752abbf012788519ea4647532835d616fedb1ca8",
+    "modules/preferences.js": "b7cf24f5c940ede4a818a6b8a4ad96361fba1af354b444b6f390e975bacc747a",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
-    "modules/revenue.js": "f11e29de38abb3054a13d84da0e3d365b860bc1a866fe28a2070ebe514e6f9d9",
+    "modules/revenue.js": "fb7ae94ac2ecdb47facc22e32e85608544d03e2ba7daadcb5fb990bf87bce7c9",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

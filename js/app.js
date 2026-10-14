@@ -609,7 +609,8 @@
     // v40: a fresh shift start also starts live-miles tracking (inert
     // when the build has no live location — js/miles.js).
     // v39: a fresh shift start (not a resume) may prompt for the
-    // starting odometer — by-mile pay only, non-blocking.
+    // starting odometer — by-mile pay, or any pay mode with the v46
+    // "Daily odometer photos" preference on; non-blocking either way.
     if (wasIdle) {
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionStartMs()); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
@@ -690,19 +691,37 @@
     stopSessionAt(end.getTime());
   };
 
-  /* ODO-PROMPT-BEGIN — paid-by-mile day odometer prompts (v39).
+  /* ODO-PROMPT-BEGIN — day odometer prompts (v39, generalized v46).
      Decision + record-keeping only (DOM lives in maybePromptOdo below).
      Harness-extractable: may use `store`, `App.tracker`, `todayStr`,
      `trackerSave` and the ODO-MASTER helpers.
-     Rules (Asjad, Oct 13): pay mode is onboarding.payStandard; 'Miles'
-     means by-mile. By-mile days prompt once at shift start and once at
-     stop; hourly/trip/weight NEVER prompt. The prompt is non-blocking —
-     the timer runs regardless — and shows at most once per day per kind.
-     Readings live on the day's session entry (startOdo/endOdo); while a
-     shift is running the start reading waits on the tracker state. */
+     Rules (Asjad, Oct 13 + Oct 14): pay mode is onboarding.payStandard;
+     'Miles' means by-mile. By-mile days prompt once at shift start and
+     once at stop, always. Hourly/trip/weight prompt ONLY when the
+     Preferences toggle onboarding.odoDailyPhotos ("Daily odometer
+     photos", default OFF) is on — drivers who still want a per-day
+     miles record like the old hour sheet's start-odo column. The prompt
+     is non-blocking — the timer runs regardless — and shows at most
+     once per day per kind. Readings live on the day's session entry
+     (startOdo/endOdo); while a shift is running the start reading waits
+     on the tracker state. */
   function isByMile() {
     var o = store.get('onboarding', {});
     return String((o && o.payStandard) || '').toLowerCase() === 'miles';
+  }
+  function odoDailyPhotosOn() {
+    var o = store.get('onboarding', {});
+    return !!(o && o.odoDailyPhotos);
+  }
+  /* v46: the day's kilometres from a session's odometer pair, or null.
+     Both readings stay on the record either way; a closing reading at
+     or below the start (misread/typo) yields NO distance rather than a
+     negative or zero one. Same rule Revenue's Miles fallback uses. */
+  function odoDailyKm(session) {
+    if (!session) return null;
+    var s = parseFloat(session.startOdo), e = parseFloat(session.endOdo);
+    if (!(s > 0) || !(e > s)) return null;
+    return Math.round((e - s) * 100) / 100;
   }
   function odoPromptShown(kind, dateStr) {
     var rec = store.get('odoPrompt', {});
@@ -722,7 +741,7 @@
     return null;
   }
   function shouldPromptOdo(kind) {
-    if (!isByMile()) return false;
+    if (!isByMile() && !odoDailyPhotosOn()) return false;
     var today = todayStr(new Date());
     if (odoPromptShown(kind, today)) return false;
     if (kind === 'start') {
@@ -793,41 +812,66 @@
     markOdoPromptShown(kind, todayStr(new Date()));
     _odoPromptKind = kind;
     el('odoSheetTitle').textContent = kind === 'start' ? '📸 Starting odometer' : '📸 Ending odometer';
+    // v46: wording follows WHY the prompt is showing — by-mile pay, or
+    // the driver's own "Daily odometer photos" preference.
+    var byMile = isByMile();
     el('odoSheetNote').textContent = kind === 'start'
-      ? 'Paid by the mile — snap the dash for your starting reading. Your timer is already running.'
-      : 'Paid by the mile — snap the dash for your closing reading.';
+      ? (byMile
+        ? 'Paid by the mile — snap the dash for your starting reading. Your timer is already running.'
+        : 'Daily odometer photos are on — snap the dash for your starting reading, or type it below. Your timer is already running.')
+      : (byMile
+        ? 'Paid by the mile — snap the dash for your closing reading.'
+        : 'Daily odometer photos are on — snap the dash for your closing reading, or type it below.');
     el('odoSheetStatus').innerHTML = '';
+    var valIn = el('odoSheetVal');
+    if (valIn) valIn.value = '';
     sheet.classList.add('open');
     el('scrim').classList.add('show');
     el('scrim').onclick = function () { closeOdoSheet(); };
     return true;
   }
   App.odoSheetSkip = function () { closeOdoSheet(); };
+  /* v46: the reading is confirmed in the sheet before it lands. OCR
+     fills the editable field; the driver checks/fixes it and taps Save
+     (or just types the reading with no photo at all). Nothing is
+     applied — and nothing blocks the shift — until Save, and Skip
+     always walks away clean. */
+  App.odoSheetSave = function () {
+    var st = el('odoSheetStatus');
+    var inp = el('odoSheetVal');
+    var n = inp ? parseFloat(inp.value) : NaN;
+    if (!(_odoPromptKind && n > 0)) {
+      if (st) st.innerHTML = 'Type the reading first — or tap Skip.';
+      return;
+    }
+    applyOdoReading(_odoPromptKind, n);
+    if (st) st.innerHTML = '✓ Saved: <b>' + Number(n).toLocaleString('en-CA') + ' km</b>';
+    setTimeout(closeOdoSheet, 900);
+  };
   function odoSheetHandleFile(file) {
     if (!file || !_odoPromptKind) return;
-    var kind = _odoPromptKind;
     var st = el('odoSheetStatus');
     function setStatus(html) { if (st) st.innerHTML = html; }
     if (!window.TicketOCR || !TicketOCR.fileToOCRImage) {
-      setStatus('⚠️ Photo reader not ready — skip for now; you can add the reading in Fuel.');
+      setStatus('⚠️ Photo reader not ready — type the reading below, or tap Skip.');
       return;
     }
     setStatus('📖 Reading photo…');
     TicketOCR.fileToOCRImage(file, function (ocrUrl) {
-      if (!ocrUrl) { setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.'); return; }
+      if (!ocrUrl) { setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.'); return; }
       TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
         try { setStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
       }).then(function (text) {
         var km = parseOdometerReading(text);
         if (km) {
-          applyOdoReading(kind, km);
-          setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b>');
-          setTimeout(closeOdoSheet, 1200);
+          var inp = el('odoSheetVal');
+          if (inp) inp.value = km;
+          setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.');
         } else {
-          setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.');
+          setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
         }
       }).catch(function () {
-        setStatus('⚠️ Couldn\'t read the odometer — tap Skip; you can add it later in Fuel.');
+        setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
       });
     });
   }
@@ -1515,6 +1559,7 @@
     el('odoSheetPick').onclick = function () { el('odoSheetIn').click(); };
     el('odoSheetCamIn').onchange = function () { odoSheetHandleFile(el('odoSheetCamIn').files[0]); el('odoSheetCamIn').value = ''; };
     el('odoSheetIn').onchange = function () { odoSheetHandleFile(el('odoSheetIn').files[0]); el('odoSheetIn').value = ''; };
+    el('odoSheetSave').onclick = function () { App.odoSheetSave(); }; // v46: confirm the reading in the sheet
     // v41: dynamic tracker controls — mode buttons under the hero
     // (delegated: the buttons are re-rendered by paintTrackerExtra), the
     // tappable weight unit on the hero, and the "+ Add load" sheet.
@@ -1621,6 +1666,7 @@
   App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
+  App._odoDailyKm = odoDailyKm; // v46: session start/end pair -> the day's km (or null), used by Revenue
   try { if (window.CloudSync) CloudSync.attach(store); } catch (e) {} // v27: Firestore mirror
   /* v30 OTA: wait for the over-the-air updater before booting. OTA.ready()
      resolves when it is safe to start (update applied or not needed / offline).
