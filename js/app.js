@@ -127,6 +127,7 @@
     el('sbEmail').textContent = em || 'Local mode';
     var nm = store.get('onboarding', {}).accountType || 'Driver';
     el('sbName').textContent = nm + (user ? '' : ' (offline)');
+    try { ensureUserRole(); } catch (e) {} // v52: stamp the role default before dashboards build
     syncTrial();
     buildSidebar();
     buildDashboard();
@@ -188,6 +189,59 @@
     // v36: 'autostart' registry entry removed — settings moved into Revenue (Asjad); modules/autostart.js is now a shared card library + pointer stub
   };
 
+  /* ---------------- v52: user role — the PERSON, not the account ----------------
+     Onboarding's last question: "Do you drive a truck yourself?" Stored as
+     onboarding.userRole: 'driver' (drives only) / 'both' (drives + office) /
+     'office' (office only, never drives). Deliberately separate from
+     accountType (business entitlements): it tunes the home dashboard and
+     decides whose pay the travel bonus is (audit Oct 14: the bonus is the
+     DRIVER's income; payer-side books owe it as a wage cost).
+     ================= ROLE-BEGIN =================
+     Harness-extractable: functions in this region use only `store` + pure JS. */
+  var USER_ROLES = ['driver', 'both', 'office'];
+  var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
+  var ROLE_MODULE_ORDER = {
+    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'damage', 'pnl', 'invoice', 'connect'],
+    office: ['dispatch', 'invoice', 'pnl', 'manifest', 'revenue', 'fuel', 'maintenance', 'damage', 'navigation', 'connect'],
+    both: ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
+  };
+  /* Sidebar lead-ins: items named here come first (in this order); every
+     other sidebar item keeps its current place after them. Nothing is
+     removed — tuning is emphasis only. */
+  var ROLE_SIDEBAR_LEAD = {
+    driver: ['dashboard', 'revenue', 'dispatch', 'navigation', 'fuel', 'maintenance', 'damage', 'manifest'],
+    office: ['dashboard', 'dispatch', 'invoice', 'pnl', 'manifest', 'revenue', 'fuel', 'maintenance', 'damage', 'navigation', 'connect'],
+    both: ['dashboard']
+  };
+  function roleDefaultFor(accountType) { return USER_ROLE_DEFAULTS[accountType] || 'driver'; }
+  function isUserRole(v) { return USER_ROLES.indexOf(v) >= 0; }
+  function resolveUserRole(o) {
+    o = o || {};
+    return isUserRole(o.userRole) ? o.userRole : roleDefaultFor(o.accountType);
+  }
+  /* One-time, idempotent migration: stamp the accountType-derived default
+     when no valid userRole is stored. A value the user picked is never
+     overwritten. */
+  function ensureUserRole() {
+    var o = store.get('onboarding', {}) || {};
+    var r = resolveUserRole(o);
+    if (o.userRole !== r) { o.userRole = r; store.set('onboarding', o); }
+    return r;
+  }
+  function roleShowsTracker(role) { return role !== 'office'; }
+  function roleModuleOrder(role) { return (ROLE_MODULE_ORDER[role] || ROLE_MODULE_ORDER.both).slice(); }
+  function roleSidebarOrder(role, items) {
+    var lead = ROLE_SIDEBAR_LEAD[role] || [];
+    var head = [], tail = [];
+    items.forEach(function (it) {
+      if (lead.indexOf(it[0]) >= 0) head.push(it); else tail.push(it);
+    });
+    head.sort(function (a, b) { return lead.indexOf(a[0]) - lead.indexOf(b[0]); });
+    return head.concat(tail);
+  }
+  App.userRole = function () { return resolveUserRole(store.get('onboarding', {}) || {}); };
+  /* ================= ROLE-END ================= */
+
   /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
   function pnlAllowed() {
     return true;
@@ -209,7 +263,15 @@
   function buildDashboard() {
     var g = el('modGrid');
     var html = '';
-    MODULE_ORDER.forEach(function (key) {
+    /* v52: role tuning — office users get NO tracker card on home and an
+       office-led module order; drivers keep the tracker front and center
+       with road modules leading; 'both' is the dashboard as it was.
+       Tuning only reorders/hides the tracker card — it never removes a
+       module the user's tier + accountType entitle them to. */
+    var role = App.userRole();
+    var tc = el('trkCard');
+    if (tc) tc.style.display = roleShowsTracker(role) ? '' : 'none';
+    roleModuleOrder(role).forEach(function (key) {
       if (key === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
       if (key === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
       var meta = MODULE_META[key];
@@ -247,7 +309,7 @@
   function buildSidebar() {
     var nav = el('sbNav');
     var html = '';
-    SIDEBAR_ITEMS.forEach(function (it) {
+    roleSidebarOrder(App.userRole(), SIDEBAR_ITEMS).forEach(function (it) {
       if (it[0] === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
       if (it[0] === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
       html += '<button data-act="' + it[0] + '"><span>' + it[1] + '</span> ' + it[2] + '</button>';
@@ -921,6 +983,9 @@
 
   App.checkAutoStart = function () {
     try {
+      /* v52: office users never drive — no tracker auto-start, and (with
+         no tracker card on their home screen) no odometer prompts. */
+      if (App.userRole && App.userRole() === 'office') return 'office';
       var p = autoStartPrefs();
       if (!p.enabled) return 'off';
       var now = new Date();
@@ -1017,6 +1082,11 @@
   var ONB_STEPS = [
     { key: 'accountType', title: 'What best describes you?', hint: 'This shapes what the app tracks for you.',
       type: 'opts', opts: [['Driver', '🚛', 'Driver'], ['Owner-Operator', '🧾', 'Owner-Operator'], ['Fleet Manager', '👥', 'Fleet Manager']] },
+    /* v52: the second question is about the person holding the phone,
+       not the business (owner, Oct 14): it tunes the home screen for the
+       road or the office, and decides whose pay travel time belongs to. */
+    { key: 'userRole', title: 'Do you drive a truck yourself?', hint: 'Drivers get the tracker and road tools up front; office-only users get dispatches, invoices and paperwork — no tracker in the way. This also decides whether travel time is your income or a wage you pay a driver.',
+      type: 'opts', opts: [['driver', '🚛', 'Yes — I drive'], ['both', '🚛🧾', 'I drive and do office work'], ['office', '🧾', 'No — office only']] },
     { key: 'employment', title: 'How are you paid?', hint: 'Contract or payroll — used for invoices and pay stubs.',
       type: 'opts', opts: [['Contract', '📝', 'Contract'], ['Payroll', '💼', 'Payroll']] },
     { key: 'pay', title: 'Payment standard', hint: 'How your pay is calculated, and your rate.',
@@ -1089,7 +1159,8 @@
         '<div class="kv"><span>Company</span><b>' + esc(o.companyName || '—') + '</b></div>' +
         '<div class="kv"><span>Truck</span><b>' + esc(o.truckNo || '—') + '</b></div>' +
         '<div class="kv"><span>Odometer</span><b>' + esc(o.odometerBaseline ? Number(o.odometerBaseline).toLocaleString('en-CA') + ' km' : '—') + '</b></div>' +
-        '<div class="kv"><span>Safety expiry</span><b>' + esc(o.safetyExpiry || '—') + '</b></div></div>';
+        '<div class="kv"><span>Safety expiry</span><b>' + esc(o.safetyExpiry || '—') + '</b></div>' +
+        '<div class="kv"><span>You drive</span><b>' + esc({ driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' }[resolveUserRole(o)] || '—') + '</b></div></div>';
     }
     h += '</div>';
     el('onbSteps').innerHTML = h;
@@ -1286,6 +1357,10 @@
   function finishOnboarding() {
     collectOnbInputs();
     var o = App.onb || {};
+    // v52: an unanswered role question defaults from the account type
+    try {
+      if (!isUserRole(o.userRole)) { o.userRole = roleDefaultFor(o.accountType); App.onb = o; store.set('onboarding', o); }
+    } catch (e) {}
     // v28: odometer baseline -> Maintenance PM starting point
     try {
       if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) {

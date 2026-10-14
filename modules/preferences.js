@@ -6,29 +6,47 @@
   Meticulous.modules.preferences = {
     render: function (body) {
       var o = App._store.get('onboarding', {});
+      /* v52: person-level role (onboarding.userRole) — computed here
+         because the control sits in the Account card next to Account
+         type. The note states the CURRENT effective value plainly:
+         when it was set automatically from the account type, it says
+         so, so a wrong default is easy to spot and fix. */
+      var rawRole = o.userRole;
+      var effRole = (window.App && App.userRole) ? App.userRole() : 'driver';
+      var ROLE_LABEL = { driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' };
       var h = '<div class="card"><h3>👤 Account</h3>' +
         '<label class="f">Account type</label><select id="pf_acct">' +
         ['Driver', 'Owner-Operator', 'Fleet Manager'].map(function (x) { return '<option' + (o.accountType === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
+        '<label class="f">Do you drive a truck yourself?</label><select id="pf_role">' +
+        ['driver', 'both', 'office'].map(function (x) { return '<option value="' + x + '"' + (effRole === x ? ' selected' : '') + '>' + ROLE_LABEL[x] + '</option>'; }).join('') + '</select>' +
+        '<p class="note" id="pf_role_note">' +
+        (rawRole
+          ? 'Your answer now: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. This tunes your home screen (tracker for drivers, office tools for office-only) and decides whether travel time is your income or a wage owed to a driver. It saves the moment you change it.'
+          : 'Set automatically from your account type (' + esc(o.accountType || 'Driver') + ') as: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. If that\u2019s wrong, change it here — it tunes your home screen and decides whether travel time is your income or a wage owed to a driver.') +
+        '</p>' +
         '<label class="f">Employment</label><select id="pf_emp">' +
         ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div>';
 
       /* v34: in-app password change — distinct from "Forgot password?" (the
          email reset on the sign-in screen). Signed-in users only: Firebase
          needs a current user for updatePassword, and re-authenticates with
-         the current password when it demands a recent login. */
+         the current password when it demands a recent login.
+         v52 placement (owner, Oct 14): the Security card renders LAST on
+         the page — it is built into a variable here and appended at the
+         bottom, just above the final Save preferences button. */
       var signedIn = !!(window.FB && FB.user);
-      h += '<div class="card"><h3>🔒 Security</h3>';
+      var securityCard = '<div class="card"><h3>🔒 Security</h3>';
       if (signedIn) {
-        h += '<p class="note">Signed in as ' + esc(FB.user.email || '') + '</p>' +
+        securityCard += '<p class="note">Signed in as ' + esc(FB.user.email || '') + '</p>' +
           '<label class="f">Current password</label><input id="pf_pw_cur" type="password" autocomplete="current-password">' +
           '<label class="f">New password</label><input id="pf_pw_new" type="password" autocomplete="new-password">' +
           '<label class="f">Confirm new password</label><input id="pf_pw_conf" type="password" autocomplete="new-password">' +
-          '<button class="btn navy" id="pf_pw_btn" style="margin-top:10px;">Change password</button>' +
+          '<button class="btn ghost" id="pf_pw_btn" style="margin-top:10px;">Change password</button>' +
           '<p class="note" id="pf_pw_note"></p>';
       } else {
-        h += '<p class="note">Sign in to change your password.</p>';
+        securityCard += '<p class="note">Sign in to change your password.</p>';
       }
-      h += '</div>';
+      securityCard += '</div>';
 
       h += '<div class="card"><h3>💵 Pay</h3>' +
         '<label class="f">Payment standard</label><select id="pf_std">' +
@@ -37,11 +55,10 @@
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
         '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p></div>';
 
-      /* v36: tracker auto-start settings MOVED to Revenue (Asjad) — the
-         tracker feeds Revenue, so its controls live there. Pointer only
-         here; no duplicate controls. */
-      h += '<div class="card"><h3>⏰ Tracker auto-start</h3>' +
-        '<p class="note">Auto tracker settings live in <b>Revenue</b>.</p></div>';
+      /* v36: tracker auto-start settings live in Revenue (the tracker
+         feeds Revenue). A pointer card sat here until v52 — removed at
+         the owner's ask (Oct 14): a stub that only points elsewhere
+         doesn't belong in the settings list. */
 
       h += '<div class="card"><h3>📍 Base location</h3>' +
         '<label class="f">Where do you park your truck?</label><input id="pf_base" value="' + esc(o.baseLocation || '') + '">' +
@@ -92,22 +109,47 @@
         '<p class="note">We remind you 30 days before it expires.</p></div>';
 
       h += '<div class="card"><h3>🔔 Notifications</h3>' +
-        '<button class="btn navy" id="pf_push">Enable push notifications</button>' +
+        '<button class="btn ghost" id="pf_push">Enable push notifications</button>' +
         '<p class="note" id="pf_pushnote"></p></div>';
 
-      h += '<button class="btn primary" id="pf_save">Save preferences</button>';
-
+      /* v52 layout (owner, Oct 14): "Save preferences" used to sit here,
+         mid-list, above a crowd of similar big navy buttons — "a user
+         will press the wrong button." It now lives at the very BOTTOM of
+         the page as the one solid primary button; every utility action
+         (push, updates, sync, password) is a quiet ghost button, and
+         Reset onboarding questions is fenced off at the bottom of
+         Advanced in danger colours. Layout only — no save behaviour
+         changed. */
       h += '<div class="card"><h3>⚙️ Advanced</h3>' +
-        '<button class="btn ghost" id="pf_resetonb">Reset onboarding questions</button>' +
-        '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p>' +
-        '<button class="btn navy" id="pf_checkupd">Check for updates</button>' +
-        '<p class="note" id="pf_updnote"></p></div>';
-      /* v32: cloud-sync diagnostics — shows live sync state, last error, and
-         a manual retry. If the top-bar dot is red/yellow, the reason is here. */
-      h += '<div class="card"><h3>☁️ Cloud sync</h3>' +
+        '<button class="btn ghost" id="pf_checkupd">Check for updates</button>' +
+        '<p class="note" id="pf_updnote"></p>' +
+        /* v52 (owner, Oct 14): cloud sync is not a feature card — it is a
+           troubleshooting tool, so its status + retry live here in
+           Advanced. (The sync status wiring below still uses the same
+           pf_syncnote / pf_syncnow ids.) */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote">Checking…</p>' +
-        '<button class="btn navy" id="pf_syncnow">Retry sync now</button></div>';
+        '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
+        '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
+      /* v32: cloud-sync diagnostics used to be their own card here;
+         v52 moved them into Advanced as a troubleshooting row (owner:
+         "you only need this as a troubleshooting tool"). The status +
+         retry wiring below is unchanged and works on the same ids. */
       // v24: removed "Erase all local data" — developer tool, not for users
+
+      /* v52 (owner, Oct 14): the Security / change-password card is the
+         LAST card on the page (built as `securityCard` up top), and the
+         role control lives in the Account card next to Account type —
+         an earlier end-of-list placement for the role question was a
+         misread and was withdrawn. */
+      h += securityCard;
+
+      /* v52: THE button — one solid primary, full width, at the very
+         bottom of the page, under the last card. */
+      h += '<button class="btn primary big" id="pf_save" style="margin-top:2px;">Save preferences</button>';
 
       body.innerHTML = h;
       body.querySelector('#pf_save').onclick = function () {
@@ -150,6 +192,21 @@
           App._wirePhotoOCR('pf_odo', 'odometer', prefsPersistPhoto);
           App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
         }
+      } catch (e) {}
+      /* v52: the role select also persists the moment it changes (same
+         pattern as the toggle below), and re-runs App.onAuth so the
+         sidebar + dashboard re-tune immediately. It also keeps the
+         render-closure `o` in sync, so a later "Save preferences" can
+         never write a stale role back over the user's pick. */
+      try {
+        var roleSel = body.querySelector('#pf_role');
+        if (roleSel) roleSel.onchange = function () {
+          o.userRole = roleSel.value;
+          App._store.set('onboarding', o);
+          var rn = body.querySelector('#pf_role_note');
+          if (rn) rn.innerHTML = 'Your answer now: <b>' + esc(ROLE_LABEL[roleSel.value]) + '</b>. Changing it re-tunes your home screen right away.';
+          App.onAuth(App.user);
+        };
       } catch (e) {}
       /* v46: the Daily-odometer-photos toggle also persists the moment
          it changes (like the photo retakes above), so it takes effect

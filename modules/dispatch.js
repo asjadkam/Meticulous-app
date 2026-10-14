@@ -108,6 +108,135 @@
   }
   /* ================= DSP-SAVE-END ================= */
 
+  /* ================= DSP-COMPLETE-BEGIN =================
+     v52: completion money plan — PURE and harness-extractable: given the
+     ticket summary + account settings + the completing user's role, it
+     decides the Revenue entry, any P&L travel-wage claim, and the exact
+     disclosure wording. The Complete handler applies the plan; it does
+     no money math of its own anymore.
+
+     Travel-bonus rule (owner, Oct 14; audit travel-bonus-role-audit):
+     the bonus is the DRIVER's income. A completer who drives ('driver'
+     or 'both') gets the entry exactly as pre-v52 — foreman + travel,
+     same amounts, same hours, same note — PLUS the split fields
+     foremanHours / travelHours stored on the entry (invoice A1: the
+     components are no longer hidden inside one hours number). An
+     'office' completer never drove the work: the entry carries foreman
+     hours ONLY, the travel hours are held out of income, and they are
+     routed to the identified driver's wages as a claim
+     (pnl_travel_claims, consumed by P&L driverWages) — or, when no
+     driver is identified, the disclosure says they were held out and
+     where to pay them. The money is never silently dropped. */
+  function dspFmtH(x) {
+    var n = Math.round((parseFloat(x) || 0) * 100) / 100;
+    return (n % 1 === 0) ? n.toFixed(1) : String(n);
+  }
+  function dspCompletionPlan(x) {
+    var entry = null, claim = null, heldOut = 0, disclosure = '', mode = 'none';
+    var sum = x.sum || null;
+    if (sum) {
+      var brk = (sum.breakdown || []).map(function (b) {
+        return b.label + ': ' + (b.foremanHours || 0) + 'h';
+      }).join(', ');
+      if (x.std === 'weight' && sum.totalNetWeight > 0 && x.rate > 0) {
+        var wAmt = sum.totalNetWeight * x.rate;
+        entry = {
+          date: x.date,
+          amount: wAmt.toFixed(2),
+          tons: sum.totalNetWeight.toFixed(2),
+          type: 'weight',
+          loads: x.ticketCount,
+          note: 'Dispatch: ' + (x.jobSite || '') +
+            ' · ' + sum.totalNetWeight.toFixed(2) + 't @ $' + x.rate + '/t' +
+            ' (' + x.ticketCount + ' tickets)'
+        };
+        mode = 'weight';
+      } else if ((x.std === 'hourly' || x.std === 'trip') && sum.totalForemanHours > 0) {
+        var fh = sum.totalForemanHours, th = sum.travelBonus;
+        if (x.role === 'office') {
+          var oAmt = fh * x.rate;
+          entry = {
+            date: x.date,
+            amount: oAmt.toFixed(2),
+            hours: fh.toFixed(2),
+            type: 'hourly',
+            loads: x.ticketCount,
+            foremanHours: fh,
+            travelHours: th,
+            travelInIncome: false,
+            note: 'Dispatch: ' + (x.jobSite || '') +
+              ' · foreman ' + fh + 'h' +
+              (brk ? ' (' + brk + ')' : '') +
+              ' · travel ' + dspFmtH(th) + 'h not in income (office — it is the driver\u2019s wage)'
+          };
+          heldOut = th;
+          mode = 'office-held';
+          if (th > 0 && x.driver) {
+            var dRate = parseFloat(x.driver.rate) || 0;
+            claim = {
+              date: x.date,
+              driverId: x.driver.id,
+              hours: th,
+              rate: dRate,
+              wage: Math.round(th * dRate * 100) / 100,
+              source: 'dispatch',
+              jobSite: x.jobSite || ''
+            };
+            mode = 'office-routed';
+            disclosure = 'Travel ' + dspFmtH(th) + 'h not added to income — sent to ' + (x.driver.name || 'the driver') + '\u2019s wages in P&L.';
+          } else if (th > 0) {
+            disclosure = 'Travel ' + dspFmtH(th) + 'h not added to income — assign the driver in P&L to pay it.';
+          }
+        } else {
+          /* driver / both: byte-identical to the pre-v52 entry, plus the
+             split fields foremanHours / travelHours. */
+          var hAmt = sum.totalPaidHours * x.rate;
+          entry = {
+            date: x.date,
+            amount: hAmt.toFixed(2),
+            hours: sum.totalPaidHours.toFixed(2),
+            type: 'hourly',
+            loads: x.ticketCount,
+            foremanHours: fh,
+            travelHours: th,
+            travelInIncome: true,
+            note: 'Dispatch: ' + (x.jobSite || '') +
+              ' · foreman ' + fh + 'h + travel ' + x.travelBonusRaw + 'h' +
+              ' = ' + sum.totalPaidHours + 'h' +
+              (brk ? ' (' + brk + ')' : '')
+          };
+          mode = 'driver';
+        }
+      }
+    }
+    if (!entry) {
+      var amt = parseFloat(x.legacyAmount);
+      if (amt > 0) {
+        entry = {
+          date: x.date,
+          amount: amt.toFixed(2),
+          type: 'load',
+          loads: x.loads || 1,
+          note: 'Dispatch: ' + (x.jobSite || '') + (x.ticketNo ? ' · ticket #' + x.ticketNo : '')
+        };
+        mode = 'legacy-amount';
+      } else if (x.legacyNetWeight && x.std === 'weight' && x.rate > 0) {
+        var lwAmt = parseFloat(x.legacyNetWeight) * x.rate;
+        entry = {
+          date: x.date,
+          amount: lwAmt.toFixed(2),
+          tons: x.legacyNetWeight,
+          type: 'weight',
+          loads: 1,
+          note: 'Dispatch: ' + (x.jobSite || '') + ' · ' + x.legacyNetWeight + 't @ $' + x.rate + '/t'
+        };
+        mode = 'legacy-weight';
+      }
+    }
+    return { entry: entry, claim: claim, heldOut: heldOut, disclosure: disclosure, mode: mode };
+  }
+  /* ================= DSP-COMPLETE-END ================= */
+
   function fbSave(doc) {
     if (window.FB && FB.saveDoc) { try { FB.saveDoc('dispatches', doc.id, doc); } catch (e) {} }
   }
@@ -180,6 +309,17 @@
     getActive: function () { return active(); },
     render: function (body) {
       var a = active();
+      /* v52: optional driver picker — only when the account keeps P&L
+         drivers. It is how a dispatch "identifies a driver", which the
+         travel-bonus routing needs when an office user completes the
+         dispatch (the travel hours become that driver's wage claim). */
+      var drvList = App._store.get('pnl_drivers', []) || [];
+      var drvField = '';
+      if (drvList.length) {
+        drvField = '<label class="f">Driver <span style="font-weight:normal;color:var(--muted)">(optional — who ran this job)</span></label>' +
+          '<select id="dp_driver"><option value="">— Not set —</option>' +
+          drvList.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join('') + '</select>';
+      }
       var h = '';
 
       /* ---- Active dispatch card ---- */
@@ -213,6 +353,7 @@
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Loads</label><input id="dp_loads" type="number" min="1" step="1" value="1"></div></div>' +
         '<label class="f">Notes</label><input id="dp_notes" placeholder="Gate code, contact…">' +
+        drvField +
         '<label class="f">🎫 Tickets <span style="font-weight:normal;color:var(--muted)">(add one per haul card / scale ticket)</span></label>' +
         '<div id="dp_ticketlist"></div>' +
         '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
@@ -271,7 +412,8 @@
             jobSite: q('#dp_site'), scheduledAt: q('#dp_when'), equipment: q('#dp_equip'),
             lat: q('#dp_lat'), lng: q('#dp_lng'),
             material: q('#dp_mat'), ticketNo: q('#dp_ticket'),
-            amount: q('#dp_amt'), loads: q('#dp_loads'), notes: q('#dp_notes')
+            amount: q('#dp_amt'), loads: q('#dp_loads'), notes: q('#dp_notes'),
+            driverId: q('#dp_driver')
           },
           tickets: pendingTickets.slice(),
           photo: pendingPhoto,
@@ -281,7 +423,7 @@
       function draftIsEmpty(d) {
         var f = d.fields || {};
         var any = f.jobSite || f.scheduledAt || f.equipment || f.material ||
-                  f.ticketNo || f.amount || f.notes || f.lat || f.lng;
+                  f.ticketNo || f.amount || f.notes || f.lat || f.lng || f.driverId;
         return !any && !(d.tickets && d.tickets.length) && !d.photo;
       }
       function showDraftWarn(msg) {
@@ -322,6 +464,7 @@
         set('#dp_lat', f.lat); set('#dp_lng', f.lng);
         set('#dp_mat', f.material); set('#dp_ticket', f.ticketNo);
         set('#dp_amt', f.amount); if (f.loads) set('#dp_loads', f.loads); set('#dp_notes', f.notes);
+        set('#dp_driver', f.driverId);
         if (f.lat !== '' && f.lat !== undefined && f.lat !== null && f.lng !== '' && f.lng !== undefined && f.lng !== null) {
           body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
             ' — <a href="https://www.google.com/maps?q=' + f.lat + ',' + f.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
@@ -567,6 +710,7 @@
 
       function readForm() {
         var latV = body.querySelector('#dp_lat').value, lngV = body.querySelector('#dp_lng').value;
+        var drvEl = body.querySelector('#dp_driver'); // v52: absent when no P&L drivers
         return {
           jobSite: body.querySelector('#dp_site').value.trim(),
           scheduledAt: body.querySelector('#dp_when').value || '', // v31: dispatch datetime from OCR/manual
@@ -578,6 +722,8 @@
           amount: body.querySelector('#dp_amt').value.trim(),
           loads: body.querySelector('#dp_loads').value.trim() || '1',
           notes: body.querySelector('#dp_notes').value.trim(),
+          driverId: drvEl ? drvEl.value : '',                        // v52
+          driverName: (drvEl && drvEl.value) ? drvEl.options[drvEl.selectedIndex].text : '', // v52
           date: App._today()
         };
       }
@@ -631,71 +777,47 @@
         W('list', l); W('active', null); fbSave(cur);
         /* One confirmation updates Revenue: log the dispatch earnings.
            v26: Multi-ticket — sum foreman hours from all tickets + travel bonus.
-           Pay by Weight: sum net weights × rate/tonne. */
+           Pay by Weight: sum net weights × rate/tonne.
+           v52: the money decision lives in dspCompletionPlan (pure,
+           harness-tested). Driver/both completers get the pre-v52 entry
+           unchanged; an office completer's entry excludes the travel
+           hours, which are routed to the identified driver's P&L wages
+           as a claim — or disclosed as held out when no driver matches. */
         var o = App._store.get('onboarding', {});
         var std = (o.payStandard || 'hourly').toLowerCase();
         var rate = parseFloat(o.payRate) || 0;
         var travelBonus = parseFloat(o.travelBonus) || 0;
-        var revEntry = null;
         var tickets = cur.tickets || [];
-        if (tickets.length && window.TicketOCR) {
-          var sum = TicketOCR.summarizeTickets(tickets, travelBonus);
-          if (std === 'weight' && sum.totalNetWeight > 0 && rate > 0) {
-            var wAmt = sum.totalNetWeight * rate;
-            revEntry = {
-              date: App._today(),
-              amount: wAmt.toFixed(2),
-              tons: sum.totalNetWeight.toFixed(2),
-              type: 'weight',
-              loads: tickets.length,
-              note: 'Dispatch: ' + (cur.jobSite || '') +
-                ' · ' + sum.totalNetWeight.toFixed(2) + 't @ $' + rate + '/t' +
-                ' (' + tickets.length + ' tickets)'
-            };
-          } else if ((std === 'hourly' || std === 'trip') && sum.totalForemanHours > 0) {
-            var hAmt = sum.totalPaidHours * rate;
-            var brk = sum.breakdown.map(function (b) {
-              return b.label + ': ' + (b.foremanHours || 0) + 'h';
-            }).join(', ');
-            revEntry = {
-              date: App._today(),
-              amount: hAmt.toFixed(2),
-              hours: sum.totalPaidHours.toFixed(2),
-              type: 'hourly',
-              loads: tickets.length,
-              note: 'Dispatch: ' + (cur.jobSite || '') +
-                ' · foreman ' + sum.totalForemanHours + 'h + travel ' + travelBonus + 'h' +
-                ' = ' + sum.totalPaidHours + 'h' +
-                (brk ? ' (' + brk + ')' : '')
-            };
+        var sum = (tickets.length && window.TicketOCR) ? TicketOCR.summarizeTickets(tickets, travelBonus) : null;
+        var role = (App.userRole ? App.userRole() : 'driver');
+        var matchedDriver = null;
+        if (role === 'office') {
+          var pds = App._store.get('pnl_drivers', []) || [];
+          pds.forEach(function (pd) { if (!matchedDriver && cur.driverId && pd.id === cur.driverId) matchedDriver = pd; });
+          if (!matchedDriver && cur.driverName) {
+            var nm = String(cur.driverName).trim().toLowerCase();
+            pds.forEach(function (pd) { if (!matchedDriver && pd.name && String(pd.name).trim().toLowerCase() === nm) matchedDriver = pd; });
           }
         }
-        // Fallback: legacy single amount
-        if (!revEntry) {
-          var amt = parseFloat(cur.amount);
-          if (amt > 0) {
-            revEntry = {
-              date: App._today(),
-              amount: amt.toFixed(2),
-              type: 'load',
-              loads: cur.loads || 1,
-              note: 'Dispatch: ' + (cur.jobSite || '') + (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '')
-            };
-          } else if (cur.netWeight && std === 'weight' && rate > 0) {
-            // Legacy single-weight dispatch
-            var lwAmt = parseFloat(cur.netWeight) * rate;
-            revEntry = {
-              date: App._today(),
-              amount: lwAmt.toFixed(2),
-              tons: cur.netWeight,
-              type: 'weight',
-              loads: 1,
-              note: 'Dispatch: ' + (cur.jobSite || '') + ' · ' + cur.netWeight + 't @ $' + rate + '/t'
-            };
-          }
-        }
+        var plan = dspCompletionPlan({
+          sum: sum, std: std, rate: rate, role: role, date: App._today(),
+          jobSite: cur.jobSite || '', ticketCount: tickets.length,
+          travelBonusRaw: travelBonus, driver: matchedDriver,
+          legacyAmount: cur.amount, legacyNetWeight: cur.netWeight,
+          loads: cur.loads, ticketNo: cur.ticketNo
+        });
+        var revEntry = plan.entry;
+        var amt = parseFloat(cur.amount);
         if (revEntry && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
           Meticulous.modules.revenue.addEntry(revEntry);
+        }
+        if (plan.claim) {
+          plan.claim.id = 'tc' + Date.now().toString(36);
+          plan.claim.dispatchId = cur.id;
+          var claims = App._store.get('pnl_travel_claims', []) || [];
+          claims.push(plan.claim);
+          App._store.set('pnl_travel_claims', claims);
+          if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_travel_claims', plan.claim.id, plan.claim); } catch (e) {} }
         }
         /* v41: dynamic tracker — a dispatch completed during a running
            session counts as one trip for the day, and its tickets' NET
@@ -715,8 +837,16 @@
           }
         } catch (e) {}
         manifestFeedPush('dispatch', 'Dispatch completed: ' + (cur.jobSite || '') +
-          (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '') + (amt > 0 ? ' · $' + amt.toFixed(2) : ''));
-        alert(amt > 0 ? 'Dispatch completed — $' + amt.toFixed(2) + ' logged to Revenue.' : 'Dispatch completed.');
+          (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '') + (amt > 0 ? ' · $' + amt.toFixed(2) : '') +
+          (plan.disclosure ? ' · ' + plan.disclosure : ''));
+        /* v52: when travel was held out (office completion), the result
+           text says so in plain words — the money is never dropped
+           silently. Same pre-existing alert; extended message only. */
+        var doneMsg = amt > 0 ? 'Dispatch completed — $' + amt.toFixed(2) + ' logged to Revenue.' : 'Dispatch completed.';
+        if (plan.disclosure) {
+          doneMsg = 'Dispatch completed' + (revEntry ? ' — $' + revEntry.amount + ' logged to Revenue' : '') + '. ' + plan.disclosure;
+        }
+        alert(doneMsg);
         api.render(body);
       };
       var cancelBtn = body.querySelector('#dp_cancel');

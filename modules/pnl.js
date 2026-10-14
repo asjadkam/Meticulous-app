@@ -179,6 +179,11 @@
 
   function drivers() { return S('drivers', []); }
   function wageEntries() { return S('wage_entries', []); }
+  /* v52: travel-wage claims routed from Dispatch — when an office user
+     completes a dispatch, the travel hours that may NOT enter Revenue
+     as income land here against the identified driver (owner's rule:
+     the bonus is paid TO the driver, so payer-side books owe it). */
+  function travelClaims() { return S('travel_claims', []); }
 
   /* Driver wages for a month — per-driver breakdown + cumulative total.
      Hourly/per-mile/per-load wages come from logged work entries (the wage
@@ -186,10 +191,11 @@
      Salary drivers earn their fixed monthly rate for every month on/after
      their start month. */
   function driverWages(m) {
-    var ds = drivers(), es = wageEntries();
+    var ds = drivers(), es = wageEntries(), cs = travelClaims();
     var per = {}, total = 0;
     ds.forEach(function (d) {
       var w = 0, detail = '';
+      var daysSeen = {};
       if (d.payType === 'salary') {
         if (!d.start || d.start <= m) {
           w = parseFloat(d.rate) || 0;
@@ -201,10 +207,42 @@
           if (e.driverId !== d.id || !inMonth(e.date, m)) return;
           qty += parseFloat(e.qty) || 0;
           w += parseFloat(e.wage) || 0;
+          if (e.date) daysSeen[e.date] = true;
         });
         if (qty > 0 || w > 0) detail = qty + ' ' + (UNIT[d.payType] || '') + ' × ' + money(parseFloat(d.rate) || 0);
       }
-      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail };
+      /* v52: TRAVEL component — itemized, on top of the base wage.
+         Two sources, never double-paid for the same day:
+         (a) computed: the driver's per-day travelHours × the distinct
+             days they have logged work in the month × their rate —
+             EXCLUDING any day a dispatch claim already covers;
+         (b) claims: travel routed from office-completed dispatches
+             (pnl_travel_claims), each carrying its own snapshotted wage.
+         The owner's rule (Oct 14): owners/fleets PAY the travel bonus;
+         before v52 it existed nowhere on this side of the ledger. */
+      var dRate = parseFloat(d.rate) || 0;
+      var claimWage = 0, claimHours = 0, claimDays = {};
+      cs.forEach(function (c) {
+        if (c.driverId !== d.id || !inMonth(c.date, m)) return;
+        claimWage += parseFloat(c.wage) || 0;
+        claimHours += parseFloat(c.hours) || 0;
+        if (c.date) claimDays[c.date] = true;
+      });
+      var th = parseFloat(d.travelHours) || 0, compDays = 0;
+      if (d.payType !== 'salary' && th > 0) {
+        Object.keys(daysSeen).forEach(function (dt) { if (!claimDays[dt]) compDays++; });
+      }
+      var compWage = th * compDays * dRate;
+      var travelWage = Math.round((claimWage + compWage) * 100) / 100;
+      var travelDetail = '';
+      if (travelWage > 0) {
+        var parts = [];
+        if (compWage > 0) parts.push('travel ' + th + 'h × ' + compDays + ' day' + (compDays === 1 ? '' : 's') + ' = ' + money(compWage));
+        if (claimWage > 0) parts.push('dispatch travel ' + claimHours + 'h = ' + money(claimWage));
+        travelDetail = parts.join(' · ');
+      }
+      w = Math.round((w + travelWage) * 100) / 100;
+      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail, travelWage: travelWage, travelDetail: travelDetail };
       total += w;
     });
     return { per: per, total: total };
@@ -427,6 +465,11 @@
           var d = c.wagesByDriver[id];
           if (d.wage > 0) anyW = true;
           h += '<div class="kv"><span>' + esc(d.name) + (d.detail ? ' <span class="note">(' + esc(d.detail) + ')</span>' : '') + '</span><b>' + money(d.wage) + '</b></div>';
+          /* v52: travel pay is its own line — the driver was owed it on
+             top of the ticket/logged hours, and it shows. */
+          if (d.travelWage > 0) {
+            h += '<div class="kv"><span style="padding-left:14px">↳ Travel pay <span class="note">(' + esc(d.travelDetail) + ')</span></span><b>' + money(d.travelWage) + '</b></div>';
+          }
         });
         if (!anyW) h += '<div class="empty">No wages logged for this month yet.</div>';
         h += '<div class="kv"><span><b>Total driver wages</b></span><b>' + money(c.wages) + '</b></div>';
@@ -441,11 +484,13 @@
         '</select></div></div>' +
         '<div class="row"><div><label class="f">Rate $</label><input id="pnl_drate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Start month</label><input id="pnl_dstart" type="month" value="' + esc(m) + '"><div class="note">Salary drivers earn their rate every month from this month on.</div></div></div>' +
+        '<div class="row"><div><label class="f">Travel time (hours/day)</label><input id="pnl_dtravel" type="number" inputmode="decimal" min="0" step="0.25" placeholder="0"><div class="note">Travel pay you owe this driver for each day they work — on top of their ticket/logged hours (e.g. 1, some drivers 1.5).</div></div></div>' +
         '<button class="btn primary" id="pnl_dadd">Add driver</button>' +
         '<div id="pnl_dlist">' + drivers().map(function (d) {
           return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
             '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
-            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
+            '<div class="row" style="margin-top:6px;align-items:flex-end"><div style="flex:1"><label class="f">Travel hrs/day owed</label><input type="number" inputmode="decimal" min="0" step="0.25" data-pnltravel="' + esc(d.id) + '" value="' + (parseFloat(d.travelHours) || 0) + '"></div>' +
+            '<button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
         }).join('') + '</div></div>';
 
       /* Log driver work */
@@ -630,18 +675,33 @@
           name: name,
           payType: body.querySelector('#pnl_dtype').value,
           rate: rate,
+          travelHours: parseFloat(body.querySelector('#pnl_dtravel').value) || 0, // v52
           start: body.querySelector('#pnl_dstart').value || App._today().slice(0, 7)
         };
         var l = drivers(); l.push(rec); W('drivers', l);
         if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
         api.render(body);
       };
+      /* v52: per-driver travel hrs/day — editable in place; saves on change */
+      body.querySelectorAll('[data-pnltravel]').forEach(function (inp) {
+        inp.onchange = function () {
+          var id = inp.getAttribute('data-pnltravel');
+          var v = parseFloat(inp.value);
+          if (isNaN(v) || v < 0) v = 0;
+          var l = drivers(), rec = null;
+          l.forEach(function (d) { if (d.id === id) { d.travelHours = v; rec = d; } });
+          W('drivers', l);
+          if (rec && window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
+          api.render(body);
+        };
+      });
       body.querySelectorAll('[data-pnldriverdel]').forEach(function (b) {
         b.onclick = function () {
           if (!confirm('Remove this driver? Their logged work entries will be removed too.')) return;
           var id = b.getAttribute('data-pnldriverdel');
           W('drivers', drivers().filter(function (d) { return d.id !== id; }));
           W('wage_entries', wageEntries().filter(function (e) { return e.driverId !== id; }));
+          W('travel_claims', travelClaims().filter(function (c) { return c.driverId !== id; })); // v52
           api.render(body);
         };
       });
