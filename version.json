@@ -1,10 +1,9 @@
 {
   "version": 30,
   "apkUrl": "",
-  "webVersion": 37,
+  "webVersion": 38,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
-    "assets/hero-truck-v2.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
     "assets/icon-192.png": "e3d66e6d3e9687da6d784745f7eb2ee90c7244b66f3bded7032b20fbcca9f32b",
     "assets/icon-512.png": "1d122167d873a784ac96be3288e5bcf9a330d6d00688d6499e1db39413a7242e",
@@ -33,7 +32,7 @@
     "modules/pnl.js": "a11586f02f458ea3cf267e936116cbe24cc505df4dbf1488787e54d627d62226",
     "modules/preferences.js": "2ab6b3b8d92acdd30bb53e2556a985ce8ac2e9fafe4f13102b303484c90f8e93",
     "modules/reminders.js": "015d217864ca8b69b97772105b4d5de22fe412287c9d3c4ae3f8f177f4a89d2e",
-    "modules/revenue.js": "d8c0219e0cc4edb24a0ef21bdeb5c6c95e3ae5d8a45025e4c2f4af0750c9e891",
+    "modules/revenue.js": "fc19c2fb2a3011e785c097a7f9799e3acfa5ffea79d4a001b80988cd8656e726",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }
