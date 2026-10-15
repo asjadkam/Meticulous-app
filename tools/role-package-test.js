@@ -119,8 +119,10 @@ function roleSandbox(store) {
   eq(sb.roleShowsTracker('driver'), true, 'dashboard: driver ⇒ tracker');
   eq(sb.roleShowsTracker('both'), true, 'dashboard: both ⇒ tracker');
 
-  const ALL = ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
-  deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the pre-v52 order, unchanged');
+  /* v77: 'navigator' joins every role order right after 'navigation'
+     (eleven modules now — the set grows, nothing is removed). */
+  const ALL = ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the pre-v52 order + navigator after navigation');
   /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
      blueprint — the office home leads with the boss's five tools,
      Connect FIRST, then Dispatch, Invoice, Maintenance, P&L. */
@@ -128,19 +130,19 @@ function roleSandbox(store) {
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
-    eq(ord.length, 10, 'dashboard ' + r + ': all 10 modules present (nothing removed)');
+    eq(ord.length, 11, 'dashboard ' + r + ': all 11 modules present (nothing removed)');
     deepEq(ord.slice().sort(), ALL.slice().sort(), 'dashboard ' + r + ': same module set, reordered only');
   });
 
-  const KEYS = ['dashboard', 'revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'feedback', 'logout'];
+  const KEYS = ['dashboard', 'revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'feedback', 'logout'];
   const items = KEYS.map(function (k) { return [k, '', k]; });
   const off = sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });
   /* v76 (F4): sidebar lead follows the same blueprint order. */
   deepEq(off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'], 'sidebar: office leads with the boss five, connect first');
-  eq(off.length, 16, 'sidebar: office keeps every item');
+  eq(off.length, 17, 'sidebar: office keeps every item');
   const drv = sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq(drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch'], 'sidebar: driver leads with revenue/dispatch');
-  eq(drv.length, 16, 'sidebar: driver keeps every item');
+  eq(drv.length, 17, 'sidebar: driver keeps every item');
   const both = sb.roleSidebarOrder('both', items).map(function (i) { return i[0]; });
   deepEq(both, KEYS, 'sidebar: both = the pre-v52 order, unchanged');
 }

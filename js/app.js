@@ -263,11 +263,12 @@
   };
 
   /* ---------------- module registry / dashboard ---------------- */
-  var MODULE_ORDER = ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  var MODULE_ORDER = ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
     dispatch:   { title: 'Dispatch',          icon: '📋', tier: 'basic' },
     navigation: { title: 'Navigation',        icon: '🗺️', tier: 'basic' },
+    navigator:  { title: 'Navigator',         icon: '🧭', tier: 'basic' },
     fuel:       { title: 'Fuel & Expense',    icon: '⛽', tier: 'basic' },
     pnl:        { title: 'P&L',               icon: '📈', tier: 'basic' },
     maintenance:{ title: 'Maintenance',       icon: '🔧', tier: 'basic' },
@@ -290,19 +291,19 @@
   var USER_ROLES = ['driver', 'both', 'office'];
   var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
   var ROLE_MODULE_ORDER = {
-    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'damage', 'pnl', 'invoice', 'connect'],
+    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
     /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
        five tools IN BLUEPRINT ORDER — Connect first (his #1: his
        connection to his drivers), then Dispatch, Invoice, Maintenance,
        P&L. Everything else follows; nothing is removed. */
-    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigation'],
-    both: ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
+    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigation', 'navigator'],
+    both: ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
      other sidebar item keeps its current place after them. Nothing is
      removed — tuning is emphasis only. */
   var ROLE_SIDEBAR_LEAD = {
-    driver: ['dashboard', 'revenue', 'dispatch', 'navigation', 'fuel', 'maintenance', 'damage', 'manifest'],
+    driver: ['dashboard', 'revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'maintenance', 'damage', 'manifest'],
     office: ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'],
     both: ['dashboard']
   };
@@ -406,6 +407,7 @@
     ['revenue', '📊', 'Revenue'],
     ['dispatch', '📋', 'Dispatch'],
     ['navigation', '🗺️', 'Navigation'],
+    ['navigator', '🧭', 'Navigator'],
     ['fuel', '⛽', 'Fuel & Expense'],
     ['pnl', '📈', 'P&L'],
     ['maintenance', '🔧', 'Maintenance'],
@@ -446,7 +448,20 @@
     el('scrim').classList.remove('show');
   }
 
+  /* v77: modules with live resources (the Navigator's GPS watch, map
+     and speech) expose teardown(); leaving a module — to the dashboard
+     or to another module — runs the OUTGOING module's teardown first.
+     Modules without teardown are untouched. */
+  function teardownModule() {
+    try {
+      var prev = App._modKey && Meticulous.modules[App._modKey];
+      if (prev && prev.teardown) prev.teardown();
+    } catch (e) {}
+    App._modKey = null;
+  }
+
   App.showDashboard = function () {
+    teardownModule();
     el('dashView').classList.remove('hidden');
     el('modView').classList.add('hidden');
     buildDashboard();
@@ -462,6 +477,8 @@
     }
     var mod = Meticulous.modules[key];
     if (!mod) return;
+    if (App._modKey !== key) teardownModule();
+    App._modKey = key;
     el('dashView').classList.add('hidden');
     el('modView').classList.remove('hidden');
     var title = meta ? meta.title : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription' }[key] || key);

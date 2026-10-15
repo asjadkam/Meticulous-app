@@ -116,6 +116,28 @@
         '<input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
         '<p class="note">We remind you 30 days before it expires.</p></div>';
 
+      /* v77 (Navigator): the truck profile every truck route is costed
+         with — dimensions and weights the routing engine checks against
+         Calgary's truck-network rules. Defaults are a tandem dump
+         truck. The fields persist the moment they change (the power-
+         read pattern), never through Save preferences, and live in the
+         shared 'navigator' store (MeticulousNav) the Navigator module
+         reads. The routing server URL itself is plumbing — it lives
+         in Advanced below, not on this card. */
+      var nvSet = (window.MeticulousNav && MeticulousNav.loadSettings) ? MeticulousNav.loadSettings()
+        : { profile: { height: 3.9, width: 2.6, length: 9.0, weight: 24, axleLoad: 10, axles: 3, hazmat: false }, serverUrl: '' };
+      var nvp = nvSet.profile;
+      h += '<div class="card"><h3>🧭 Navigator</h3>' +
+        '<p class="note" style="margin-top:0">Your truck, as the Navigator sees it. Truck routes keep you legal for a truck of this size and weight.</p>' +
+        '<label class="f">Height (m)</label><input id="pf_nv_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.height) + '">' +
+        '<label class="f">Width (m)</label><input id="pf_nv_width" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.width) + '">' +
+        '<label class="f">Length (m)</label><input id="pf_nv_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.length) + '">' +
+        '<label class="f">Weight (tonnes)</label><input id="pf_nv_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(nvp.weight) + '">' +
+        '<label class="f">Axle load (tonnes)</label><input id="pf_nv_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(nvp.axleLoad) + '">' +
+        '<label class="f">Axles</label><input id="pf_nv_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(nvp.axles) + '">' +
+        '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_nv_hazmat"' + (nvp.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +
+        '<p class="note" id="pf_nv_note">Saves as you type. The routing server address lives in Advanced → Navigator server.</p></div>';
+
       /* v54 (owner, Oct 14): the standalone Notifications card is gone —
          "Updates and notifications should also be in advanced features!
          These are plumbings a user doesn't click on daily." The push
@@ -188,6 +210,17 @@
         '<button class="btn ghost" id="pf_parkset">📍 Set where I park (use my location now)</button>' +
         '<button class="btn ghost hidden" id="pf_parknn">Allow notifications</button>' +
         '<button class="btn ghost hidden" id="pf_parkforget">Forget this place</button></div>' +
+        /* v77 (Navigator): the routing server URL is plumbing — a user
+           sets it once (or never) — so it lives here in Advanced, not
+           on the Navigator card. Empty means the Navigator honestly
+           reports routing unavailable; the app ships with NO server
+           address built in. Persists the moment it changes. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">🧭 Navigator server</p>' +
+        '<p class="note">The Navigator routes trucks on Calgary\u2019s designated truck network through a routing server. Paste its URL here. The truck profile it routes with is set on the Navigator card above.</p>' +
+        '<label class="f">Navigator server URL</label>' +
+        '<input id="pf_nav_url" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://your-routing-server.example">' +
+        '<p class="note" id="pf_nav_note"></p></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
@@ -569,6 +602,60 @@
         };
         try { if (window.ParkPlace) ParkPlace.onPlaceChange(paint); } catch (e) {}
         paint();
+      })();
+      /* v77: Navigator profile + server URL — persist the moment they
+         change (the power-read pattern), through the shared
+         MeticulousNav store helpers the Navigator module reads. If the
+         module failed to load, fall back to the same 'navigator' store
+         key directly so the settings are never lost. */
+      (function () {
+        function navLoad() {
+          if (window.MeticulousNav && MeticulousNav.loadSettings) return MeticulousNav.loadSettings();
+          var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
+          return { profile: s.profile || {}, serverUrl: String(s.serverUrl || '') };
+        }
+        function navSave(patch) {
+          if (window.MeticulousNav && MeticulousNav.saveSettings) { MeticulousNav.saveSettings(patch); return; }
+          var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
+          for (var k in patch) s[k] = patch[k];
+          try { App._store.set('navigator', s); } catch (e) {}
+        }
+        var urlEl = body.querySelector('#pf_nav_url');
+        var urlNote = body.querySelector('#pf_nav_note');
+        if (urlEl) {
+          urlEl.value = navLoad().serverUrl || '';
+          if (urlNote) urlNote.textContent = urlEl.value
+            ? 'Routing server set — the Navigator will route through it.'
+            : 'No server set — the Navigator will say routing is unavailable.';
+          urlEl.onchange = function () {
+            var v = urlEl.value.trim();
+            navSave({ serverUrl: v });
+            if (urlNote) urlNote.textContent = v
+              ? '✓ Saved. The Navigator will route through this server.'
+              : 'Cleared — the Navigator will say routing is unavailable until a server is set.';
+          };
+        }
+        var profIds = { height: 'pf_nv_height', width: 'pf_nv_width', length: 'pf_nv_length', weight: 'pf_nv_weight', axleLoad: 'pf_nv_axleload', axles: 'pf_nv_axles' };
+        var nvNote = body.querySelector('#pf_nv_note');
+        function saveProfile() {
+          var cur = navLoad().profile || {};
+          var p = {}, k, el;
+          for (k in profIds) {
+            el = body.querySelector('#' + profIds[k]);
+            if (el && el.value !== '') p[k] = Number(el.value);
+            else if (cur[k] !== undefined) p[k] = cur[k];
+          }
+          var hz = body.querySelector('#pf_nv_hazmat');
+          p.hazmat = hz ? !!hz.checked : !!cur.hazmat;
+          navSave({ profile: p });
+          if (nvNote) nvNote.textContent = '✓ Truck profile saved — the Navigator routes for this truck.';
+        }
+        Object.keys(profIds).forEach(function (k) {
+          var el = body.querySelector('#' + profIds[k]);
+          if (el) el.onchange = saveProfile;
+        });
+        var hzEl = body.querySelector('#pf_nv_hazmat');
+        if (hzEl) hzEl.onchange = saveProfile;
       })();
       // v24: pf_wipe handler removed (button removed above)
     }
