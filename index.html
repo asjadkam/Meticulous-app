@@ -9,7 +9,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=74">
+<link rel="stylesheet" href="css/style.css?v=75">
 <style>
 /* critical splash: visible before style.css / JS load */
 #splash{position:fixed;inset:0;background:#1F3764;z-index:9999;display:flex;flex-direction:column;
@@ -54,7 +54,7 @@
   <!-- AUTH -->
   <div id="auth" class="view">
     <div class="auth-land" id="authLand">
-      <div class="hero-photo"><img src="assets/hero-truck.jpg?v=35" alt=""></div>
+      <div class="hero-photo"><img src="assets/hero-truck.jpg?v=75" alt=""></div>
       <div class="hero-copy">
         <h2>We care about<br>your load.</h2>
         <p class="tag">World-class customer service, small-town customer care.</p>
@@ -223,38 +223,38 @@
 </div>
 
 <!-- v30 OTA: runs before everything else; gates app boot on OTA.ready() -->
-<script src="js/ota.js?v=30"></script>
+<script src="js/ota.js?v=75"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="js/firebase.js?v=26"></script>
-<script src="js/cloudsync.js?v=27"></script>
+<script src="js/firebase.js?v=75"></script>
+<script src="js/cloudsync.js?v=75"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/ticket-ocr.js?v=26"></script>
-<script src="js/powerread.js?v=63"></script>
-<script src="js/dispatch-ingest.js?v=66"></script>
-<script src="js/pdfexport.js?v=71"></script>
-<script src="modules/revenue.js?v=41"></script>
-<script src="modules/dispatch.js?v=74"></script>
-<script src="modules/navigation.js?v=25"></script>
-<script src="modules/fuel.js?v=63"></script>
-<script src="modules/pnl.js?v=26"></script>
-<script src="modules/maintenance.js?v=63"></script>
-<script src="modules/damage.js?v=25"></script>
-<script src="modules/manifest.js?v=74"></script>
-<script src="modules/invoice.js?v=71"></script>
-<script src="modules/connect.js?v=25"></script>
-<script src="modules/reminders.js?v=25"></script>
-<script src="modules/autostart.js?v=30"></script>
-<script src="modules/preferences.js?v=74"></script>
-<script src="modules/subscription.js?v=25"></script>
-<script src="js/app.js?v=74"></script>
-<script src="js/geo.js?v=37"></script>
-<script src="js/miles.js?v=70"></script>
-<script src="js/geoloads.js?v=68"></script>
-<script src="js/shifttrack.js?v=74"></script>
-<script src="js/parkplace.js?v=74"></script>
+<script src="js/ticket-ocr.js?v=75"></script>
+<script src="js/powerread.js?v=75"></script>
+<script src="js/dispatch-ingest.js?v=75"></script>
+<script src="js/pdfexport.js?v=75"></script>
+<script src="modules/revenue.js?v=75"></script>
+<script src="modules/dispatch.js?v=75"></script>
+<script src="modules/navigation.js?v=75"></script>
+<script src="modules/fuel.js?v=75"></script>
+<script src="modules/pnl.js?v=75"></script>
+<script src="modules/maintenance.js?v=75"></script>
+<script src="modules/damage.js?v=75"></script>
+<script src="modules/manifest.js?v=75"></script>
+<script src="modules/invoice.js?v=75"></script>
+<script src="modules/connect.js?v=75"></script>
+<script src="modules/reminders.js?v=75"></script>
+<script src="modules/autostart.js?v=75"></script>
+<script src="modules/preferences.js?v=75"></script>
+<script src="modules/subscription.js?v=75"></script>
+<script src="js/app.js?v=75"></script>
+<script src="js/geo.js?v=75"></script>
+<script src="js/miles.js?v=75"></script>
+<script src="js/geoloads.js?v=75"></script>
+<script src="js/shifttrack.js?v=75"></script>
+<script src="js/parkplace.js?v=75"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

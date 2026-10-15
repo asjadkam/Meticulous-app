@@ -504,6 +504,31 @@
     r.readAsDataURL(file);
   }
 
+  /* DSP-SCROLL-BEGIN — v75: after an Edit tap the form must COME
+     TO the user (owner video, Oct 14: Edit loaded the form at the
+     top of the module but nothing scrolled to it, so the tap read
+     as "nothing happens" — the LOOK TWICE rule). A single
+     scrollIntoView right after the re-render was already there and
+     was not enough on the phone: the ingest card paints after the
+     render and ticket photos decode late, both shifting layout
+     after the one scroll. So: scroll to the FORM CARD now, again
+     on the next frame, and once more shortly after — the last
+     layout settles with the form in view. scrollIntoView is the
+     only mechanism (a WebView has no window.scrollTo target for a
+     module body); every attempt is guarded. */
+  function dspScrollToForm(body) {
+    function go() {
+      try {
+        var el = body.querySelector('#dp_form_card') || body.querySelector('#dp_site');
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+      } catch (e) {}
+    }
+    go();
+    try { if (window.requestAnimationFrame) window.requestAnimationFrame(go); } catch (e) {}
+    setTimeout(go, 350);
+  }
+  /* DSP-SCROLL-END */
+
   var api = {
     status: function () {
       var a = active();
@@ -580,7 +605,7 @@
 
       /* ---- New dispatch form (v56: the same form is the EDIT form
            when editingId is set — one form, prefilled either way) ---- */
-      h += '<div class="card"><h3>' + (editingId ? '✏️ Edit dispatch' : '＋ New dispatch') + '</h3>' +
+      h += '<div class="card" id="dp_form_card"><h3>' + (editingId ? '✏️ Edit dispatch' : '＋ New dispatch') + '</h3>' +
         '<div id="dp_draft_note"></div>' +
         '<div id="dp_draft_warn"></div>' +
         '<div id="dp_save_err"></div>' +
@@ -620,7 +645,12 @@
           var i = list().length - 1 - ri;
           var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
                    d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
-          return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
+          /* v75: the item being edited says so, HERE, where he
+             tapped — orange frame + a plain line — so even before
+             the scroll lands, the tap visibly DID something. */
+          var isEditing = !!(editingId && d.id === editingId);
+          return '<div class="listitem"' + (isEditing ? ' style="border:2px solid var(--orange);border-radius:10px"' : '') + '><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
+            (isEditing ? '<div style="color:var(--orange);font-weight:700;margin-top:2px">✏️ You\'re editing this one — the form is at the top of this page ↑</div>' : '') +
             '<div class="b">' + esc(d.date || '') +
             (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
             (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
@@ -633,7 +663,7 @@
             (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' : '') +
             '<div class="row" style="margin-top:8px">' +
             (d.status === 'saved' ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
-            '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>' +
+            '<button class="btn small ghost" data-edit="' + i + '">' + (isEditing ? '✏️ Editing ↑' : '✏️ Edit') + '</button>' +
             '<button class="btn small ghost" data-del="' + i + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
 
@@ -1209,8 +1239,10 @@
         var draft = { fields: fields, tickets: tk, photo: dspPhotoFor(d), editId: d.id, savedAt: Date.now() };
         if (dspSaveDraft(draft) === false) { dspSaveDraft(dspSlimDraft(draft)); }
         api.render(body);
-        var siteEl = body.querySelector('#dp_site');
-        if (siteEl && siteEl.scrollIntoView) { try { siteEl.scrollIntoView({ block: 'start' }); } catch (e) {} }
+        /* v75: bring the edit form to him (repeated scroll — see
+           DSP-SCROLL above; the one-shot scroll this replaces did
+           not survive the phone's late layout). */
+        dspScrollToForm(body);
       }
 
       var addBtn = body.querySelector('#dp_add');

@@ -29,6 +29,31 @@
 
   function dayStr() { return G('mani_date', App._today()); }
 
+  /* v75: session stamps are stored as ISO STRINGS (app.js
+     stopSessionAt writes endedAt via toISOString), but collect()
+     did arithmetic on the raw value — endedAt - seconds * 1000 is
+     NaN on a string, and new Date(NaN).toLocaleTimeString() renders
+     literally "Invalid Date" (owner's phone, Oct 14: Start Time
+     "Invalid Date" on a day whose start existed three ways). Parse
+     every stamp to ms first (numbers pass through, strings go via
+     Date.parse); anything unparseable renders '—', never
+     "Invalid Date". Display only — what the times MEAN is unchanged:
+     start is still endedAt − seconds, end is still endedAt. */
+  function stampMs(v) {
+    var n = (typeof v === 'number') ? v : Date.parse(v);
+    return (typeof n === 'number' && isFinite(n) && n > 0) ? n : null;
+  }
+  function fmtStamp(v) {
+    var ms = stampMs(v);
+    return ms === null ? '—' : new Date(ms).toLocaleTimeString();
+  }
+  function fmtStartOf(s) {
+    var e = stampMs(s && s.endedAt);
+    if (e === null) return '—';
+    var start = e - (parseFloat(s.seconds) || 0) * 1000;
+    return start > 0 ? new Date(start).toLocaleTimeString() : '—';
+  }
+
   function collect(d) {
     var dispatches = (G('dsp_list', [])).filter(function (x) { return x.date === d; });
     var navLog = (G('nav_log', [])).filter(function (x) { return x.at.slice(0, 10) === d; });
@@ -47,8 +72,8 @@
       else if (o.payStandard === 'Weight') earned += (parseFloat(e.tons) || 0) * rate;
     });
     extras.forEach(function (x) { earned += parseFloat(x.amount) || 0; });
-    var startT = sessions.length ? new Date(sessions[0].endedAt - sessions[0].seconds * 1000).toLocaleTimeString() : '—';
-    var endT = sessions.length ? new Date(sessions[sessions.length - 1].endedAt).toLocaleTimeString() : '—';
+    var startT = sessions.length ? fmtStartOf(sessions[0]) : '—';
+    var endT = sessions.length ? fmtStamp(sessions[sessions.length - 1].endedAt) : '—';
     /* v40: the day's odometer readings live on the session entries
        (by-mile day photos, v39), and so do live miles + the miles
        reconciliation verdict (js/miles.js). First start reading and
@@ -95,7 +120,7 @@
       }
     } catch (e) { live = null; }
     if (live) {
-      if (!sessions.length) startT = new Date(live.startMs).toLocaleTimeString();
+      if (!sessions.length) startT = fmtStamp(live.startMs);
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
     }
@@ -169,7 +194,7 @@
     if (t.nav && c.navLog.length) {
       L.push({ k: 'h', a: 'Work travel' });
       c.navLog.forEach(function (x) {
-        L.push({ k: 'kv', a: x.name, b: new Date(x.at).toLocaleTimeString() });
+        L.push({ k: 'kv', a: x.name, b: fmtStamp(x.at) });
       });
     }
     if (t.expense && (c.fills.length || c.expenses.length)) {
@@ -212,7 +237,7 @@
           '). The dump site already on record was kept.' });
       }
       (c.geoDay.events || []).forEach(function (ev, i) {
-        L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: new Date(ev.t).toLocaleTimeString() });
+        L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: fmtStamp(ev.t) });
       });
     } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
       L.push({ k: 'note', a: GEOLOAD_BLOCKED[c.geoDay.blocked] });
@@ -278,7 +303,7 @@
       }
       if (t.nav && c.navLog.length) {
         h += '<h3>Work travel</h3>' + c.navLog.map(function (x) {
-          return '<div class="kv"><span>' + esc(x.name) + '</span><b>' + esc(new Date(x.at).toLocaleTimeString()) + '</b></div>';
+          return '<div class="kv"><span>' + esc(x.name) + '</span><b>' + esc(fmtStamp(x.at)) + '</b></div>';
         }).join('');
       }
       if (t.expense && (c.fills.length || c.expenses.length)) {
@@ -338,7 +363,7 @@
         }
         (c.geoDay.events || []).forEach(function (ev, i) {
           h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
-            esc(new Date(ev.t).toLocaleTimeString()) + '</b></div>';
+            esc(fmtStamp(ev.t)) + '</b></div>';
         });
       } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
         h += '<div class="note" style="margin:6px 0">🚛 ' + esc(GEOLOAD_BLOCKED[c.geoDay.blocked]) + '</div>';

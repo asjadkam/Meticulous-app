@@ -246,13 +246,18 @@
     var days = Math.min(periodDays(), 62);
     var now = new Date();
     var agg = dayAgg();
-    var buckets = [], labels = [];
+    var buckets = [], labels = [], dates = [];
     for (var i = days - 1; i >= 0; i--) {
       var d = new Date(now.getTime() - i * 86400000);
       var ds = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
       buckets.push(agg[ds] ? agg[ds].amount : 0);
       labels.push((d.getMonth() + 1) + '/' + d.getDate());
+      dates.push(ds);
     }
+    /* v75: each bar IS its day — render wires a canvas tap to the
+       bucket under it via this list ("make sure revenue entries
+       are clickable as well", owner, Oct 14). */
+    cv._dayDates = dates;
     var Wd = cv.width = (cv.offsetWidth || 600) * 2, H = cv.height = 340;
     var ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, Wd, H);
@@ -399,6 +404,56 @@
       entries: ents, extras: xtras, sessions: sessions, fuel: fuel, dispatches: dispatches
     };
   }
+
+  /* v75: entry/extra EDITING for Day Details (owner, Oct 14:
+     "make sure revenue entries are clickable as well" — v47 made a
+     day's entries visible and deletable, but there was still no way
+     to VIEW one day from the period chart or the main lists, and no
+     way to EDIT an entry anywhere). applyEntryEdit / applyExtraEdit
+     are pure: the original record's other fields (date, auto, any
+     keys the form doesn't know) survive, the form's fields win, and
+     a quantity the form leaves blank is REMOVED so payFor can never
+     price a ghost. saveEntriesVerified / saveExtrasVerified are the
+     v48 rule — write, read back, byte-compare; false means the
+     stored list is unchanged and the caller keeps the edit form
+     open with a plain in-page error. */
+  function applyEntryEdit(orig, form) {
+    var e = {};
+    for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) e[k] = orig[k]; }
+    e.type = form.type || e.type || 'load';
+    e.amount = (parseFloat(form.amount) || 0).toFixed(2);
+    e.loads = parseInt(form.loads, 10) || 1;
+    e.note = form.note || '';
+    ['hours', 'miles', 'tons', 'trips'].forEach(function (name) {
+      var v = parseFloat(form[name]);
+      if (v > 0) e[name] = v; else delete e[name];
+    });
+    return e;
+  }
+  function applyExtraEdit(orig, form) {
+    var x = {};
+    for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) x[k] = orig[k]; }
+    x.type = form.type || x.type || 'other';
+    x.amount = (parseFloat(form.amount) || 0).toFixed(2);
+    x.note = form.note || '';
+    return x;
+  }
+  function saveEntriesVerified(list) {
+    W('entries', list);
+    var back = S('entries', null);
+    if (JSON.stringify(back) !== JSON.stringify(list)) return false;
+    /* the cloud mirror saveEntries performs, once the local write
+       is proven — mirrors never precede the verified local save. */
+    if (window.FB && FB.saveDoc) list.forEach(function (x, i) {
+      try { FB.saveDoc('revenue', 'e' + i + '_' + (x.date || ''), x); } catch (err) {}
+    });
+    return true;
+  }
+  function saveExtrasVerified(list) {
+    W('extras', list);
+    var back = S('extras', null);
+    return JSON.stringify(back) === JSON.stringify(list);
+  }
   /* DAY-DETAIL-END */
 
   /* v47: Day Details — opened by tapping a day row in the Month view
@@ -416,6 +471,12 @@
   function renderDayDetail(body) {
     var ds = dayDetailDate;
     var d = dayDetailData(ds);
+    /* v75: an edit target that no longer exists (deleted elsewhere)
+       closes the edit quietly — never edit a ghost. */
+    if (dayEdit) {
+      var tgt = dayEdit.kind === 'entry' ? entries()[dayEdit.index] : extras()[dayEdit.index];
+      if (!tgt) { dayEdit = null; dayEditErr = ''; }
+    }
     var title = new Date(ds + 'T12:00:00').toLocaleDateString('en',
       { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     var h = '<button class="btn small ghost" id="rv_day_back" style="margin-bottom:10px">‹ Back</button>';
@@ -425,6 +486,48 @@
       (d.extrasAmt > 0 ? '<div class="note" style="margin-top:6px">Earnings include $' + d.extrasAmt.toFixed(2) + ' in extras (listed below).</div>' : '') +
       (d.live ? '<div class="note" style="margin-top:6px">● Tracker still running — this day is counted live; the finished session lands here when you stop.</div>' : '') +
       '</div>';
+    if (dayErr) {
+      h += '<div class="card"><div style="color:#c2410c;font-weight:600">⚠️ ' + esc(dayErr) + '</div></div>';
+    }
+    /* v75: THE EDIT FORM — one card, right under the day's totals,
+       prefilled with the record's own values. Amount is the number
+       that prices the entry (payFor's rule: an amount over 0 wins);
+       the quantity fields are there for the records that carry them
+       (hours-sheet and tracker days) — blanking one removes it.
+       After a FAILED save the form reopens with dayEditDraft's
+       values, so what he typed is genuinely still there. */
+    if (dayEdit) {
+      var rec = dayEdit.kind === 'entry' ? entries()[dayEdit.index] : extras()[dayEdit.index];
+      var draft = (dayEditDraft && dayEditDraft.kind === dayEdit.kind && dayEditDraft.index === dayEdit.index) ? dayEditDraft.form : null;
+      function fv(name, raw) {
+        if (draft && draft[name] !== undefined) return draft[name];
+        return (raw === undefined || raw === null) ? '' : raw;
+      }
+      h += '<div class="card" style="border:2px solid var(--orange)"><h3>✏️ Edit ' + (dayEdit.kind === 'entry' ? 'entry' : 'extra') + '</h3>' +
+        (dayEditErr ? '<div style="color:#c2410c;font-weight:600;margin-bottom:8px">⚠️ ' + esc(dayEditErr) + '</div>' : '');
+      if (dayEdit.kind === 'entry') {
+        var typeOpts = ['load', 'hourly', 'miles', 'trip', 'weight'].map(function (t) {
+          return '<option value="' + t + '"' + (fv('type', rec.type || 'load') === t ? ' selected' : '') + '>' + t + '</option>';
+        }).join('');
+        h += '<div class="row"><div><label class="f">Type</label><select id="rv_ed_type">' + typeOpts + '</select></div>' +
+          '<div><label class="f">Amount $</label><input id="rv_ed_amt" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('amount', rec.amount)) + '"></div></div>' +
+          '<div class="row"><div><label class="f">Hours</label><input id="rv_ed_hours" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('hours', rec.hours)) + '"></div>' +
+          '<div><label class="f">Loads</label><input id="rv_ed_loads" type="number" min="1" step="1" value="' + esc(fv('loads', rec.loads || 1)) + '"></div></div>' +
+          '<div class="row"><div><label class="f">Miles (km)</label><input id="rv_ed_miles" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('miles', rec.miles)) + '"></div>' +
+          '<div><label class="f">Tonnes</label><input id="rv_ed_tons" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('tons', rec.tons)) + '"></div></div>' +
+          '<div class="row"><div><label class="f">Trips</label><input id="rv_ed_trips" type="number" inputmode="decimal" min="0" step="1" value="' + esc(fv('trips', rec.trips)) + '"></div></div>' +
+          '<label class="f">Note</label><input id="rv_ed_note" value="' + esc(fv('note', rec.note)) + '">';
+      } else {
+        var xOpts = ['bonus', 'detention', 'reimbursement', 'other'].map(function (t) {
+          return '<option value="' + t + '"' + (fv('type', rec.type || 'other') === t ? ' selected' : '') + '>' + t + '</option>';
+        }).join('');
+        h += '<div class="row"><div><label class="f">Type</label><select id="rv_ed_xtype">' + xOpts + '</select></div>' +
+          '<div><label class="f">Amount $</label><input id="rv_ed_xamt" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('amount', rec.amount)) + '"></div></div>' +
+          '<label class="f">Note</label><input id="rv_ed_xnote" value="' + esc(fv('note', rec.note)) + '">';
+      }
+      h += '<div class="row" style="margin-top:10px"><button class="btn primary" id="rv_ed_save">💾 Save changes</button>' +
+        '<button class="btn ghost" id="rv_ed_cancel">Cancel</button></div></div>';
+    }
     if (d.entries.length) {
       h += '<div class="card"><h3>📒 Entries</h3>' + d.entries.map(function (e) {
         var parts = [];
@@ -435,16 +538,22 @@
         if (e.type === 'load' && e.loads > 0) parts.push(e.loads + ' load' + (e.loads === 1 ? '' : 's'));
         if (e.note) parts.push(e.note);
         if (e.auto) parts.push('auto');
+        var editingThis = dayEdit && dayEdit.kind === 'entry' && dayEdit.index === e.index;
         return '<div class="listitem"><div class="a">$' + e.amount.toFixed(2) + ' <span class="pill">' + esc(e.type) + '</span></div>' +
           (parts.length ? '<div class="b">' + esc(parts.join(' · ')) + '</div>' : '') +
-          '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + e.index + '">Delete</button></div></div>';
+          (editingThis ? '<div class="b" style="color:var(--orange);font-weight:700">✏️ You\'re editing this one — the form is at the top of this page ↑</div>' :
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvedit="' + e.index + '">✏️ Edit</button>' +
+            (dayEdit ? '' : '<button class="btn small ghost" data-rvdel="' + e.index + '">Delete</button>') + '</div>') + '</div>';
       }).join('') + '</div>';
     }
     if (d.extras.length) {
       h += '<div class="card"><h3>✨ Extras</h3>' + d.extras.map(function (x) {
+        var editingThisX = dayEdit && dayEdit.kind === 'extra' && dayEdit.index === x.index;
         return '<div class="listitem"><div class="a">' + esc(x.type) + ' — $' + x.amount.toFixed(2) + '</div>' +
           (x.note ? '<div class="b">' + esc(x.note) + '</div>' : '') +
-          '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + x.index + '">Delete</button></div></div>';
+          (editingThisX ? '<div class="b" style="color:var(--orange);font-weight:700">✏️ You\'re editing this one — the form is at the top of this page ↑</div>' :
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxedit="' + x.index + '">✏️ Edit</button>' +
+            (dayEdit ? '' : '<button class="btn small ghost" data-rxdel="' + x.index + '">Delete</button>') + '</div>') + '</div>';
       }).join('') + '</div>';
     }
     if (d.sessions.length) {
@@ -485,17 +594,114 @@
       h += '<div class="card"><div class="empty">Nothing recorded for this day.</div></div>';
     }
     body.innerHTML = h;
-    body.querySelector('#rv_day_back').onclick = function () { dayDetailDate = null; api.render(body); };
+    body.querySelector('#rv_day_back').onclick = function () {
+      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      api.render(body);
+    };
+    /* v75: deletes from Day Details are verified too — a failed
+       write leaves the record in place and says so on the page. */
     bindTwoTapDelete(body, '[data-rvdel]', function (b) {
-      var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
+      var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1);
+      if (!saveEntriesVerified(l)) {
+        dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
+      } else { dayErr = ''; }
+      api.render(body);
     });
     bindTwoTapDelete(body, '[data-rxdel]', function (b) {
-      var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
+      var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1);
+      if (!saveExtrasVerified(l)) {
+        dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
+      } else { dayErr = ''; }
+      api.render(body);
     });
+    /* v75: open an editor (the form renders at the top of the
+       detail, and opening one re-renders — the row it came from
+       says "you're editing this one" so the tap's effect is visible
+       where he tapped too). */
+    body.querySelectorAll('[data-rvedit]').forEach(function (b) {
+      b.onclick = function () {
+        dayEdit = { kind: 'entry', index: +b.getAttribute('data-rvedit') };
+        dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+        api.render(body);
+        var top = body.querySelector('#rv_day_back');
+        if (top && top.scrollIntoView) { try { top.scrollIntoView({ block: 'start' }); } catch (e) {} }
+      };
+    });
+    body.querySelectorAll('[data-rxedit]').forEach(function (b) {
+      b.onclick = function () {
+        dayEdit = { kind: 'extra', index: +b.getAttribute('data-rxedit') };
+        dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+        api.render(body);
+        var top = body.querySelector('#rv_day_back');
+        if (top && top.scrollIntoView) { try { top.scrollIntoView({ block: 'start' }); } catch (e) {} }
+      };
+    });
+    var edCancel = body.querySelector('#rv_ed_cancel');
+    if (edCancel) edCancel.onclick = function () { dayEdit = null; dayEditErr = ''; dayEditDraft = null; api.render(body); };
+    var edSave = body.querySelector('#rv_ed_save');
+    if (edSave) edSave.onclick = function () {
+      if (!dayEdit) return;
+      if (dayEdit.kind === 'entry') {
+        var form = {
+          type: body.querySelector('#rv_ed_type').value,
+          amount: body.querySelector('#rv_ed_amt').value,
+          loads: body.querySelector('#rv_ed_loads').value,
+          hours: body.querySelector('#rv_ed_hours').value,
+          miles: body.querySelector('#rv_ed_miles').value,
+          tons: body.querySelector('#rv_ed_tons').value,
+          trips: body.querySelector('#rv_ed_trips').value,
+          note: body.querySelector('#rv_ed_note').value.trim()
+        };
+        dayEditDraft = { kind: 'entry', index: dayEdit.index, form: form };
+        var amt = parseFloat(form.amount);
+        if (!(amt >= 0) || isNaN(amt)) {
+          dayEditErr = 'Enter the amount (0 or more) — nothing was saved.';
+          api.render(body); return;
+        }
+        var l = entries();
+        if (!l[dayEdit.index]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
+        l[dayEdit.index] = applyEntryEdit(l[dayEdit.index], form);
+        if (!saveEntriesVerified(l)) {
+          dayEditErr = 'Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the entry is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.';
+          api.render(body); return;
+        }
+      } else {
+        var xform = {
+          type: body.querySelector('#rv_ed_xtype').value,
+          amount: body.querySelector('#rv_ed_xamt').value,
+          note: body.querySelector('#rv_ed_xnote').value.trim()
+        };
+        dayEditDraft = { kind: 'extra', index: dayEdit.index, form: xform };
+        var xamt = parseFloat(xform.amount);
+        if (!(xamt >= 0) || isNaN(xamt)) {
+          dayEditErr = 'Enter the amount (0 or more) — nothing was saved.';
+          api.render(body); return;
+        }
+        var xl = extras();
+        if (!xl[dayEdit.index]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
+        xl[dayEdit.index] = applyExtraEdit(xl[dayEdit.index], xform);
+        if (!saveExtrasVerified(xl)) {
+          dayEditErr = 'Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the extra is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.';
+          api.render(body); return;
+        }
+      }
+      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      api.render(body);
+    };
   }
 
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
   var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
+  /* v75: the entry/extra being edited inside Day Details
+     ({kind:'entry'|'extra', index} into the FULL stored list), the
+     message a failed verified save/delete leaves on the detail view,
+     and the standalone delete-failure line. While an edit is open
+     the lists' Delete buttons are not rendered at all — deleting a
+     different row would shift the indexes the edit points at. */
+  var dayEdit = null;
+  var dayEditErr = '';
+  var dayErr = '';
+  var dayEditDraft = null; // v75: form values of a FAILED save, so the reopened editor still holds them
 
   var api = {
     status: function () {
@@ -674,7 +880,8 @@
             }).join('') + '</div>' : '') +
           '</div>';
       } else {
-        h += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas></div>';
+        h += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas>' +
+          '<div class="note" style="margin-top:6px">Tap a bar to open that day.</div></div>';
       }
 
       h += '<div class="card"><h3>＋ Manual entry</h3>' +
@@ -693,7 +900,7 @@
         '<label class="f">Note</label><input id="rx_note" placeholder="e.g. 3h wait at pit">' +
         '<button class="btn navy" id="rx_add">Add extra</button>' +
         '<div id="rx_list">' + (extras().length ? extras().slice().reverse().map(function (x, ri) {
-          return '<div class="listitem"><div class="a">' + esc(x.type) + ' — $' + esc(x.amount) + '</div><div class="b">' + esc(x.date) + (x.note ? ' · ' + esc(x.note) : '') + '</div>' +
+          return '<div class="listitem" data-day-link="' + esc(x.date) + '" style="cursor:pointer"><div class="a">' + esc(x.type) + ' — $' + esc(x.amount) + '</div><div class="b">' + esc(x.date) + (x.note ? ' · ' + esc(x.note) : '') + ' · tap to open the day</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + (extras().length - 1 - ri) + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No extras yet.</div>') + '</div></div>';
 
@@ -702,8 +909,8 @@
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
           var amt = payFor(e, std, App._store.get('onboarding', {}).payRate);
           var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
-          return '<div class="listitem"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
-            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + '</div>' +
+          return '<div class="listitem" data-day-link="' + esc(e.date) + '" style="cursor:pointer"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
+            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + (entries().length - 1 - ri) + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No entries yet. Add one above or run the tracker.</div>') + '</div></div>';
 
@@ -711,7 +918,25 @@
 
       body.innerHTML = h;
       var chartEl = body.querySelector('#revChart');
-      if (chartEl) drawChart(chartEl);
+      if (chartEl) {
+        drawChart(chartEl);
+        /* v75: tap a bar → that day's detail (the bucket under the
+           tap, from the date list drawChart stashed on the canvas). */
+        chartEl.style.cursor = 'pointer';
+        chartEl.onclick = function (ev) {
+          var dates = chartEl._dayDates;
+          if (!dates || !dates.length) return;
+          var w = chartEl.offsetWidth || chartEl.getBoundingClientRect().width || 0;
+          if (!w) return;
+          var x = (ev && typeof ev.offsetX === 'number') ? ev.offsetX
+            : (ev.clientX - chartEl.getBoundingClientRect().left);
+          var i = Math.floor(x / (w / dates.length));
+          if (i < 0) i = 0;
+          if (i >= dates.length) i = dates.length - 1;
+          dayDetailDate = dates[i];
+          api.render(body);
+        };
+      }
 
       /* v36: auto-start card save (shared saver, same storage keys). */
       body.querySelector('#rv_as_save').onclick = function () {
@@ -808,6 +1033,19 @@
       });
       bindTwoTapDelete(body, '[data-rxdel]', function (b) {
         var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
+      });
+      /* v75: the main Entries/Extras rows open their day's detail
+         (owner: "make sure revenue entries are clickable as well").
+         A tap on the row's own Delete button must NOT navigate —
+         the button keeps its two-tap delete, guarded here by the
+         tap landing inside it. */
+      body.querySelectorAll('[data-day-link]').forEach(function (el) {
+        el.onclick = function (ev) {
+          if (ev && ev.target && ev.target.closest &&
+              ev.target.closest('[data-rvdel],[data-rxdel]')) return;
+          dayDetailDate = el.getAttribute('data-day-link');
+          api.render(body);
+        };
       });
       body.querySelector('#rv_export').onclick = function () {
         api.exportToManifest();

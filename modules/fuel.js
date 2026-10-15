@@ -7,6 +7,54 @@
 
   function fills() { return S('fills', []); }
 
+  /* FUEL-OPEN-BEGIN — v75: records you can open (owner, Oct 14:
+     "These entries should be editable... When clicked nothing
+     happens"). The guard / edit / verified-save logic lives here so
+     the tests drive the shipped code; the render wiring below uses
+     exactly these helpers.
+     - fillGuard: a fill with BOTH litres and cost empty must never
+       save (the owner's phone holds a blank "L — $ · 2026-10-13 ·
+       odo 168510" entry that slipped through the old form). Returns
+       a plain message, or null when the fill may save.
+     - applyFillEdit: the updated record — the original's other
+       fields survive, the form's fields win, and an emptied
+       odometer REMOVES the odo field (the v44 no-odo convention:
+       odo-less rows are ignored by the master and the MPG trend).
+     - saveFillsVerified: the v48 rule — write, read back, compare;
+       false means the stored list is unchanged and the caller keeps
+       the form open with a plain in-page error. */
+  function fillGuard(litres, cost) {
+    var l = parseFloat(litres), c = parseFloat(cost);
+    if (!(l > 0) && !(c > 0)) {
+      return 'Enter the litres or the cost — a fill-up with neither can\'t be saved.';
+    }
+    return null;
+  }
+  function applyFillEdit(orig, form) {
+    var rec = {};
+    for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) rec[k] = orig[k]; }
+    rec.date = form.date || rec.date;
+    rec.litres = form.litres;
+    rec.cost = form.cost;
+    rec.station = form.station;
+    var odo = parseFloat(form.odo);
+    if (odo > 0) rec.odo = odo; else delete rec.odo;
+    return rec;
+  }
+  function saveFillsVerified(f) {
+    W('fills', f);
+    var back = S('fills', null);
+    return JSON.stringify(back) === JSON.stringify(f);
+  }
+  /* FUEL-OPEN-END */
+
+  /* v75: which fill-up (index into fills()) the form is editing, or
+     null for a new fill-up; editErr is the guard/save message kept
+     visible in the form after a blocked save (the form is NOT
+     re-rendered on failure, so typed values are never lost). */
+  var editFillIdx = null;
+  var editErr = '';
+
   /* v39: note from the most recent save (e.g. the master-odometer
      outcome), shown at the top of the Fuel-up card after re-render. */
   var saveNote = '';
@@ -50,13 +98,21 @@
     },
     render: function (body) {
       var trend = mpgTrend();
+      /* v75: an edit target that vanished (deleted elsewhere) falls
+         back to a plain new-fill-up form — never edits a ghost. */
+      var editRec = null;
+      if (editFillIdx !== null) {
+        editRec = fills()[editFillIdx] || null;
+        if (!editRec) editFillIdx = null;
+      }
       var h = '<div class="card"><h3>⛽ Fuel trend</h3>' +
         (trend.length ? '<div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + trend[trend.length - 1].mpg + ' <small style="font-size:13px">km/L</small></div>' +
           '<div class="note center">Last ' + trend.length + ' fill-ups</div>' +
           trend.slice(-8).map(function (t) { return '<div class="kv"><span>' + esc(t.date) + '</span><b>' + t.mpg + '</b></div>'; }).join('')
           : '<div class="empty">Add 2+ fill-ups with odometer readings to see MPG.</div>') + '</div>';
 
-      h += '<div class="card"><h3>＋ Fuel-up</h3>' +
+      h += '<div class="card" id="fu_form_card"><h3>' + (editRec ? '✏️ Edit fill-up' : '＋ Fuel-up') + '</h3>' +
+        (editRec ? '<div class="note" style="margin-bottom:8px">You\'re editing the fill-up from ' + esc(editRec.date || '') + ' — “Save changes” updates that same entry, it does not add a new one.</div>' : '') +
         (saveNote ? '<p class="note" style="color:var(--navy);font-weight:600">' + esc(saveNote) + '</p>' : '') +
         '<label class="f">Date</label><input type="date" id="fu_date" value="' + App._today() + '">' +
         '<div class="row"><div><label class="f">Odometer (km)</label><input id="fu_odo" type="number" inputmode="decimal">' +
@@ -79,7 +135,9 @@
         '<input type="file" id="fu_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="fu_prev"></div>' +
         '<div id="fu_read" style="font-size:14px;margin-top:8px;"></div>' +
-        '<button class="btn primary" id="fu_add">Save fill-up</button></div>';
+        '<div id="fu_err" style="font-size:14px;margin:8px 0">' + (editErr ? '<span style="color:#c2410c;font-weight:600">⚠️ ' + esc(editErr) + '</span>' : '') + '</div>' +
+        '<button class="btn primary" id="fu_add">' + (editRec ? '💾 Save changes' : 'Save fill-up') + '</button>' +
+        (editRec ? '<button class="btn ghost" id="fu_cancel_edit" style="margin-left:8px">Cancel edit</button>' : '') + '</div>';
 
       h += '<div class="card"><h3>🧾 Other expenses</h3>' +
         '<div class="row"><div><label class="f">What</label><input id="fx_what" placeholder="e.g. DEF fluid"></div>' +
@@ -98,13 +156,55 @@
           return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
         }).join('') + '</div></div>';
 
+      /* v75: rows are TAPPABLE — a tap opens the entry in the form
+         above (edit mode), and the tap scrolls the form into view
+         (the LOOK TWICE rule: the response happens where he's
+         looking, or takes him straight to it). */
+      var flAll = fills();
       h += '<div class="card"><h3>📒 Fill-ups</h3>' +
-        (fills().length ? fills().slice().reverse().map(function (f) {
-          return '<div class="listitem"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) + '</div>' +
-            '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + '</div></div>';
+        (flAll.length ? flAll.slice().reverse().map(function (f, ri) {
+          var i = flAll.length - 1 - ri;
+          return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
+            '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+            '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + ' · tap to view or edit</div></div>';
         }).join('') : '<div class="empty">No fill-ups yet.</div>') + '</div>';
 
       body.innerHTML = h;
+
+      /* v75: edit-mode prefill — the form opens holding the tapped
+         entry's own values. Fields are marked touched so a stray
+         OCR read can never silently rewrite them (v39 rule). The
+         receipt photo shows when the record carries one. */
+      if (editRec) {
+        var pre = { '#fu_date': editRec.date, '#fu_odo': editRec.odo, '#fu_l': editRec.litres, '#fu_cost': editRec.cost, '#fu_stn': editRec.station };
+        Object.keys(pre).forEach(function (id) {
+          var e = body.querySelector(id);
+          if (e && pre[id] !== undefined && pre[id] !== null && pre[id] !== '') {
+            e.value = pre[id];
+            e.setAttribute('data-touched', '1');
+          }
+        });
+        if (editRec.photo) {
+          var pv = body.querySelector('#fu_prev');
+          if (pv) pv.innerHTML = '<img src="' + editRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">';
+        }
+      }
+      body.querySelectorAll('[data-fuedit]').forEach(function (el) {
+        el.onclick = function () {
+          editFillIdx = +el.getAttribute('data-fuedit');
+          editErr = ''; saveNote = '';
+          Meticulous.modules.fuel.render(body);
+          var card = body.querySelector('#fu_form_card');
+          function go() { if (card && card.scrollIntoView) { try { card.scrollIntoView({ block: 'start' }); } catch (e) {} } }
+          go();
+          try { if (window.requestAnimationFrame) window.requestAnimationFrame(go); } catch (e) {}
+        };
+      });
+      var cancelEditBtn = body.querySelector('#fu_cancel_edit');
+      if (cancelEditBtn) cancelEditBtn.onclick = function () {
+        editFillIdx = null; editErr = '';
+        Meticulous.modules.fuel.render(body);
+      };
       // v26: two-button pattern (Take photo / Choose file) like dispatch
       var fuCamInput = body.querySelector('#fu_img_cam');
       var fuPickInput = body.querySelector('#fu_img');
@@ -305,6 +405,20 @@
       }
 
       body.querySelector('#fu_add').onclick = function () {
+        /* v75: the guard runs FIRST for new and edited fills alike —
+           litres AND cost both empty never saves (the blank phone
+           entry in BUGS.md slipped through without one). A blocked
+           or failed save shows the error IN the form and does NOT
+           re-render, so what he typed is never lost. */
+        var errEl = body.querySelector('#fu_err');
+        function showErr(msg) {
+          editErr = msg;
+          if (errEl) errEl.innerHTML = '<span style="color:#c2410c;font-weight:600">⚠️ ' + esc(msg) + '</span>';
+        }
+        var litresV = body.querySelector('#fu_l').value;
+        var costV = body.querySelector('#fu_cost').value;
+        var guard = fillGuard(litresV, costV);
+        if (guard) { showErr(guard); return; }
         // v44: odometer is OPTIONAL — many fuel receipts show no reading,
         // and the user wants those entered as-is. Empty/invalid → the
         // record is saved with NO odo field at all; the master odometer
@@ -312,12 +426,41 @@
         var odo = parseFloat(body.querySelector('#fu_odo').value);
         var hasOdo = odo > 0;
         var f = fills();
-        var rec = { date: body.querySelector('#fu_date').value || App._today() };
+        var formVals = {
+          date: body.querySelector('#fu_date').value || App._today(),
+          litres: litresV, cost: costV,
+          station: body.querySelector('#fu_stn').value.trim(),
+          odo: body.querySelector('#fu_odo').value
+        };
+        if (editFillIdx !== null && f[editFillIdx]) {
+          /* v75: EDIT — update the SAME entry in place (no duplicate),
+             verified the v48 way before anything else happens. */
+          var updated = applyFillEdit(f[editFillIdx], formVals);
+          f[editFillIdx] = updated;
+          if (!saveFillsVerified(f)) {
+            showErr('Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the saved fill-up is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.');
+            return;
+          }
+          try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
+          if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
+          editFillIdx = null; editErr = '';
+          var un = hasOdo ? masterOnSave(odo) : '';
+          saveNote = un || '✓ Fill-up updated.';
+          Meticulous.modules.fuel.render(body);
+          return;
+        }
+        var rec = { date: formVals.date };
         if (hasOdo) rec.odo = odo;
-        rec.litres = body.querySelector('#fu_l').value;
-        rec.cost = body.querySelector('#fu_cost').value;
-        rec.station = body.querySelector('#fu_stn').value.trim();
-        f.push(rec); W('fills', f);
+        rec.litres = litresV;
+        rec.cost = costV;
+        rec.station = formVals.station;
+        f.push(rec);
+        /* v75: the add path is verified too — a failed write used to
+           look exactly like a saved fill-up. */
+        if (!saveFillsVerified(f)) {
+          showErr('That fill-up did NOT save — the app storage on your phone looks full, or the write failed. Your entry is still in the form — free up some phone space and tap “Save fill-up” again.');
+          return;
+        }
         /* v59: this save confirms the form — consume any power-read
            result that was waiting for this screen. */
         try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
@@ -325,6 +468,7 @@
         // v39: feed the master odometer (upward only) + show the outcome —
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
+        editErr = '';
         saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.';
         Meticulous.modules.fuel.render(body);
       };
