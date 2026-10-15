@@ -195,6 +195,12 @@
   /* ---- live session state (one navigation at a time) ---- */
   var S = null; // built fresh on every render; torn down on exit
 
+  /* v78: the last destination a route was actually built for in
+     this app session — the dashboard card's preview fact. It lives
+     OUTSIDE S on purpose: teardown nulls S when the module closes,
+     but the card should still say where the Navigator last went. */
+  var lastNavDest = '';
+
   function teardown() {
     if (!S) return;
     try { if (S.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(S.watchId); } catch (e) {}
@@ -215,9 +221,13 @@
   }
 
   var api = {
+    /* v78: the card preview — where the Navigator last routed this
+       session; before any route, the server/profile state. A
+       cleared server always wins over a stale destination. */
     status: function () {
       var st = loadSettings();
       if (!st.serverUrl) return 'Server not set — routing off';
+      if (lastNavDest) return '→ ' + lastNavDest;
       return (st.mode === 'car' ? 'Car' : 'Truck') + ' · ' + st.profile.weight + ' t · Calgary truck routes';
     },
 
@@ -397,6 +407,10 @@
             S.line = line;
             S.plan = maneuverPlan(data.trip);
             S.manIdx = 0; S.offSince = 0; S.arrived = false;
+            /* v78: remember the destination for the dashboard card
+               (search name when there is one, else the pin coords —
+               the same words the destination note shows). */
+            lastNavDest = S.destLabel || (S.dest ? S.dest[0].toFixed(5) + ', ' + S.dest[1].toFixed(5) : '');
             if (S.map) {
               if (S.routeLine) S.map.removeLayer(S.routeLine);
               S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 5, opacity: 0.9 }).addTo(S.map);

@@ -261,7 +261,40 @@
   }
 
   Meticulous.modules.manifest = {
-    status: function () { return 'Daily log · ' + dayStr(); },
+    /* v78: the card preview — TODAY's worked time so far. This is
+       the tracker COMPLEMENT, not a repeat: the hero card counts
+       the RUNNING session; this line totals the whole day (saved
+       sessions + the live one, the same split collect() makes).
+       Office faces never see tracker facts — for them the card
+       keeps the plain log line. */
+    status: function () {
+      var role = '';
+      try { role = App.userRole ? App.userRole() : ''; } catch (e) {}
+      if (role !== 'office') {
+        try {
+          var today = App._today(), secs = 0;
+          (G('sessions', []) || []).forEach(function (s) {
+            if (s && s.date === today) secs += parseFloat(s.seconds) || 0;
+          });
+          var trk = (window.App && App.tracker) || G('tracker', null);
+          var live = 0, liveState = '';
+          if (trk && (trk.status === 'running' || trk.status === 'paused')) {
+            live = parseFloat(trk.elapsed) || 0;
+            if (trk.status === 'running') live += Math.floor((Date.now() - (trk.startTs || Date.now())) / 1000);
+            liveState = trk.status;
+          }
+          var total = secs + live;
+          if (total > 60) {
+            var h = Math.floor(total / 3600), m = Math.round((total % 3600) / 60);
+            if (m === 60) { h += 1; m = 0; }
+            return 'Today: ' + (h ? h + ' h ' : '') + m + ' m worked' +
+              (liveState === 'running' ? ' · still working' : '');
+          }
+          if (liveState) return liveState === 'running' ? 'Shift running' : 'Shift paused';
+        } catch (e) {}
+      }
+      return 'Daily log · ' + dayStr();
+    },
     render: function (body) {
       var d = dayStr(), c = collect(d), t = toggles();
       var h = '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';

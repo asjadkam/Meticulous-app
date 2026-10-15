@@ -60,6 +60,30 @@
   var saveNote = '';
   function fmtKm(v) { return Number(v).toLocaleString('en-CA'); }
 
+  /* v78: when the last fill happened, in the driver's words —
+     "today" / "yesterday" / "3 days ago", else the short date.
+     Date math runs on the ISO day strings (UTC-parsed), never on
+     local midnights, so DST can never shift the answer. */
+  var FUEL_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function fillDayMs(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || '');
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function fillWhen(iso) {
+    if (!iso) return '';
+    var today = '';
+    try { today = App._today(); } catch (e) {}
+    if (iso === today) return 'today';
+    var a = fillDayMs(iso), b = fillDayMs(today);
+    if (a !== null && b !== null) {
+      var diff = Math.round((b - a) / 86400000);
+      if (diff === 1) return 'yesterday';
+      if (diff > 1 && diff < 7) return diff + ' days ago';
+    }
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+    return m ? FUEL_MON[+m[2] - 1] + ' ' + (+m[3]) : String(iso);
+  }
+
   /* v39 (addition #2): a saved fill-up's odometer feeds the ONE master
      odometer (mt_odo) — upward only. A lower saved reading (OCR misread
      or typo) never drags the master down; the returned note says which
@@ -92,9 +116,23 @@
 
   Meticulous.modules.fuel = {
     _masterOnSave: masterOnSave,
+    /* v78: the card preview — the most recent fill-up (litres · $
+       · when), the fact a driver glances for; the MPG trend stays
+       inside the module where it always lived. */
     status: function () {
-      var t = mpgTrend();
-      return t.length ? 'MPG: ' + t[t.length - 1].mpg + ' km/L' : fills().length + ' entries';
+      var f = fills(), last = null;
+      f.forEach(function (x) {
+        if (x && (!last || String(x.date || '') >= String(last.date || ''))) last = x;
+      });
+      if (!last) return 'No fill-ups yet';
+      var parts = [];
+      var L = parseFloat(last.litres);
+      if (L > 0) parts.push(String(+L.toFixed(1)) + ' L');
+      var C = parseFloat(last.cost);
+      if (C > 0) parts.push('$' + C.toFixed(2));
+      var when = fillWhen(last.date);
+      if (when) parts.push(when);
+      return parts.length ? 'Last fill: ' + parts.join(' · ') : 'No fill-ups yet';
     },
     render: function (body) {
       var trend = mpgTrend();

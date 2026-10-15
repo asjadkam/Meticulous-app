@@ -207,6 +207,27 @@
   }
   /* ================= DSP-SAVE-END ================= */
 
+  /* ---- v78: dashboard card preview helpers ----
+     The card face shows ONE live fact (Asjad, Oct 15: he missed the
+     old app's cards previewing state on the dashboard). dspCardLabel
+     is the short job line — the site, plus where the load goes when
+     the record carries a drop-off/destination; dspDayShort renders a
+     record day as "Fri Oct 16". Plain text only (app.js escapes the
+     status into the card's muted line). */
+  var DSP_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var DSP_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function dspCardLabel(d) {
+    var s = (d && (d.jobSite || d.pickup)) || 'Dispatch';
+    var drop = d && (d.dropoff || d.destination);
+    return (drop && drop !== s) ? s + ' → ' + drop : s;
+  }
+  function dspDayShort(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+    if (!m) return String(iso || '');
+    var dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return DSP_DOW[dt.getUTCDay()] + ' ' + DSP_MON[dt.getUTCMonth()] + ' ' + dt.getUTCDate();
+  }
+
   /* ================= DSP-COMPLETE-BEGIN =================
      v52: completion money plan — PURE and harness-extractable: given the
      ticket summary + account settings + the completing user's role, it
@@ -540,11 +561,34 @@
   /* DSP-SCROLL-END */
 
   var api = {
+    /* v78: the card preview — ONE live fact in priority order: the
+       ACTIVE dispatch, else today's saved dispatch, else the next
+       upcoming one (with its day), else the history count. */
     status: function () {
       var a = active();
-      if (a) return 'Active: ' + (a.jobSite || a.pickup || 'dispatch');
-      var done = list().filter(function (d) { return d.status === 'completed'; }).length;
-      return done ? done + ' completed' : list().length + ' saved';
+      if (a) return 'Active: ' + dspCardLabel(a);
+      var l = list(), i, d, rd;
+      var today = '';
+      try { today = App._today(); } catch (e) {}
+      if (today) {
+        for (i = 0; i < l.length; i++) {
+          d = l[i];
+          if (d && dspRecordDate(d) === today && d.status !== 'completed' && d.status !== 'cancelled') {
+            return 'Today: ' + dspCardLabel(d);
+          }
+        }
+        var next = null, nextDate = '';
+        for (i = 0; i < l.length; i++) {
+          d = l[i];
+          if (!d) continue;
+          rd = dspRecordDate(d);
+          if (rd && rd > today && d.status !== 'completed' && d.status !== 'cancelled' &&
+              (!nextDate || rd < nextDate)) { next = d; nextDate = rd; }
+        }
+        if (next) return dspCardLabel(next) + ' · ' + dspDayShort(nextDate);
+      }
+      var done = l.filter(function (x) { return x.status === 'completed'; }).length;
+      return done ? done + ' completed' : (l.length ? l.length + ' saved' : 'No dispatch today');
     },
     getActive: function () { return active(); },
     render: function (body) {

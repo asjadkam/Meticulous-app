@@ -119,9 +119,13 @@
   }
 
   Meticulous.modules.connect = {
+    /* v78: the card preview — shares WAITING lead (the fact that
+       needs the user); the connection count is the quiet fallback. */
     status: function () {
-      var q = outbox().length;
-      return conns().length + ' connection' + (conns().length === 1 ? '' : 's') + (q ? ', ' + q + ' queued' : '');
+      var q = outbox().length, n = conns().length;
+      var cs = n + ' connection' + (n === 1 ? '' : 's');
+      if (q) return q + ' waiting to send' + (n ? ' · ' + cs : '');
+      return n ? cs : 'No connections yet';
     },
     render: function (body) {
       var list = conns(), ob = outbox();

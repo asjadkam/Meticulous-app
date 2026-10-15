@@ -557,7 +557,21 @@
 
   /* ---------------- main ---------------- */
   Meticulous.modules.invoice = {
-    status: function () { return invoices().length + ' issued'; },
+    /* v78: the card preview — the OPEN period and its running total
+       (the period's revenue lines; a draft's manual items join when
+       the invoice itself is built). Falls back to the issued count
+       if the period cannot be read. */
+    status: function () {
+      try {
+        var p = invCycOpenPeriod(invoices(), App._today());
+        if (p) {
+          var tot = 0;
+          revenueLines(p.a, p.b).forEach(function (l) { tot += l.amt || 0; });
+          return invCycShort(p) + (tot > 0 ? ': $' + tot.toFixed(2) : ' · no entries yet');
+        }
+      } catch (e) {}
+      return invoices().length + ' issued';
+    },
     render: function (body) {
       var o = onb();
       var mode = S('mode', o.employment === 'Payroll' ? 'paystub' : 'invoice');
