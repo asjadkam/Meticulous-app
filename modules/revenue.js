@@ -849,9 +849,15 @@
          not in revenue"). The tracker feeds Revenue — onSession logs tracked
          hours as earnings — so its start-by-itself switch sits here, under
          the numbers it produces. Shared card + save from modules/autostart.js;
-         storage keys unchanged (onboarding: autoStart/autoStartTime/autoStartDays). */
-      h += Meticulous.modules.autostart.settingsHTML('rv');
-      h += '<button class="btn primary" id="rv_as_save" style="margin-bottom:16px">Save auto-start</button>';
+         storage keys unchanged (onboarding: autoStart/autoStartTime/autoStartDays).
+         v76 (F5, boss QA Oct 14): hidden for OFFICE users — the engine
+         hard-returns 'office' and can never fire for them, so the card
+         was an inert promise of a tracker they do not have. */
+      var rvIsOffice = (App.userRole ? App.userRole() : 'driver') === 'office';
+      if (!rvIsOffice) {
+        h += Meticulous.modules.autostart.settingsHTML('rv');
+        h += '<button class="btn primary" id="rv_as_save" style="margin-bottom:16px">Save auto-start</button>';
+      }
 
       if (view === 'month') {
         /* v38 (B1): per-day breakdown, newest first — date, hours, amount.
@@ -938,8 +944,10 @@
         };
       }
 
-      /* v36: auto-start card save (shared saver, same storage keys). */
-      body.querySelector('#rv_as_save').onclick = function () {
+      /* v36: auto-start card save (shared saver, same storage keys).
+         v76 (F5): the button only exists for non-office renders. */
+      var rvAsSave = body.querySelector('#rv_as_save');
+      if (rvAsSave) rvAsSave.onclick = function () {
         Meticulous.modules.autostart.saveFrom('rv', body);
         alert('Auto-start saved.');
       };

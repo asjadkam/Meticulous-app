@@ -11,8 +11,28 @@
 
   /* Canadian GST/HST by province — prefill only, always editable */
   var CA_TAX = { AB: 5, BC: 5, MB: 5, NB: 15, NL: 15, NS: 15, NT: 5, NU: 5, ON: 13, PE: 15, QC: 5, SK: 5, YT: 5 };
+  var CA_NAME2CODE = { 'Alberta': 'AB', 'British Columbia': 'BC', 'Manitoba': 'MB', 'New Brunswick': 'NB',
+    'Newfoundland and Labrador': 'NL', 'Nova Scotia': 'NS', 'Northwest Territories': 'NT', 'Nunavut': 'NU',
+    'Ontario': 'ON', 'Prince Edward Island': 'PE', 'Quebec': 'QC', 'Saskatchewan': 'SK', 'Yukon': 'YT' };
 
-  function onb() { return App._store.get('onboarding', {}); }
+  /* v76 (F8, boss QA Oct 14): read-time location bridge. Since v76,
+     onboarding's company step collects country + province (codes) for
+     every role. Records written before that may carry ONLY the
+     Preferences "Home province" (a full name) — that IS a location
+     answer, so derive country/province from it here instead of
+     greeting the user with the red "Set your location first" banner
+     for a fact he already gave. The stored record is never mutated. */
+  function onb() {
+    var o = App._store.get('onboarding', {});
+    if ((!o.country || !o.province) && o.homeProvince && CA_NAME2CODE[o.homeProvince]) {
+      var c = {};
+      for (var k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k]; }
+      if (!c.country) c.country = 'Canada';
+      if (!c.province) c.province = CA_NAME2CODE[o.homeProvince];
+      return c;
+    }
+    return o;
+  }
   function invoices() { return S('list', []); }
   function paystubs() { return S('stubs', []); }
 

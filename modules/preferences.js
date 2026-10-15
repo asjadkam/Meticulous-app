@@ -82,8 +82,15 @@
          sticker (renewed) without redoing onboarding. */
       h += '<div class="card"><h3>🚛 Truck</h3>' +
         '<label class="f">Truck number</label><input id="pf_tnum" value="' + esc(o.truckNo || '') + '">' +
-        '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">' +
-        '<label class="f">Odometer baseline (km)</label>' +
+        '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">';
+      /* v76 (F6, boss QA Oct 14): the odometer-baseline photo flow and
+         the Daily-odometer-photos tracker toggle are DRIVER tools —
+         hidden for office-only users (a man who never starts a tracker
+         should not be asked for photos of an odometer he doesn't sit
+         in front of). Truck number/type and the safety sticker stay:
+         an office manages the fleet's trucks and inspections. */
+      if (effRole !== 'office') {
+        h += '<label class="f">Odometer baseline (km)</label>' +
         '<div style="display:flex;gap:8px;margin:6px 0;">' +
         '<button type="button" class="btn secondary" id="pf_odo_cam" style="flex:1;">📷 Retake photo</button>' +
         '<button type="button" class="btn secondary" id="pf_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
@@ -97,8 +104,9 @@
            on onboarding.odoDailyPhotos, default OFF; read live by the
            tracker's prompt logic in app.js. */
         '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_odo_photos"' + (o.odoDailyPhotos ? ' checked' : '') + '> 📸 Daily odometer photos</label>' +
-        '<p class="note">When on, starting and stopping the tracker offers a photo of the odometer (morning and end of day — always skippable), and the day\'s kilometres show in Revenue, like the starting-odometer column on a paper hour sheet.</p>' +
-        '<label class="f">Safety sticker expiry</label>' +
+        '<p class="note">When on, starting and stopping the tracker offers a photo of the odometer (morning and end of day — always skippable), and the day\'s kilometres show in Revenue, like the starting-odometer column on a paper hour sheet.</p>';
+      }
+      h += '<label class="f">Safety sticker expiry</label>' +
         '<div style="display:flex;gap:8px;margin:6px 0;">' +
         '<button type="button" class="btn secondary" id="pf_safety_cam" style="flex:1;">📷 Retake photo</button>' +
         '<button type="button" class="btn secondary" id="pf_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
@@ -208,8 +216,12 @@
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont');
         o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype');
-        o.odometerBaseline = g('pf_odo'); o.safetyExpiry = g('pf_safety');
-        o.odoDailyPhotos = body.querySelector('#pf_odo_photos').checked; // v46
+        /* v76 (F6): office renders have no odometer field/toggle —
+           keep whatever is stored, never reach for missing inputs. */
+        if (body.querySelector('#pf_odo')) o.odometerBaseline = g('pf_odo');
+        o.safetyExpiry = g('pf_safety');
+        var odoTglSave = body.querySelector('#pf_odo_photos');
+        o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
         // v28: push through to Maintenance stores so PM baselines stay in sync
         try {
           if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) App._store.set('mt_odo', String(o.odometerBaseline));

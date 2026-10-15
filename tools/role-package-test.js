@@ -121,7 +121,10 @@ function roleSandbox(store) {
 
   const ALL = ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
   deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the pre-v52 order, unchanged');
-  deepEq(sb.roleModuleOrder('office').slice(0, 4), ['dispatch', 'invoice', 'pnl', 'manifest'], 'dashboard: office leads with dispatch/invoice/P&L/manifest');
+  /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
+     blueprint — the office home leads with the boss's five tools,
+     Connect FIRST, then Dispatch, Invoice, Maintenance, P&L. */
+  deepEq(sb.roleModuleOrder('office').slice(0, 5), ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl'], 'dashboard: office leads with the boss five, connect first');
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
@@ -132,7 +135,8 @@ function roleSandbox(store) {
   const KEYS = ['dashboard', 'revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'feedback', 'logout'];
   const items = KEYS.map(function (k) { return [k, '', k]; });
   const off = sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });
-  deepEq(off.slice(0, 5), ['dashboard', 'dispatch', 'invoice', 'pnl', 'manifest'], 'sidebar: office leads with office work');
+  /* v76 (F4): sidebar lead follows the same blueprint order. */
+  deepEq(off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'], 'sidebar: office leads with the boss five, connect first');
   eq(off.length, 16, 'sidebar: office keeps every item');
   const drv = sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq(drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch'], 'sidebar: driver leads with revenue/dispatch');

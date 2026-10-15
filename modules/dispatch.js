@@ -456,6 +456,16 @@
      dsp_draft, so the verified Save below remains the only way a
      dispatch record is ever created. */
   var ingestFlash = '';
+  /* v76 (owner field report, Oct 14 19:22): a Use REFUSAL must be
+     visible AT THE TAP — ingestTopFlash renders at the top of the
+     suggestions card, beside the Use buttons (ingestFlash renders at
+     the card's bottom, by the paste box, where a man who just tapped
+     Use at the top never looks). And a Use SUCCESS names what it
+     loaded in the form's own banner (usedSugNote, consumed once by
+     restoreDraft) — the suggestion vanishing from the list was the
+     only sign the tap worked, and it was not enough. */
+  var ingestTopFlash = '';
+  var usedSugNote = '';
 
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
   function fileToThumb(file, cb) {
@@ -539,6 +549,14 @@
     getActive: function () { return active(); },
     render: function (body) {
       var a = active();
+      /* v76 (F3, boss QA Oct 14): the OFFICE face. An office-only user
+         (the boss) composes dispatches at a desk: nothing he saves
+         "starts" — no started semantics, no session implication (the
+         engine already hard-returns 'office'; this is the wording
+         catching up with the fact). His Save is a plain Save, his
+         records read as saved-on-this-device, and one honest line
+         says delivery arrives with Connect Phase 2. */
+      var isOffice = (App.userRole ? App.userRole() : 'driver') === 'office';
       /* v56: the form's draft is resolved BEFORE the HTML is built —
          a draft carrying editId means the form opens in EDIT mode for
          that record (title, single "Save changes" button). If the
@@ -579,14 +597,16 @@
       /* ---- Active dispatch card ---- */
       if (a) {
         h += '<div class="card" style="border:2px solid var(--orange)"><h3>🚛 Active dispatch</h3>' +
-          '<div class="kv"><span>Status</span><b style="color:var(--orange)">● In progress</b></div>' +
+          (isOffice
+            ? '<div class="kv"><span>Status</span><b>Saved on this device</b></div>'
+            : '<div class="kv"><span>Status</span><b style="color:var(--orange)">● In progress</b></div>') +
           '<div class="kv"><span>Job site</span><b>' + esc(a.jobSite || a.pickup || '—') + '</b></div>' +
           (a.dropoff ? '<div class="kv"><span>Drop-off</span><b>' + esc(a.dropoff) + '</b></div>' : '') +
           (a.material ? '<div class="kv"><span>Material</span><b>' + esc(a.material) + '</b></div>' : '') +
           (a.ticketNo ? '<div class="kv"><span>Ticket #</span><b>' + esc(a.ticketNo) + '</b></div>' : '') +
           (a.amount ? '<div class="kv"><span>Amount</span><b>$' + esc(a.amount) + '</b></div>' : '') +
           (a.notes ? '<div class="kv"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
-          '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>' +
+          (isOffice ? '' : '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>') +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' : '') +
           '<div id="dp_close_note"></div>' +
           '<div class="row" style="margin-top:10px">' +
@@ -635,8 +655,14 @@
         (editingId ?
           '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_saveedit">💾 Save changes</button>' +
           '<button class="btn ghost" id="dp_canceledit">Cancel edit</button></div></div>' :
-          '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
-          '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>');
+          isOffice ?
+            /* v76 (F3): office Save is a PLAIN Save — no "& start",
+               no started semantics; the honest local-only line sits
+               with it (a line in the view, never a banner card). */
+            '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save</button></div>' +
+            '<p class="note" style="margin-top:8px">Dispatches are saved on this device — sending them to your drivers arrives with Connect Phase 2.</p></div>' :
+            '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
+            '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>');
 
       /* ---- History ---- */
       var hist = list().slice().reverse();
@@ -662,7 +688,7 @@
             (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
             (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' : '') +
             '<div class="row" style="margin-top:8px">' +
-            (d.status === 'saved' ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
+            (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
             '<button class="btn small ghost" data-edit="' + i + '">' + (isEditing ? '✏️ Editing ↑' : '✏️ Edit') + '</button>' +
             '<button class="btn small ghost" data-del="' + i + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
@@ -687,6 +713,9 @@
         if (sug.length) {
           h += '<h3>📩 Suggested dispatches <span class="pill">' + sug.length + '</span></h3>' +
             '<p class="note">From messages you pasted or shared — whoever sent them. Tap <b>Use</b> to put one in the form below. Nothing is saved until you tap Save there.</p>' +
+            /* v76: tap-point feedback for Use — refusals AND the
+               success pointer render HERE, beside the buttons. */
+            (ingestTopFlash ? '<div style="border:2px solid var(--orange);background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px">' + ingestTopFlash + '</div>' : '') +
             conf.map(function (c) {
               return '<div style="border:2px solid #b45309;background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px;color:#7c4a03">⚠️ <b>' + c.count + ' dispatches for ' + esc(fmtDay(c.date)) + '</b> — more than one sender dispatched this day. Pick the right one below; nothing is chosen for you.</div>';
             }).join('') +
@@ -730,6 +759,7 @@
         if (!wrap) return;
         wrap.innerHTML = ingestHTML();
         ingestFlash = '';
+        ingestTopFlash = '';
         var pb = wrap.querySelector('#dp_paste_btn');
         if (pb) pb.onclick = function () {
           var ta = wrap.querySelector('#dp_paste');
@@ -763,14 +793,34 @@
             var res = null;
             try { if (window.DispatchIngest) res = DispatchIngest.use(b.getAttribute('data-suguse')); } catch (e) {}
             if (res && res.ok) {
+              /* v76 (owner field report, Oct 14 19:22: "tapping Use
+                 does nothing — the suggestion never loads into the
+                 form"): the load itself worked (draft written,
+                 restore fills the form on render), but the tap's
+                 only feedback was the suggestion vanishing and a
+                 ONE-SHOT scrollIntoView — the exact pattern v75
+                 proved dead on the phone (ingest paint + photo
+                 decode shift the layout after the one scroll).
+                 Now: name the load in the form's own banner
+                 (usedSugNote, consumed by restoreDraft), say it in
+                 the card too, and bring the form to the user with
+                 dspScrollToForm — the v75 repeated scroll. */
+              var ef = (res.entry && res.entry.fields) || {};
+              usedSugNote = (ef.jobSite || ef.destination || 'Dispatch') +
+                (ef.scheduledAt ? ' · ' + String(ef.scheduledAt).replace('T', ' ') : '');
+              ingestTopFlash = '✓ Loaded into the form below — check it, then tap Save there. Nothing is saved yet.';
               api.render(body); // draft restore fills the form from dsp_draft
-              var siteEl = body.querySelector('#dp_site');
-              if (siteEl && siteEl.scrollIntoView) { try { siteEl.scrollIntoView({ block: 'start' }); } catch (e2) {} }
+              dspScrollToForm(body);
               return;
             }
-            ingestFlash = (res && res.reason === 'editing')
+            /* v76: a refusal explains itself AT THE TAP (top of the
+               card) — the old text rendered at the card's bottom by
+               the paste box, off-screen from the button he pressed. */
+            ingestTopFlash = (res && res.reason === 'editing')
               ? 'Finish or cancel the edit in the form below first — then tap Use.'
-              : 'You have an unsaved dispatch in the form below — save it first (or clear the form), then tap Use.';
+              : (res && res.reason === 'gone')
+                ? 'That suggestion is no longer there — the list has been refreshed.'
+                : 'You have an unsaved dispatch in the form below — save it first (or clear the form), then tap Use.';
             paintIngest();
           };
         });
@@ -866,6 +916,14 @@
           body.querySelector('#dp_draft_note').innerHTML =
             '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">📝 <b>Draft restored</b> — this unsaved dispatch was kept from last time. Check it, then tap Save.' +
             (draft0.photoDropped ? '<br>⚠️ The ticket photo could not be kept (the app storage on your phone was full) — please add the photo again.' : '') + '</div>';
+        }
+        /* v76: a suggestion loaded by Use names itself HERE, in the
+           form it landed in — the "Draft restored" wording would
+           undersell that the tap worked, and name nothing. */
+        if (usedSugNote) {
+          body.querySelector('#dp_draft_note').innerHTML =
+            '<div style="border:2px solid #2e9e5b;border-radius:10px;padding:8px 10px;margin-bottom:10px">📩 <b>Loaded from your suggestions:</b> ' + esc(usedSugNote) + ' — check the form, then tap Save. Nothing is saved until you do.</div>';
+          usedSugNote = '';
         }
       }
       ['#dp_site', '#dp_when', '#dp_equip', '#dp_mat', '#dp_ticket', '#dp_amt', '#dp_loads', '#dp_notes'].forEach(function (id) {
@@ -1181,7 +1239,7 @@
         var res = dspSaveRecord(d, mayStart);
         if (!res.ok) {
           persistDraft(); // best effort — the on-screen form is untouched either way
-          showSaveError('⚠️ That save did NOT go through — the app storage on your phone looks full, or the write failed, so your dispatch was not saved. Your entry is kept as a draft below, so nothing is lost. Free up some phone space, then tap ' + (start ? '“Save & start”' : '“Save dispatch”') + ' again.');
+          showSaveError('⚠️ That save did NOT go through — the app storage on your phone looks full, or the write failed, so your dispatch was not saved. Your entry is kept as a draft below, so nothing is lost. Free up some phone space, then tap ' + (isOffice ? '“Save”' : (start ? '“Save & start”' : '“Save dispatch”')) + ' again.');
           return;
         }
         lastSaveTry = null;

@@ -155,7 +155,8 @@
             App.showDashboard();
           } else if (a.act === 'onb-prev') {
             collectOnbInputs(); // same as the in-app onboarding Back button
-            App.onbStep--;
+            var pv = onbPrevVisible(App.onbStep, App.onb); // v76 (F2): skip role-hidden steps
+            if (pv >= 0) App.onbStep = pv;
             renderOnbStep();
           } else if (a.act === 'onb-auth') {
             App.showView('auth');
@@ -214,7 +215,21 @@
     if (BETA_MODE) {
       App.userTier = 'premium';
       App.trialDaysLeft = 999;
+      /* v76 (F9, boss QA Oct 14): the flag still unlocks everything
+         (tierAllows reads BETA_MODE itself — display is decoupled from
+         the gate), but the "🧪 Beta testing" banner is developer
+         wording on the user's face. For OFFICE users (the boss being
+         courted as the proving user) the home screen's first line is
+         his tools, not our construction notes: banner hidden, tools
+         stay unlocked. */
       var bbar = el('trialBar');
+      var officeFace = false;
+      try { officeFace = (App.userRole && App.userRole() === 'office'); } catch (e) {}
+      if (officeFace) {
+        bbar.classList.add('hidden');
+        bbar.innerHTML = '';
+        return;
+      }
       bbar.classList.remove('hidden');
       bbar.innerHTML = '🧪 <b>Beta testing</b> — full access, no paywall yet.';
       return;
@@ -276,7 +291,11 @@
   var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
   var ROLE_MODULE_ORDER = {
     driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'damage', 'pnl', 'invoice', 'connect'],
-    office: ['dispatch', 'invoice', 'pnl', 'manifest', 'revenue', 'fuel', 'maintenance', 'damage', 'navigation', 'connect'],
+    /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
+       five tools IN BLUEPRINT ORDER — Connect first (his #1: his
+       connection to his drivers), then Dispatch, Invoice, Maintenance,
+       P&L. Everything else follows; nothing is removed. */
+    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigation'],
     both: ['revenue', 'dispatch', 'navigation', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
@@ -284,23 +303,44 @@
      removed — tuning is emphasis only. */
   var ROLE_SIDEBAR_LEAD = {
     driver: ['dashboard', 'revenue', 'dispatch', 'navigation', 'fuel', 'maintenance', 'damage', 'manifest'],
-    office: ['dashboard', 'dispatch', 'invoice', 'pnl', 'manifest', 'revenue', 'fuel', 'maintenance', 'damage', 'navigation', 'connect'],
+    office: ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'],
     both: ['dashboard']
   };
   function roleDefaultFor(accountType) { return USER_ROLE_DEFAULTS[accountType] || 'driver'; }
   function isUserRole(v) { return USER_ROLES.indexOf(v) >= 0; }
+  function roleAnswered(o) { return isUserRole(o && o.userRole); }
   function resolveUserRole(o) {
     o = o || {};
     return isUserRole(o.userRole) ? o.userRole : roleDefaultFor(o.accountType);
   }
+  /* v76 (F1, boss QA Oct 14): the PROVISIONAL role — what an UNANSWERED
+     "Do you drive?" means until the person answers. 'both' is a DRIVER
+     face (tracker card up front, road order): stamping or resolving it
+     on a guess put the giant START tracker on the boss's first screen
+     when he tapped Next through setup, because Owner-Operator defaults
+     to 'both'. An unanswered question now holds the SAFE face —
+     'office' (no tracker, office order) — and stamps NOTHING, so the
+     question stays genuinely unanswered until he picks (onboarding
+     now requires the pick; Preferences can change it any time). The
+     driver/office accountType defaults are safe faces and keep their
+     old migration behaviour; an answered pick is never overridden. */
+  function provisionalRole(o) {
+    o = o || {};
+    if (isUserRole(o.userRole)) return o.userRole;
+    var d = roleDefaultFor(o.accountType);
+    return d === 'both' ? 'office' : d;
+  }
   /* One-time, idempotent migration: stamp the accountType-derived default
-     when no valid userRole is stored. A value the user picked is never
-     overwritten. */
+     when no valid userRole is stored — EXCEPT 'both', which is never
+     stamped on an unanswered user (see provisionalRole above). A value
+     the user picked is never overwritten. */
   function ensureUserRole() {
     var o = store.get('onboarding', {}) || {};
-    var r = resolveUserRole(o);
-    if (o.userRole !== r) { o.userRole = r; store.set('onboarding', o); }
-    return r;
+    if (isUserRole(o.userRole)) return o.userRole;
+    var d = roleDefaultFor(o.accountType);
+    if (d === 'both') return 'office'; // unanswered: hold at the safe face, stamp nothing
+    if (o.userRole !== d) { o.userRole = d; store.set('onboarding', o); }
+    return d;
   }
   function roleShowsTracker(role) { return role !== 'office'; }
   function roleModuleOrder(role) { return (ROLE_MODULE_ORDER[role] || ROLE_MODULE_ORDER.both).slice(); }
@@ -313,7 +353,7 @@
     head.sort(function (a, b) { return lead.indexOf(a[0]) - lead.indexOf(b[0]); });
     return head.concat(tail);
   }
-  App.userRole = function () { return resolveUserRole(store.get('onboarding', {}) || {}); };
+  App.userRole = function () { return provisionalRole(store.get('onboarding', {}) || {}); };
   /* ================= ROLE-END ================= */
 
   /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
@@ -1522,6 +1562,65 @@
     { key: 'done', title: 'You are set!', hint: 'Review and finish.', type: 'done' }
   ];
 
+  /* v76 (F1/F2, boss QA Oct 14): role-branched, role-gated flow.
+     - The "Do you drive?" step must be ANSWERED to advance — Next,
+       Skip and Finish all hold at the question while it is unanswered
+       (the old flow let an Owner-Operator tap through and silently
+       inherit the 'both' driver face; see provisionalRole).
+     - An 'office' answer SKIPS the driver homework entirely: park
+       place, Truck details, Odometer photo, Safety sticker photo —
+       an office-only user never sees them.
+     Navigation walks VISIBLE steps only; App.onbStep stays a raw
+     ONB_STEPS index and every mover snaps through hidden steps. */
+  var ONB_OFFICE_SKIP = ['base', 'truck', 'odometer', 'safety'];
+  var _onbRoleNudge = false; // set when a mover is blocked at the role question
+  function onbRoleStepIndex() {
+    for (var i = 0; i < ONB_STEPS.length; i++) { if (ONB_STEPS[i].key === 'userRole') return i; }
+    return -1;
+  }
+  function onbStepVisible(idx, o) {
+    var st = ONB_STEPS[idx];
+    if (!st) return false;
+    if (o && o.userRole === 'office' && ONB_OFFICE_SKIP.indexOf(st.key) >= 0) return false;
+    return true;
+  }
+  function onbNextVisible(idx, o) {
+    for (var j = idx + 1; j < ONB_STEPS.length; j++) { if (onbStepVisible(j, o)) return j; }
+    return -1;
+  }
+  function onbPrevVisible(idx, o) {
+    for (var j = idx - 1; j >= 0; j--) { if (onbStepVisible(j, o)) return j; }
+    return -1;
+  }
+  function onbVisibleCount(o) {
+    var n = 0;
+    for (var j = 0; j < ONB_STEPS.length; j++) { if (onbStepVisible(j, o)) n++; }
+    return n;
+  }
+  function onbVisiblePos(idx, o) {
+    var n = 0;
+    for (var j = 0; j <= idx && j < ONB_STEPS.length; j++) { if (onbStepVisible(j, o)) n++; }
+    return n;
+  }
+  /* v76 (F8): the company step collects country + province/state for
+     EVERY role — Invoice reads onboarding.country / onboarding.province
+     (codes, matching its CA_TAX prefill) and until now NOTHING in the
+     app ever wrote them, so every fresh user met Invoice's red
+     "Set your location first" banner. Canadian provinces are a code
+     select; anything else is a plain state/province field. */
+  var ONB_CA_PROVINCES = [['AB', 'Alberta'], ['BC', 'British Columbia'], ['MB', 'Manitoba'],
+    ['NB', 'New Brunswick'], ['NL', 'Newfoundland and Labrador'], ['NS', 'Nova Scotia'],
+    ['NT', 'Northwest Territories'], ['NU', 'Nunavut'], ['ON', 'Ontario'],
+    ['PE', 'Prince Edward Island'], ['QC', 'Quebec'], ['SK', 'Saskatchewan'], ['YT', 'Yukon']];
+  function onbProvinceCodeForName(name) {
+    for (var i = 0; i < ONB_CA_PROVINCES.length; i++) { if (ONB_CA_PROVINCES[i][1] === name) return ONB_CA_PROVINCES[i][0]; }
+    return '';
+  }
+  function onbProvinceNameForCode(code) {
+    for (var i = 0; i < ONB_CA_PROVINCES.length; i++) { if (ONB_CA_PROVINCES[i][0] === code) return ONB_CA_PROVINCES[i][1]; }
+    return '';
+  }
+
   function optGrid(opts, cur) {
     var h = '<div class="optgrid">';
     opts.forEach(function (o) {
@@ -1531,23 +1630,55 @@
   }
 
   function renderOnbStep() {
-    var i = App.onbStep, st = ONB_STEPS[i], o = App.onb;
-    el('onbProg').style.width = Math.round(((i + 1) / ONB_STEPS.length) * 100) + '%';
-    el('onbBack').style.visibility = i === 0 ? 'hidden' : 'visible';
-    el('onbNext').textContent = i === ONB_STEPS.length - 1 ? 'Finish' : 'Next';
-    var h = '<div class="step on"><h3>Step ' + (i + 1) + ' of ' + ONB_STEPS.length + ': ' + st.title + '</h3><p class="hint">' + st.hint + '</p>';
+    var i = App.onbStep, o = App.onb;
+    /* v76 (F2): a step the answered role skips is never landed on —
+       snap forward to the next visible step (e.g. a restored session
+       parked on Truck details after an 'office' answer). */
+    if (!onbStepVisible(i, o)) {
+      var snap = onbNextVisible(i, o);
+      if (snap >= 0) { App.onbStep = snap; i = snap; }
+    }
+    var st = ONB_STEPS[i];
+    var vCount = onbVisibleCount(o), vPos = onbVisiblePos(i, o);
+    el('onbProg').style.width = Math.round((vPos / vCount) * 100) + '%';
+    el('onbBack').style.visibility = onbPrevVisible(i, o) < 0 ? 'hidden' : 'visible';
+    el('onbNext').textContent = onbNextVisible(i, o) < 0 ? 'Finish' : 'Next';
+    var h = '<div class="step on"><h3>Step ' + vPos + ' of ' + vCount + ': ' + st.title + '</h3><p class="hint">' + st.hint + '</p>';
     if (st.type === 'opts') {
       h += optGrid(st.opts, o[st.key]);
+      /* v76 (F1): blocked at the role question — say so HERE, at the
+         question, in plain words (never a silent no-op). */
+      if (st.key === 'userRole' && _onbRoleNudge && !isUserRole(o.userRole)) {
+        h += '<p class="hint" id="onb_role_warn" style="color:#b3541e;font-weight:700;margin-top:10px">👆 Pick one to continue — this decides your home screen. You can change it later in Preferences.</p>';
+      }
     } else if (st.type === 'pay') {
       h += optGrid([['Miles', '🛣️', 'Miles'], ['Hourly', '⏱️', 'Hourly'], ['Trip', '🔁', 'Trip'], ['Weight', '⚖️', 'Weight']], o.payStandard);
       h += '<label class="f">Rate ($)</label><input id="ob_rate" type="number" inputmode="decimal" placeholder="e.g. 95" value="' + esc(o.payRate || '') + '">';
     } else if (st.type === 'text') {
       h += '<input id="ob_base" placeholder="' + esc(st.ph || '') + '" value="' + esc(o.baseLocation || '') + '">';
     } else if (st.type === 'company') {
+      /* v76 (F8): country + province/state — Invoice's tax prefill and
+         jurisdiction read these from the onboarding record; asking
+         here, once, in context, is what keeps a fresh user's first
+         invoice free of the red "Set your location first" banner. */
+      var obCountry = o.country || 'Canada';
+      var obProv = o.province || onbProvinceCodeForName(o.homeProvince || '');
       h += '<label class="f">Company name</label><input id="ob_cname" value="' + esc(o.companyName || '') + '">' +
         '<label class="f">GST/HST number</label><input id="ob_gst" value="' + esc(o.gst || '') + '" placeholder="e.g. 123456789RT0001">' +
         '<label class="f">Business address</label><input id="ob_caddr" value="' + esc(o.companyAddr || '') + '">' +
-        '<label class="f">Contracting company</label><input id="ob_cont" value="' + esc(o.contractingCo || '') + '">';
+        '<label class="f">Contracting company</label><input id="ob_cont" value="' + esc(o.contractingCo || '') + '">' +
+        '<label class="f">Country</label><select id="ob_country">' +
+        ['Canada', 'United States', 'Other'].map(function (c) {
+          return '<option value="' + c + '"' + (obCountry === c ? ' selected' : '') + '>' + c + '</option>';
+        }).join('') + '</select>' +
+        '<label class="f">Province / state</label>' +
+        (obCountry === 'Canada'
+          ? '<select id="ob_prov"><option value="">— pick yours —</option>' +
+            ONB_CA_PROVINCES.map(function (p) {
+              return '<option value="' + p[0] + '"' + (obProv === p[0] ? ' selected' : '') + '>' + p[1] + '</option>';
+            }).join('') + '</select>'
+          : '<input id="ob_prov" value="' + esc(o.province || '') + '" placeholder="e.g. Texas">') +
+        '<p class="note">Sets the tax rate on your invoices — the app will not guess your location.</p>';
     } else if (st.type === 'truck') {
       h += '<label class="f">Truck number</label><input id="ob_tnum" value="' + esc(o.truckNo || '') + '" placeholder="e.g. 007">' +
         '<label class="f">Load / trailer type</label><input id="ob_ttype" value="' + esc(o.truckType || '') + '" placeholder="e.g. Tandem dump">';
@@ -1579,6 +1710,7 @@
         '<div class="kv"><span>Pay</span><b>' + esc(o.payStandard || '—') + (o.payRate ? ' @ $' + esc(o.payRate) : '') + '</b></div>' +
         '<div class="kv"><span>Base</span><b>' + esc(o.baseLocation || '—') + '</b></div>' +
         '<div class="kv"><span>Company</span><b>' + esc(o.companyName || '—') + '</b></div>' +
+        '<div class="kv"><span>Location</span><b>' + esc(o.country ? (o.country + (o.province ? ' / ' + (onbProvinceNameForCode(o.province) || o.province) : '')) : '—') + '</b></div>' +
         '<div class="kv"><span>Truck</span><b>' + esc(o.truckNo || '—') + '</b></div>' +
         '<div class="kv"><span>Odometer</span><b>' + esc(o.odometerBaseline ? Number(o.odometerBaseline).toLocaleString('en-CA') + ' km' : '—') + '</b></div>' +
         '<div class="kv"><span>Safety expiry</span><b>' + esc(o.safetyExpiry || '—') + '</b></div>' +
@@ -1590,19 +1722,34 @@
       d.onclick = function () {
         var v = d.getAttribute('data-v');
         if (st.key === 'pay') o.payStandard = v; else o[st.key] = v;
+        if (st.key === 'userRole') _onbRoleNudge = false; // answered — the gate is satisfied
         store.set('onboarding', o);
         renderOnbStep();
       };
     });
+    /* v76 (F8): changing the country swaps the province control
+       (Canadian code select <-> free state field) — collect first so
+       nothing typed on this step is lost, then re-render. */
+    if (st.type === 'company') {
+      var csEl = el('ob_country');
+      if (csEl) csEl.onchange = function () {
+        collectOnbInputs();
+        App.onb.country = csEl.value;
+        if (csEl.value !== 'Canada') App.onb.province = '';
+        else if (!onbProvinceNameForCode(App.onb.province || '')) App.onb.province = onbProvinceCodeForName(App.onb.homeProvince || '');
+        store.set('onboarding', App.onb);
+        renderOnbStep();
+      };
+    }
     // v28: photo steps — wire camera/file buttons + per-step skip
     if (st.type === 'odometer') {
       onbWirePhoto('ob_odo', 'odometer');
       var osk = el('ob_odo_skip');
-      if (osk) osk.onclick = function () { collectOnbInputs(); if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); } };
+      if (osk) osk.onclick = function () { collectOnbInputs(); var nx = onbNextVisible(App.onbStep, App.onb); if (nx >= 0) { App.onbStep = nx; renderOnbStep(); } };
     } else if (st.type === 'safety') {
       onbWirePhoto('ob_safety', 'safety');
       var ssk = el('ob_safety_skip');
-      if (ssk) ssk.onclick = function () { collectOnbInputs(); if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); } };
+      if (ssk) ssk.onclick = function () { collectOnbInputs(); var nx2 = onbNextVisible(App.onbStep, App.onb); if (nx2 >= 0) { App.onbStep = nx2; renderOnbStep(); } };
     }
   }
 
@@ -1925,6 +2072,8 @@
     if (g('ob_gst')) o.gst = g('ob_gst');
     if (g('ob_caddr')) o.companyAddr = g('ob_caddr');
     if (g('ob_cont')) o.contractingCo = g('ob_cont');
+    if (g('ob_country')) o.country = g('ob_country');
+    if (g('ob_prov')) o.province = g('ob_prov');
     if (g('ob_tnum')) o.truckNo = g('ob_tnum');
     if (g('ob_ttype')) o.truckType = g('ob_ttype');
     if (g('ob_odo')) o.odometerBaseline = g('ob_odo');
@@ -1935,9 +2084,27 @@
   function finishOnboarding() {
     collectOnbInputs();
     var o = App.onb || {};
-    // v52: an unanswered role question defaults from the account type
+    /* v76 (F1): finishing is impossible with the role question
+       unanswered — hold AT the question instead of stamping a
+       default. (The v52 stamp this replaces is what put the driver
+       face on the boss: Owner-Operator defaulted to 'both'.) The
+       movers gate earlier; this is the last line of defence. */
+    if (!isUserRole(o.userRole)) {
+      _onbRoleNudge = true;
+      var ri = onbRoleStepIndex();
+      if (ri >= 0) App.onbStep = ri;
+      renderOnbStep();
+      return;
+    }
+    /* v76 (F8): keep the location pair coherent for Invoice + P&L —
+       a Canadian province code implies Canada, and P&L's workers-comp
+       lookup reads the full province name (homeProvince). */
     try {
-      if (!isUserRole(o.userRole)) { o.userRole = roleDefaultFor(o.accountType); App.onb = o; store.set('onboarding', o); }
+      if (o.province && onbProvinceNameForCode(o.province)) {
+        if (!o.country) o.country = 'Canada';
+        if (!o.homeProvince) o.homeProvince = onbProvinceNameForCode(o.province);
+        App.onb = o; store.set('onboarding', o);
+      }
     } catch (e) {}
     // v28: odometer baseline -> Maintenance PM starting point
     try {
@@ -2209,13 +2376,40 @@
     // a dispatch). Inert without the share params.
     try { if (window.DispatchIngest && DispatchIngest.captureShare) DispatchIngest.captureShare(); } catch (e) {}
 
-    el('onbBack').onclick = function () { collectOnbInputs(); if (App.onbStep > 0) { App.onbStep--; renderOnbStep(); } };
+    el('onbBack').onclick = function () {
+      collectOnbInputs();
+      var pv = onbPrevVisible(App.onbStep, App.onb);
+      if (pv >= 0) { App.onbStep = pv; renderOnbStep(); }
+    };
     el('onbNext').onclick = function () {
       collectOnbInputs();
-      if (App.onbStep < ONB_STEPS.length - 1) { App.onbStep++; renderOnbStep(); }
+      /* v76 (F1): the role question must be ANSWERED to advance —
+         no Next-through, ever. The nudge renders at the question. */
+      var cur = ONB_STEPS[App.onbStep];
+      if (cur && cur.key === 'userRole' && !isUserRole(App.onb.userRole)) {
+        _onbRoleNudge = true;
+        renderOnbStep();
+        return;
+      }
+      var nx = onbNextVisible(App.onbStep, App.onb);
+      if (nx >= 0) { App.onbStep = nx; renderOnbStep(); }
       else finishOnboarding();
     };
-    el('onbSkip').onclick = function () { store.set('onboarded', true); App.showView('main'); };
+    el('onbSkip').onclick = function () {
+      /* v76 (F1): Skip can no longer walk past the role question —
+         with it unanswered, Skip lands ON the question (it is the
+         one answer the app cannot guess). Once answered, Skip works
+         exactly as before. */
+      collectOnbInputs();
+      if (!isUserRole(App.onb.userRole)) {
+        _onbRoleNudge = true;
+        var ri = onbRoleStepIndex();
+        if (ri >= 0) App.onbStep = ri;
+        renderOnbStep();
+        return;
+      }
+      store.set('onboarded', true); App.showView('main');
+    };
 
     el('btnMenu').onclick = function () {
       el('sidebar').classList.add('open'); el('scrim').classList.add('show');
