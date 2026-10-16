@@ -502,12 +502,12 @@ function cStatus(extra) {
     ok(/versionCode 10/.test(gradle) && /versionName "1\.8"/.test(gradle),
       'E7 native version bumped (code 10 / name 1.8)');
     const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
-    /* v93: webVersion moved to 93 (chatbot release; native unchanged) */
-    ok(vj.webVersion === 93 && vj.version === 35, 'E8 version.json: web 93, native 35');
+    /* v94: webVersion moved to 94 (key-nag removal; native unchanged) */
+    ok(vj.webVersion === 94 && vj.version === 35, 'E8 version.json: web 94, native 35');
     const appSrc2 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
     ok(/var APK_VERSION = 35;/.test(appSrc2), 'E9 app.js APK_VERSION = 35');
     const idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-    ok(!idx.includes('?v=92') && idx.includes('?v=93'), 'E10 index.html pins moved to ?v=93 (v93 bump)');
+    ok(!idx.includes('?v=93') && idx.includes('?v=94'), 'E10 index.html pins moved to ?v=94 (v94 bump)');
     const lead = /var ARM_LEAD_MS = (\d+) \* 60 \* 1000/.exec(appSrc2);
     const slack = /ADOPT_FIRST_SLACK_MS = (\d+) \* 60 \* 1000/.exec(milesSrc);
     ok(lead && slack && +lead[1] === +slack[1],

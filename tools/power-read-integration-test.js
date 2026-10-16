@@ -264,9 +264,12 @@ async function partMaintenance() {
     eq('M2 camera path fills date', w.body.querySelector('#mt_ns_date').value, '2026-09-28');
   }
 
-  /* M3: THE LIVE FAILURE — no key on this device. v62 behaviour: plain
-     local banner, zero fetch, zero ⚡ (proven in the repro harness).
-     v63: the skip must SAY SO in the same line. */
+  /* M3: THE LIVE FAILURE — no cloud route on this device. v62
+     behaviour: plain local banner, zero fetch, zero ⚡ (proven in
+     the repro harness). v63: the skip must SAY SO in the same line.
+     v94: the line is ONE quiet sentence with NO key errand — the
+     pre-v94 "key not set / paste your key" wording encoded the
+     superseded BYO-key contract (owner ruling, Oct 16, 2026). */
   {
     const w = makeMaintWorld({
       seed: MAINT_SEED.slice(),
@@ -279,7 +282,8 @@ async function partMaintenance() {
     eq('M3 escalation was still attempted by the wiring', w.escalateCalls.length, 1);
     eq('M3 zero provider calls without a key', w.fetchCalls.length, 0);
     const line = w.body.querySelector('#mt_ns_read').innerHTML;
-    ok('M3 read line EXPLAINS the skip (⚡ + key not set, on-device only)', /⚡ Power Read key not set — reads are on-device only/.test(line), line);
+    ok('M3 read line EXPLAINS the skip in one quiet line (⚡ + cloud reader not reachable)', /⚡ Power read couldn\'t run — the cloud reader isn\'t reachable/.test(line), line);
+    ok('M3 v94: the skip line carries no key instructions', !/API key|paste|AI Studio|key not set/i.test(line), line);
     eq('M3 fields left exactly as stored', w.body.querySelector('#mt_ns_odo').value, '175429');
     eq('M3 master untouched', w.store.get('mt_odo', ''), '168518');
   }
@@ -296,7 +300,7 @@ async function partMaintenance() {
     await flush();
     const line = w.body.querySelector('#mt_ns_read').innerHTML;
     eq('M4 provider was called', w.fetchCalls.length, 1);
-    ok('M4 read line shows the ⚡ API-key error in plain words', /⚡ Power read: that API key didn't work/.test(line), line);
+    ok('M4 read line shows the ⚡ error in plain words (v94 copy — no key to go check)', /⚡ Power read couldn\'t complete that read/.test(line) && !/API key/.test(line), line);
     eq('M4 master untouched after provider error', w.store.get('mt_odo', ''), '168518');
   }
 
@@ -312,7 +316,7 @@ async function partMaintenance() {
     await flush();
     const line = w.body.querySelector('#mt_ns_read').innerHTML;
     eq('M5 zero provider calls while off', w.fetchCalls.length, 0);
-    ok('M5 read line says the power read is turned off', /⚡ Power read is turned off/.test(line), line);
+    ok('M5 read line says the power read is off (v94 trimmed wording)', /⚡ Power read is off — turn it on in Preferences/.test(line), line);
   }
 }
 
@@ -564,7 +568,8 @@ async function partFuel() {
     eq('F3 no escalation', w.escalateCalls.length, 0);
   }
 
-  /* F4: fuel receipt with NO key → the skip explains itself in-page. */
+  /* F4: fuel receipt with NO cloud route → the skip explains itself
+     in-page, in the v94 quiet wording (no key instructions). */
   {
     const w = makeFuelWorld({
       seed: [['mt_odo', '168518']],
@@ -578,7 +583,7 @@ async function partFuel() {
     eq('F4 escalation attempted by the wiring', w.escalateCalls.length, 1);
     eq('F4 zero provider calls without a key', w.fetchCalls.length, 0);
     const line = w.body.querySelector('#fu_read').innerHTML;
-    ok('F4 read line explains the skip', /⚡ Power Read key not set — reads are on-device only/.test(line), line);
+    ok('F4 read line explains the skip', /⚡ Power read couldn\'t run — the cloud reader isn\'t reachable/.test(line) && !/API key|paste|AI Studio|key not set/i.test(line), line);
   }
 }
 

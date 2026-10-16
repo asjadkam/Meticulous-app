@@ -4,8 +4,12 @@
  * Loads the REAL js/powerread.js in a vm with an in-memory App._store,
  * a programmable fetch mock and a controllable navigator.onLine, and
  * verifies:
- *   1. Trigger logic: localFailed truth table; with no key or the
- *      switch off, escalate() is a silent no-op (zero fetch calls).
+ *   1. Trigger logic: localFailed truth table; with no cloud route
+ *      or the switch off, escalate() skips (zero fetch calls) and a
+ *      host that asked hears ONE quiet line (v94 wording — no key
+ *      instructions anywhere; the pre-v94 "key not set / paste your
+ *      key" copy was the superseded BYO-key contract, owner ruling
+ *      Oct 16, 2026).
  *   2. Gemini response JSON → parser field shapes (odometer {value},
  *      sticker {odo,date}, generic {rawText} → real parseServiceSticker).
  *   3. Confirm-first invariants: a full escalate + queue-drain cycle
@@ -110,7 +114,8 @@ async function main() {
      the v59 total silence is what hid the Oct 14 sticker failure. */
   let un = null;
   out = await PowerRead.escalate({ reader: 'sticker', image: IMG, onStatus: s => { un = s; } });
-  check('no key + onStatus → unavailable(nokey) surfaced, still skipped, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'nokey' && /Power Read key not set — reads are on-device only/.test(un.message || '') && fetchCalls.length === 0, JSON.stringify(un));
+  check('no route + onStatus → unavailable(nokey) surfaced, still skipped, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'nokey' && /couldn\'t run — the cloud reader isn\'t reachable/.test(un.message || '') && fetchCalls.length === 0, JSON.stringify(un));
+  check('v94: the unavailable line carries NO key errand (no API key / paste / AI Studio / Preferences key wording)', !!un && !/API key|paste|AI Studio|key not set/i.test(un.message || ''), JSON.stringify(un));
   PowerRead.setKey('TESTKEY-123');
   PowerRead.setOn(false);
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
@@ -198,7 +203,8 @@ async function main() {
   fetchHandler = () => geminiErr(400, 'API key not valid. Please pass a valid API key.');
   statuses = []; let errMsg = '';
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG, onStatus: s => { statuses.push(s.state); if (s.message) errMsg = s.message; } });
-  check('bad key → error state with plain message', out.status === 'error' && /API key/.test(errMsg), errMsg);
+  check('bad key → error state with plain message', out.status === 'error' && /couldn\'t complete that read/.test(errMsg), errMsg);
+  check('v94: the bad-key error never repeats provider key wording (nothing for the user to go fix)', !/API key/.test(errMsg), errMsg);
   check('bad key → NOT queued', PowerRead.queueLength() === 0);
   fetchHandler = () => geminiErr(429, 'Quota exceeded');
   errMsg = '';
@@ -235,6 +241,54 @@ async function main() {
   const src = fs.readFileSync(path.join(ROOT, 'js', 'powerread.js'), 'utf8');
   check('no console.* in powerread.js (key can never be logged)', !/console\./.test(src));
   check('no hardcoded key-shaped strings', !/AIza[0-9A-Za-z_-]{10,}/.test(src));
+  /* v94 (owner ruling, Oct 16, 2026): NO user-facing key
+     instructions may ship in this module — the phrases below were
+     the v59–v93 nag/failure copy and are banned outright. */
+  check('v94: no key-instruction phrases in powerread.js', !/Paste your|AI Studio|key not set|check it in Preferences/i.test(src));
+  check('v94: no key input is rendered by powerread.js', !/pf_pr_key|type="password"|type=\'password\'/.test(src));
+
+  /* ---------- 9. v94 transport: server proxy first, saved key silent ---------- */
+  /* proxy set, NO key anywhere: the route exists, reads flow. */
+  PowerRead.setKey('');
+  mockStore.set('powerReadProxyUrl', 'https://nav.example.test/powerread');
+  check('v94: proxy alone is a route (enabled with no key saved)', PowerRead.hasRoute() === true && PowerRead.hasKey() === false && PowerRead.enabled() === true);
+  fetchCalls = [];
+  let gotFields = null;
+  fetchHandler = () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ text: JSON.stringify({ value: 168547 }) }) });
+  out = await PowerRead.escalate({ reader: 'odometer', image: IMG, onResult: r => { gotFields = r.fields; } });
+  check('v94: proxy read succeeds and maps fields', out.status === 'done' && gotFields && gotFields.value === '168547', JSON.stringify(out));
+  check('v94: the call went to the proxy, not Google', fetchCalls.length === 1 && fetchCalls[0].url === 'https://nav.example.test/powerread', fetchCalls.map(c => c.url).join(' | '));
+  check('v94: proxy body carries reader + image only (no key material)', !!fetchCalls[0] && fetchCalls[0].opts.body.indexOf('TESTKEY') < 0 && JSON.parse(fetchCalls[0].opts.body).reader === 'odometer');
+  /* the toggle still gates the proxy route */
+  PowerRead.setOn(false);
+  fetchCalls = [];
+  out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
+  check('v94: switch off gates the proxy route too (skipped, zero fetch)', out.status === 'skipped' && fetchCalls.length === 0);
+  PowerRead.setOn(true);
+  /* proxy WINS over a saved key when both exist */
+  PowerRead.setKey('TESTKEY-123');
+  fetchCalls = [];
+  fetchHandler = () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ value: 168548 }) });
+  out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
+  check('v94: proxy beats the saved key; bare model JSON from the proxy also maps', out.status === 'done' && fetchCalls.length === 1 && fetchCalls[0].url === 'https://nav.example.test/powerread', JSON.stringify(fetchCalls.map(c => c.url)));
+  /* proxy network failure queues like a direct-call dropout */
+  fetchCalls = [];
+  fetchHandler = () => Promise.reject(new Error('down'));
+  out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
+  check('v94: proxy network failure → waiting + queued', out.status === 'waiting' && PowerRead.queueLength() === 1);
+  mockStore.del('powerReadProxyUrl');
+  fetchHandler = () => geminiOk({ value: 168549 });
+  await PowerRead.processQueue();
+  check('v94: the queued read drains via the saved key once the proxy is gone', PowerRead.queueLength() === 0 && !!PowerRead.peekResult('odometer'));
+  PowerRead.takeResult('odometer');
+  /* the pre-v94 saved key still works SILENTLY on its own */
+  fetchCalls = [];
+  check('v94: saved key alone is still a route (existing installs keep working)', PowerRead.hasRoute() === true && PowerRead.enabled() === true);
+  out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
+  check('v94: saved-key read still succeeds with the key in the header only', out.status === 'done' && fetchCalls.length === 1 && fetchCalls[0].opts.headers['x-goog-api-key'] === 'TESTKEY-123' && fetchCalls[0].url.indexOf('generativelanguage') >= 0);
+  PowerRead.setKey('');
+  mockStore.del('powerReadProxyUrl');
+  check('v94: neither route → not enabled, escalate skips with zero fetch', PowerRead.hasRoute() === false && PowerRead.enabled() === false);
 
   console.log('\npower-read: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

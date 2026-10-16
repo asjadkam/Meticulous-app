@@ -203,16 +203,17 @@
         '<p class="note" id="pf_syncnote">Checking…</p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
         /* v59 (owner, Oct 14): Power read is plumbing too — it lives
-           here in Advanced, not as a feature card. The switch + key
-           persist the moment they change (same pattern as the role
-           select), never through Save preferences, so a half-filled
-           form can never clobber them. */
+           here in Advanced, not as a feature card. The switch persists
+           the moment it changes (same pattern as the role select),
+           never through Save preferences.
+           v94 (owner ruling, Oct 16): the key field is GONE — users
+           are never asked for a key. Power read reaches Meticulous's
+           cloud reader through the server; there is nothing here to
+           set up, so the card carries only the switch. */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">⚡ Power read — cloud help for hard photos</p>' +
-        '<p class="note">When a photo is too hard for the built-in reader (dot-matrix dash, handwritten sticker), the app sends just that photo to Google\'s Gemini AI to read it. The answer always waits for your check — nothing is ever saved by itself.</p>' +
+        '<p class="note">When a photo is too hard for the built-in reader, Power read sends just that photo to Meticulous\'s cloud reader for a second look. Nothing to set up — and the answer always waits for your check.</p>' +
         '<label class="chk"><input type="checkbox" id="pf_pr_on"> Power read on</label>' +
-        '<label class="f">Gemini API key</label>' +
-        '<input id="pf_pr_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key here">' +
         '<p class="note" id="pf_pr_note"></p></div>' +
         /* v63 (native v34): Background tracking status — plumbing like
            the rows above, not a feature card. On the new Android shell
@@ -247,8 +248,8 @@
            address built in. Persists the moment it changes. */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">🧭 Navigator server</p>' +
-        '<p class="note">The Navigator routes trucks on Calgary\u2019s designated truck network through a routing server. Paste its URL here. The truck profile it routes with is set on the Navigator card above.</p>' +
-        '<label class="f">Navigator server URL</label>' +
+        '<p class="note">Where the Navigator gets its truck routes. Your truck\'s size and weight are set on the Navigator card above.</p>' +
+        '<label class="f">Server address</label>' +
         '<input id="pf_nav_url" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://your-routing-server.example">' +
         '<p class="note" id="pf_nav_note"></p></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
@@ -551,7 +552,7 @@
               : st.dot === 'err' ? 'Error' : 'Off (not signed in)';
             var t = 'Status: ' + word;
             if (st.lastError) t += ' — ' + String(st.lastError).slice(0, 140);
-            if (st.dirtyKeys && st.dirtyKeys.length) t += ' — ' + st.dirtyKeys.length + ' change(s) waiting to upload (' + st.dirtyKeys.slice(0, 5).join(', ') + (st.dirtyKeys.length > 5 ? '…' : '') + ')';
+            if (st.dirtyKeys && st.dirtyKeys.length) t += ' — ' + st.dirtyKeys.length + ' change(s) waiting to upload.';
             note.textContent = t;
           } catch (e) { note.textContent = 'Could not read sync status.'; }
         }
@@ -562,25 +563,19 @@
           setTimeout(paint, 4000);
         };
       })();
-      /* v59: power-read controls — persist on change (never via Save
-         preferences) and always show the month's read count, so the
-         cost (fractions of a cent per read) is visible at a glance. */
+      /* v59: the power-read switch persists on change (never via
+         Save preferences); the note shows the month's read count.
+         v94: no key control exists here anymore (owner ruling,
+         Oct 16) — nothing on this card reads, writes, or mentions
+         a key. A key saved on the device before v94 stays where it
+         is and PowerRead still uses it silently. */
       (function () {
         var onEl = body.querySelector('#pf_pr_on');
-        var keyEl = body.querySelector('#pf_pr_key');
         var note = body.querySelector('#pf_pr_note');
         if (!note) return;
         function paint(extra) {
           if (!window.PowerRead) { note.textContent = 'Power read is not loaded in this version.'; return; }
           var bits = [];
-          /* v80: the key's state is the first line, verified by
-             re-reading storage at every paint — a saved key shows
-             as saved (BUGS Oct 15: the key vanished silently once;
-             now its absence is stated, never discovered mid-read). */
-          bits.push(PowerRead.hasKey()
-            ? '✓ Key saved on this device.'
-            : 'Power Read key not set — reads are on-device only.');
-          bits.push('Free key: open Google AI Studio → “Get API key” → paste it above. Each read costs a fraction of a cent.');
           bits.push('Power reads this month: ' + PowerRead.monthCount() + '.');
           var q = 0;
           try { q = PowerRead.queueLength(); } catch (e) {}
@@ -590,15 +585,10 @@
         }
         if (window.PowerRead) {
           if (onEl) onEl.checked = PowerRead.isOn();
-          if (keyEl) keyEl.value = PowerRead.getKey();
         }
         if (onEl) onEl.onchange = function () {
           if (window.PowerRead) PowerRead.setOn(!!onEl.checked);
-          paint(onEl.checked ? 'Power read is on.' : 'Power read is off — photos stay on this device only.');
-        };
-        if (keyEl) keyEl.onchange = function () {
-          if (window.PowerRead) PowerRead.setKey(keyEl.value);
-          paint(keyEl.value ? '✓ Key saved.' : 'Key cleared — power read will stay off until a key is pasted.');
+          paint(onEl.checked ? 'Power read is on.' : 'Power read is off — hard photos get the built-in reader only.');
         };
         paint();
       })();
@@ -614,7 +604,7 @@
         function paint() {
           var ST = window.ShiftTrack;
           if (!ST || !ST.available()) {
-            note.textContent = 'Not in this build — live miles count only while the app is open. Background tracking comes with the newest Android app.';
+            note.textContent = 'Not in this build — miles count only while the app is open. The newest Android app counts in the background.';
             show(allowBtn, false); show(battBtn, false);
             return;
           }
@@ -622,24 +612,24 @@
             if (!s) { note.textContent = 'Could not read tracking status.'; return; }
             var lines = [];
             if (!s.fineLocation) {
-              lines.push('Location is off for Meticulous — miles can\'t be counted at all. Turn location on for the app, then allow it below.');
+              lines.push('Location is off for Meticulous — miles can\'t be counted. Turn it on, then allow it below.');
             } else if (s.backgroundLocation) {
-              lines.push('Background location: Allowed — miles keep counting with the app closed. ✓');
+              lines.push('Background location: allowed — miles keep counting with the app closed. ✓');
             } else {
-              lines.push('Background location: Not allowed — counting stops when the app closes.');
+              lines.push('Background location: not allowed — counting stops when the app closes.');
             }
             lines.push(s.batteryExempt
-              ? 'Battery: Unrestricted — battery saver can\'t stop tracking mid-shift. ✓'
-              : 'Battery: Battery saver can stop tracking mid-shift. Set Meticulous to “Unrestricted” battery so a shift is never cut short.');
+              ? 'Battery: unrestricted — saver can\'t stop tracking mid-shift. ✓'
+              : 'Battery: saver can stop tracking mid-shift — set Meticulous battery to “Unrestricted”.');
             if (s.sessionActive) lines.push('Right now: a shift is being tracked in the background.');
             /* v92: the armed day, in plain words — counting that
                starts by itself, before the app is ever opened. */
             if (s.armStarted && s.sessionActive) {
-              lines.push('Today\'s counting started by itself — the app never had to be opened first.');
+              lines.push('Today\'s counting started by itself.');
             } else if (s.armed && s.armFireMs) {
               var armWhen = new Date(s.armFireMs).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
               var armDay = new Date(s.armFireMs).toDateString() === new Date().toDateString() ? 'today' : 'tomorrow';
-              lines.push('Next shift: counting starts by itself ' + armDay + ' at ' + armWhen + ' — no need to open the app first.');
+              lines.push('Next shift: counting starts by itself ' + armDay + ' at ' + armWhen + '.');
             }
             note.textContent = lines.join(' ');
             show(allowBtn, !s.backgroundLocation);
@@ -679,26 +669,25 @@
           var lines = [];
           if (info.place) {
             lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
-              (info.place.source === 'manual' ? 'you set it.' : 'learned from your shift starts and ends.'));
+              (info.place.source === 'manual' ? 'you set it.' : 'learned from your shifts.'));
           } else {
-            lines.push('No park place yet. The app learns where the truck sleeps from a few shift starts and ends — or set it now while you are parked there.');
+            lines.push('No park place yet — the app learns it from a few shifts, or set it now while you\'re parked there.');
           }
-          lines.push('The app asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
+          lines.push('Asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
           if (!info.notificationsAvailable) {
-            lines.push('Notifications are not in this build, so the asks show as a card in the app.');
+            lines.push('Notifications aren\'t in this build — the asks show as a card in the app.');
             show(nnBtn, false);
           } else if (info.notificationsGranted) {
-            lines.push('Notifications: allowed ✓ — the asks also arrive as notifications.');
+            lines.push('Notifications: allowed ✓.');
             show(nnBtn, false);
           } else if (info.notificationsGranted === false) {
-            lines.push('Notifications: not allowed — the asks will show as a card in the app instead.');
+            lines.push('Notifications: not allowed — the asks show as a card in the app instead.');
             show(nnBtn, true);
           } else {
             lines.push('Notifications: checking…');
             show(nnBtn, false);
             PP.refreshNotifications().then(function () { paint(); }).catch(function () {});
           }
-          lines.push('Honest limit: an ask can only appear while the app is open or a shift is running. A future app update will watch while the app is fully closed.');
           note.textContent = lines.join(' ');
           show(forgetBtn, !!info.place);
         }
@@ -745,14 +734,14 @@
         if (urlEl) {
           urlEl.value = navLoad().serverUrl || '';
           if (urlNote) urlNote.textContent = urlEl.value
-            ? 'Routing server set — the Navigator will route through it.'
+            ? 'Server set — the Navigator routes through it.'
             : 'No server set — the Navigator will say routing is unavailable.';
           urlEl.onchange = function () {
             var v = urlEl.value.trim();
             navSave({ serverUrl: v });
             if (urlNote) urlNote.textContent = v
-              ? '✓ Saved. The Navigator will route through this server.'
-              : 'Cleared — the Navigator will say routing is unavailable until a server is set.';
+              ? '✓ Saved — the Navigator routes through this server.'
+              : 'Cleared — the Navigator will say routing is unavailable.';
           };
         }
         var profIds = { height: 'pf_nv_height', width: 'pf_nv_width', length: 'pf_nv_length', weight: 'pf_nv_weight', axleLoad: 'pf_nv_axleload', axles: 'pf_nv_axles' };

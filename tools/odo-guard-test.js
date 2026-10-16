@@ -14,8 +14,10 @@
  *     the supervised Preferences save decision.
  *  B. js/powerread.js in a vm over a stub store + raw localStorage:
  *     the key mirror (self-heal after a store wipe), the two-sided
- *     gate on cloud answers (live + queued), and the plain
- *     "key not set" wording at read time.
+ *     gate on cloud answers (live + queued), and the plain failure
+ *     wording at read time (v94: one quiet line, no key errand —
+ *     the pre-v94 "key not set / paste your key" copy encoded the
+ *     superseded BYO-key contract, owner ruling Oct 16, 2026).
  *  C. js/ticket-ocr.js parseFuelReceipt on the receipt shapes that
  *     defeated it: the labelled-column layout, a garbled TOTAL, and
  *     a missing total line (cost derived from litres × price).
@@ -197,13 +199,14 @@ function geminiOk(payload) {
     eq('B3e odoReadFailed: plausible passes', w.PR.odoReadFailed(168934), false);
     eq('B3f jump constant matches app.js', w.PR.ODO_MAX_JUMP_KM, 1000);
   }
-  /* B4: no key at read time — the plain words, exactly. */
+  /* B4: no cloud route at read time — one quiet line, exactly. */
   {
     const w = prWorld();
     let status = null;
     const res = await w.PR.escalate({ reader: 'odometer', image: 'data:image/jpeg;base64,AAAA', onStatus: s => { status = s; } });
-    eq('B4a no key: escalation skips', res.status, 'skipped');
-    ok('B4b no key: says the plain words', !!status && /Power Read key not set — reads are on-device only/.test(status.message || ''), status && status.message);
+    eq('B4a no route: escalation skips', res.status, 'skipped');
+    ok('B4b no route: says the plain words', !!status && /Power read couldn\'t run — the cloud reader isn\'t reachable/.test(status.message || ''), status && status.message);
+    ok('B4c v94: no key instructions in the line', !!status && !/API key|paste|AI Studio|key not set/i.test(status.message || ''), status && status.message);
   }
   /* B5: an implausible CLOUD answer is never delivered as a result. */
   {

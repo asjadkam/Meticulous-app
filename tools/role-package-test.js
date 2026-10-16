@@ -333,6 +333,22 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(pref.indexOf('btn primary big') >= 0 && pref.indexOf('id="pf_save"') > pref.indexOf('btn primary big') - 60, 'prefs: Save is the solid primary (big) button');
   ok(pref.indexOf('id="pf_syncnow"') > 0 && /btn ghost" id="pf_syncnow"/.test(pref), 'prefs: Retry sync uses quiet secondary (ghost) styling');
   ok(/btn ghost" id="pf_pw_btn"/.test(pref), 'prefs: Change password button de-crowded to ghost');
+  /* v94 (owner ruling, Oct 16, 2026 — keys move server-side; the
+     owner screenshotted the nag in disgust): NO key UI anywhere in
+     Preferences, and the Advanced explainers are trimmed to short
+     plain lines. The pre-v94 pins this replaces lived in the
+     power-read suites (the v80 key-state paint); the card's copy
+     now states the server shape and the switch alone remains. */
+  ok(pref.indexOf('pf_pr_key') === -1, 'v94 prefs: NO key input rendered anywhere in Preferences');
+  ok(!/Paste your key|Google AI Studio|Get API key|key not set/i.test(pref), 'v94 prefs: no key-instruction strings in Preferences');
+  eq((pref.match(/id="pf_pr_on"/g) || []).length, 1, 'v94 prefs: the Power read toggle survives, exactly once');
+  ok(pref.indexOf('Meticulous\\\'s cloud reader') >= 0 && pref.indexOf('Nothing to set up') >= 0, 'v94 prefs: Power read copy states the server shape (nothing to set up)');
+  ok(pref.indexOf('Honest limit: an ask can only appear') === -1, 'v94 prefs: park-place "honest limit" essay is gone');
+  ok(pref.indexOf('or set it now while you are parked there') === -1, 'v94 prefs: park-place explainer trimmed (old essay wording absent)');
+  ok(pref.indexOf('The Navigator routes trucks on Calgary') === -1, 'v94 prefs: Navigator server explainer trimmed (old essay wording absent)');
+  ok(pref.indexOf('>Server address</label>') >= 0, 'v94 prefs: Navigator server field carries the shorter label');
+  ok(pref.indexOf('No server set — the Navigator will say routing is unavailable.') >= 0, 'v94 prefs: the one-line no-server note stays');
+  ok(pref.indexOf('Free key:') === -1 && pref.indexOf('Key saved on this device') === -1, 'v94 prefs: no key-state paint remains in the Power read note');
 }
 
 console.log('\nrole-package-test: ' + pass + '/' + (pass + fail) + ' passed');

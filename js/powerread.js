@@ -1,4 +1,4 @@
-/* Meticulous — ⚡ POWER READ (v59)
+/* Meticulous — ⚡ POWER READ (v59; v94 transport revision)
    Cloud-vision escalation for photos the on-device reader can't crack
    (dot-matrix odometer dashes, handwritten service stickers).
 
@@ -6,12 +6,25 @@
    Vision" rule — made with real prices in front of him): Tesseract
    keeps first crack at every photo, free and offline. ONLY when a
    local read comes back with no usable fields does the app send that
-   one photo to Google's Gemini vision model (Flash-class, the user's
-   OWN free AI Studio key) and bring the answer back into the SAME
-   confirm-first flows the local reads use.
+   one photo to a cloud vision model (Gemini Flash-class) and bring
+   the answer back into the SAME confirm-first flows the local reads
+   use.
+
+   v94 (owner ruling, Oct 16, 2026 — "why are we asking users to do
+   more work?"): users are NEVER asked for a key. There is no key
+   field, prompt, or nag anywhere in the app. Transport order:
+   (a) the Meticulous server proxy — store key 'powerReadProxyUrl',
+       set by the server ship, deliberately NO UI (the chatbot's
+       chatProxyUrl seam is the same pattern); the proxy holds
+       Meticulous's own key server-side;
+   (b) a key saved on the device before v94 (the owner's own setup)
+       — still read silently so existing installs keep working.
+   When neither route exists the module is simply quiet: reads stay
+   on-device and a failed escalation says one plain line, with no
+   instructions to go fetch anything.
 
    Hard rules baked in:
-   - No key, or the Preferences switch is off → this module is inert:
+   - Switch off, or no cloud route → this module is inert:
      zero network calls, local behaviour byte-identical to before.
    - A power-read value is a CANDIDATE, never a save. Odometer values
      land in the field / a tap-to-use chip only; the upward-only master
@@ -24,17 +37,10 @@
      the owning screen picks them up (still confirm-first).
    - API errors surface as plain in-page text via the caller's status
      line; the photo and the local result are never lost.
-   - The API key lives only in the synced store key 'powerReadKey'
-     (Preferences → Advanced, password field). It is sent solely as
+   - A stored key (route b) lives only in the synced store key
+     'powerReadKey' (+ its device-local mirror). It is sent solely as
      the x-goog-api-key header to generativelanguage.googleapis.com —
-     never hardcoded, never in the bundle, never logged.
-
-   KNOWN FOLLOW-UP (pre-rollout, not this ship): the call is made from
-   the client with the user's own key because the Firebase project has
-   no Cloud Functions / Blaze plan. A shared-key rollout for other
-   drivers needs a small backend proxy; per-user keys are fine for
-   the owner's own use and keep Google's bill (fractions of a cent
-   per read) on the key's owner. */
+     never hardcoded, never in the bundle, never logged. */
 (function () {
   'use strict';
 
@@ -110,7 +116,12 @@
   };
   PowerRead.setOn = function (on) { sset('powerReadOn', !!on); mirrorWrite({ on: !!on }); };
   PowerRead.hasKey = function () { return PowerRead.getKey().length > 0; };
-  PowerRead.enabled = function () { return PowerRead.isOn() && PowerRead.hasKey(); };
+  /* v94: route (a) — the server proxy. Its URL lives in the synced
+     store, written by the server ship (or a future default); there
+     is deliberately NO UI for it anywhere in the app. */
+  PowerRead.proxyUrl = function () { return String(sget('powerReadProxyUrl', '') || '').trim(); };
+  PowerRead.hasRoute = function () { return !!PowerRead.proxyUrl() || PowerRead.hasKey(); };
+  PowerRead.enabled = function () { return PowerRead.isOn() && PowerRead.hasRoute(); };
 
   /* ---------- monthly counter (cost visibility) ---------- */
   function monthStr(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2); }
@@ -290,19 +301,47 @@
       if (r.status === 404 || /not found/i.test(emsg)) return { ok: false, kind: 'nomodel' };
       if (r.status === 400 || r.status === 401 || r.status === 403) {
         if (/not found/i.test(emsg)) return { ok: false, kind: 'nomodel' };
-        return { ok: false, kind: 'badkey', message: '⚡ Power read: that API key didn\'t work — check it in Preferences → Advanced. Your photo and entries are unchanged.' };
+        return { ok: false, kind: 'badkey', message: '⚡ Power read couldn\'t complete that read — your photo and entries are unchanged.' };
       }
-      if (r.status === 429) return { ok: false, kind: 'quota', message: '⚡ Power read hit Google\'s limit for now — try again later. Your photo and entries are unchanged.' };
+      if (r.status === 429) return { ok: false, kind: 'quota', message: '⚡ Power read hit the cloud reader\'s limit for now — try again later. Your photo and entries are unchanged.' };
       return { ok: false, kind: 'http', message: '⚡ Power read failed (HTTP ' + r.status + ') — your photo and entries are unchanged.' };
     }, function () {
       if (timer) clearTimeout(timer);
-      return { ok: false, kind: 'network', message: '⚡ Power read could not reach Google.' };
+      return { ok: false, kind: 'network', message: '⚡ Power read could not reach the cloud reader.' };
     });
   }
 
-  /* One read: walks the model chain on 404s only, remembers the model
-     that worked, counts exactly one read per successful answer. */
+  /* v94 route (a): the Meticulous server proxy holds the key —
+     the app sends just {reader, image} and gets back either the
+     model's JSON text ({text}) or the model JSON itself. A proxy
+     network failure reports kind 'network' so the escalation path
+     queues the photo exactly as it does for a direct-call dropout. */
+  function callProxy(url, reader, dataUrl) {
+    var f = fetchFn();
+    if (!f) return Promise.resolve({ ok: false, kind: 'network', message: '⚡ Power read needs a network connection.' });
+    return f(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reader: reader, image: dataUrl })
+    }).then(function (resp) {
+      return resp.json().then(function (j) { return { status: resp.status, json: j }; }, function () { return { status: resp.status, json: null }; });
+    }).then(function (r) {
+      if (r.status !== 200 || !r.json) return { ok: false, kind: 'http', message: '⚡ Power read failed — your photo and entries are unchanged.' };
+      var parsed = (typeof r.json.text === 'string') ? parseModelJson(r.json.text) : r.json;
+      if (!parsed) return { ok: false, kind: 'http', message: '⚡ Power read could not understand the answer — your photo and entries are unchanged.' };
+      bumpCount();
+      return { ok: true, fields: mapFields(reader, parsed), model: 'proxy' };
+    }, function () {
+      return { ok: false, kind: 'network', message: '⚡ Power read could not reach the cloud reader.' };
+    });
+  }
+
+  /* One read: the server proxy when one is set; otherwise the
+     device-saved key walks the model chain on 404s only, remembers
+     the model that worked. Counts exactly one read per success. */
   PowerRead.read = function (reader, dataUrl) {
+    var proxy = PowerRead.proxyUrl();
+    if (proxy) return callProxy(proxy, reader, dataUrl);
     var key = PowerRead.getKey();
     if (!key) return Promise.resolve({ ok: false, kind: 'nokey' });
     var chain = PowerRead.MODELS.slice();
@@ -387,7 +426,7 @@
               onStatus({state,message}), onResult({fields, reader}) }
      States: 'working' → 'waiting' (queued; will retry) | 'error'
      (plain message; nothing queued) — success fires onResult.
-     Disabled (off / no key) or no usable photo → resolves
+     Disabled (off / no cloud route) or no usable photo → resolves
      {status:'skipped'} with NO network and nothing written — but
      v63: a host that explicitly asked for an escalation (it passed
      onStatus) is told WHY via state 'unavailable', so the failure
@@ -408,10 +447,13 @@
           message = '⚡ Power read didn\'t run — the photo couldn\'t be prepared for it.';
         } else if (!PowerRead.isOn()) {
           reason = 'off';
-          message = '⚡ Power read is turned off — switch it on in Preferences → Advanced and tough photos get a second, stronger read.';
+          message = '⚡ Power read is off — turn it on in Preferences → Advanced to give hard photos a second read.';
         } else {
+          /* v94: no cloud route on this device yet (the server
+             proxy isn't live and no key was ever saved here) — one
+             quiet line, no errand attached. */
           reason = 'nokey';
-          message = '⚡ Power Read key not set — reads are on-device only. Paste your free Gemini key in Preferences → Advanced once, and tough photos get a second, stronger read.';
+          message = '⚡ Power read couldn\'t run — the cloud reader isn\'t reachable from this device yet, so this photo was read on-device only.';
         }
         try { opts.onStatus({ state: 'unavailable', reason: reason, message: message }); } catch (e) {}
       }
@@ -490,8 +532,8 @@
           return next();
         }
         /* network → still no signal, stop and keep the queue.
-           badkey/quota/http → stop too; the key may be fixed later
-           and the next app open retries. The photo is never dropped. */
+           badkey/quota/http → stop too; the next app open retries
+           once a cloud route is reachable. The photo is never dropped. */
         _processing = false;
         finish();
         return null;
