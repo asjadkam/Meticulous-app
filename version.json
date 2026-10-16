@@ -1,6 +1,6 @@
 {
   "version": 35,
-  "apkUrl": "",
+  "apkUrl": "https://meticulous-dd570.web.app/meticulous-v35.apk",
   "webVersion": 92,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
