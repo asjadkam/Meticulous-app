@@ -54,6 +54,24 @@
     var start = e - (parseFloat(s.seconds) || 0) * 1000;
     return start > 0 ? new Date(start).toLocaleTimeString() : '—';
   }
+  /* v83: confirmed times print the way the foreman card reads —
+     "8:00 AM", "6:30 PM", no seconds (the seconds were the tell
+     that the app was printing its own session stamps). */
+  function fmtClock(ms) {
+    return (ms === null || ms === undefined || !isFinite(ms)) ? '—'
+      : new Date(ms).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
+  }
+  /* v83: a handwritten clock from a ticket ("8:30 AM") placed on
+     the manifest's date. Null when the text carries no clock. */
+  function clockOnDate(d, text) {
+    var m = /(\d{1,2}):(\d{2})\s*([aApP])[mM]/.exec(String(text || ''));
+    if (!m) return null;
+    var h = parseInt(m[1], 10) % 12;
+    if (/p/i.test(m[3])) h += 12;
+    var p = String(d).split('-');
+    if (p.length !== 3) return null;
+    return new Date(+p[0], +p[1] - 1, +p[2], h, parseInt(m[2], 10)).getTime();
+  }
 
   function collect(d) {
     var dispatches = (G('dsp_list', [])).filter(function (x) { return x.date === d; });
@@ -125,6 +143,71 @@
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
     }
+    /* v83: the day's dispatch records, matched the way the rest of
+       the app files a dispatch — scheduledAt's date wins (a
+       dispatch saved the evening before FOR today is today's,
+       whatever its raw date field says). */
+    var dayDsp = (G('dsp_list', [])).filter(function (x) {
+      if (!x) return false;
+      var sd = '';
+      if (typeof x.scheduledAt === 'string') {
+        var mm = /^(\d{4}-\d{2}-\d{2})/.exec(x.scheduledAt);
+        if (mm) sd = mm[1];
+      }
+      return (sd || x.date) === d;
+    });
+    /* v83: START / END ARE HIS TIMES, NOT THE APP'S (owner, Oct 15:
+       the manifest printed the tracker session's 8:00:01 AM /
+       6:02:43 PM while his foreman card #21314 said start 8:00,
+       finish 6:30 PM — "Should be what my actual close time and
+       start time was! Not what the app thought!"). The session
+       figures computed above survive ONLY as a fallback, and the
+       renderers label them as tracker times whenever they are
+       what shows (startSrc / endSrc). Confirmed priority —
+       START: a ticket's own start clock, then the dispatch's
+       scheduled start, then its started stamp.
+       END (once a dispatch for the day is completed): a ticket's
+       finish clock, then the card finish DERIVED as the scheduled
+       start + the tickets' foreman hours (the card's handwritten
+       finish is never OCR-read — start + hours is the same fact:
+       8:00 + 10.5h = 6:30 PM), then the record's endedAt, the
+       moment he himself tapped Close. */
+    var startSrc = (sessions.length || live) ? 'tracker' : '', endSrc = sessions.length ? 'tracker' : '';
+    var dspStartMs = null, dspEndMs = null, cardEndMs = null, tkStartMs = null, tkEndMs = null, anyCompleted = false;
+    dayDsp.forEach(function (x) {
+      var schMs = (typeof x.scheduledAt === 'string') ? Date.parse(x.scheduledAt) : NaN;
+      var stMs = stampMs(x.startedAt);
+      var cand = isFinite(schMs) ? schMs : stMs;
+      if (cand !== null && isFinite(cand) && (dspStartMs === null || cand < dspStartMs)) dspStartMs = cand;
+      if (x.status === 'completed') {
+        anyCompleted = true;
+        var eMs = stampMs(x.endedAt);
+        if (eMs !== null && (dspEndMs === null || eMs > dspEndMs)) dspEndMs = eMs;
+      }
+      (x.tickets || []).forEach(function (tk) {
+        if (!tk) return;
+        var s2 = clockOnDate(d, tk.startTime);
+        if (s2 !== null && (tkStartMs === null || s2 < tkStartMs)) tkStartMs = s2;
+        var f2 = clockOnDate(d, tk.finishTime);
+        if (f2 !== null && (tkEndMs === null || f2 > tkEndMs)) tkEndMs = f2;
+      });
+    });
+    if (tkStartMs !== null) { startT = fmtClock(tkStartMs); startSrc = 'card'; }
+    else if (dspStartMs !== null) { startT = fmtClock(dspStartMs); startSrc = 'dispatch'; }
+    /* a live session means the day has not ended — the live block's
+       "Still working" stands; confirmed ends apply to closed days */
+    if (!live) {
+      if (tkEndMs !== null) { endT = fmtClock(tkEndMs); endSrc = 'card'; }
+      else if (anyCompleted && dspStartMs !== null && window.TicketOCR && TicketOCR.summarizeTickets) {
+        var fh = 0;
+        dayDsp.forEach(function (x) {
+          if (x.status === 'completed') fh += TicketOCR.summarizeTickets(x.tickets || [], 0).totalForemanHours || 0;
+        });
+        if (fh > 0) { cardEndMs = dspStartMs + fh * 3600000; endT = fmtClock(cardEndMs); endSrc = 'card'; }
+      }
+      if (endSrc === 'tracker' && dspEndMs !== null) { endT = fmtClock(dspEndMs); endSrc = 'dispatch'; }
+    }
+
     /* v82 (item 3b): the day's LOADS — the count the driver himself
        confirmed, which the manifest never had (its only loads line
        was the GPS cross-check, and the GPS counter cannot run when
@@ -140,7 +223,7 @@
        form defaults it to '1', so it cannot prove a count. */
     var loads = 0, loadsSrc = '';
     var tkLoads = 0;
-    dispatches.forEach(function (x) {
+    dayDsp.forEach(function (x) {
       (x.tickets || []).forEach(function (tk) {
         var v = parseFloat(tk && tk.loads);
         if (v > 0) tkLoads += v;
@@ -163,7 +246,7 @@
       sessions.forEach(function (s) { wLoads += parseInt(s.loadCount, 10) || 0; });
       if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
     }
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
+    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -247,6 +330,15 @@
     }
     if (t.start) L.push({ k: 'kv', a: 'Start Time', b: c.startT });
     if (t.end) L.push({ k: 'kv', a: 'End Time', b: c.endT });
+    /* v83: when a shown time is the tracker's (no confirmed
+       dispatch/card time for it), the manifest SAYS so — session
+       times never again wear the day's clothes unlabelled. */
+    var trkParts = [];
+    if (c.startSrc === 'tracker' && c.startT !== '—') trkParts.push('Start');
+    if (c.endSrc === 'tracker' && c.endT !== '—') trkParts.push('End');
+    if (trkParts.length) {
+      L.push({ k: 'note', a: trkParts.join(' and ') + (trkParts.length > 1 ? ' times are' : ' time is') + ' from the tracker — no confirmed dispatch time for this day.' });
+    }
     if (t.odoStart && c.odoStart !== null) L.push({ k: 'kv', a: 'Start Odometer', b: Number(c.odoStart).toLocaleString('en-CA') + ' km' });
     if (t.odoEnd && c.odoEnd !== null) L.push({ k: 'kv', a: 'End Odometer', b: Number(c.odoEnd).toLocaleString('en-CA') + ' km' });
     if (t.odoEnd && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
@@ -399,6 +491,13 @@
       }
       if (t.start) h += '<div class="kv"><span>Start Time</span><b>' + esc(c.startT) + '</b></div>';
       if (t.end) h += '<div class="kv"><span>End Time</span><b>' + esc(c.endT) + '</b></div>';
+      /* v83: tracker-sourced times are labelled as such (see docLines) */
+      var trkParts2 = [];
+      if (c.startSrc === 'tracker' && c.startT !== '—') trkParts2.push('Start');
+      if (c.endSrc === 'tracker' && c.endT !== '—') trkParts2.push('End');
+      if (trkParts2.length) {
+        h += '<div class="note" style="margin:2px 0 6px">' + trkParts2.join(' and ') + (trkParts2.length > 1 ? ' times are' : ' time is') + ' from the tracker — no confirmed dispatch time for this day.</div>';
+      }
       /* v40: odometer readings + live miles ride together — the live
          number is the tracking, the odometer only confirms it. */
       if (t.odoStart && c.odoStart !== null) h += '<div class="kv"><span>Start Odometer</span><b>' + Number(c.odoStart).toLocaleString('en-CA') + ' km</b></div>';
