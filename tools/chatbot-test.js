@@ -15,6 +15,12 @@
  * Part H: statics — the key-correction pins (no API-key field,
  *   prompt, or nag anywhere in the feature), the honest offline
  *   line, the Ask button's footprint.
+ * Part I (v96): the garble gate — dictated mush ("HowwoH") gets
+ *   the short didn't-catch line; real questions, typo'd real
+ *   questions, and genuine general questions never do.
+ * Part J (v96): the composer — a real, full-width text box
+ *   (owner field test, Oct 16: "There should be a text box as
+ *   well"); typed text sends through the same ask() as voice.
  * Run: node tools/chatbot-test.js
  */
 'use strict';
@@ -312,7 +318,7 @@ console.log('— G: weather —');
 console.log('— H: statics —');
 {
   has('H1 index.html loads the chatbot at the live pin', idxSrc, 'js/chatbot.js?v=' + ver.webVersion);
-  eq('H2 webVersion is 95 (v95 moved the pin; the chatbot is unchanged)', ver.webVersion, 95);
+  eq('H2 webVersion is 96 (v96: the composer + garble round)', ver.webVersion, 96);
   eq('H3 native stays 35', ver.version, 35);
   ok(ver.apkUrl.indexOf('meticulous-v35.apk') !== -1, 'H4 apkUrl untouched', ver.apkUrl);
   /* The key correction (owner, Oct 16, 2026): no API-key field,
@@ -335,6 +341,68 @@ console.log('— H: statics —');
   ok(chatSrc.indexOf('speechSynthesis') !== -1, 'H19 voice out via the in-house speech path');
   ok(chatSrc.indexOf('Open-Meteo') !== -1 || chatSrc.indexOf('open-meteo') !== -1, 'H20 weather layer present');
   eq('H21 street index source is named', routes.src.indexOf('Calgary') !== -1, true);
+}
+
+/* ================= Part I: the garble gate (v96) ================= */
+console.log('— I: garble —');
+{
+  /* The field-test mush, and its family. */
+  ok(C.isGarble('HowwoH') === true, 'I1 the field-test mush is garble');
+  ok(C.isGarble('asdf qwer') === true, 'I2 keyboard mush is garble');
+  ok(C.isGarble('zxqv bnm plok') === true, 'I3 multi-token mush is garble');
+
+  /* Real questions the detector must NEVER eat. */
+  ok(C.isGarble('weather') === false, 'I4 one known word clears it');
+  ok(C.isGarble('how many holes') === false, 'I5 the slide question fragment clears it');
+  ok(C.isGarble('who won the game') === false, 'I6 a genuine general question is NOT garble');
+  ok(C.isGarble('what is the capital of France?') === false, 'I7 general knowledge is NOT garble');
+  eq('I8 general questions still route to the general layer', C.route('who won the game').layer, 'general');
+  eq('I9 and garble also routes general — the glue swaps only the reply', C.route('HowwoH').layer, 'general');
+
+  /* One-edit misspellings of real terms clear the gate. */
+  ok(C.isGarble('wheather') === false, 'I10 a typo\'d "weather" is not garble');
+  ok(C.isGarble('how many hols do i slide') === false, 'I11 a typo\'d "holes" is not garble');
+  ok(C.isGarble('my drivs are heavy') === false, 'I12 a typo\'d "drives" line is not garble');
+
+  /* Numbers and emptiness belong to other layers, never garble. */
+  ok(C.isGarble('800') === false, 'I13 a bare number is not garble (weights follow-ups)');
+  ok(C.isGarble('') === false, 'I14 empty is not garble');
+  ok(C.isGarble('the drives') === false, 'I15 a bare group answer is not garble');
+
+  /* The line itself: short, plain, and NOT the offline speech. */
+  has('I16 the garble line says it plainly', C.GARBLE_LINE, "Didn't catch that");
+  has('I17 and points back at the chips', C.GARBLE_LINE, 'tap one of these');
+  ok(C.GARBLE_LINE !== C.OFFLINE_LINE && C.GARBLE_LINE.indexOf('general brain') === -1, 'I18 garble never speaks the general-brain line');
+  ok(C.GARBLE_LINE.length < C.OFFLINE_LINE.length / 2, 'I19 the garble line is short — under half the fallback', C.GARBLE_LINE.length + ' vs ' + C.OFFLINE_LINE.length);
+
+  /* Glue: the gate sits in ask(), ahead of the general seam. */
+  ok(chatSrc.indexOf('CORE.isGarble(text)') !== -1, 'I20 the glue gates on the core detector');
+  ok(chatSrc.indexOf('CORE.isGarble(text)') < chatSrc.indexOf('remoteAsk(text).then'), 'I21 the gate fires before the general seam is tried');
+  ok(chatSrc.indexOf('CORE.GARBLE_LINE') !== -1 && /isGarble\(text\)\) \{\s*botSay\(CORE\.GARBLE_LINE/.test(chatSrc), 'I22 garble answers with the short line');
+  ok(/botSay\(CORE\.GARBLE_LINE[^)]*\);\s*renderChips\(\);/.test(chatSrc), 'I23 and re-offers the example chips');
+}
+
+/* ================= Part J: the composer (v96) ================= */
+console.log('— J: composer —');
+{
+  /* ONE obvious text box: a real text input with class + plain
+     placeholder (owner, Oct 16: "There should be a text box"). */
+  has('J1 the composer renders a real text input', chatSrc, '<input id="chatIn" class="chat-in" type="text"');
+  has('J2 with the plain type-a-question placeholder', chatSrc, 'placeholder="Type a question…"');
+  ok(chatSrc.indexOf('Ask about the road, the truck, the load…') === -1, 'J3 the old invisible-pill placeholder is gone');
+
+  /* Its width is protected in CSS: the field flexes to fill the
+     row and the global .btn width:100% can no longer crush it. */
+  ok(/\.chat-row \.chat-in\{[^}]*flex:1/.test(cssSrc), 'J4 the field takes the row (flex:1)');
+  ok(/\.chat-row \.chat-in\{[^}]*width:auto/.test(cssSrc), 'J5 the field escapes the global input width:100%');
+  ok(/\.chat-row \.btn\{[^}]*width:auto/.test(cssSrc) && /\.chat-row \.btn\{[^}]*flex:none/.test(cssSrc), 'J6 the send button is compact — auto width, no flex');
+
+  /* Voice stays, and every door lands in the SAME ask(): the mic
+     result, the Ask button, and Enter in the field. */
+  ok(chatSrc.indexOf('id="chatMic"') !== -1, 'J7 the mic door stays');
+  has('J8 voice results send through ask() as voice', chatSrc, 'ask(txt, { viaVoice: true })');
+  eq('J9 button + Enter both send typed text through ask()', chatSrc.split('ask(v, { viaVoice: false })').length - 1, 2);
+  ok(chatSrc.indexOf("ev.key === 'Enter'") !== -1, 'J10 Enter in the field sends');
 }
 
 console.log('chatbot-test: ' + pass + ' passed, ' + fail + ' failed');

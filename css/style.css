@@ -201,7 +201,13 @@ textarea{min-height:90px;resize:vertical;}
 .chat-chip{border:1.5px solid var(--navy);color:var(--navy);background:#fff;border-radius:999px;
   padding:8px 12px;font-size:13.5px;cursor:pointer;text-align:left;}
 .chat-row{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #e6eaf4;align-items:center;}
-.chat-row input{flex:1;font-size:16px;padding:12px;border:1.5px solid #ccd4e8;border-radius:12px;min-width:0;}
+.chat-row input{font-size:16px;padding:12px;border:1.5px solid #ccd4e8;border-radius:12px;min-width:0;}
+/* v96: the text field IS the row's primary element — the global
+   .btn{width:100%} made the Ask button's flex base the whole row
+   and crushed the field to a sliver (owner field test, Oct 16).
+   The field takes every spare pixel; the send button is compact. */
+.chat-row .chat-in{flex:1 1 auto;width:auto;}
+.chat-row .btn{flex:none;width:auto;padding:12px 20px;}
 .chat-mic{width:48px;height:48px;border-radius:50%;border:0;background:var(--orange);color:#fff;
   font-size:21px;cursor:pointer;flex:none;}
 .chat-mic.listening{background:var(--red);}

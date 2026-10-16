@@ -573,6 +573,56 @@
       return { layer: 'general' };
     }
 
+    /* ---------------- garble: the "didn't catch that" gate ----
+       Voice-first means a dictated question sometimes arrives as
+       mush ("HowwoH"). Mush is NOT a general question: it gets
+       one short line and the chips again, never the general-brain
+       speech. The detector is conservative on purpose — a message
+       counts as garble only when NONE of its word tokens is a
+       word the intents (or plain English) can grip: one known
+       word clears it, and so does a one-edit misspelling of a
+       longer known word ("wheather", "hols"), so a typo'd real
+       question still flows to the layer that owns it. Empty and
+       numbers-only input are never garble (a bare "800" mid-
+       conversation belongs to the weights talk). */
+    var KNOWN_WORDS = ('i a an the my me you your it is am are was were do does did can could should would will ' +
+      'what when where who why how which this that there here and or but if then so to of on in at for with by from about ' +
+      'over under out up down off not no yes ok okay hi hello hey please thanks thank tell say show give get got know need want like ' +
+      'much many more most any some all one two last next today tonight tomorrow now day time go going come back again ' +
+      'play music song songs joke jokes story news call text open closed set timer alarm remind reminder book find search near nearest ' +
+      'gas fuel diesel station stations restaurant food coffee shop store bank hotel flight ' +
+      'weather forecast rain raining snow snowing temperature cold hot windy wind legal trucks truck route street road ' +
+      'trail avenue boulevard crescent court place way gate common landing park square close green hill link manor point view rise highway ' +
+      'drive drives driver driving trailer tandem tandems tridem steer axle axles weight weights heavy overweight ' +
+      'slide slid sliding holes hole notch notches fifth wheel shift move load loads hauled dispatch job pickup drop ' +
+      'destination site hours hour gross made make earned earn money period pay odometer odo').split(' ');
+    var KNOWN_SET = {};
+    KNOWN_WORDS.forEach(function (w) { KNOWN_SET[w] = true; });
+    /* Edit distance ≤ 1 (one insert, delete, or substitution). */
+    function editLe1(a, b) {
+      if (Math.abs(a.length - b.length) > 1) return false;
+      var i = 0, j = 0, edits = 0;
+      while (i < a.length && j < b.length) {
+        if (a[i] === b[j]) { i++; j++; continue; }
+        if (++edits > 1) return false;
+        if (a.length > b.length) i++;
+        else if (b.length > a.length) j++;
+        else { i++; j++; }
+      }
+      if (i < a.length || j < b.length) edits++;
+      return edits <= 1;
+    }
+    function isGarble(text) {
+      var toks = String(text || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+      if (!toks.length) return false;
+      for (var i = 0; i < toks.length; i++) {
+        var t = toks[i];
+        if (KNOWN_SET[t]) return false;
+        if (t.length >= 4 && KNOWN_WORDS.some(function (w) { return w.length >= 4 && editLe1(t, w); })) return false;
+      }
+      return true;
+    }
+
     /* ---------------- weather words (Open-Meteo / WMO) ---------------- */
     function wxPhrase(code) {
       var c = Number(code);
@@ -740,6 +790,9 @@
     var OFFLINE_LINE = 'That one needs my general brain, and it isn\'t online yet — it comes with the server, and I won\'t guess at it. ' +
       'Ask me about weights and axles, whether a Calgary street is legal for your truck, the weather at your drop, or your own numbers — those I can answer right now.';
     var CAPS_LINE = 'I can work out axle slides and Alberta legal weights, check whether a Calgary street is legal for your truck, get the weather at your drop, and read back your own dispatch, loads, hours, gross, and odometer.';
+    /* Garble gets ONE short line (spoken too) — not the
+       general-brain speech above. */
+    var GARBLE_LINE = 'Didn\'t catch that — say it again, or tap one of these.';
 
     return {
       LB: LB, GEO: GEO, AB: AB,
@@ -751,10 +804,10 @@
       newMathState: newMathState, mathMerge: mathMerge, mathStep: mathStep,
       expandStreet: expandStreet, normKey: normKey, buildStreetMap: buildStreetMap,
       streetLookup: streetLookup, restrActiveNow: restrActiveNow, legalText: legalText,
-      route: route, streetQueryOf: streetQueryOf,
+      route: route, streetQueryOf: streetQueryOf, isGarble: isGarble,
       wxPhrase: wxPhrase, wxCompose: wxCompose,
       recordsFacts: recordsFacts, recordsText: recordsText, recDate: recDate, clockOf: clockOf,
-      GREETING: GREETING, CHIPS: CHIPS, OFFLINE_LINE: OFFLINE_LINE, CAPS_LINE: CAPS_LINE
+      GREETING: GREETING, CHIPS: CHIPS, OFFLINE_LINE: OFFLINE_LINE, CAPS_LINE: CAPS_LINE, GARBLE_LINE: GARBLE_LINE
     };
   })();
   /* CHAT-CORE-END */
@@ -1094,6 +1147,15 @@
       });
       return;
     }
+    /* Garble — a dictated question that arrived as mush — is NOT
+       a general question: one short line and the chips again,
+       never the general-brain speech. Genuine general questions
+       fall through to the seam + honest line exactly as before. */
+    if (CORE.isGarble(text)) {
+      botSay(CORE.GARBLE_LINE, { speak: viaVoice });
+      renderChips();
+      return;
+    }
     /* general — the seam, then the one honest line */
     var think3 = botSay('Thinking…');
     remoteAsk(text).then(function (ans) {
@@ -1132,6 +1194,17 @@
   }
 
   /* ---------- build + boot ---------- */
+  function renderChips() {
+    if (!els || !els.chips) return;
+    els.chips.innerHTML = '';
+    chipsHtml().forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'chat-chip';
+      b.textContent = c;
+      b.onclick = function () { ask(c, { viaVoice: false, example: true }); };
+      els.chips.appendChild(b);
+    });
+  }
   function chipsHtml() {
     var off = 0;
     try { off = parseInt(localStorage.getItem('chat_chip_off') || '0', 10) || 0; } catch (e) {}
@@ -1165,7 +1238,7 @@
       '<div class="chat-msgs" id="chatMsgs"></div>' +
       '<div class="chat-chips" id="chatChips"></div>' +
       '<div class="chat-row">' +
-        '<input id="chatIn" placeholder="Ask about the road, the truck, the load…" autocomplete="off">' +
+        '<input id="chatIn" class="chat-in" type="text" placeholder="Type a question…" autocomplete="off" enterkeyhint="send">' +
         '<button class="chat-mic" id="chatMic" title="Speak your question">🎤</button>' +
         '<button class="btn navy" id="chatSend">Ask</button>' +
       '</div>';
@@ -1224,14 +1297,7 @@
     if (!started) {
       started = true;
       addCard('bot', CORE.GREETING);
-      els.chips.innerHTML = '';
-      chipsHtml().forEach(function (c) {
-        var b = document.createElement('button');
-        b.className = 'chat-chip';
-        b.textContent = c;
-        b.onclick = function () { ask(c, { viaVoice: false, example: true }); };
-        els.chips.appendChild(b);
-      });
+      renderChips();
     }
     try { els.input.focus(); } catch (e) {}
   }
