@@ -78,5 +78,15 @@ eq('seed-9 full order (GST first, total above date)', T.parseFuelReceipt(['GST I
 eq('cents-14 trap: "$193.14" above "Oct 15, 2026"', T.parseFuelReceipt(['Mobil @ 1739 Gas Stn', 'TOTAL $193.14', 'Oct 15, 2026 17:55:41', '78.175 L', 'PRICE/L 2.479'].join('\n')).date, '2026-10-15');
 eq('same-line space shape still parses (24 Apr 18)', T.parseFuelReceipt('Shell\n24 Apr 18\nDiesel 50.000 L @ 1.999/L\nTOTAL $99.95').date, '2018-04-24');
 
+console.log('\n— v90: station number survives a header pushed past line 10 (soak Pass 21) —');
+{
+  const L15 = ['Mobil @ 1739 Gas Stn', '200-20 Heritage Meadow', 'Calgary AB T2H 3C1', '2026-10-15 17:55:41', 'Pump 8  DIESEL', '78.175 L', 'PRICE/L  2.479', 'AMOUNT  $193.80', 'GST INCLUDED IN TOTAL $9.23', 'VISA ****8001', 'Invoice No 519326'];
+  const pushed = [L15[8], L15[3], L15[1], L15[6], L15[2], L15[7], L15[5], L15[10], L15[9], L15[4], L15[0]]; // the exact seed-21 order: station header is line 11
+  eq('header on line 11: number kept', T.parseFuelReceipt(pushed.join('\n')).station, 'Mobil @ 1739');
+  eq('header on line 1: number kept (unchanged)', T.parseFuelReceipt(L15.join('\n')).station, 'Mobil @ 1739');
+  const twoNums = ['Mobil @ 1742 Gas Stn', '300-3633 Westwinds Dr', 'Calgary AB', 'Oct 14, 2026 17:32', 'Diesel 94.522 L @ 2.479/L', 'TOTAL $234.32', 'Mobil @ 9999 promo line', 'VISA ****8001'];
+  eq('head number wins over a later same-brand number', T.parseFuelReceipt(twoNums.join('\n')).station, 'Mobil @ 1742');
+}
+
 console.log('\nsoak-regressions test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

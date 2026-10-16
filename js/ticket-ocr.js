@@ -1258,7 +1258,14 @@
        Meadows), and a bare brand merges them. */
     if (f.station) {
       var brandEsc = f.station.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      var snm = head.match(new RegExp(brandEsc + '\\s*@\\s*(\\d{3,5})', 'i'));
+      /* v90 (soak Pass 21): the number search ran over the head lines
+         only, while the brand itself is found over the whole text —
+         a header pushed past line 10 by OCR line-splitting kept its
+         brand but lost its number, merging two different stations
+         in the records. Head still wins when it carries a number;
+         the full text is the fallback. */
+      var snm = head.match(new RegExp(brandEsc + '\\s*@\\s*(\\d{3,5})', 'i')) ||
+                t.match(new RegExp(brandEsc + '\\s*@\\s*(\\d{3,5})', 'i'));
       if (snm) f.station = f.station + ' @ ' + snm[1];
     }
 
