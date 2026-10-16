@@ -132,6 +132,19 @@ console.log('— pure: request building —');
   check('at 200 m along: past the two short opening maneuvers', sb.currentManeuverIndex(plan, 200) === 2);
   check('fmtDist metres/km', sb.fmtDist(240) === '240 m' && sb.fmtDist(4886) === '4.9 km');
   check('fmtMin', sb.fmtMin(7.02) === '7 min' && sb.fmtMin(65) === '1 h 5 min');
+
+  console.log('— pure: turn-by-turn handoff links (v93) —');
+  check('ttnLinks: no destination → null', sb.ttnLinks(null) === null && sb.ttnLinks(['x', 'y']) === null);
+  const lk = sb.ttnLinks(DEST, 'Test B');
+  check('ttnLinks: web directions is the canonical fallback',
+    lk.web === 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent('51.107500,-114.084500') + '&travelmode=driving', lk.web);
+  check('ttnLinks: intent leads, addressed to Google Maps, carrying the web fallback',
+    lk.intent.indexOf('intent://navigate?q=' + encodeURIComponent('51.107500,-114.084500')) === 0 &&
+    lk.intent.indexOf('package=com.google.android.apps.maps') >= 0 &&
+    lk.intent.indexOf('S.browser_fallback_url=' + encodeURIComponent(lk.web)) >= 0, lk.intent);
+  check('ttnLinks: geo URI carries pin + label',
+    lk.geo === 'geo:51.107500,-114.084500?q=' + encodeURIComponent('51.107500,-114.084500 (Test B)'), lk.geo);
+  check('ttnLinks: Waze deep link', lk.waze === 'https://waze.com/ul?ll=51.107500,-114.084500&navigate=yes', lk.waze);
 }
 
 /* ================= 2. render + flow (stubbed DOM) ================= */
@@ -161,7 +174,8 @@ function makeWorld(storeData) {
     del: function (k) { delete storeData[k]; }
   };
   const ids = ['nv_banner', 'nv_map', 'nv_mode_truck', 'nv_mode_car', 'nv_follow', 'nv_mute',
-    'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps'];
+    'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps',
+    'nv_ttn', 'nv_ttn_note'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
   reg.nv_banner.children['.nv-banner-main'] = el();
@@ -170,7 +184,7 @@ function makeWorld(storeData) {
   body.querySelector = function (sel) { return reg[sel.slice(1)] || null; };
   body.querySelectorAll = function () { return []; };
 
-  const calls = { fetch: [], polylines: [], spoken: [], views: [] };
+  const calls = { fetch: [], polylines: [], spoken: [], views: [], opened: [], anchors: [] };
   const mapHandlers = {};
   const mapStub = {
     setView: function (c, z) { calls.views.push([c, z]); return mapStub; },
@@ -188,7 +202,19 @@ function makeWorld(storeData) {
   let geoCb = null;
   const world = {
     console: console, JSON: JSON, Math: Math, Date: Date, setTimeout: setTimeout,
-    window: null, document: {},
+    window: null,
+    /* v93: the TTN cascade touches document/window.open — stubbed
+       to CAPTURE every attempt so the chain can be asserted. */
+    document: {
+      hidden: false,
+      addEventListener: function () {}, removeEventListener: function () {},
+      createElement: function () {
+        const a = { href: '', style: {}, click: function () { calls.anchors.push(a.href); }, remove: function () {} };
+        return a;
+      },
+      body: { appendChild: function () {} }
+    },
+    open: function (u) { calls.opened.push(u); },
     App: { _esc: function (s) { return String(s == null ? '' : s); }, _store: store },
     Meticulous: {},
     L: L,
@@ -219,6 +245,10 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w.firePos(ORIGIN[0], ORIGIN[1]);
   w.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
   check('map tap sets the destination note', /Destination:/.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
+  check('server set: Route leads, the handoff sits under it ghost-styled (v93)',
+    w.body.innerHTML.indexOf('id="nv_route"') < w.body.innerHTML.indexOf('id="nv_ttn"') &&
+    w.body.innerHTML.indexOf('class="btn ghost hidden" id="nv_ttn"') >= 0);
+  check('server set: destination note still points at Route', /tap Route\./.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
   w.reg.nv_route.onclick();
   await tick(); await tick();
   const routeCalls = w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
@@ -266,6 +296,45 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('no route fetch is attempted without a server', w2.calls.fetch.length === 0);
   api2.teardown();
 
+  console.log('— flow: turn-by-turn handoff (v93) —');
+  const w3 = makeWorld({});
+  const api3 = w3.world.Meticulous.modules.navigator;
+  /* the stub DOM does not parse markup classes — seed the hidden
+     state the real DOM gets from the rendered class attribute */
+  w3.reg.nv_ttn.classList.add('hidden');
+  w3.reg.nv_ttn_note.classList.add('hidden');
+  api3.render(w3.body);
+  check('no server: the handoff is the primary action, above Route',
+    w3.body.innerHTML.indexOf('id="nv_ttn"') < w3.body.innerHTML.indexOf('id="nv_route"') &&
+    w3.body.innerHTML.indexOf('class="btn primary big hidden" id="nv_ttn"') >= 0);
+  check('no server: the honest handoff label ships in the markup',
+    w3.body.innerHTML.indexOf("Opens Google Maps for spoken directions. Meticulous's own drive screen is coming.") >= 0);
+  check('handoff stays hidden until a destination exists', w3.reg.nv_ttn.classList.contains('hidden'));
+  w3.reg.nv_ttn.onclick();
+  check('no destination: the tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
+  check('no destination: nothing was opened', w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
+  w3.firePos(ORIGIN[0], ORIGIN[1]);
+  w3.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  check('destination set → handoff button + label revealed',
+    !w3.reg.nv_ttn.classList.contains('hidden') && !w3.reg.nv_ttn_note.classList.contains('hidden'));
+  check('no server: destination note points at Turn-by-turn', /tap Turn-by-turn/.test(w3.reg.nv_destnote.textContent), w3.reg.nv_destnote.textContent);
+  /* capture the module's cascade timers instead of waiting them out */
+  const timers = [];
+  w3.world.setTimeout = function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; };
+  w3.reg.nv_ttn.onclick();
+  const want = w3.world.MeticulousNav.ttnLinks(DEST, 'Dropped pin');
+  check('cascade 1: the Google Maps intent fires first, built from the set destination',
+    w3.calls.anchors[0] === want.intent, w3.calls.anchors[0]);
+  check('cascade note tells the driver what is happening', /Opening turn-by-turn/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
+  const fireTimer = function (ms) { const t = timers.filter(function (x) { return x.ms === ms; })[0]; if (t) t.fn(); };
+  fireTimer(900);
+  check('cascade 2: geo URI when still here', w3.calls.anchors[1] === want.geo, w3.calls.anchors[1]);
+  fireTimer(2000);
+  check('cascade 3: Waze when still here', w3.calls.opened[0] === want.waze, w3.calls.opened[0]);
+  fireTimer(3100);
+  check('cascade 4: Google Maps web directions last', w3.calls.opened[1] === want.web, w3.calls.opened[1]);
+  api3.teardown();
+
   /* ================= 3. statics ================= */
   console.log('— statics —');
   check('index.html loads modules/navigator.js at ?v=<webVersion>', idxSrc.indexOf('modules/navigator.js?v=' + ver.webVersion) >= 0);
@@ -277,6 +346,9 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('navigator.js ships NO baked-in server address', !/127\.0\.0\.1|localhost|:8002|198\.19\.|192\.168\./.test(navSrc));
   check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
+  check('navigator.js carries the v93 turn-by-turn handoff', navSrc.indexOf('id="nv_ttn"') >= 0 && navSrc.indexOf('function ttnLinks') >= 0);
+  check('the handoff label is the honest one', navSrc.indexOf('Opens Google Maps for spoken directions.') >= 0 && navSrc.indexOf('own drive screen is coming.') >= 0);
+  check('MeticulousNav exposes ttnLinks for the handoff', navSrc.indexOf('ttnLinks: ttnLinks') >= 0);
 
   console.log('navigator-test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

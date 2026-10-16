@@ -164,6 +164,29 @@
     if (min < 60) return Math.round(min) + ' min';
     return Math.floor(min / 60) + ' h ' + Math.round(min % 60) + ' min';
   }
+
+  /* v93: the turn-by-turn HANDOFF link set. The phone's own maps
+     app does the spoken driving TODAY; Meticulous's own 3D drive
+     screen still waits on the routing server (owner, Oct 16,
+     2026: turn-by-turn must not wait for the server). Pure: dest
+     is [lat, lng]. The chain, first to last resort: the Google
+     Maps navigation intent (its browser_fallback_url carries the
+     web directions if Maps is absent) → a geo: URI (any maps
+     app) → Waze → Google Maps web directions. */
+  function ttnLinks(dest, label) {
+    if (!dest) return null;
+    var lat = Number(dest[0]), lng = Number(dest[1]);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    var q = lat.toFixed(6) + ',' + lng.toFixed(6);
+    var name = String(label || '');
+    var web = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(q) + '&travelmode=driving';
+    var intent = 'intent://navigate?q=' + encodeURIComponent(q) +
+      '#Intent;scheme=google.navigation;package=com.google.android.apps.maps;' +
+      'S.browser_fallback_url=' + encodeURIComponent(web) + ';end';
+    var geo = 'geo:' + q + '?q=' + encodeURIComponent(q + (name ? ' (' + name + ')' : ''));
+    var waze = 'https://waze.com/ul?ll=' + q + '&navigate=yes';
+    return { intent: intent, geo: geo, waze: waze, web: web };
+  }
   /* ================= NAVPURE-END ================= */
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
@@ -189,7 +212,8 @@
     DEFAULT_PROFILE: NAV_DEFAULT_PROFILE,
     loadSettings: loadSettings,
     saveSettings: saveSettings,
-    profile: navProfile
+    profile: navProfile,
+    ttnLinks: ttnLinks
   };
 
   /* ---- live session state (one navigation at a time) ---- */
@@ -283,7 +307,19 @@
             return '<option value="' + i + '">' + esc(p.name) + '</option>';
           }).join('') + '</select>' : '') +
         '<p class="note" id="nv_destnote">No destination yet. Search above, tap the map, or pick a saved place in Navigation.</p>' +
-        '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
+        /* v93: ONE primary action per server state. No server:
+           the turn-by-turn handoff leads (the in-app Route button
+           keeps its exact server-not-set behaviour below it).
+           Server set: Route leads and the handoff sits under it
+           as the quiet secondary. The handoff button + its honest
+           label stay hidden until a destination exists. */
+        (settings.serverUrl
+          ? '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
+            '<button class="btn ghost hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
+            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions. Meticulous\'s own drive screen is coming.</p>'
+          : '<button class="btn primary big hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
+            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions. Meticulous\'s own drive screen is coming.</p>' +
+            '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>') +
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
@@ -328,8 +364,12 @@
           else S.destMarker = L.marker(latlng).addTo(S.map);
         }
         var dn = body.querySelector('#nv_destnote');
-        if (dn) dn.textContent = 'Destination: ' + (label || (latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5))) + ' — tap Route.';
-        banner('Destination set', 'Tap Route to get ' + (S.settings.mode === 'car' ? 'car' : 'truck') + ' directions.');
+        if (dn) dn.textContent = 'Destination: ' + (label || (latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5))) + ' — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
+        var tb = body.querySelector('#nv_ttn'); if (tb) tb.classList.remove('hidden');
+        var tn = body.querySelector('#nv_ttn_note'); if (tn) tn.classList.remove('hidden');
+        banner('Destination set', S.settings.serverUrl
+          ? 'Tap Route to get ' + (S.settings.mode === 'car' ? 'car' : 'truck') + ' directions.'
+          : 'Tap Turn-by-turn for spoken directions in your maps app.');
       }
 
       var searchBtn = body.querySelector('#nv_search');
@@ -540,6 +580,44 @@
 
       /* ---------- controls ---------- */
       body.querySelector('#nv_route').onclick = doRoute;
+
+      /* v93: the turn-by-turn handoff. Walks the ttnLinks chain
+         with pauses: if a maps app takes over, the page hides and
+         the later fallbacks never fire; if we're still here, the
+         next resort tries. The destination it uses is the one
+         setDest set — the same pin every other door lands on. */
+      var ttnBtn = body.querySelector('#nv_ttn');
+      if (ttnBtn) ttnBtn.onclick = function () {
+        var links = ttnLinks(S.dest, S.destLabel);
+        if (!links) { note('Pick a destination first — search above or tap the map.'); return; }
+        var left = false;
+        var onHide = function () { left = true; };
+        try {
+          document.addEventListener('visibilitychange', onHide);
+          window.addEventListener('pagehide', onHide);
+        } catch (e) {}
+        function attempt(href, blank) {
+          try {
+            if (blank) { window.open(href, '_blank'); return; }
+            var a = document.createElement('a');
+            a.href = href; a.style.display = 'none';
+            document.body.appendChild(a); a.click();
+            setTimeout(function () { try { a.remove(); } catch (e) {} }, 100);
+          } catch (e) {}
+        }
+        function stillHere() { return !left && !document.hidden; }
+        attempt(links.intent, false);
+        setTimeout(function () { if (stillHere()) attempt(links.geo, false); }, 900);
+        setTimeout(function () { if (stillHere()) attempt(links.waze, true); }, 2000);
+        setTimeout(function () { if (stillHere()) attempt(links.web, true); }, 3100);
+        setTimeout(function () {
+          try {
+            document.removeEventListener('visibilitychange', onHide);
+            window.removeEventListener('pagehide', onHide);
+          } catch (e) {}
+        }, 4200);
+        note('Opening turn-by-turn in your maps app…');
+      };
       var endBtn = body.querySelector('#nv_end');
       if (endBtn) endBtn.onclick = function () { clearRoute(); banner('Where to?', 'Search for a place, or tap the map to drop a pin.'); };
       var followBtn = body.querySelector('#nv_follow');
