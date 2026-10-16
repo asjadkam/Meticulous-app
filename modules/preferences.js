@@ -75,7 +75,17 @@
         '<label class="f">Company name</label><input id="pf_cname" value="' + esc(o.companyName || '') + '">' +
         '<label class="f">GST/HST number</label><input id="pf_gst" value="' + esc(o.gst || '') + '">' +
         '<label class="f">Business address</label><input id="pf_caddr" value="' + esc(o.companyAddr || '') + '">' +
-        '<label class="f">Contracting company</label><input id="pf_cont" value="' + esc(o.contractingCo || '') + '"></div>';
+        '<label class="f">Contracting company</label><input id="pf_cont" value="' + esc(o.contractingCo || '') + '">' +
+        /* v79: invoice settings live with the business details — the
+           user's own next invoice number (no silent counter) and the
+           tax-inclusive rate switch. They save with Save preferences,
+           like every other field on this card. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:16px;padding-top:12px;">' +
+        '<p class="note" style="margin-top:0">🧾 Invoices</p>' +
+        '<label class="f">Next invoice number</label><input id="pf_nextinv" value="' + esc(o.nextInvoiceNo || '') + '" placeholder="e.g. 1152">' +
+        '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_taxincl"' + (o.rateIncludesTax ? ' checked' : '') + '> My rate includes tax</label>' +
+        '<label class="f">Tax rate %</label><input id="pf_invtax" type="number" step="0.01" min="0" value="' + esc(o.invoiceTaxRate == null || o.invoiceTaxRate === '' ? '5' : o.invoiceTaxRate) + '">' +
+        '<p class="note">The next invoice uses this number. After it is saved, the number moves up by one.</p></div></div>';
 
       /* v31: photo retake buttons — same OCR as onboarding. Lets Asjad update
          the odometer baseline (e.g. new truck / rolled over) or the safety
@@ -248,6 +258,9 @@
         o.payRate = g('pf_rate'); o.travelBonus = g('pf_travel') || '1';
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont');
+        o.nextInvoiceNo = g('pf_nextinv');
+        o.rateIncludesTax = body.querySelector('#pf_taxincl').checked;
+        o.invoiceTaxRate = g('pf_invtax') || '5';
         o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype');
         /* v76 (F6): office renders have no odometer field/toggle —
            keep whatever is stored, never reach for missing inputs. */

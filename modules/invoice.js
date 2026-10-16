@@ -41,7 +41,10 @@
     return 0;
   }
 
-  function nextInvNo() { return invCycNextNo(invoices()); }
+  function nextInvNo() {
+    var o = onb();
+    return String(o.nextInvoiceNo || '').trim() || invCycNextNo(invoices());
+  }
 
   /* ================= INV-CYCLE-BEGIN =================
      v55: the invoice CYCLE — semi-monthly periods, verified issuing,
@@ -62,11 +65,26 @@
      the new open period, and a one-shot confirmation is stored for
      the next render.
 
-     Numbering: a typed number wins; an empty number auto-assigns
-     max(numeric issued #) + 1, or 1 when no issued number is numeric.
-     A typed number that collides with an issued one is refused.
+     Numbering: a typed number wins; otherwise the user's own
+     Preferences "Next invoice number" is used; only when neither
+     exists does it fall back to max(numeric issued #) + 1, or 1 when
+     no issued number is numeric. A successful issue reports the next
+     Preferences number (issued # + 1) so the sequence the user sees
+     is the sequence that advances — no silent counter. A typed or
+     preferred number that collides with an issued one is refused.
      "(auto on save)" is a placeholder, never a value — a legacy draft
-     still carrying it as a value is treated as empty. */
+     still carrying it as a value is treated as empty.
+
+     Dates: the issued record's date is the ISSUE date (today), never
+     the draft's creation date; the draft date survives on the record
+     as draftDate.
+
+     Lines (v79): revenue entries are grouped to ONE line per day.
+     A dispatch-completion entry is the day's confirmed source and
+     wins over tracker/session entries for that day; a day with only
+     ONE tracker entry keeps it, flagged unconfirmed; a day with
+     several tracker entries and no confirmed source cannot be
+     resolved and BLOCKS issuing (stage 'duplicate'). */
   var INV_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function invS(k, d) { return App._store.get('inv_' + k, d); }
   function invW(k, v) { return App._store.set('inv_' + k, v); }
@@ -148,6 +166,101 @@
       return !!r && String(r.no || '').trim().toLowerCase() === t;
     });
   }
+  /* The number AFTER an issued one, in the user's own format: plain
+     numbers step by 1 ("1151" -> "1152", keeping zero padding), and
+     formatted numbers step their trailing group ("INV-2026-0007" ->
+     "INV-2026-0008"). '' when the number carries no digits. */
+  function invCycIncrementNo(no) {
+    var s = String(no || '').trim();
+    var m = s.match(/(\d+)\s*$/);
+    if (!m) return '';
+    var next = String(parseInt(m[1], 10) + 1);
+    while (next.length < m[1].length) next = '0' + next;
+    return s.slice(0, s.length - m[1].length) + next;
+  }
+  function invCycRound2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+  /* Invoice totals. Tax-INCLUSIVE mode (v79): the amounts already
+     carry the tax — subtotal is the total due, and the tax figure is
+     the part of it that is tax: sub x rate/(100+rate). Add-on mode is
+     the original behaviour: tax = sub x rate/100, added on top. */
+  function invCycTotals(sub, taxRate, taxIncluded) {
+    var s = invCycRound2(sub);
+    var r = Number(taxRate) || 0;
+    var tax = taxIncluded ? invCycRound2(s * r / (100 + r)) : invCycRound2(s * r / 100);
+    return { sub: s, tax: tax, total: taxIncluded ? s : invCycRound2(s + tax) };
+  }
+  function invCycCompanyMissing(company) {
+    return !String((company && company.name) || '').trim();
+  }
+  /* Where a stored revenue entry came from — dispatch completions
+     keep their "Dispatch: …" note through revenue.addEntry, tracker
+     sessions carry auto/'Auto from tracker'. */
+  function invCycEntrySrc(e) {
+    if (!e) return 'entry';
+    if (e.auto) return 'tracker';
+    var n = e.note || '';
+    if (n.indexOf('Dispatch:') === 0) return 'dispatch';
+    if (n === 'Auto from tracker') return 'tracker';
+    return 'entry';
+  }
+  function invCycCloneLine(l) {
+    var c = {};
+    for (var k in l) { if (Object.prototype.hasOwnProperty.call(l, k)) c[k] = l[k]; }
+    return c;
+  }
+  function invCycCombinedLine(group, src) {
+    var amt = 0;
+    group.forEach(function (l) { amt += Number(l.amt) || 0; });
+    return {
+      desc: (src === 'dispatch' ? 'Dispatch completions' : 'Revenue entries') +
+        ' (' + group.length + ' entries) — ' + group[0].date,
+      amt: invCycRound2(amt), date: group[0].date, src: src, combined: true
+    };
+  }
+  /* Build the invoice's revenue lines from period entries + extras.
+     Returns {lines, duplicateDates, unconfirmedDates}: ONE line per
+     day (see the region header for the source rules); extras are
+     separate charges and pass through untouched. */
+  function invCycBuildRevenueLines(entries, extras, rate, std) {
+    rate = parseFloat(rate) || 0;
+    std = String(std || '').toLowerCase();
+    var raw = [];
+    (entries || []).forEach(function (e) {
+      var amt = 0, desc = '';
+      if (std === 'hourly') { amt = (parseFloat(e.hours) || 0) * rate; desc = (e.hours || 0) + ' hrs @ $' + rate; }
+      else if (std === 'miles') { amt = (parseFloat(e.miles) || 0) * rate; desc = (e.miles || 0) + ' mi @ $' + rate; }
+      else if (std === 'trip') { amt = (parseFloat(e.trips) || 0) * rate; desc = (e.trips || 0) + ' trips @ $' + rate; }
+      else if (std === 'weight') { amt = (parseFloat(e.tons) || 0) * rate; desc = (e.tons || 0) + ' tons @ $' + rate; }
+      else { amt = parseFloat(e.amount) || 0; desc = e.note || e.date; }
+      if (amt > 0) raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: invCycEntrySrc(e) });
+    });
+    var byDate = {};
+    raw.forEach(function (l) {
+      var g = byDate[l.date] || (byDate[l.date] = { dispatch: [], tracker: [], entry: [] });
+      if (g[l.src]) g[l.src].push(l); else g.entry.push(l);
+    });
+    var lines = [], duplicateDates = [], unconfirmedDates = [];
+    Object.keys(byDate).sort().forEach(function (date) {
+      var g = byDate[date], chosen = null;
+      if (g.dispatch.length) {
+        chosen = g.dispatch.length === 1 ? invCycCloneLine(g.dispatch[0]) : invCycCombinedLine(g.dispatch, 'dispatch');
+      } else if (g.entry.length) {
+        chosen = g.entry.length === 1 ? invCycCloneLine(g.entry[0]) : invCycCombinedLine(g.entry, 'entry');
+      } else if (g.tracker.length === 1) {
+        chosen = invCycCloneLine(g.tracker[0]);
+        chosen.unconfirmed = true;
+        unconfirmedDates.push(date);
+      } else if (g.tracker.length > 1) {
+        duplicateDates.push(date);
+      }
+      if (chosen) lines.push(chosen);
+    });
+    (extras || []).forEach(function (x) {
+      var v = parseFloat(x.amount) || 0;
+      if (v !== 0) lines.push({ desc: (x.type || 'Extra') + ' — ' + x.date, amt: v, date: x.date, src: 'extra' });
+    });
+    return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates };
+  }
   /* Dates whose invoice lines come from BOTH a dispatch completion
      and the tracker — the classic double count. Lines carry
      {date, src} (see revenueLines). Returns short labels, sorted. */
@@ -171,32 +284,47 @@
     return false;
   }
   /* Verified issue + cycle rollover. x: {draft, revLines, sub, tax,
-     total, pa, pb, today, now?, company, province, country}.
-     Returns {ok:true, rec, next} or {ok:false, stage, message}.
+     total, pa, pb, today, now?, company, province, country, prefNo?,
+     taxIncluded?, duplicateDates?, setNextInvoiceNo?}.
+     Returns {ok:true, rec, next, nextPrefNo} or
+     {ok:false, stage, message}.
      On failure NOTHING is written that matters: the list is only
      replaced by a verified write, and the draft is left untouched. */
   function invIssue(x) {
     var draft = x.draft || {};
+    var dupDates = x.duplicateDates || [];
+    if (dupDates.length) {
+      return {
+        ok: false, stage: 'duplicate',
+        message: 'Saving is blocked: ' + dupDates.map(invCycDateShort).join(', ') +
+          (dupDates.length === 1 ? ' still has' : ' still have') +
+          ' more than one tracker entry and no dispatch completion to confirm the day. ' +
+          'Fix that day in Revenue, then try again — nothing was saved and your draft is unchanged.'
+      };
+    }
     var list = invS('list', []);
     var typed = String(draft.no || '').trim();
     if (typed === '(auto on save)') typed = '';
+    var pref = String(x.prefNo || '').trim();
+    if (pref === '(auto on save)') pref = '';
     var no;
-    if (typed) {
-      if (invCycCollision(list, typed)) {
+    if (typed || pref) {
+      no = typed || pref;
+      if (invCycCollision(list, no)) {
         return {
           ok: false, stage: 'collision',
-          message: 'Invoice #' + typed + ' has already been issued. Type a different number — nothing was saved and your draft is unchanged.'
+          message: 'Invoice #' + no + ' has already been issued. Type a different number — nothing was saved and your draft is unchanged.'
         };
       }
-      no = typed;
     } else {
       no = invCycNextNo(list);
     }
     var rec = {
-      id: 'inv' + (x.now || Date.now()), no: no, date: draft.date, billTo: draft.billTo,
+      id: 'inv' + (x.now || Date.now()), no: no, date: x.today, draftDate: draft.date, billTo: draft.billTo,
       pa: x.pa, pb: x.pb,
       revLines: x.revLines, items: (draft.items || []).slice(),
-      taxRate: Number(draft.taxRate) || 0, sub: x.sub, tax: x.tax, total: x.total,
+      taxRate: Number(draft.taxRate) || 0, taxIncluded: !!x.taxIncluded,
+      sub: x.sub, tax: x.tax, total: x.total,
       notes: draft.notes, company: x.company,
       province: x.province, country: x.country, at: x.today
     };
@@ -207,6 +335,13 @@
         message: 'Invoice #' + no + ' could not be saved — nothing was printed and your draft is unchanged. Check storage or connection, then try again.'
       };
     }
+    /* The user's own sequence advances — visibly, in Preferences.
+       The callback writes it only now that the issue is verified;
+       nextPrefNo is also returned for callers without a callback. */
+    var nextPrefNo = invCycIncrementNo(no);
+    if (nextPrefNo && typeof x.setNextInvoiceNo === 'function') {
+      try { x.setNextInvoiceNo(nextPrefNo); } catch (e) {}
+    }
     /* Verified — the invoice is archived. Start the new cycle: clear
        the whole draft and advance the period to the new open period. */
     invW('draft', null);
@@ -214,46 +349,23 @@
     if (next) { invW('pa', next.a); invW('pb', next.b); }
     invW('cycmsg', 'Invoice #' + no + ' saved for ' + invCycShort({ a: x.pa, b: x.pb }) +
       '. Next period: ' + invCycShort(next) + '.');
-    return { ok: true, rec: rec, next: next };
+    return { ok: true, rec: rec, next: next, nextPrefNo: nextPrefNo };
   }
   /* ================= INV-CYCLE-END ================= */
 
-  /* Where a stored revenue entry came from — dispatch completions
-     keep their "Dispatch: …" note through revenue.addEntry, tracker
-     sessions carry auto/'Auto from tracker'. Used by the duplicate-
-     date heads-up (invCycDupDates); not shown on the invoice. */
-  function entrySrc(e) {
-    if (!e) return 'entry';
-    if (e.auto) return 'tracker';
-    var n = e.note || '';
-    if (n.indexOf('Dispatch:') === 0) return 'dispatch';
-    if (n === 'Auto from tracker') return 'tracker';
-    return 'entry';
+  /* The line plan for a period: the grouped lines plus the days
+     that block issuing and the tracker-only days to flag. The
+     grouping/source rules live in invCycBuildRevenueLines
+     (INV-CYCLE region, suite-tested). */
+  function revenueLinePlan(a, b) {
+    var o = onb();
+    var entries = App._store.get('rev_entries', []).filter(function (e) { return e.date >= a && e.date <= b; });
+    var extras = App._store.get('rev_extras', []).filter(function (x) { return x.date >= a && x.date <= b; });
+    return invCycBuildRevenueLines(entries, extras, o.payRate, o.payStandard);
   }
 
   /* lines from revenue entries + extras inside a period, using pay standard */
-  function revenueLines(a, b) {
-    var o = onb();
-    var rate = parseFloat(o.payRate) || 0;
-    var std = (o.payStandard || '').toLowerCase();
-    var entries = App._store.get('rev_entries', []).filter(function (e) { return e.date >= a && e.date <= b; });
-    var extras = App._store.get('rev_extras', []).filter(function (x) { return x.date >= a && x.date <= b; });
-    var lines = [];
-    entries.forEach(function (e) {
-      var amt = 0, desc = '';
-      if (std === 'hourly') { amt = (parseFloat(e.hours) || 0) * rate; desc = (e.hours || 0) + ' hrs @ $' + rate; }
-      else if (std === 'miles') { amt = (parseFloat(e.miles) || 0) * rate; desc = (e.miles || 0) + ' mi @ $' + rate; }
-      else if (std === 'trip') { amt = (parseFloat(e.trips) || 0) * rate; desc = (e.trips || 0) + ' trips @ $' + rate; }
-      else if (std === 'weight') { amt = (parseFloat(e.tons) || 0) * rate; desc = (e.tons || 0) + ' tons @ $' + rate; }
-      else { amt = parseFloat(e.amount) || 0; desc = e.note || e.date; }
-      if (amt > 0) lines.push({ desc: desc + ' — ' + e.date, amt: amt, date: e.date, src: entrySrc(e) });
-    });
-    extras.forEach(function (x) {
-      var v = parseFloat(x.amount) || 0;
-      if (v !== 0) lines.push({ desc: (x.type || 'Extra') + ' — ' + x.date, amt: v, date: x.date, src: 'extra' });
-    });
-    return lines;
-  }
+  function revenueLines(a, b) { return revenueLinePlan(a, b).lines; }
 
   function jurisdictionBanner() {
     var o = onb();
@@ -307,21 +419,35 @@
     /* Legacy drafts (pre-v55) could hold the placeholder text as the
        # value — it is not a number; treat it as empty. */
     if (draft.no === '(auto on save)') draft.no = null;
+    /* v79: the form's # is the user's own sequence — the Preferences
+       "Next invoice number" fills an empty draft number. */
+    if (!draft.no && o.nextInvoiceNo) draft.no = String(o.nextInvoiceNo);
+    /* v79: tax settings come from Preferences (Company card). In
+       tax-inclusive mode the rate defaults to 5% when Preferences
+       carries no rate; add-on mode keeps the draft's own rate. */
+    var taxIncluded = !!o.rateIncludesTax;
+    var prefTaxRate = parseFloat(o.invoiceTaxRate);
+    if (isFinite(prefTaxRate) && taxIncluded) draft.taxRate = prefTaxRate;
+    else if (taxIncluded) draft.taxRate = 5;
+    var bizPromptVisible = false;
     function saveDraft() { W('draft', draft); }
+    /* A stable draft id, so the business-details check (below) nags
+       at most once per invoice, never once per render. */
+    if (!draft.id) { draft.id = 'draft' + Date.now(); saveDraft(); }
 
     function totals(lines) {
       var sub = 0;
       lines.forEach(function (l) { sub += l.amt; });
       draft.items.forEach(function (it) { sub += (Number(it.qty) || 0) * (Number(it.rate) || 0); });
-      var tax = sub * (Number(draft.taxRate) || 0) / 100;
-      return { sub: sub, tax: tax, total: sub + tax };
+      return invCycTotals(sub, draft.taxRate, taxIncluded);
     }
 
     function draw() {
       var openP = invCycOpenPeriod(invoices(), App._today());
       var pa = S('pa', null), pb = S('pb', null);
       if (!pa || !pb) { pa = openP.a; pb = openP.b; }
-      var revLines = revenueLines(pa, pb);
+      var revPlan = revenueLinePlan(pa, pb);
+      var revLines = revPlan.lines;
       var t = totals(revLines);
       var h = jurisdictionBanner();
       var cycMsg = S('cycmsg', ''); if (cycMsg) W('cycmsg', '');
@@ -335,22 +461,28 @@
         '<div class="row"><div><label class="f">Invoice #</label><input id="iv_no" value="' + esc(draft.no || '') + '" placeholder="(auto on save)"></div>' +
         '<div><label class="f">Date</label><input type="date" id="iv_date" value="' + esc(draft.date) + '"></div></div>' +
         '<label class="f">Bill to</label><input id="iv_billto" value="' + esc(draft.billTo) + '" placeholder="Contracting company">' +
-        '<label class="f">Tax rate % (GST/HST)</label><input id="iv_tax" type="number" step="0.01" min="0" value="' + esc(draft.taxRate) + '">' +
-        '<p class="note">Prefilled from your province. Change it if your situation differs.</p></div>';
+        (taxIncluded
+          ? '<p class="note">Your rate already includes tax: <b>' + esc(draft.taxRate) + '% GST</b>. ' +
+            'The tax part is shown on the invoice — it is not added on top. Change this in Preferences → Company.</p></div>'
+          : '<label class="f">Tax rate % (GST/HST)</label><input id="iv_tax" type="number" step="0.01" min="0" value="' + esc(draft.taxRate) + '">' +
+            '<p class="note">Prefilled from your province. Change it if your situation differs.</p></div>');
 
       h += '<div class="card"><h3>Line items</h3>';
       if (revLines.length) {
         h += '<p class="note">From revenue (' + esc(pa) + ' → ' + esc(pb) + '):</p>';
         revLines.forEach(function (l) {
-          h += '<div class="kv"><span>' + esc(l.desc) + '</span><b>$' + l.amt.toFixed(2) + '</b></div>';
+          h += '<div class="kv"><span>' + esc(l.desc) +
+            (l.unconfirmed ? ' <span style="color:#b97a0f">— from tracker — unconfirmed</span>' : '') +
+            '</span><b>$' + l.amt.toFixed(2) + '</b></div>';
         });
-      } else {
+      } else if (!revPlan.duplicateDates.length) {
         h += '<p class="note">No revenue entries in this period. Add items manually:</p>';
       }
-      var dupDates = invCycDupDates(revLines);
-      if (dupDates.length) {
-        h += '<p class="note" style="color:#b97a0f">⚠️ Heads up: ' + dupDates.map(esc).join(', ') +
-          (dupDates.length === 1 ? ' appears' : ' appear') + ' twice — check for a double count.</p>';
+      if (revPlan.duplicateDates.length) {
+        h += '<p class="note" style="color:#c0392b">⛔ Saving is blocked: ' +
+          revPlan.duplicateDates.map(function (d) { return esc(invCycDateShort(d)); }).join(', ') +
+          (revPlan.duplicateDates.length === 1 ? ' still has' : ' still have') +
+          ' more than one tracker entry and no dispatch completion to confirm the day. Fix that day in Revenue first.</p>';
       }
       draft.items.forEach(function (it, i) {
         h += '<div class="kv"><span>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</span>' +
@@ -365,13 +497,24 @@
 
       h += '<div class="card"><h3>Totals</h3>' +
         '<div class="kv"><span>Subtotal</span><b>$' + t.sub.toFixed(2) + '</b></div>' +
-        '<div class="kv"><span>Tax (' + esc(draft.taxRate) + '%)</span><b>$' + t.tax.toFixed(2) + '</b></div>' +
+        '<div class="kv"><span>' + (taxIncluded
+          ? 'Tax (' + esc(draft.taxRate) + '% GST, included in the rate)'
+          : 'Tax (' + esc(draft.taxRate) + '%)') + '</span><b>$' + t.tax.toFixed(2) + '</b></div>' +
+        (taxIncluded ? '<p class="note">That tax amount is already inside the subtotal — it is not added again.</p>' : '') +
         '<div class="kv" style="font-size:17px"><span><b>Total due</b></span><b>$' + t.total.toFixed(2) + '</b></div></div>';
+
+      if (bizPromptVisible) {
+        h += '<div class="card" style="border-left:4px solid #b97a0f"><h3>One check before printing</h3>' +
+          '<p class="note">Your business name/address/GST aren\'t set — the printed invoice will miss them. ' +
+          'Set them in Preferences → Your business.</p>' +
+          '<div class="row"><button class="btn navy" id="iv_biz_prefs" style="margin:0">Set them now</button>' +
+          '<button class="btn ghost" id="iv_biz_print" style="margin:0">Print anyway</button></div></div>';
+      }
 
       h += '<button class="btn primary" id="iv_issue">Save &amp; print invoice</button>';
       h += issuedHtml();
       body.innerHTML = h;
-      wireInvoice(body, draft, revLines, t, saveDraft, draw);
+      wireInvoice(body, draft, revLines, t, saveDraft, draw, revPlan);
     }
 
     function issuedHtml() {
@@ -385,14 +528,15 @@
       return h + '</div>';
     }
 
-    function wireInvoice(body, draft, revLines, t, saveDraft, draw) {
+    function wireInvoice(body, draft, revLines, t, saveDraft, draw, revPlan) {
       var gp = body.querySelector('#iv_goprefs');
       if (gp) gp.onclick = function () { App.openModule('preferences'); };
       function sync() {
         draft.no = body.querySelector('#iv_no').value.trim();
         draft.date = body.querySelector('#iv_date').value;
         draft.billTo = body.querySelector('#iv_billto').value.trim();
-        draft.taxRate = body.querySelector('#iv_tax').value;
+        var taxNode = body.querySelector('#iv_tax');
+        if (taxNode) draft.taxRate = taxNode.value;
         draft.notes = body.querySelector('#iv_notes').value;
         W('pa', body.querySelector('#iv_a').value); W('pb', body.querySelector('#iv_b').value);
         saveDraft();
@@ -412,9 +556,27 @@
       body.querySelectorAll('[data-mdel]').forEach(function (a) {
         a.onclick = function (e) { e.preventDefault(); draft.items.splice(+a.getAttribute('data-mdel'), 1); saveDraft(); draw(); };
       });
-      body.querySelector('#iv_issue').onclick = function () {
+      function bizWarnedForThisDraft() {
+        var seen = S('bizwarn', {});
+        return !!(draft.id && seen && seen[draft.id]);
+      }
+      function markBizWarned() {
+        if (!draft.id) return;
+        var seen = S('bizwarn', {}) || {};
+        seen[draft.id] = true;
+        W('bizwarn', seen);
+      }
+      function attemptIssue(fromPrompt) {
         sync();
         if (t.sub <= 0) { alert('Add at least one line item first.'); return; }
+        /* v79: business-details check — one plain prompt per draft
+           when the company name is empty. "Print anyway" proceeds and
+           never nags again for THIS invoice; it never blocks forever. */
+        if (!fromPrompt && invCycCompanyMissing({ name: o.companyName }) && !bizWarnedForThisDraft()) {
+          bizPromptVisible = true;
+          draw();
+          return;
+        }
         /* v55: verified issue + rollover lives in invIssue (INV-CYCLE
            region). A failed or refused save keeps the draft exactly as
            it is and prints nothing; only a verified save archives the
@@ -423,6 +585,15 @@
           draft: draft, revLines: revLines, sub: t.sub, tax: t.tax, total: t.total,
           pa: body.querySelector('#iv_a').value, pb: body.querySelector('#iv_b').value,
           today: App._today(),
+          prefNo: o.nextInvoiceNo || '', taxIncluded: taxIncluded,
+          duplicateDates: (revPlan && revPlan.duplicateDates) || [],
+          setNextInvoiceNo: function (next) {
+            try {
+              var oo = App._store.get('onboarding', {});
+              oo.nextInvoiceNo = next;
+              App._store.set('onboarding', oo);
+            } catch (e) {}
+          },
           company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },
           province: o.province, country: o.country
         });
@@ -434,6 +605,15 @@
         if (window.FB && FB.saveDoc) FB.saveDoc('invoices', res.rec.no, { no: res.rec.no, date: res.rec.date, total: res.rec.total });
         printInvoice(res.rec);
         Meticulous.modules.invoice.render(body);
+      }
+      body.querySelector('#iv_issue').onclick = function () { attemptIssue(false); };
+      var bizPrefsBtn = body.querySelector('#iv_biz_prefs');
+      if (bizPrefsBtn) bizPrefsBtn.onclick = function () { App.openModule('preferences'); };
+      var bizPrintBtn = body.querySelector('#iv_biz_print');
+      if (bizPrintBtn) bizPrintBtn.onclick = function () {
+        markBizWarned();
+        bizPromptVisible = false;
+        attemptIssue(true);
       };
       body.querySelectorAll('[data-reprint]').forEach(function (a) {
         a.onclick = function (e) {
@@ -461,7 +641,9 @@
         '<div class="row"><span><b>Bill to:</b> ' + esc(rec.billTo || '—') + '</span><span><b>Date:</b> ' + esc(rec.date) + '</span></div>' +
         '<table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>' + rows + '</table>' +
         '<div class="row"><span>Subtotal</span><span>$' + rec.sub.toFixed(2) + '</span></div>' +
-        '<div class="row"><span>Tax (' + esc(rec.taxRate) + '%)</span><span>$' + rec.tax.toFixed(2) + '</span></div>' +
+        '<div class="row"><span>' + (rec.taxIncluded
+          ? 'Tax (' + esc(rec.taxRate) + '% GST, included in the rate)'
+          : 'Tax (' + esc(rec.taxRate) + '%)') + '</span><span>$' + rec.tax.toFixed(2) + '</span></div>' +
         '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + rec.total.toFixed(2) + '</b></span></div>' +
         (rec.notes ? '<p class="muted">' + esc(rec.notes) + '</p>' : ''));
     }

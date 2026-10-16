@@ -22,6 +22,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
 const invSrc = fs.readFileSync(path.join(ROOT, 'modules', 'invoice.js'), 'utf8');
+const prefSrc = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
 
 function extractStore(src) {
   const a = src.indexOf('var store = {');
@@ -239,6 +240,121 @@ function emptyDraft(no) {
     w.invCycDupDates([{ date: '2026-10-13', src: 'tracker' }, { date: '2026-10-13', src: 'tracker' }]), []);
 })();
 
+/* ---------------- v79: one line per day, confirmed source only ---------------- */
+(function () {
+  const w = makeWorld(freshBacking());
+  const B = w.invCycBuildRevenueLines;
+  /* The Oct 15 shape: a dispatch completion AND a tracker session
+     for the same day — the completion is the day's one line. */
+  const plan = B([
+    { date: '2026-10-15', hours: '10.04', note: 'Auto from tracker', auto: true },
+    { date: '2026-10-15', hours: '11.50', note: 'Dispatch: 12th Street · foreman 10.5h + travel 1h = 11.5h' },
+    { date: '2026-10-14', hours: '9.63', note: 'Auto from tracker', auto: true }
+  ], [], 29, 'hourly');
+  eq('v79 lines: one line per day', plan.lines.length, 2);
+  eq('v79 lines: sorted by day', plan.lines[0].date + '/' + plan.lines[1].date, '2026-10-14/2026-10-15');
+  eq('v79 lines: completion wins over tracker', plan.lines[1].amt, 333.50);
+  eq('v79 lines: completion source kept', plan.lines[1].src, 'dispatch');
+  eq('v79 lines: tracker line excluded, not summed', plan.lines[1].desc.indexOf('10.04'), -1);
+  eq('v79 lines: tracker-only day kept', plan.lines[0].amt, 279.27);
+  eq('v79 lines: tracker-only day flagged unconfirmed', plan.lines[0].unconfirmed, true);
+  deepEq('v79 lines: unconfirmed dates listed', plan.unconfirmedDates, ['2026-10-14']);
+  deepEq('v79 lines: no blocking duplicates', plan.duplicateDates, []);
+
+  /* Several tracker entries, no confirmed source: unresolvable. */
+  const blocked = B([
+    { date: '2026-10-15', hours: '5.00', note: 'Auto from tracker', auto: true },
+    { date: '2026-10-15', hours: '5.04', note: 'Auto from tracker', auto: true }
+  ], [], 29, 'hourly');
+  eq('v79 blocked: no line emitted for the day', blocked.lines.length, 0);
+  deepEq('v79 blocked: day named as duplicate', blocked.duplicateDates, ['2026-10-15']);
+
+  /* Several completions on one day combine into the day's one line. */
+  const multi = B([
+    { date: '2026-10-06', hours: '5', note: 'Dispatch: Pit A' },
+    { date: '2026-10-06', hours: '6.5', note: 'Dispatch: Pit B' }
+  ], [], 29, 'hourly');
+  eq('v79 multi: still one line', multi.lines.length, 1);
+  eq('v79 multi: amounts summed', multi.lines[0].amt, 333.50);
+
+  /* A manual entry also outranks a tracker entry for its day. */
+  const manual = B([
+    { date: '2026-10-03', hours: '9.63', note: 'Auto from tracker', auto: true },
+    { date: '2026-10-03', hours: '9', note: 'Sheet import' }
+  ], [], 29, 'hourly');
+  eq('v79 manual: one line, manual wins', manual.lines.length + '/' + manual.lines[0].amt, '1/261');
+
+  /* Extras are separate charges — they pass through untouched. */
+  const withExtra = B([], [{ date: '2026-10-15', type: 'Fuel surcharge', amount: '25' }], 29, 'hourly');
+  eq('v79 extras: pass through', withExtra.lines.length + '/' + withExtra.lines[0].src + '/' + withExtra.lines[0].amt, '1/extra/25');
+
+  eq('v79 src: dispatch note', w.invCycEntrySrc({ note: 'Dispatch: X' }), 'dispatch');
+  eq('v79 src: auto flag', w.invCycEntrySrc({ note: 'anything', auto: true }), 'tracker');
+  eq('v79 src: tracker note', w.invCycEntrySrc({ note: 'Auto from tracker' }), 'tracker');
+  eq('v79 src: plain entry', w.invCycEntrySrc({ note: 'Sheet import' }), 'entry');
+})();
+
+/* ---------------- v79: totals, tax-inclusive math, numbering helpers ---------------- */
+(function () {
+  const w = makeWorld(freshBacking());
+  const inc = w.invCycTotals(3610.50, 5, true);
+  eq('v79 tax-incl: subtotal is the lines sum', inc.sub, 3610.50);
+  eq('v79 tax-incl: included GST = sub x 5/105', inc.tax, 171.93);
+  eq('v79 tax-incl: total due = subtotal (nothing added)', inc.total, 3610.50);
+  const add = w.invCycTotals(100, 5, false);
+  eq('v79 tax add-on: unchanged behaviour', add.sub + '/' + add.tax + '/' + add.total, '100/5/105');
+  eq('v79 tax-incl: zero rate -> zero tax', w.invCycTotals(200, 0, true).tax, 0);
+  eq('v79 increment: plain', w.invCycIncrementNo('1151'), '1152');
+  eq('v79 increment: zero-padded', w.invCycIncrementNo('009'), '010');
+  eq('v79 increment: formatted keeps its prefix', w.invCycIncrementNo('INV-2026-0007'), 'INV-2026-0008');
+  eq('v79 increment: no digits -> empty', w.invCycIncrementNo('abc'), '');
+  eq('v79 company: empty name is missing', w.invCycCompanyMissing({ name: '  ' }), true);
+  eq('v79 company: a name satisfies the check', w.invCycCompanyMissing({ name: 'Asjad Kamal' }), false);
+  eq('v79 company: no company at all is missing', w.invCycCompanyMissing(null), true);
+})();
+
+/* ---------------- v79: issue — pref number, issue date, duplicate block ---------------- */
+(function () {
+  const b = freshBacking();
+  const w = makeWorld(b, '2026-10-15');
+  const S = function (k, d) { return w.App._store.get('inv_' + k, d); };
+  let advancedTo = null;
+  const draft = emptyDraft('');
+  draft.date = '2026-10-14'; // the draft was created yesterday…
+  const args = issueArgs(draft, '2026-10-01', '2026-10-15', 999);
+  args.today = '2026-10-15'; // …but it is issued today
+  args.prefNo = '1151';
+  args.taxIncluded = true;
+  const tt = w.invCycTotals(3610.50, 5, true);
+  args.sub = tt.sub; args.tax = tt.tax; args.total = tt.total;
+  args.setNextInvoiceNo = function (n) { advancedTo = n; };
+  w.App._store.set('inv_draft', draft);
+  const r = w.invIssue(args);
+  eq('v79 issue: ok', r.ok, true);
+  eq('v79 issue: Preferences number used', r.rec.no, '1151');
+  eq('v79 issue: date is the ISSUE date, not the draft date', r.rec.date, '2026-10-15');
+  eq('v79 issue: draft date kept on the record', r.rec.draftDate, '2026-10-14');
+  eq('v79 issue: tax-inclusive flag stored', r.rec.taxIncluded, true);
+  eq('v79 issue: totals stored', r.rec.sub + '/' + r.rec.tax + '/' + r.rec.total, '3610.5/171.93/3610.5');
+  eq('v79 issue: Preferences sequence advanced by callback', advancedTo, '1152');
+  eq('v79 issue: nextPrefNo returned', r.nextPrefNo, '1152');
+
+  /* The preferred number collides once it has been issued. */
+  const rc = w.invIssue(Object.assign({}, args, { prefNo: '1151', now: 1000 }));
+  eq('v79 pref collision: refused', rc.ok, false);
+  eq('v79 pref collision: stage', rc.stage, 'collision');
+  eq('v79 pref collision: sequence not advanced again', advancedTo, '1152');
+
+  /* A duplicate day blocks the save outright — nothing is written. */
+  w.App._store.set('inv_draft', draft);
+  const rd = w.invIssue(Object.assign({}, args, { prefNo: '1152', duplicateDates: ['2026-10-15'], now: 1001 }));
+  eq('v79 duplicate: refused', rd.ok, false);
+  eq('v79 duplicate: stage', rd.stage, 'duplicate');
+  ok('v79 duplicate: message names the day', rd.message.indexOf('Oct 15') !== -1, rd.message);
+  eq('v79 duplicate: nothing archived', S('list', []).length, 1);
+  deepEq('v79 duplicate: draft intact', S('draft', null), draft);
+})();
+
 /* ---------------- static layout assertions on the shipped file ---------------- */
 (function () {
   ok('static: # field renders an EMPTY value (placeholder only)',
@@ -247,6 +363,19 @@ function emptyDraft(no) {
     invSrc.indexOf('placeholder="(auto on save)"') !== -1);
   ok('static: open period is labelled in plain words', invSrc.indexOf('Current period:') !== -1);
   ok('static: issue path goes through the verified invIssue', invSrc.indexOf('var res = invIssue({') !== -1);
+  /* v79 statics */
+  ok('v79 static: draft # fills from Preferences next number', invSrc.indexOf('if (!draft.no && o.nextInvoiceNo)') !== -1);
+  ok('v79 static: issue passes the Preferences number', invSrc.indexOf("prefNo: o.nextInvoiceNo || ''") !== -1);
+  ok('v79 static: issue passes duplicate days to the blocker', invSrc.indexOf('duplicateDates: (revPlan && revPlan.duplicateDates) || []') !== -1);
+  ok('v79 static: issue passes the tax-inclusive mode', invSrc.indexOf('taxIncluded: taxIncluded') !== -1);
+  ok('v79 static: totals label the included tax', invSrc.indexOf('% GST, included in the rate') !== -1);
+  ok('v79 static: tracker-only line flagged in the UI', invSrc.indexOf('from tracker — unconfirmed') !== -1);
+  ok('v79 static: business check prompt copy', invSrc.indexOf('Your business name/address/GST aren') !== -1);
+  ok('v79 static: business check buttons', invSrc.indexOf('id="iv_biz_prefs"') !== -1 && invSrc.indexOf('>Set them now</button>') !== -1 && invSrc.indexOf('id="iv_biz_print"') !== -1 && invSrc.indexOf('>Print anyway</button>') !== -1);
+  ok('v79 static: Preferences has Next invoice number', prefSrc.indexOf('id="pf_nextinv"') !== -1 && prefSrc.indexOf('Next invoice number') !== -1);
+  ok('v79 static: Preferences has the tax-inclusive toggle', prefSrc.indexOf('id="pf_taxincl"') !== -1 && prefSrc.indexOf('My rate includes tax') !== -1);
+  ok('v79 static: Preferences has the tax rate (default 5)', prefSrc.indexOf('id="pf_invtax"') !== -1 && prefSrc.indexOf("? '5' : o.invoiceTaxRate") !== -1);
+  ok('v79 static: Preferences saves the invoice settings', prefSrc.indexOf("o.nextInvoiceNo = g('pf_nextinv')") !== -1 && prefSrc.indexOf("o.rateIncludesTax = body.querySelector('#pf_taxincl').checked") !== -1 && prefSrc.indexOf("o.invoiceTaxRate = g('pf_invtax') || '5'") !== -1);
 })();
 
 console.log('\ninvoice-cycle: ' + pass + ' passed, ' + fail + ' failed');
