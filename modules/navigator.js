@@ -201,7 +201,7 @@
      '' stays cleared — loadSettings never resurrects the default over
      a saved value. (The nav.meticuloustechnologies.com name replaces
      this IP literal once its DNS lands.) */
-  var NAV_DEFAULT_SERVER_URL = 'https://45.31.47.19';
+  var NAV_DEFAULT_SERVER_URL = 'https://2.31.47.19';
 
   function loadSettings() {
     var s = {};

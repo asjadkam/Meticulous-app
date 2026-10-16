@@ -757,7 +757,7 @@
              deliberate '', wins). The literal is duplicated on purpose:
              this fallback exists for when the module failed to load. */
           return { profile: s.profile || {}, serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
-            ? 'https://45.31.47.19' : String(s.serverUrl) };
+            ? 'https://2.31.47.19' : String(s.serverUrl) };
         }
         function navSave(patch) {
           if (window.MeticulousNav && MeticulousNav.saveSettings) { MeticulousNav.saveSettings(patch); return; }

@@ -304,9 +304,9 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   console.log('— flow: default server, never set (v98) —');
   const w4 = makeWorld({});
   const api4 = w4.world.Meticulous.modules.navigator;
-  check('v98: MeticulousNav exposes the shipped default', w4.world.MeticulousNav.DEFAULT_SERVER_URL === 'https://45.31.47.19',
+  check('v98: MeticulousNav exposes the shipped default', w4.world.MeticulousNav.DEFAULT_SERVER_URL === 'https://2.31.47.19',
     w4.world.MeticulousNav.DEFAULT_SERVER_URL);
-  check('v98: never-saved → loadSettings returns the default', w4.world.MeticulousNav.loadSettings().serverUrl === 'https://45.31.47.19',
+  check('v98: never-saved → loadSettings returns the default', w4.world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19',
     w4.world.MeticulousNav.loadSettings().serverUrl);
   check('v98: a saved custom server still wins over the default',
     makeWorld({ navigator: { serverUrl: 'http://nav.test' } }).world.MeticulousNav.loadSettings().serverUrl === 'http://nav.test');
@@ -325,7 +325,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w4.reg.nv_route.onclick();
   await tick(); await tick();
   const dCalls = w4.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
-  check('v98: Route POSTs to the shipped default <server>/route', dCalls.length === 1 && dCalls[0].url === 'https://45.31.47.19/route',
+  check('v98: Route POSTs to the shipped default <server>/route', dCalls.length === 1 && dCalls[0].url === 'https://2.31.47.19/route',
     dCalls.length ? dCalls[0].url : 'no fetch');
   if (dCalls.length) {
     const dSent = JSON.parse(dCalls[0].opts.body);
@@ -391,9 +391,9 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('preferences has the Navigator profile card', prefSrc.indexOf('pf_nv_height') >= 0 && prefSrc.indexOf('pf_nv_hazmat') >= 0);
   check('preferences Advanced has the Navigator server URL', prefSrc.indexOf('pf_nav_url') >= 0 && prefSrc.indexOf('Navigator server') >= 0);
   check('navigator.js carries no loopback/private server literals', !/127\.0\.0\.1|localhost|:8002|198\.19\.|192\.168\./.test(navSrc));
-  check('v98: the one baked-in address is the shipped default server', navSrc.indexOf("var NAV_DEFAULT_SERVER_URL = 'https://45.31.47.19'") >= 0);
+  check('v98: the one baked-in address is the shipped default server', navSrc.indexOf("var NAV_DEFAULT_SERVER_URL = 'https://2.31.47.19'") >= 0);
   check('v98: MeticulousNav exposes the default (Preferences/tests)', navSrc.indexOf('DEFAULT_SERVER_URL: NAV_DEFAULT_SERVER_URL') >= 0);
-  check('v98: Preferences fallback carries the same default rule', prefSrc.indexOf("? 'https://45.31.47.19' : String(s.serverUrl)") >= 0);
+  check('v98: Preferences fallback carries the same default rule', prefSrc.indexOf("? 'https://2.31.47.19' : String(s.serverUrl)") >= 0);
   check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
   check('navigator.js carries the v93 turn-by-turn handoff', navSrc.indexOf('id="nv_ttn"') >= 0 && navSrc.indexOf('function ttnLinks') >= 0);
