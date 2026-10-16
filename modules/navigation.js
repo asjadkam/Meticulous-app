@@ -1,6 +1,11 @@
 /* Meticulous — Navigation module (standalone, complete)
    Tabs: Work (built-in places + work favorites; visits logged to
    Manifest) vs Personal (never logged).
+   v91 (owner, Oct 16): the built-ins are FAMOUS PUBLIC PITS ONLY
+   (see NAV-BUILTIN); the owner's own 25 places from the old
+   dataset migrate once into his work favorites (NAV-MIGRATION);
+   and this screen carries the one quiet Yard pick that
+   js/yardstart.js watches for dispatch auto-activation.
    v87 (owner, Oct 15): THE CARD WALL IS GONE — "don't need 40
    different cards for each and every saved location. That should
    be all in a dropdown… 1 field to fill in the address." Places
@@ -35,23 +40,72 @@
   var addOpen = false;
 
   /* ================= NAV-BUILTIN-BEGIN =================
-     v84: BUILT-IN PLACES (owner, Oct 15: the Work favorites were
-     EMPTY and "how do I even input a address?" — nobody thumb-types
-     41 places; the addresses lived in Muse-side files, never in
-     the app). These are compiled from the owner's own 2026 dispatch
-     history (job-sites directory + confirmed pits list, Oct 15,
-     2026): every entry carries the RESOLVED pin from his messages —
-     nothing guessed, nothing looked up. Only CONFIRMED places with
-     coordinates are seeded (the unconfirmed pits — Star Pit,
-     Black Diamond, South plant — are NOT here; Aecon Scale Star
-     Pit's pin could not be proven to mark the pit rather than the
-     haul-to, so it waits for a proven pin). The two fuel entries
-     carry street addresses from his receipts (no pin was ever
-     shared for them; navigation falls back to the address query).
+     v91: BUILT-IN PLACES ARE FAMOUS PUBLIC PLACES ONLY (owner,
+     Oct 16, 2026, on site, looking at this dropdown: "All these places are useful
+     for me, but not useful for everyone else… I don't see a
+     reason why this should ship out with these locations
+     preloaded… these can't stay in the GPS"). The v84–v90
+     dataset was compiled from the OWNER'S OWN 2026 dispatch
+     history — his pits, his job sites, his fuel stops — and it
+     no longer ships (it now migrates into HIS work favorites,
+     NAV-MIGRATION below). What ships instead is a small set of
+     FAMOUS Calgary pits any driver would know, and each row
+     earned its place: the name, the street address AND the pin
+     all come from the SAME public listing, never from the
+     owner's dispatch pins:
+       - Stoney Pit — public listing "Stoney Trail Aggregate
+         Resource", 12411 85 St NW, Calgary, pin 51.165429,
+         -114.213202 (the listing's own website is
+         stoneytrailpit.ca; the pit's own documents name
+         12411–85th Street NW as its entrance/scale house).
+       - Volker Stevin — 7175 12 St SE, Calgary, pin 50.990329,
+         -114.037808 (the listing's own website is
+         volkerstevin.ca; the company's own site lists this
+         address).
+     Named by the owner but NOT publicly verifiable — no public
+     listing ties the name to a specific pin or address — so NOT
+     shipped, and flagged in the build report: Lafarge North,
+     Lafarge South, Lafarge Industrial, North Plant, South Plant.
+     A row ships the day a public source proves the place.
      Built-ins are not stored in nav_data: they cannot be deleted,
      do not sync, and are the same on every install. Personal
      favorites are untouched. */
   var BUILTIN_RAW = [
+    ['Stoney Pit', 51.165429, -114.213202, 'pit', 'Stoney Trail Aggregate Resource (STAR) · BLV Group pit at Spy Hill', '12411 85 St NW, Calgary'],
+    ['Volker Stevin', 50.990329, -114.037808, 'pit', 'Volker Stevin Calgary yard', '7175 12 St SE, Calgary']
+  ];
+  var BUILTINS = BUILTIN_RAW.map(function (r) {
+    return {
+      id: 'bi-' + r[0].toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      name: r[0], lat: r[1], lng: r[2], type: r[3], note: r[4],
+      address: r[5] || '', builtin: true
+    };
+  });
+  function builtinPlaces() { return BUILTINS.slice(); }
+  function findBuiltin(id) {
+    for (var i = 0; i < BUILTINS.length; i++) if (BUILTINS[i].id === id) return BUILTINS[i];
+    return null;
+  }
+  /* ================= NAV-BUILTIN-END ================= */
+
+  /* ================= NAV-MIGRATION-BEGIN =================
+     v91: THE OWNER'S 25, KEPT — AS HIS. This dataset is the exact
+     v84/v87 built-in table (names, types, notes, pins, addresses —
+     byte-for-byte), and it lives ONLY here, inside the migration,
+     plus its test fixture. On the first run of v91+ an install
+     that PREDATES the removal (real local data already present:
+     saved places, dispatches, or finished onboarding) gets all 25
+     copied into its OWN work favorites — the same store the Add
+     form writes — so they show tagged "Yours", navigate, log work
+     visits and delete exactly like favorites the user added by
+     hand. Deduped against what is already there (same name, or
+     same pin = skip). A fresh install (no local data at all)
+     gets NOTHING copied — the product ships clean — and the
+     versioned flag (nav_places_migrated = 91) is set either way,
+     so the migration never re-runs: a migrated favorite the user
+     later deletes STAYS deleted. The two pin-less Mobil rows
+     migrate as address-only favorites, same as they were. */
+  var MIGRATION_RAW = [
     ['12th Street', 51.000861, -114.033528, 'pit', 'Clay loading · one pin covers both sides — confirm North/South before rolling', ''],
     ['Aecon Bradi Pit', 51.2720600, -114.4317900, 'pit', 'Loads 80mm · near Cochrane', ''],
     ['Simply Stone', 50.96851, -114.0334, 'pit', 'Stone yard', ''],
@@ -78,21 +132,66 @@
     ['Mobil — Westwinds', null, null, 'fuel', 'His main diesel stop', '300-3633 Westwinds Dr NE, Calgary'],
     ['Mobil — Heritage Meadows', null, null, 'fuel', '', '100-20 Heritage Meadows Way SE, Calgary']
   ];
-  var BUILTINS = BUILTIN_RAW.map(function (r) {
-    return {
-      id: 'bi-' + r[0].toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      name: r[0], lat: r[1], lng: r[2], type: r[3], note: r[4],
-      address: r[5] || '', builtin: true
-    };
-  });
-  function builtinPlaces() { return BUILTINS.slice(); }
-  function findBuiltin(id) {
-    for (var i = 0; i < BUILTINS.length; i++) if (BUILTINS[i].id === id) return BUILTINS[i];
-    return null;
+  var MIGRATION_VERSION = 91;
+  var migrating = false;
+  /* "Predates the removal" = this install already holds real
+     data. Deliberately strict: synced-in LATER data must not
+     conjure the 25 onto a fresh device — the owner's own phone
+     (which holds data) migrates, and the migrated favorites then
+     sync like any others. */
+  function navHasExistingData() {
+    try {
+      var d = S('data', null);
+      if (d && ((d.work && d.work.length) || (d.personal && d.personal.length) || (d.recent && d.recent.length))) return true;
+    } catch (e) {}
+    try { if ((App._store.get('dsp_list', []) || []).length) return true; } catch (e) {}
+    try {
+      var ob = App._store.get('onboarding', null);
+      if (ob && (ob.done || ob.completed || ob.name || ob.company)) return true;
+    } catch (e) {}
+    return false;
   }
-  /* ================= NAV-BUILTIN-END ================= */
+  function migrateLegacyPlaces() {
+    if (migrating) return 0;
+    var added = 0;
+    try {
+      if (S('places_migrated', 0)) return 0;
+      migrating = true;
+      if (navHasExistingData()) {
+        var d = data();
+        var work = d.work || (d.work = []);
+        /* Dedupe is judged ONLY against the favorites the user
+           already had — never against rows added by this same
+           pass: the dataset itself legitimately holds two places
+           on one pin (L30 CIP / the CIP dump pin). */
+        var already = work.slice();
+        MIGRATION_RAW.forEach(function (r) {
+          var nameKey = String(r[0]).trim().toLowerCase(), dup = false, i, f;
+          for (i = 0; i < already.length; i++) {
+            f = already[i];
+            if (!f) continue;
+            if (String(f.name || '').trim().toLowerCase() === nameKey) { dup = true; break; }
+            if (r[1] && r[2] && f.lat && f.lng &&
+                Math.abs(+f.lat - r[1]) < 1e-6 && Math.abs(+f.lng - r[2]) < 1e-6) { dup = true; break; }
+          }
+          if (dup) return;
+          var fav = { id: uid(), name: r[0], address: r[5] || '', type: r[3], visits: 0 };
+          if (r[1] && r[2]) { fav.lat = r[1]; fav.lng = r[2]; }
+          if (r[4]) fav.note = r[4];
+          work.push(fav);
+          added++;
+        });
+        if (added) saveData(d);
+      }
+      W('places_migrated', MIGRATION_VERSION);
+    } catch (e) { /* a failed migration must never break Places */ }
+    migrating = false;
+    return added;
+  }
+  /* ================= NAV-MIGRATION-END ================= */
 
   function data() {
+    migrateLegacyPlaces();
     return S('data', { work: [], personal: [], recent: [] });
   }
   function saveData(d) { W('data', d); }
@@ -183,6 +282,7 @@
 
   var api = {
     builtinPlaces: builtinPlaces,
+    migrateLegacyPlaces: migrateLegacyPlaces,
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';
@@ -214,7 +314,16 @@
           TYPE_OPTS.map(function (t) { return '<option value="' + t + '">' + (TYPE_ICON[t] || '') + ' ' + t + '</option>'; }).join('') + '</select>';
       }
       h += '<div class="row" style="margin-top:10px"><button class="btn primary" id="nv_add" style="flex:1">Add</button>' +
-        '<button class="btn ghost" id="nv_addcancel" style="flex:1">Cancel</button></div></div></div>';
+        '<button class="btn ghost" id="nv_addcancel" style="flex:1">Cancel</button></div></div>' +
+        /* v91: the Yard — ONE quiet setting (owner, Oct 16:
+           leaving the yard turns the day's saved dispatch on).
+           The select lists the user's own places; "Automatic"
+           means the personal place named Home. js/yardstart.js
+           does the watching; this only records the pick. */
+        '<div class="row" style="margin-top:12px;align-items:center">' +
+        '<label class="f" style="margin:0">🏠 Yard</label>' +
+        '<select id="nv_yard" style="flex:1"></select></div>' +
+        '<p class="note">Leaving your yard turns on today\'s saved dispatch.</p></div>';
 
       /* ---- Recent destinations ---- */
       var d = data();
@@ -256,8 +365,7 @@
       function paintDetail() {
         var e = selId[kind] ? findEntry(kind, selId[kind]) : null;
         if (!e) {
-          detailEl.innerHTML = '<div class="empty">' +
-            (kind === 'work' ? 'Pick a place above — your pits and job sites are already here.' : 'Pick a place above.') + '</div>';
+          detailEl.innerHTML = '<div class="empty">Pick a place above.</div>';
           return;
         }
         var p = e.place;
@@ -306,6 +414,32 @@
       body.querySelectorAll('[data-tab]').forEach(function (b) {
         b.onclick = function () { tab = b.getAttribute('data-tab'); addOpen = false; pickQ = ''; api.render(body); };
       });
+
+      /* ---- the Yard pick (v91): stored as nav_yard
+         { kind, id }; "Automatic" clears it and the yard falls
+         back to the personal place named Home. ---- */
+      var yardSel = body.querySelector('#nv_yard');
+      if (yardSel) {
+        var dd2 = data();
+        var curYard = S('yard', null);
+        var hasHome = false;
+        dd2.personal.forEach(function (f) {
+          if (String(f.name || '').trim().toLowerCase() === 'home') hasHome = true;
+        });
+        var yopts = [{ v: '', label: hasHome ? 'Automatic — Home place' : 'Not set' }];
+        dd2.work.forEach(function (f) { yopts.push({ v: 'work:' + f.id, label: f.name + ' · work' }); });
+        dd2.personal.forEach(function (f) { yopts.push({ v: 'personal:' + f.id, label: f.name + ' · personal' }); });
+        yardSel.innerHTML = yopts.map(function (o) {
+          var sel = curYard && o.v && o.v === (curYard.kind + ':' + curYard.id);
+          return '<option value="' + esc(o.v) + '"' + (sel ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+        }).join('');
+        yardSel.addEventListener('change', function () {
+          var v = yardSel.value;
+          if (!v) { W('yard', null); return; }
+          var i = v.indexOf(':');
+          W('yard', { kind: v.slice(0, i), id: v.slice(i + 1) });
+        });
+      }
 
       /* ---- Add favorite (behind its button) ---- */
       body.querySelector('#nv_addopen').onclick = function () {

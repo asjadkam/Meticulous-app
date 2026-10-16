@@ -629,6 +629,41 @@
   }
   /* DSP-SCROLL-END */
 
+  /* ================= DSP-ACTIVATE-BEGIN =================
+     v91: THE one activation path. Flipping a saved dispatch to
+     active is exactly these writes — status + startedAt on the
+     record in the list, the list write, dsp_active, the cloud
+     mirror, and the same "Dispatch started" notification the
+     Start button has always sent. NOTHING else: no revenue
+     record, no tracker session (pay stays ticket-based and the
+     session machinery belongs to the autostart plan, which reads
+     dsp_active itself). The Start button and the yard-departure
+     watcher (js/yardstart.js, via api.activateById) both come
+     through here, so an automatic activation can never drift
+     from what a manual Start produces. Only a 'saved' record can
+     be activated — the same records the Start button is offered
+     on. Extracted verbatim by tools/yard-start-test.js. */
+  function dspActivateRecord(d) {
+    if (!d || d.status !== 'saved') return false;
+    var l = list(), idx = -1, i;
+    for (i = 0; i < l.length; i++) if (l[i] && l[i].id === d.id) { idx = i; break; }
+    if (idx === -1) return false;
+    d.status = 'active'; d.startedAt = Date.now();
+    l[idx] = d;
+    W('list', l); W('active', d); fbSave(d);
+    if (window.FB && FB.localNotify) { try { FB.localNotify('Dispatch started', d.jobSite || ''); } catch (e) {} }
+    return true;
+  }
+  function dspActivateById(id) {
+    if (!id) return false;
+    var l = list();
+    for (var i = 0; i < l.length; i++) {
+      if (l[i] && l[i].id === id) return dspActivateRecord(l[i]);
+    }
+    return false;
+  }
+  /* ================= DSP-ACTIVATE-END ================= */
+
   var api = {
     /* v78: the card preview — ONE live fact in priority order: the
        ACTIVE dispatch, else today's saved dispatch, else the next
@@ -660,6 +695,9 @@
       return done ? done + ' completed' : (l.length ? l.length + ' saved' : 'No dispatch today');
     },
     getActive: function () { return active(); },
+    /* v91: yard-departure activation (js/yardstart.js) — the
+       manual Start below routes through the same path. */
+    activateById: function (id) { return dspActivateById(id); },
     render: function (body) {
       var a = active();
       /* v76 (F3, boss QA Oct 14): the OFFICE face. An office-only user
@@ -1874,11 +1912,7 @@
       body.querySelectorAll('[data-start]').forEach(function (b) {
         b.onclick = function () {
           var d = list()[+b.getAttribute('data-start')];
-          d.status = 'active'; d.startedAt = Date.now();
-          var l = list(); l[+b.getAttribute('data-start')] = d;
-          W('list', l); W('active', d); fbSave(d);
-          if (window.FB && FB.localNotify) { try { FB.localNotify('Dispatch started', d.jobSite || ''); } catch (e) {} }
-          api.render(body);
+          if (dspActivateRecord(d)) api.render(body);
         };
       });
       body.querySelectorAll('[data-del]').forEach(function (b) {
