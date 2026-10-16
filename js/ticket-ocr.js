@@ -583,14 +583,14 @@
     if (!s) return null;
     s = String(s);
     var m;
-    if ((m = s.match(/\b(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})\b/))) {       // 24-Apr-18 — \b both ends (v88): unanchored, the tail of a longer digit run could pose as the day ("8001\nOct 14" -> day "01", year "14" -> 2014-10-01)
+    if ((m = s.match(/\b(\d{1,2})[-\t ]([A-Za-z]{3,9})[-\t ](\d{2,4})\b/))) {    // 24-Apr-18 — same-line separators only + \b both ends (v88/v89): a newline hop let a number ending the line above pose as the day ("8001\nOct 14" -> 2014-10-01; "$234.32\nOct 14" -> day "32" vetoed the real date). An invalid candidate falls through instead of vetoing the patterns below.
       var mo1 = MONTHS[m[2].slice(0, 3).toLowerCase()];
       var y1 = parseInt(m[3], 10); if (y1 < 100) y1 += 2000;
-      if (mo1) return isoDate(y1, mo1, parseInt(m[1], 10));
+      if (mo1) { var r1 = isoDate(y1, mo1, parseInt(m[1], 10)); if (r1) return r1; }
     }
-    if ((m = s.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})/))) {              // Apr 24, 2018
+    if ((m = s.match(/([A-Za-z]{3,9})[\t ]+(\d{1,2}),?[\t ]+(\d{4})/))) {        // Apr 24, 2018 — same-line only (v89), invalid falls through
       var mo2 = MONTHS[m[1].slice(0, 3).toLowerCase()];
-      if (mo2) return isoDate(parseInt(m[3], 10), mo2, parseInt(m[2], 10));
+      if (mo2) { var r2 = isoDate(parseInt(m[3], 10), mo2, parseInt(m[2], 10)); if (r2) return r2; }
     }
     if ((m = s.match(/(\d{4})-(\d{2})-(\d{2})/))) return m[0];                   // 2026-10-14
     if ((m = s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/))) {                  // 3/26/2020 — \b both ends, same v88 anchoring

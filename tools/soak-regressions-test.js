@@ -66,5 +66,17 @@ eq('14-Oct-26 style', T.parseFuelReceipt('Mobil @ 1742 Gas Stn\n14-Oct-26\nDiese
 eq('24-Apr-18 style', T.parseFuelReceipt('Shell\n24-Apr-18\nDiesel 50.000 L @ 1.999/L\nTOTAL $99.95').date, '2018-04-24');
 eq('slash date 10/14/2026', T.parseFuelReceipt('Mobil\n10/14/2026\nDiesel 94.522 L @ 2.479/L\nTOTAL $234.32').date, '2026-10-14');
 
+console.log('\n— v89: the newline hop, second head (soak Pass 9) —');
+/* "TOTAL $234.32" ending the line directly above "Oct 14, 2026":
+   the cents "32" posed as pattern 1's day; isoDate(2014,10,32) is
+   null and the old code RETURNED it, vetoing the real date below.
+   With cents <= 31 ("$234.14\nOct 15, 2026") it fabricated a valid
+   wrong date instead (2015-10-14). Both die with same-line-only
+   separators + fall-through on invalid candidates. */
+eq('total line directly above the date line', T.parseFuelReceipt([L[0], L[1], L[2], L[5], L[3], L[4], L[6]].join('\n')).date, '2026-10-14');
+eq('seed-9 full order (GST first, total above date)', T.parseFuelReceipt(['GST INCLUDED IN TOTAL $9.23', 'VISA ****8001', 'Mobil @ 1742 Gas Stn', 'TOTAL $234.32', 'Oct 14, 2026 17:32', '300-3633 Westwinds Dr', 'Calgary AB', 'Diesel 94.522 L @ 2.479/L'].join('\n')).date, '2026-10-14');
+eq('cents-14 trap: "$193.14" above "Oct 15, 2026"', T.parseFuelReceipt(['Mobil @ 1739 Gas Stn', 'TOTAL $193.14', 'Oct 15, 2026 17:55:41', '78.175 L', 'PRICE/L 2.479'].join('\n')).date, '2026-10-15');
+eq('same-line space shape still parses (24 Apr 18)', T.parseFuelReceipt('Shell\n24 Apr 18\nDiesel 50.000 L @ 1.999/L\nTOTAL $99.95').date, '2018-04-24');
+
 console.log('\nsoak-regressions test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
