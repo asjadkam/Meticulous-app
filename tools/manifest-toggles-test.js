@@ -141,8 +141,8 @@ function makeWorld(mem, writes) {
   const mem = fixtureMem(), writes = [];
   const w = makeWorld(mem, writes);
   w.render();
-  eq('a: 11 toggle checkboxes rendered', w.body._toggles.length, 11);
-  check('a: all 11 default ON', w.body._toggles.every(function (t) { return t.checked; }));
+  eq('a: 10 toggle checkboxes rendered (v87: the two odometer lines merged into one)', w.body._toggles.length, 10);
+  check('a: all 10 default ON', w.body._toggles.every(function (t) { return t.checked; }));
   check('a: mft_sections created in the store on first read', 'mft_sections' in mem);
   check('a: no legacy mani_toggles created', !('mani_toggles' in mem));
   check('a: preview shows Dispatches', w.body._html.indexOf('<h3>Dispatches</h3>') >= 0);
@@ -181,7 +181,7 @@ function makeWorld(mem, writes) {
   w.render();
   check('d: after relaunch expense is still off', w.body.toggle('expense').checked === false);
   check('d: after relaunch nav is still off', w.body.toggle('nav').checked === false);
-  check('d: after relaunch the other 9 are on', w.body._toggles.filter(function (t) { return t.checked; }).length === 9);
+  check('d: after relaunch the other 8 are on', w.body._toggles.filter(function (t) { return t.checked; }).length === 8);
   check('d: preview after relaunch still drops Fuel & expenses', w.body._html.indexOf('Fuel & expenses') < 0);
 }
 
@@ -194,7 +194,7 @@ function makeWorld(mem, writes) {
   check('e: migrated dispatch is off', w.body.toggle('dispatch').checked === false);
   check('e: migrated earned is off', w.body.toggle('earned').checked === false);
   check('e: migrated geoloads is off', w.body.toggle('geoloads').checked === false);
-  check('e: untouched sections default ON after migration', w.body.toggle('start').checked === true && w.body.toggle('odoEnd').checked === true);
+  check('e: untouched sections default ON after migration', w.body.toggle('start').checked === true && w.body.toggle('odo').checked === true);
   eq('e: the most recent set became mft_sections', mem.mft_sections.dispatch, false);
   eq('e: migrated set kept an explicit ON too', mem.mft_sections.expense, true);
   check('e: legacy key removed — one source of truth', !('mani_toggles' in mem));
@@ -205,6 +205,25 @@ function makeWorld(mem, writes) {
   w = makeWorld(mem, []);
   w.render();
   check('e: migrated set survives a relaunch', w.body.toggle('dispatch').checked === false && w.body.toggle('start').checked === false);
+}
+
+/* ---------------- (e2) v87: a pre-v87 odometer opt-out survives the merge ---------------- */
+{
+  const mem = fixtureMem(), writes = [];
+  mem.mft_sections = { odoStart: false }; /* he had Start Odometer OFF before v87 */
+  const w = makeWorld(mem, writes);
+  w.render();
+  check('e2: the merged Odometer section starts OFF (legacy odoStart opt-out honored)', w.body.toggle('odo').checked === false);
+  const mem2 = fixtureMem();
+  mem2.mft_sections = { odoEnd: false }; /* …or End Odometer OFF */
+  const w2 = makeWorld(mem2, []);
+  w2.render();
+  check('e2: the merged Odometer section starts OFF (legacy odoEnd opt-out honored)', w2.body.toggle('odo').checked === false);
+  const mem3 = fixtureMem();
+  mem3.mft_sections = { odo: false, odoStart: true, odoEnd: true }; /* his own v87 choice wins over the legacy keys */
+  const w3 = makeWorld(mem3, []);
+  w3.render();
+  check('e2: an explicit v87 odo=false is respected as-is', w3.body.toggle('odo').checked === false);
 }
 
 /* ---------------- (f) statics ---------------- */

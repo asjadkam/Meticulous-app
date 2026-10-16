@@ -80,11 +80,25 @@ eq('builtinPlaces returns the list', X.builtinPlaces().length, 25);
 
 console.log('\n— wiring —');
 ok('Navigation api exposes builtinPlaces', navSrc.includes('builtinPlaces: builtinPlaces'));
-ok('openNav navigates to the PIN when a place has one', navSrc.includes("(fav.lat + ',' + fav.lng)"));
-ok('Work tab renders the built-in card with search', navSrc.includes('id="nv_bi_q"') && navSrc.includes('Built-in places'));
-ok('built-in rows carry the standard nav buttons', navSrc.includes('navButtons(f, \'work\')') || navSrc.includes("navButtons(f, 'work')"));
-ok('findFav resolves built-ins (visits/Go-again keep the pin)', navSrc.includes('findBuiltin(id)'));
-ok('recent entries keep the pin', navSrc.includes('rec.lat = fav.lat'));
+/* v87 (owner, Oct 15): the v84 wiring assertions below were
+   REPLACED — they encoded the card wall the owner ordered removed
+   ("don't need 40 different cards for each and every saved
+   location… 1 field… no need for 40 different cards") and the
+   four rival-app buttons he rejected ("when I can just use my
+   own now?"). The v87 contract: ONE search/select field over the
+   combined list, Navigate hands the PIN to our own Navigator via
+   the one-shot nav_pending record, the Add form lives behind its
+   button. */
+ok('v87: the ONE picker field renders (filter input + select)', navSrc.includes('id="nv_q"') && navSrc.includes('id="nv_sel"'));
+ok('v87: combined list assembly (built-ins + favorites, tagged by source)', navSrc.includes('function placesFor') && navSrc.includes("src: 'builtin'") && navSrc.includes("src: 'fav'"));
+ok('v87: Navigate hands the PIN over via nav_pending', navSrc.includes("App._store.set('nav_pending'") && navSrc.includes('pend.lat = fav.lat'));
+ok('v87: Navigate opens the in-app Navigator', navSrc.includes("App.openModule('navigator')"));
+ok('v87: the detail panel carries the ONE primary action', navSrc.includes('id="nv_go"') && navSrc.includes('🧭 Navigate'));
+ok('v87: the Add form lives behind its button (never the landing face)', navSrc.includes('id="nv_addopen"') && navSrc.includes("addOpen ? 'block' : 'none'"));
+ok('v87: NO card wall — no per-place cards, no app-button rows', !navSrc.includes('data-navapp') && !navSrc.includes('navButtons(') && !navSrc.includes('Built-in places'));
+ok('v87: NO external nav URLs remain (no Google/Waze/CoPilot/Apple)', !navSrc.includes('waze.com') && !navSrc.includes('maps.apple.com') && !navSrc.includes('google.com/maps') && !navSrc.includes('geo:0,0'));
+ok('v87: visits still record (manifest feed + recent keep the pin)', navSrc.includes('manifestFeedPush') && navSrc.includes('rec.lat = fav.lat'));
+ok('v87: Navigator consumes the pending destination through setDest', torSrc.includes("App._store.get('nav_pending'") && torSrc.includes("App._store.del('nav_pending')"));
 ok('Navigator offers the built-in picker', torSrc.includes('id="nv_places"') && torSrc.includes('builtinPlaces()'));
 ok('Navigator picker sets the destination on the pin', torSrc.includes('setDest([p.lat, p.lng], p.name)'));
 ok('Navigator reads the list lazily (no load-order dependency)', torSrc.includes('Meticulous.modules.navigation.builtinPlaces'));

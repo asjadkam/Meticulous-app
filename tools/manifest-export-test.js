@@ -284,7 +284,7 @@ function runManifestWorlds() {
     }
     check('f1: Start Time shows the running session start (~2h ago)', startOk, 'row: ' + (mRow && mRow[0]));
     check('f1: End Time honestly open — Still working', w.body._html.indexOf('<div class="kv"><span>End Time</span><b>Still working</b></div>') >= 0);
-    check('f1: no Start Odometer KV row when none captured', w.body._html.indexOf('<div class="kv"><span>Start Odometer</span>') < 0);
+    check('f1: no Odometer KV row when none captured (v87: one merged line, omitted when empty)', w.body._html.indexOf('<div class="kv"><span>Odometer</span>') < 0);
   }
   /* ---- (f2) running + pending by-mile start odo shows ---- */
   {
@@ -293,8 +293,8 @@ function runManifestWorlds() {
       odoStart: { date: todayStrLocal(Date.now() - 3600 * 1000), value: 168518 } };
     const w = makeWorld(mem);
     w.render();
-    check('f2: Start Odometer shows the pending start reading',
-      w.body._html.indexOf('<div class="kv"><span>Start Odometer</span><b>168,518 km</b></div>') >= 0);
+    check('f2: Odometer line shows the pending start reading, end honestly open (v87)',
+      w.body._html.indexOf('<div class="kv"><span>Odometer</span><b>168,518 km → end not recorded</b></div>') >= 0);
   }
   /* ---- (f3) paused session: end shows Paused ---- */
   {
@@ -313,9 +313,8 @@ function runManifestWorlds() {
     const wantEnd = new Date(Date.parse('2026-10-14T19:00:00')).toLocaleTimeString();
     check('f4: stopped day start from the saved entry', w.body._html.indexOf('<div class="kv"><span>Start Time</span><b>' + wantStart + '</b></div>') >= 0);
     check('f4: stopped day end from the saved entry', w.body._html.indexOf('<div class="kv"><span>End Time</span><b>' + wantEnd + '</b></div>') >= 0);
-    check('f4: stopped day odometers from the saved entry',
-      w.body._html.indexOf('<span>Start Odometer</span><b>168,518 km</b>') >= 0 &&
-      w.body._html.indexOf('<span>End Odometer</span><b>168,685 km</b>') >= 0);
+    check('f4: stopped day odometer line from the saved entry (v87: one line, day km between)',
+      w.body._html.indexOf('<span>Odometer</span><b>168,518 → 168,685 km (167 km)</b>') >= 0);
   }
   /* ---- (f5) saved session + a live one: earliest start wins, end open ---- */
   {

@@ -1,8 +1,18 @@
 /* Meticulous — Navigation module (standalone, complete)
-   Tabs: Work favorites (logged to Manifest) vs Personal (never logged).
-   Favorites have name, address, type (pit / job site / dump site).
-   Route cards offer Google Maps, Waze, CoPilot Truck GPS, Apple Maps.
-   Recent destinations list. Work visits feed the Manifest; personal never does.
+   Tabs: Work (built-in places + work favorites; visits logged to
+   Manifest) vs Personal (never logged).
+   v87 (owner, Oct 15): THE CARD WALL IS GONE — "don't need 40
+   different cards for each and every saved location. That should
+   be all in a dropdown… 1 field to fill in the address." Places
+   now live behind ONE search/select field: type to filter the
+   combined list (built-ins + the tab's own favorites), pick one,
+   and the single primary action is Navigate — into the app's OWN
+   Navigator (the Google/Waze/CoPilot/Apple button rows are gone;
+   "when I can just use my own now?"). The Add form is not the
+   landing face either ("Add favourite shouldn't be in the face
+   when you open it — it has to live inside the favourites
+   button"): it opens from one "+ Add favorite" button and closes
+   back to the list with the new place selected.
    Persists via App._store (localStorage, mt_ prefix).
 */
 (function () {
@@ -17,6 +27,12 @@
   var TYPE_OPTS = ['pit', 'job site', 'dump site'];
   var TYPE_ICON = { 'pit': '⛏️', 'job site': '🏗️', 'dump site': '🚧', 'fuel': '⛽' };
   var tab = 'work'; // active tab: 'work' | 'personal'
+  /* v87 picker state: the selected place per tab, the filter text,
+     and whether the Add form is open. Module-level so a re-render
+     (tab switch, post-save) keeps the user's place. */
+  var selId = { work: '', personal: '' };
+  var pickQ = '';
+  var addOpen = false;
 
   /* ================= NAV-BUILTIN-BEGIN =================
      v84: BUILT-IN PLACES (owner, Oct 15: the Work favorites were
@@ -90,16 +106,6 @@
     } catch (e) {}
   }
 
-  /* External navigation URLs for each supported app. */
-  function navUrl(app, query) {
-    var e = encodeURIComponent(query);
-    if (app === 'waze') return 'https://waze.com/ul?q=' + e + '&navigate=yes';
-    if (app === 'apple') return 'https://maps.apple.com/?daddr=' + e;
-    if (app === 'copilot') return 'geo:0,0?q=' + e; // Android: opens app chooser incl. CoPilot
-    return 'https://www.google.com/maps/dir/?api=1&destination=' + e;
-  }
-  var APP_LABEL = { google: 'Google Maps', waze: 'Waze', copilot: 'CoPilot', apple: 'Apple Maps' };
-
   function fmtWhen(ts) {
     try {
       var d = new Date(ts), now = new Date();
@@ -131,22 +137,48 @@
     saveData(d);
   }
 
-  function openNav(app, fav, kind) {
+  /* v87: THE hand-off into our own Navigator. The visit is
+     recorded here (manifest feed + recent, exactly as the old
+     external-app buttons recorded it); the destination itself
+     travels as a one-shot pending record the Navigator consumes
+     on open — a pinned place hands over its PIN (a name search
+     can land on the wrong gate; the coordinates are the spot the
+     dispatcher actually sent), an address-only place hands over
+     its address as the search text. */
+  function goNavigate(fav, kind) {
     recordNav(fav, kind);
-    /* v84: a place with a pin navigates to the PIN — a name search
-       can land on the wrong gate; the coordinates are the spot the
-       dispatcher actually sent. */
-    var q = (fav.lat && fav.lng) ? (fav.lat + ',' + fav.lng)
-      : (fav.address ? fav.name + ', ' + fav.address : fav.name);
-    window.open(navUrl(app, q), '_blank', 'noopener');
+    var pend = { name: fav.name, ts: Date.now() };
+    if (fav.lat && fav.lng) { pend.lat = fav.lat; pend.lng = fav.lng; }
+    else pend.query = fav.address ? (fav.name + ', ' + fav.address) : fav.name;
+    App._store.set('nav_pending', pend);
+    App.openModule('navigator');
   }
 
-  function navButtons(fav, kind) {
-    return '<div class="row">' +
-      ['google', 'waze', 'copilot', 'apple'].map(function (a) {
-        return '<button class="btn small ' + (a === 'google' ? 'navy' : 'ghost') + '" data-navapp="' + a +
-          '" data-navid="' + esc(fav.id) + '" data-navkind="' + kind + '">' + APP_LABEL[a] + '</button>';
-      }).join('') + '</div>';
+  /* v87: the combined list behind the ONE field — the tab's own
+     favorites plus, on the work tab, the built-ins. Each entry
+     carries its source so the picker can tag it (Built-in /
+     Yours) and the detail panel knows whether Remove applies. */
+  function placesFor(kind) {
+    var d = data(), out = [];
+    if (kind === 'work') BUILTINS.forEach(function (p) { out.push({ place: p, src: 'builtin' }); });
+    (kind === 'work' ? d.work : d.personal).forEach(function (f) { out.push({ place: f, src: 'fav' }); });
+    return out;
+  }
+  function entryMatches(e, q) {
+    if (!q) return true;
+    var p = e.place;
+    var hay = (p.name + ' ' + (p.type || '') + ' ' + (p.note || '') + ' ' + (p.address || '')).toLowerCase();
+    return hay.indexOf(q) !== -1;
+  }
+  function findEntry(kind, id) {
+    var list = placesFor(kind);
+    for (var i = 0; i < list.length; i++) if (list[i].place.id === id) return list[i];
+    return null;
+  }
+  function optionLabel(e) {
+    var p = e.place;
+    return (TYPE_ICON[p.type] || '📍') + ' ' + p.name +
+      (p.type ? ' — ' + p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours');
   }
 
   var api = {
@@ -156,8 +188,7 @@
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';
     },
     render: function (body) {
-      var d = data();
-      var defApp = S('defApp', 'google');
+      var kind = tab;
 
       var h = '<div class="card"><div class="row">' +
         '<button class="btn small ' + (tab === 'work' ? 'primary' : 'ghost') + '" data-tab="work" style="flex:1">⭐ Work</button>' +
@@ -168,43 +199,25 @@
           : '<p class="note">Personal places are <b>never</b> logged anywhere.</p>') +
         '</div>';
 
-      /* ---- Add favorite form ---- */
-      h += '<div class="card"><h3>＋ Add ' + (tab === 'work' ? 'work favorite' : 'personal place') + '</h3>' +
+      /* ---- v87: the places surface — ONE field, one action ---- */
+      h += '<div class="card"><h3>' + (tab === 'work' ? '📍 Places' : '🏠 Personal places') + '</h3>' +
+        '<input id="nv_q" placeholder="Type to find a place…" value="' + esc(pickQ) + '" style="width:100%">' +
+        '<select id="nv_sel" style="width:100%;margin-top:8px"></select>' +
+        '<div id="nv_detail" style="margin-top:10px"></div>' +
+        '<button class="btn ghost" id="nv_addopen" style="margin-top:10px">＋ Add ' + (tab === 'work' ? 'favorite' : 'place') + '</button>' +
+        /* the Add form lives behind that button — never the landing face */
+        '<div id="nv_addwrap" style="display:' + (addOpen ? 'block' : 'none') + ';margin-top:10px">' +
         '<label class="f">Name</label><input id="nv_name" placeholder="' + (tab === 'work' ? 'e.g. Burnco Shepard pit' : 'e.g. Walmart Deerfoot') + '">' +
         '<label class="f">Address</label><input id="nv_addr" placeholder="Street address or area">';
       if (tab === 'work') {
         h += '<label class="f">Type</label><select id="nv_type">' +
           TYPE_OPTS.map(function (t) { return '<option value="' + t + '">' + (TYPE_ICON[t] || '') + ' ' + t + '</option>'; }).join('') + '</select>';
       }
-      h += '<button class="btn primary" id="nv_add" style="margin-top:10px">Add</button></div>';
-
-      /* ---- Favorite cards ---- */
-      var items = tab === 'work' ? d.work : d.personal;
-      h += '<div class="card"><h3>' + (tab === 'work' ? '⭐ Work favorites' : '🏠 Personal places') + '</h3>';
-      if (!items.length) {
-        h += '<div class="empty">' + (tab === 'work' ? 'No work places yet. Add your pits and job sites above.' : 'No personal places yet.') + '</div>';
-      }
-      items.forEach(function (f) {
-        h += '<div class="listitem"><div class="a">' +
-          (tab === 'work' ? (TYPE_ICON[f.type] || '📍') + ' ' : '📍 ') + esc(f.name) +
-          (tab === 'work' ? ' <span class="pill">' + esc(f.type || 'site') + '</span>' : '') +
-          '</div>' +
-          (f.address ? '<div class="b">' + esc(f.address) + '</div>' : '') +
-          (tab === 'work' && f.visits ? '<div class="b">' + f.visits + ' visits' + (f.lastVisit ? ' · last ' + fmtWhen(f.lastVisit) : '') + '</div>' : '') +
-          '<div style="margin-top:8px">' + navButtons(f, tab) + '</div>' +
-          '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-del="' + esc(f.id) + '">Remove</button></div></div>';
-      });
-      h += '</div>';
-
-      /* ---- v84: built-in places (work tab) ---- */
-      if (tab === 'work') {
-        h += '<div class="card"><h3>📍 Built-in places <span class="pill">' + BUILTINS.length + '</span></h3>' +
-          '<p class="note">Your pits, job sites and fuel stops from this season\'s dispatches — already here, nothing to type. Tap a place to navigate to its pin.</p>' +
-          '<input id="nv_bi_q" placeholder="Search places — try “Bradi” or “CIP”" style="width:100%">' +
-          '<div id="nv_bi_list" style="margin-top:8px"></div></div>';
-      }
+      h += '<div class="row" style="margin-top:10px"><button class="btn primary" id="nv_add" style="flex:1">Add</button>' +
+        '<button class="btn ghost" id="nv_addcancel" style="flex:1">Cancel</button></div></div></div>';
 
       /* ---- Recent destinations ---- */
+      var d = data();
       h += '<div class="card"><h3>🕘 Recent destinations</h3>';
       if (!d.recent.length) {
         h += '<div class="empty">Nothing yet. Navigate somewhere and it will show here.</div>';
@@ -221,18 +234,95 @@
 
       body.innerHTML = h;
 
-      /* ---- Wire events ---- */
-      body.querySelectorAll('[data-tab]').forEach(function (b) {
-        b.onclick = function () { tab = b.getAttribute('data-tab'); api.render(body); };
+      /* ---- the picker: filter repaints ONLY the option list (the
+         input keeps focus); picking repaints ONLY the detail. ---- */
+      var selEl = body.querySelector('#nv_sel');
+      var detailEl = body.querySelector('#nv_detail');
+      function paintOptions() {
+        var list = placesFor(kind).filter(function (e) { return entryMatches(e, pickQ.trim().toLowerCase()); });
+        if (!list.length) {
+          selEl.innerHTML = '<option value="" disabled>' +
+            (pickQ.trim() ? 'No place matches that.' : 'No places yet.') + '</option>';
+          selEl.size = 2;
+          return list;
+        }
+        selEl.innerHTML = list.map(function (e) {
+          return '<option value="' + esc(e.place.id) + '"' +
+            (e.place.id === selId[kind] ? ' selected' : '') + '>' + esc(optionLabel(e)) + '</option>';
+        }).join('');
+        selEl.size = Math.min(8, Math.max(2, list.length));
+        return list;
+      }
+      function paintDetail() {
+        var e = selId[kind] ? findEntry(kind, selId[kind]) : null;
+        if (!e) {
+          detailEl.innerHTML = '<div class="empty">' +
+            (kind === 'work' ? 'Pick a place above — your pits and job sites are already here.' : 'Pick a place above.') + '</div>';
+          return;
+        }
+        var p = e.place;
+        detailEl.innerHTML =
+          '<div class="a">' + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b>' +
+          (p.type ? ' <span class="pill">' + esc(p.type) + '</span>' : '') +
+          ' <span class="pill">' + (e.src === 'builtin' ? 'Built-in' : 'Yours') + '</span></div>' +
+          (p.note ? '<div class="b">' + esc(p.note) + '</div>' : '') +
+          '<div class="b">' + ((p.lat && p.lng) ? esc(p.lat + ', ' + p.lng) : esc(p.address || '')) + '</div>' +
+          (kind === 'work' && e.src === 'fav' && p.visits ? '<div class="b">' + p.visits + ' visits' + (p.lastVisit ? ' · last ' + fmtWhen(p.lastVisit) : '') + '</div>' : '') +
+          '<button class="btn primary big" id="nv_go" style="margin-top:8px">🧭 Navigate</button>' +
+          (e.src === 'fav' ? '<div class="row" style="margin-top:6px"><button class="btn small ghost" id="nv_remove">Remove this place</button></div>' : '');
+        detailEl.querySelector('#nv_go').onclick = function () { goNavigate(p, kind); };
+        var rm = detailEl.querySelector('#nv_remove');
+        if (rm) rm.onclick = function () {
+          if (!confirm('Remove this place?')) return;
+          var dd = data();
+          if (kind === 'work') dd.work = dd.work.filter(function (f) { return f.id !== p.id; });
+          else dd.personal = dd.personal.filter(function (f) { return f.id !== p.id; });
+          saveData(dd);
+          selId[kind] = '';
+          api.render(body);
+        };
+      }
+      paintOptions();
+      paintDetail();
+      var qEl = body.querySelector('#nv_q');
+      qEl.addEventListener('input', function () {
+        pickQ = qEl.value;
+        paintOptions();
+      });
+      selEl.addEventListener('change', function () {
+        selId[kind] = selEl.value;
+        paintDetail();
+      });
+      /* a plain click on a listbox row does not always fire change
+         (re-picking the same row); treat it as the pick too */
+      selEl.addEventListener('click', function () {
+        if (selEl.value && selEl.value !== selId[kind]) {
+          selId[kind] = selEl.value;
+          paintDetail();
+        }
       });
 
+      /* ---- tabs ---- */
+      body.querySelectorAll('[data-tab]').forEach(function (b) {
+        b.onclick = function () { tab = b.getAttribute('data-tab'); addOpen = false; pickQ = ''; api.render(body); };
+      });
+
+      /* ---- Add favorite (behind its button) ---- */
+      body.querySelector('#nv_addopen').onclick = function () {
+        addOpen = !addOpen;
+        body.querySelector('#nv_addwrap').style.display = addOpen ? 'block' : 'none';
+      };
+      body.querySelector('#nv_addcancel').onclick = function () {
+        addOpen = false;
+        body.querySelector('#nv_addwrap').style.display = 'none';
+      };
       body.querySelector('#nv_add').onclick = function () {
         var name = body.querySelector('#nv_name').value.trim();
         var addr = body.querySelector('#nv_addr').value.trim();
         if (!name) { alert('Enter a name for this place.'); return; }
         var dd = data();
         var fav = { id: uid(), name: name, address: addr };
-        if (tab === 'work') {
+        if (kind === 'work') {
           fav.type = body.querySelector('#nv_type').value;
           fav.visits = 0;
           dd.work.push(fav);
@@ -240,71 +330,24 @@
           dd.personal.push(fav);
         }
         saveData(dd);
+        addOpen = false;
+        pickQ = '';
+        selId[kind] = fav.id; /* back at the list, the new place selected */
         api.render(body);
       };
 
-      function findFav(id, kind) {
-        var dd = data();
-        var arr = kind === 'work' ? dd.work : dd.personal;
-        for (var i = 0; i < arr.length; i++) if (arr[i].id === id) return arr[i];
-        if (kind === 'work') { var bi = findBuiltin(id); if (bi) return bi; }
-        return null;
-      }
-      body.querySelectorAll('[data-navapp]').forEach(function (b) {
-        b.onclick = function () {
-          var fav = findFav(b.getAttribute('data-navid'), b.getAttribute('data-navkind'));
-          if (fav) openNav(b.getAttribute('data-navapp'), fav, b.getAttribute('data-navkind'));
-        };
-      });
-      body.querySelectorAll('[data-del]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Remove this place?')) return;
-          var dd = data(), id = b.getAttribute('data-del');
-          if (tab === 'work') dd.work = dd.work.filter(function (f) { return f.id !== id; });
-          else dd.personal = dd.personal.filter(function (f) { return f.id !== id; });
-          saveData(dd); api.render(body);
-        };
-      });
+      /* ---- Recent: Go again rides the same hand-off ---- */
       body.querySelectorAll('[data-rgo]').forEach(function (b) {
         b.onclick = function () {
           var dd = data(), id = b.getAttribute('data-rgo'), r = null;
           for (var i = 0; i < dd.recent.length; i++) if (dd.recent[i].id === id) { r = dd.recent[i]; break; }
           if (!r) return;
-          /* Re-navigate: reuses favorite record if it still exists so visits keep counting. */
-          var fav = findFav(id, r.kind) || { id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng };
-          openNav(defApp, fav, r.kind);
-          api.render(body);
+          goNavigate({ id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng }, r.kind);
         };
       });
-
-      /* ---- v84: built-in places list + search ---- */
-      var biList = body.querySelector('#nv_bi_list');
-      function paintBuiltins() {
-        if (!biList) return;
-        var qEl = body.querySelector('#nv_bi_q');
-        var q = (qEl && qEl.value || '').trim().toLowerCase();
-        var hits = BUILTINS.filter(function (p) {
-          return !q || p.name.toLowerCase().indexOf(q) !== -1 ||
-            (p.note || '').toLowerCase().indexOf(q) !== -1 || p.type.indexOf(q) !== -1;
-        });
-        biList.innerHTML = hits.length ? hits.map(function (f) {
-          return '<div class="listitem"><div class="a">' + (TYPE_ICON[f.type] || '📍') + ' ' + esc(f.name) +
-            ' <span class="pill">' + esc(f.type) + '</span></div>' +
-            (f.note ? '<div class="b">' + esc(f.note) + '</div>' : '') +
-            '<div class="b">' + ((f.lat && f.lng) ? esc(f.lat + ', ' + f.lng) : esc(f.address)) + '</div>' +
-            '<div style="margin-top:8px">' + navButtons(f, 'work') + '</div></div>';
-        }).join('') : '<div class="empty">No built-in place matches that — try a shorter word.</div>';
-        biList.querySelectorAll('[data-navapp]').forEach(function (b) {
-          b.onclick = function () {
-            var fav = findBuiltin(b.getAttribute('data-navid'));
-            if (fav) openNav(b.getAttribute('data-navapp'), fav, 'work');
-          };
-        });
-      }
-      var biQ = body.querySelector('#nv_bi_q');
-      if (biQ) { biQ.addEventListener('input', paintBuiltins); paintBuiltins(); }
     }
   };
 
   Meticulous.modules.navigation = api;
 })();
+

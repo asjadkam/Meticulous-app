@@ -372,6 +372,29 @@
         if (S.map) S.map.setView(S.dest, 14);
       };
 
+      /* v87: a place picked in Navigation arrives as a one-shot
+         pending destination (owner: places live in ONE field there
+         now, and the one action is Navigate — into THIS navigator,
+         not a row of other apps' buttons). It lands through the
+         same setDest the picker above uses, so everything
+         downstream is identical whichever door the driver came
+         through: a pin sets the destination outright; an
+         address-only place fills the search box and runs the very
+         search a manual tap would. Consumed once, then cleared. */
+      try {
+        var pend = (window.App && App._store) ? App._store.get('nav_pending', null) : null;
+        if (pend) {
+          App._store.del('nav_pending');
+          if (pend.lat && pend.lng) {
+            setDest([Number(pend.lat), Number(pend.lng)], pend.name || '');
+            if (S.map) S.map.setView(S.dest, 14);
+          } else if (pend.query) {
+            var pq = body.querySelector('#nv_q');
+            if (pq && searchBtn) { pq.value = pend.query; searchBtn.onclick(); }
+          }
+        }
+      } catch (e) {}
+
       /* ---------- GPS follow ---------- */
       function onPos(lat, lon) {
         var first = !S.pos;

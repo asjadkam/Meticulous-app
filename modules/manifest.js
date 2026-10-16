@@ -7,26 +7,23 @@
   var SECTIONS = [
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
     ['incident', 'Incident list'], ['start', 'Start Time'], ['end', 'End Time'],
-    ['odoStart', 'Start Odometer'], ['odoEnd', 'End Odometer'], ['loads', 'Loads hauled'],
+    ['odo', 'Odometer'], ['loads', 'Loads hauled'],
     ['geoloads', 'GPS-counted loads'],
     ['earned', 'Total Earned Income']
   ];
 
-  /* v50: why GPS load counting could not run for a day (stored on the
-     geoloads day record by js/geoloads.js). Plain words, shown once. */
-  var GEOLOAD_BLOCKED = {
-    'no-site-coords': 'GPS load counting needs site coordinates on the dispatch — none were set, so no loads were GPS-counted this day.',
-    'one-site': 'GPS load counting needs BOTH site pins on the dispatch (load site and dump site) — this dispatch has only one, so no loads were GPS-counted this day.',
-    'sites-too-close': 'The load-site and dump-site pins on this dispatch are too close together to tell apart, so no loads were GPS-counted this day.',
-    /* v68: the dispatch had a load pin but no dump pin (the normal
-       dump-work case — the dump is given verbally on site), so the
-       app set out to learn the dump site from the driving itself
-       and no complete load-and-dump trip was seen. */
-    'learning': 'GPS load counting is still learning where this run dumps — the dump site is given out loud on site, so the app learns it from the driving, and no complete load-and-dump trip was seen yet this day, so no loads were GPS-counted.',
-    /* v68: two different places both looked like the dump site
-       before the first round trip was finished. */
-    'ambiguous-dump': 'GPS load counting found two different places that both looked like the dump site this day and could not tell which one was right, so it counted nothing and learned nothing — ticket loads stay the record for pay.'
-  };
+  /* v87: the "why GPS load counting could not run" notes are GONE
+     from the manifest (owner, Oct 15: "I told you yesterday that
+     dump coordinates are usually not available on dispatch… They
+     are verbally relayed to us on site!"). The old texts stated a
+     wrong premise as if it were the driver's gap — in dump work
+     the coordinates are NEVER on the dispatch; they are given out
+     loud on site, so an excuse premised on dispatch paperwork
+     blames the user for an app design gap. Silence over blame:
+     a day GPS counting could not cover prints no loads excuse at
+     all. The engine still records its reason on the geoloads day
+     record (js/geoloads.js) — that is internal data for the
+     future learned-site counter, not user-facing text. */
 
   function dayStr() { return G('mani_date', App._today()); }
 
@@ -71,6 +68,25 @@
     var p = String(d).split('-');
     if (p.length !== 3) return null;
     return new Date(+p[0], +p[1] - 1, +p[2], h, parseInt(m[2], 10)).getTime();
+  }
+
+  /* v87: ONE Odometer line for the day (owner, Oct 15: there were
+     "no Odos on the manifest either… even though I gave you the
+     starting and ending" — his own sheet carries the pair every
+     day). Start → end with the day's km between them:
+     "168,759 → 168,926 km (167 km)". An end that was never
+     captured is SAID ("end not recorded"), never invented; no
+     captures at all → no line (null). Replaces the separate
+     Start/End Odometer lines. */
+  function odoLineText(c) {
+    if (!c || (c.odoStart === null && c.odoEnd === null)) return null;
+    var fmt = function (v) { return Number(v).toLocaleString('en-CA'); };
+    if (c.odoStart !== null && c.odoEnd !== null) {
+      var km = Math.round((c.odoEnd - c.odoStart) * 10) / 10;
+      return fmt(c.odoStart) + ' → ' + fmt(c.odoEnd) + ' km' + (km >= 0 ? ' (' + km + ' km)' : '');
+    }
+    if (c.odoStart !== null) return fmt(c.odoStart) + ' km → end not recorded';
+    return 'start not recorded → ' + fmt(c.odoEnd) + ' km';
   }
 
   function collect(d) {
@@ -142,6 +158,19 @@
       if (!sessions.length) startT = fmtStamp(live.startMs);
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
+    }
+    /* v87: with no session start reading, the day's earliest
+       odo-bearing record stands in for the start (a fuel fill's
+       reading is the usual one — the driver typed the dash at the
+       pump). Odometer readings only move up, so the day's
+       smallest fill reading is its earliest capture. A mid-day
+       fill NEVER becomes the day's END: the end is the closing
+       reading (a session endOdo above) or it is honestly absent
+       and the line says "end not recorded". */
+    if (odoStart === null) {
+      var fillOdos = [];
+      fills.forEach(function (x) { var v = parseFloat(x && x.odo); if (v > 0) fillOdos.push(v); });
+      if (fillOdos.length) odoStart = Math.min.apply(null, fillOdos);
     }
     /* v83: the day's dispatch records, matched the way the rest of
        the app files a dispatch — scheduledAt's date wins (a
@@ -271,6 +300,11 @@
     // sections added after a user's toggles were saved default ON
     var out = {};
     SECTIONS.forEach(function (s) { out[s[0]] = (t[s[0]] === undefined) ? true : !!t[s[0]]; });
+    /* v87: the two odometer lines merged into one 'odo' section —
+       a pre-v87 set that had deliberately turned EITHER odometer
+       line off keeps the merged line off (a remembered choice is
+       never silently reversed by a rename). */
+    if (t.odo === undefined && (t.odoStart === false || t.odoEnd === false)) out.odo = false;
     return out;
   }
 
@@ -339,10 +373,11 @@
     if (trkParts.length) {
       L.push({ k: 'note', a: trkParts.join(' and ') + (trkParts.length > 1 ? ' times are' : ' time is') + ' from the tracker — no confirmed dispatch time for this day.' });
     }
-    if (t.odoStart && c.odoStart !== null) L.push({ k: 'kv', a: 'Start Odometer', b: Number(c.odoStart).toLocaleString('en-CA') + ' km' });
-    if (t.odoEnd && c.odoEnd !== null) L.push({ k: 'kv', a: 'End Odometer', b: Number(c.odoEnd).toLocaleString('en-CA') + ' km' });
-    if (t.odoEnd && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
-    if (t.odoEnd && c.milesIssues.length && window.LiveMiles) {
+    /* v87: one Odometer line — start → end with the day's km
+       (see odoLineText); absent captures omit it entirely. */
+    if (t.odo) { var ol = odoLineText(c); if (ol !== null) L.push({ k: 'kv', a: 'Odometer', b: ol }); }
+    if (t.odo && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
+    if (t.odo && c.milesIssues.length && window.LiveMiles) {
       c.milesIssues.forEach(function (s) {
         LiveMiles.reportLines(s.milesReport).forEach(function (ln) {
           L.push({ k: 'note', a: ln });
@@ -382,9 +417,9 @@
       (c.geoDay.events || []).forEach(function (ev, i) {
         L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: fmtStamp(ev.t) });
       });
-    } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
-      L.push({ k: 'note', a: GEOLOAD_BLOCKED[c.geoDay.blocked] });
     }
+    /* v87: no blocked-reason note here anymore — see the v87 note
+       where GEOLOAD_BLOCKED used to live. Silence over blame. */
     if (t.earned) L.push({ k: 'kv', a: 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
     return L;
   }
@@ -504,11 +539,12 @@
         h += '<div class="note" style="margin:2px 0 6px">' + trkParts2.join(' and ') + (trkParts2.length > 1 ? ' times are' : ' time is') + ' from the tracker — no confirmed dispatch time for this day.</div>';
       }
       /* v40: odometer readings + live miles ride together — the live
-         number is the tracking, the odometer only confirms it. */
-      if (t.odoStart && c.odoStart !== null) h += '<div class="kv"><span>Start Odometer</span><b>' + Number(c.odoStart).toLocaleString('en-CA') + ' km</b></div>';
-      if (t.odoEnd && c.odoEnd !== null) h += '<div class="kv"><span>End Odometer</span><b>' + Number(c.odoEnd).toLocaleString('en-CA') + ' km</b></div>';
-      if (t.odoEnd && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
-      if (t.odoEnd && c.milesIssues.length && window.LiveMiles) {
+         number is the tracking, the odometer only confirms it.
+         v87: the readings print as ONE Odometer line — start → end
+         with the day's km (see odoLineText). */
+      if (t.odo) { var ol2 = odoLineText(c); if (ol2 !== null) h += '<div class="kv"><span>Odometer</span><b>' + esc(ol2) + '</b></div>'; }
+      if (t.odo && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
+      if (t.odo && c.milesIssues.length && window.LiveMiles) {
         c.milesIssues.forEach(function (s) {
           var lines = LiveMiles.reportLines(s.milesReport);
           h += '<details style="margin:8px 0"><summary style="color:#c2410c;font-weight:700;cursor:pointer">⚠️ Miles discrepancy — tap for details</summary>' +
@@ -554,9 +590,9 @@
           h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
             esc(fmtStamp(ev.t)) + '</b></div>';
         });
-      } else if (t.geoloads && c.geoDay && c.geoDay.blocked && GEOLOAD_BLOCKED[c.geoDay.blocked]) {
-        h += '<div class="note" style="margin:6px 0">🚛 ' + esc(GEOLOAD_BLOCKED[c.geoDay.blocked]) + '</div>';
       }
+      /* v87: no blocked-reason note here anymore — silence over
+         blame (see the v87 note where GEOLOAD_BLOCKED used to be). */
       if (t.earned) h += '<div class="kv"><span>Total Earned Income</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
