@@ -273,7 +273,9 @@ function eq(name, got, want) {
   ok('i: the draft carries editId from the form', dspSrc.includes('editId: editingId || null'));
   ok('i: edit entry loads the record through the draft', dspSrc.includes('editId: d.id'));
   const dialogs = (dspSrc.match(/[^a-zA-Z](alert|confirm)\(/g) || []).length;
-  eq('i: no new native dialogs (4 pre-existing)', dialogs, 4);
+  eq('i: native dialogs — the delete confirm is in-app since v103 (3 remain)', dialogs, 3);
+  ok('i: v103: no native confirm gates dispatch deletion', !dspSrc.includes("confirm('Delete this dispatch?')"));
+  ok('i: v103: the in-app delete confirm ships (arm + confirm + cancel)', dspSrc.includes('data-delconfirm') && dspSrc.includes('data-delcancel') && dspSrc.includes('pendingDelId'));
 })();
 
 console.log('\ndispatch-edit test: ' + pass + '/' + (pass + fail) + ' passed');

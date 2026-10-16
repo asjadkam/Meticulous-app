@@ -176,8 +176,15 @@ ok('v91: Navigation api exposes the migration for tests/tools', navSrc.includes(
 ok('v91: the Yard pick renders as ONE select in the places card', navSrc.includes('id="nv_yard"') && navSrc.includes("W('yard', { kind:"));
 ok('v91: plain empty-state copy (no "already here" promise)', !navSrc.includes('are already here') && navSrc.includes('Pick a place above.'));
 ok('v87: Navigator consumes the pending destination through setDest', torSrc.includes("App._store.get('nav_pending'") && torSrc.includes("App._store.del('nav_pending')"));
-ok('Navigator offers the built-in picker', torSrc.includes('id="nv_places"') && torSrc.includes('builtinPlaces()'));
+ok('v103: Navigator offers the shared search-first picker (the built-ins <select> is gone)',
+  torSrc.includes('id="nv_pq"') && torSrc.includes('id="nv_presults"') && torSrc.includes('pickerEntries(') &&
+  !torSrc.includes('id="nv_places"') && !torSrc.includes('builtinPlaces()'));
 ok('Navigator picker sets the destination on the pin', torSrc.includes('setDest([p.lat, p.lng], p.name)'));
+ok('v103: the picker is ONE shared component (Navigation exports it; recents-only default, cap 6)',
+  navSrc.includes('pickerEntries: pickerEntries') && navSrc.includes('pickerRowHTML: pickerRowHTML') &&
+  navSrc.includes('pickerFind: pickerFind') && navSrc.includes('PICKER_RECENTS_MAX = 6'));
+ok('v103: NO external navigation handoff in the Navigator (owner: never leave the app)',
+  !torSrc.includes('ttnLinks') && !torSrc.includes('waze.com') && !torSrc.includes('nv_ttn'));
 ok('no routing-server config touched (no serverUrl writes in either module)', !/serverUrl\s*[:=]/.test(navSrc));
 
 console.log('\nnav-places test: ' + pass + ' passed, ' + fail + ' failed');

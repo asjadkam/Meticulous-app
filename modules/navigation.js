@@ -30,6 +30,15 @@
    driver's own rhythm first: most recently visited, then most
    visited, then alphabetical (places never visited carry no
    visits data and fall to the alphabetical group).
+   v103 (owner, Oct 16, 2026 16:44 MDT — "But why these endless
+   endless lists"): the search-first picker still rendered ALL
+   ~48 places under the filter by default, so the wall was what
+   he saw first. THE DEFAULT VIEW IS NOW RECENTS ONLY: at most
+   PICKER_RECENTS_MAX most-recently-visited places, most recent
+   first; the full list renders ONLY as filter matches while he
+   types. The picker is ONE shared component (pickerEntries /
+   pickerRowHTML / pickerFind below) — this module's Places card
+   and the Navigator's destination door both render through it.
 */
 (function () {
   'use strict';
@@ -305,9 +314,68 @@
     });
   }
 
+  /* ================= PICKER-BEGIN =================
+     v103: THE search-first places picker — ONE component, two
+     hosts (this module's Places card and the Navigator's
+     destination door). pickerEntries(kind, q) is the whole
+     policy:
+       - q EMPTY → the RECENTS view: only places the driver has
+         actually gone to (a lastVisit stamp, or a Recent-
+         destinations entry under the same name), most recent
+         first, capped at PICKER_RECENTS_MAX. Never the wall.
+       - q TYPED → the FULL combined list, filter matches only,
+         in pickerOrder.
+     Recency rides the data the app already keeps: favorites
+     carry visits/lastVisit (work tab), and data().recent logs
+     every navigation by name for both tabs — a place's
+     effective lastVisit is the newer of the two. Entries are
+     shallow copies: the stored favorites are never mutated by
+     picking. pickerRowHTML is the one row markup both hosts
+     paint (full-width button, FULL name, source tag); a host
+     wires [data-pid] taps itself. */
+  var PICKER_RECENTS_MAX = 6;
+  function pickerEntries(kind, q) {
+    var d = data();
+    var rmap = {};
+    (d.recent || []).forEach(function (r) {
+      var k = String((r && r.name) || '').trim().toLowerCase();
+      if (k && !rmap[k]) rmap[k] = r.ts || 0; /* recent is newest-first */
+    });
+    var all = placesFor(kind).map(function (e) {
+      var p = {}, k;
+      for (k in e.place) p[k] = e.place[k];
+      var rt = rmap[String(p.name || '').trim().toLowerCase()] || 0;
+      if (rt > (p.lastVisit || 0)) p.lastVisit = rt;
+      return { place: p, src: e.src };
+    });
+    all = pickerOrder(all);
+    q = String(q || '').trim().toLowerCase();
+    if (q) return { rows: all.filter(function (e) { return entryMatches(e, q); }), recents: false };
+    return {
+      rows: all.filter(function (e) { return (e.place.lastVisit || 0) > 0; }).slice(0, PICKER_RECENTS_MAX),
+      recents: true
+    };
+  }
+  function pickerRowHTML(e, pickedId) {
+    var p = e.place, picked = !!pickedId && p.id === pickedId;
+    return '<button class="btn ghost" data-pid="' + esc(p.id) + '" ' +
+      'style="width:100%;text-align:left;margin-top:6px;white-space:normal;height:auto">' +
+      '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
+      '<span class="b" style="display:block">' +
+      esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + (p.address ? ' · ' + p.address : '')) +
+      '</span></button>';
+  }
+  function pickerFind(kind, id) { return findEntry(kind, id); }
+  /* ================= PICKER-END ================= */
+
   var api = {
     builtinPlaces: builtinPlaces,
     migrateLegacyPlaces: migrateLegacyPlaces,
+    /* v103: the shared places picker (see PICKER region) — the
+       Navigator's destination door renders through these too. */
+    pickerEntries: pickerEntries,
+    pickerRowHTML: pickerRowHTML,
+    pickerFind: pickerFind,
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';
@@ -368,29 +436,27 @@
 
       body.innerHTML = h;
 
-      /* ---- the picker (v102): filter repaints ONLY the results
-         list (the input keeps focus); one tap on a row picks the
-         place and repaints the detail (Navigate armed). Rows are
-         full-width buttons with FULL names — white-space:normal
-         so a long name wraps instead of truncating. ---- */
+      /* ---- the picker (v102 search-first; v103 recents-only
+         default): filter repaints ONLY the results list (the
+         input keeps focus); one tap on a row picks the place and
+         repaints the detail (Navigate armed). Rows come from the
+         shared component (pickerEntries/pickerRowHTML): with no
+         filter text the list is at most the ~6 most recently
+         visited places — the full list renders ONLY as matches
+         while typing. ---- */
       var resEl = body.querySelector('#nv_results');
       var detailEl = body.querySelector('#nv_detail');
       function paintResults() {
-        var list = pickerOrder(placesFor(kind).filter(function (e) { return entryMatches(e, pickQ.trim().toLowerCase()); }));
+        var res = pickerEntries(kind, pickQ);
+        var list = res.rows;
         if (!list.length) {
           resEl.innerHTML = '<div class="empty">' +
-            (pickQ.trim() ? 'No place matches that.' : 'No places yet.') + '</div>';
+            (pickQ.trim() ? 'No place matches that.'
+              : (placesFor(kind).length ? 'Places you go to will show here — type above to find any place.' : 'No places yet.')) + '</div>';
           return list;
         }
-        resEl.innerHTML = list.map(function (e) {
-          var p = e.place, picked = p.id === selId[kind];
-          return '<button class="btn ghost" data-pid="' + esc(p.id) + '" ' +
-            'style="width:100%;text-align:left;margin-top:6px;white-space:normal;height:auto">' +
-            '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
-            '<span class="b" style="display:block">' +
-            esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + (p.address ? ' · ' + p.address : '')) +
-            '</span></button>';
-        }).join('');
+        resEl.innerHTML = (res.recents ? '<p class="note" style="margin:2px 0 0">🕘 Recent places</p>' : '') +
+          list.map(function (e) { return pickerRowHTML(e, selId[kind]); }).join('');
         resEl.querySelectorAll('[data-pid]').forEach(function (b) {
           b.onclick = function () {
             selId[kind] = b.getAttribute('data-pid');

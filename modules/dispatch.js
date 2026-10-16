@@ -556,6 +556,16 @@
      only sign the tap worked, and it was not enough. */
   var ingestTopFlash = '';
   var usedSugNote = '';
+  /* v103: the history Delete confirm is IN-APP (the connect.js
+     two-step pattern), never the native dialog — the native
+     dialog is auto-dismissed by browser automation, which made
+     record deletion unverifiable and, from the driver's seat,
+     indistinguishable from a dead button (field defect, Oct 16,
+     2026 evening). pendingDelId holds the id of the record whose
+     row is showing its Delete/Cancel strip; null = no confirm
+     open. Matched by id, not row index, so a list change between
+     arm and confirm can never delete the wrong record. */
+  var pendingDelId = null;
 
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
   function fileToThumb(file, cb) {
@@ -839,10 +849,19 @@
             (d.amount ? ' · $' + esc(d.amount) : '') +
             (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
             (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' : '') +
-            '<div class="row" style="margin-top:8px">' +
-            (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
-            '<button class="btn small ghost" data-edit="' + i + '">' + (isEditing ? '✏️ Editing ↑' : '✏️ Edit') + '</button>' +
-            '<button class="btn small ghost" data-del="' + i + '">Delete</button></div></div>';
+            /* v103: Delete is a two-step IN-APP confirm — the
+               armed row swaps its buttons for one clear red
+               Delete + Cancel strip (see pendingDelId). */
+            (pendingDelId && d.id === pendingDelId ?
+              '<div style="margin-top:8px;border:2px solid #c0392b;background:#fdecea;border-radius:10px;padding:8px 10px">' +
+              '<b>Delete this dispatch?</b> <span class="b">This cannot be undone.</span>' +
+              '<div class="row" style="margin-top:6px">' +
+              '<button class="btn small" data-delconfirm="' + i + '" style="background:#c0392b;color:#fff;flex:1">Delete</button>' +
+              '<button class="btn small ghost" data-delcancel="1" style="flex:1">Cancel</button></div></div>' :
+              '<div class="row" style="margin-top:8px">' +
+              (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
+              '<button class="btn small ghost" data-edit="' + i + '">' + (isEditing ? '✏️ Editing ↑' : '✏️ Edit') + '</button>' +
+              '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
         }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
 
       body.innerHTML = h;
@@ -1915,11 +1934,25 @@
           if (dspActivateRecord(d)) api.render(body);
         };
       });
+      /* v103: Delete arms the row's in-app confirm (no native
+         dialog anywhere in this flow); only the strip's own
+         Delete button removes the record. */
       body.querySelectorAll('[data-del]').forEach(function (b) {
         b.onclick = function () {
-          if (!confirm('Delete this dispatch?')) return;
-          var l = list(); l.splice(+b.getAttribute('data-del'), 1); W('list', l); api.render(body);
+          var d = list()[+b.getAttribute('data-del')];
+          pendingDelId = d ? d.id : null;
+          api.render(body);
         };
+      });
+      body.querySelectorAll('[data-delconfirm]').forEach(function (b) {
+        b.onclick = function () {
+          var l = list(); l.splice(+b.getAttribute('data-delconfirm'), 1); W('list', l);
+          pendingDelId = null;
+          api.render(body);
+        };
+      });
+      body.querySelectorAll('[data-delcancel]').forEach(function (b) {
+        b.onclick = function () { pendingDelId = null; api.render(body); };
       });
       body.querySelectorAll('[data-edit]').forEach(function (b) {
         b.onclick = function () { startEdit(list()[+b.getAttribute('data-edit')]); };

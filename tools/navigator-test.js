@@ -52,6 +52,7 @@ function deepEq(a, b) {
 }
 
 const navSrc = read('modules/navigator.js');
+const navModSrc = read('modules/navigation.js');
 const appSrc = read('js/app.js');
 const prefSrc = read('modules/preferences.js');
 const idxSrc = read('index.html');
@@ -171,24 +172,20 @@ console.log('— pure: request building —');
   check('parseLatLngText: out-of-range pairs are rejected', sb.parseLatLngText('95.123456, -114.027355') === null &&
     sb.parseLatLngText('50.951946, -190.027355') === null);
 
-  console.log('— pure: turn-by-turn handoff links (v93) —');
-  check('ttnLinks: no destination → null', sb.ttnLinks(null) === null && sb.ttnLinks(['x', 'y']) === null);
-  const lk = sb.ttnLinks(DEST, 'Test B');
-  check('ttnLinks: web directions is the canonical fallback',
-    lk.web === 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent('51.107500,-114.084500') + '&travelmode=driving', lk.web);
-  check('ttnLinks: intent leads, addressed to Google Maps, carrying the web fallback',
-    lk.intent.indexOf('intent://navigate?q=' + encodeURIComponent('51.107500,-114.084500')) === 0 &&
-    lk.intent.indexOf('package=com.google.android.apps.maps') >= 0 &&
-    lk.intent.indexOf('S.browser_fallback_url=' + encodeURIComponent(lk.web)) >= 0, lk.intent);
-  check('ttnLinks: geo URI carries pin + label',
-    lk.geo === 'geo:51.107500,-114.084500?q=' + encodeURIComponent('51.107500,-114.084500 (Test B)'), lk.geo);
-  check('ttnLinks: Waze deep link', lk.waze === 'https://waze.com/ul?ll=51.107500,-114.084500&navigate=yes', lk.waze);
+  console.log('— pure: NO external handoff (v103) —');
+  /* Owner ruling Oct 16, 2026: navigation never leaves the app.
+     The v93 link builder is deleted from the pure region — pin
+     its ABSENCE so it can never quietly come back. */
+  check('v103: the pure region exports no external link builder', typeof sb.ttnLinks === 'undefined');
 }
 
 /* ================= 2. render + flow (stubbed DOM) ================= */
 function el() {
   const e = {
     children: {}, style: {}, _html: '', textContent: '', value: '', onclick: null,
+    _listeners: {},
+    addEventListener: function (ev, fn) { (e._listeners[ev] = e._listeners[ev] || []).push(fn); },
+    fire: function (ev) { (e._listeners[ev] || []).slice().forEach(function (f) { f(); }); },
     classList: {
       _s: new Set(),
       add: function (c) { this._s.add(c); }, remove: function (c) { this._s.delete(c); },
@@ -205,7 +202,43 @@ function el() {
   });
   return e;
 }
-function makeWorld(storeData) {
+/* v103: the Navigator's places-results stub — parses the shared
+   picker's data-pid rows out of each paint (the nav-dropdown
+   makeResults pattern) so a row can be tapped like a thumb. */
+function resultsEl() {
+  const e = {
+    children: {}, style: {}, _html: '', textContent: '', value: '', onclick: null, _rows: {},
+    classList: {
+      _s: new Set(),
+      add: function (c) { this._s.add(c); }, remove: function (c) { this._s.delete(c); },
+      toggle: function (c, on) { on ? this._s.add(c) : this._s.delete(c); },
+      contains: function (c) { return this._s.has(c); }
+    },
+    querySelector: function () { return null; },
+    querySelectorAll: function (sel) {
+      if (sel !== '[data-pid]') return [];
+      return Object.keys(e._rows).map(function (k) { return e._rows[k]; });
+    },
+    getAttribute: function () { return null; },
+    setAttribute: function () {}
+  };
+  Object.defineProperty(e, 'innerHTML', {
+    get: function () { return e._html; },
+    set: function (v) {
+      e._html = String(v); e._rows = {};
+      const re = /data-pid="([^"]+)"/g; let m;
+      while ((m = re.exec(e._html))) {
+        const pid = m[1];
+        e._rows[pid] = { onclick: null,
+          getAttribute: function (n) { return n === 'data-pid' ? pid : null; },
+          click: function () { if (this.onclick) this.onclick(); } };
+      }
+    }
+  });
+  e.pick = function (pid) { const r = e._rows[pid]; if (r) r.click(); };
+  return e;
+}
+function makeWorld(storeData, withNavModule) {
   const store = {
     get: function (k, d) { return storeData[k] !== undefined ? storeData[k] : d; },
     set: function (k, v) { storeData[k] = v; },
@@ -213,12 +246,14 @@ function makeWorld(storeData) {
   };
   const ids = ['nv_banner', 'nv_map', 'nv_mode_truck', 'nv_mode_car', 'nv_follow', 'nv_mute',
     'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps',
-    'nv_ttn', 'nv_ttn_note',
+    /* v103: the shared places picker door (filter + results) */
+    'nv_pq', 'nv_presults',
     /* v101: full-screen shell + drive screen */
     'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
     'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
+  reg.nv_presults = resultsEl();
   reg.nv_banner.children['.nv-banner-main'] = el();
   reg.nv_banner.children['.nv-banner-sub'] = el();
   const body = el();
@@ -244,8 +279,9 @@ function makeWorld(storeData) {
   const world = {
     console: console, JSON: JSON, Math: Math, Date: Date, setTimeout: setTimeout,
     window: null,
-    /* v93: the TTN cascade touches document/window.open — stubbed
-       to CAPTURE every attempt so the chain can be asserted. */
+    /* v103: document/window.open are stubbed to CAPTURE any
+       attempt — the suite asserts nothing ever tries to open
+       anything external any more. */
     document: {
       hidden: false,
       addEventListener: function () {}, removeEventListener: function () {},
@@ -256,7 +292,10 @@ function makeWorld(storeData) {
       body: { appendChild: function () {} }
     },
     open: function (u) { calls.opened.push(u); },
-    App: { _esc: function (s) { return String(s == null ? '' : s); }, _store: store },
+    App: {
+      _esc: function (s) { return String(s == null ? '' : s); }, _store: store,
+      _today: function () { return '2026-10-16'; }, openModule: function () {}
+    },
     Meticulous: {},
     L: L,
     navigator: { geolocation: { watchPosition: function (cb) { geoCb = cb; return 7; }, clearWatch: function () {} } },
@@ -270,6 +309,10 @@ function makeWorld(storeData) {
   };
   world.window = world;
   vm.createContext(world);
+  /* v103: the picker world loads the Navigation module first
+     (index.html's own order) so the Navigator's places door is
+     wired to the real shared component. */
+  if (withNavModule) vm.runInContext(navModSrc, world);
   vm.runInContext(navSrc, world);
   return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo, hd) { geoCb({ coords: { latitude: la, longitude: lo, heading: hd } }); } };
 }
@@ -290,14 +333,15 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w.reg.nv_destnote.textContent.indexOf('Dropped pin (51.10750, -114.08450)') >= 0, w.reg.nv_destnote.textContent);
   check('v101 tap-pin: the destination marker lands exactly on the tap',
     w.calls.markers.length === 1 && w.calls.markers[0][0] === DEST[0] && w.calls.markers[0][1] === DEST[1]);
-  check('server set: Route leads, the handoff sits under it ghost-styled (v93)',
-    w.body.innerHTML.indexOf('id="nv_route"') < w.body.innerHTML.indexOf('id="nv_ttn"') &&
-    w.body.innerHTML.indexOf('class="btn ghost hidden" id="nv_ttn"') >= 0);
-  check('server set: destination note still points at Route', /tap Route\./.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
-  w.reg.nv_route.onclick();
+  check('v103: no external handoff exists in the sheet (no Turn-by-turn button, no other-app copy)',
+    w.body.innerHTML.indexOf('nv_ttn') < 0 && w.body.innerHTML.indexOf('Turn-by-turn') < 0);
+  check('v103: MeticulousNav exposes no handoff link builder', w.world.MeticulousNav.ttnLinks === undefined);
+  check('v103: the destination note gives no tap instruction — picking the place IS the instruction',
+    !/tap/.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
+  check('v103: the manual Route affordance remains for re-planning', w.body.innerHTML.indexOf('id="nv_route"') >= 0);
   await tick(); await tick();
   const routeCalls = w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
-  check('Route POSTs to <server>/route', routeCalls.length === 1 && routeCalls[0].url === 'http://nav.test/route',
+  check('v103: AUTO-ROUTE — the tap alone requested the route (no Route press)', routeCalls.length === 1 && routeCalls[0].url === 'http://nav.test/route',
     routeCalls.length ? routeCalls[0].url : 'no fetch');
   if (routeCalls.length) {
     const sent = JSON.parse(routeCalls[0].opts.body);
@@ -357,72 +401,58 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     /Truck/.test(api4.status()) && !/not set/.test(api4.status()), api4.status());
   api4.render(w4.body);
   check('v98: no unset-server warning under the default', w4.body.innerHTML.indexOf('routing unavailable') < 0);
-  w4.reg.nv_ttn.classList.add('hidden');
-  w4.reg.nv_ttn_note.classList.add('hidden');
   w4.firePos(ORIGIN[0], ORIGIN[1]);
   w4.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
-  check('v98: default set: destination note points at Route', /tap Route\./.test(w4.reg.nv_destnote.textContent), w4.reg.nv_destnote.textContent);
-  check('v98: default set: Route leads, the handoff sits under it ghost-styled (v93)',
-    w4.body.innerHTML.indexOf('id="nv_route"') < w4.body.innerHTML.indexOf('id="nv_ttn"') &&
-    w4.body.innerHTML.indexOf('class="btn ghost hidden" id="nv_ttn"') >= 0);
-  w4.reg.nv_route.onclick();
+  check('v103: default set: the destination note carries no handoff instruction',
+    w4.reg.nv_destnote.textContent.indexOf('Turn-by-turn') < 0 && /Destination:/.test(w4.reg.nv_destnote.textContent),
+    w4.reg.nv_destnote.textContent);
   await tick(); await tick();
   const dCalls = w4.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
-  check('v98: Route POSTs to the shipped default <server>/route', dCalls.length === 1 && dCalls[0].url === 'https://2.31.47.19/route',
+  check('v103: AUTO-ROUTE under the default — the tap alone POSTs to the shipped default <server>/route',
+    dCalls.length === 1 && dCalls[0].url === 'https://2.31.47.19/route',
     dCalls.length ? dCalls[0].url : 'no fetch');
   if (dCalls.length) {
     const dSent = JSON.parse(dCalls[0].opts.body);
     check('v98: default route body is the truck costing shape', dSent.costing === 'truck' &&
       dSent.costing_options.truck.use_truck_route === 1.0 && dSent.costing_options.truck.hgv_no_access_penalty === 100000);
   }
-  /* v93 handoff behavior unchanged under the default: same cascade,
-     same first link, built from the set destination. */
-  const timers4 = [];
-  w4.world.setTimeout = function (fn, ms) { timers4.push({ fn: fn, ms: ms }); return timers4.length; };
-  w4.reg.nv_ttn.onclick();
-  const want4 = w4.world.MeticulousNav.ttnLinks(DEST, 'Dropped pin');
-  check('v98: handoff cascade still fires the Google Maps intent first', w4.calls.anchors[0] === want4.intent, w4.calls.anchors[0]);
+  check('v103: nothing external was opened or anchored under the default',
+    w4.calls.anchors.length === 0 && w4.calls.opened.length === 0);
   api4.teardown();
 
-  console.log('— flow: turn-by-turn handoff (v93) —');
-  /* the handoff-primary layout is the NO-server presentation — since
-     v98 that state is reached via a deliberately cleared address. */
+  console.log('— flow: no server — navigation stays in-app (v103) —');
+  /* Since v103 the no-server state (reached, since v98, via a
+     deliberately cleared address) offers NO external fallback:
+     the owner ruled navigation never leaves the app. The module
+     says routing is off, the destination still arms, and nothing
+     is ever opened, anchored, or fetched to a routing server. */
   const w3 = makeWorld({ navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' } });
   const api3 = w3.world.Meticulous.modules.navigator;
-  /* the stub DOM does not parse markup classes — seed the hidden
-     state the real DOM gets from the rendered class attribute */
-  w3.reg.nv_ttn.classList.add('hidden');
-  w3.reg.nv_ttn_note.classList.add('hidden');
   api3.render(w3.body);
-  check('no server: the handoff is the primary action, above Route',
-    w3.body.innerHTML.indexOf('id="nv_ttn"') < w3.body.innerHTML.indexOf('id="nv_route"') &&
-    w3.body.innerHTML.indexOf('class="btn primary big hidden" id="nv_ttn"') >= 0);
-  check('no server: the honest handoff label ships in the markup',
-    w3.body.innerHTML.indexOf('Opens Google Maps for spoken directions.') >= 0);
-  check('handoff stays hidden until a destination exists', w3.reg.nv_ttn.classList.contains('hidden'));
-  w3.reg.nv_ttn.onclick();
-  check('no destination: the tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
+  check('v103: no server: there is NO handoff button or other-app copy anywhere in the sheet',
+    w3.body.innerHTML.indexOf('nv_ttn') < 0 && w3.body.innerHTML.indexOf('Turn-by-turn') < 0 &&
+    w3.body.innerHTML.indexOf('Opens Google Maps') < 0);
+  check('v103: no server: MeticulousNav exposes no link builder', w3.world.MeticulousNav.ttnLinks === undefined);
+  w3.reg.nv_route.onclick();
+  check('no destination: the Route tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent) ||
+    /server/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
   check('no destination: nothing was opened', w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
   w3.firePos(ORIGIN[0], ORIGIN[1]);
   w3.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
-  check('destination set → handoff button + label revealed',
-    !w3.reg.nv_ttn.classList.contains('hidden') && !w3.reg.nv_ttn_note.classList.contains('hidden'));
-  check('no server: destination note points at Turn-by-turn', /tap Turn-by-turn/.test(w3.reg.nv_destnote.textContent), w3.reg.nv_destnote.textContent);
-  /* capture the module's cascade timers instead of waiting them out */
-  const timers = [];
-  w3.world.setTimeout = function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; };
-  w3.reg.nv_ttn.onclick();
-  const want = w3.world.MeticulousNav.ttnLinks(DEST, 'Dropped pin');
-  check('cascade 1: the Google Maps intent fires first, built from the set destination',
-    w3.calls.anchors[0] === want.intent, w3.calls.anchors[0]);
-  check('cascade note tells the driver what is happening', /Opening turn-by-turn/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
-  const fireTimer = function (ms) { const t = timers.filter(function (x) { return x.ms === ms; })[0]; if (t) t.fn(); };
-  fireTimer(900);
-  check('cascade 2: geo URI when still here', w3.calls.anchors[1] === want.geo, w3.calls.anchors[1]);
-  fireTimer(2000);
-  check('cascade 3: Waze when still here', w3.calls.opened[0] === want.waze, w3.calls.opened[0]);
-  fireTimer(3100);
-  check('cascade 4: Google Maps web directions last', w3.calls.opened[1] === want.web, w3.calls.opened[1]);
+  check('v103: no server: the destination note says routing needs the server — never another app',
+    w3.reg.nv_destnote.textContent.indexOf('routing needs the Navigator server') >= 0 &&
+    w3.reg.nv_destnote.textContent.indexOf('Turn-by-turn') < 0, w3.reg.nv_destnote.textContent);
+  check('v103: no server: the banner says routing is off',
+    w3.reg.nv_banner.children['.nv-banner-sub'].textContent.indexOf('Routing is off') >= 0,
+    w3.reg.nv_banner.children['.nv-banner-sub'].textContent);
+  await tick(); await tick();
+  w3.reg.nv_route.onclick();
+  await tick();
+  check('v103: no server: no route is ever fetched (auto-route stays off too)',
+    w3.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 0,
+    JSON.stringify(w3.calls.fetch.map(function (c) { return c.url; })));
+  check('v103: no server: nothing external was opened or anchored, ever',
+    w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
   api3.teardown();
 
   console.log('— flow: pending destination WITH coordinates (v101 Butterfly field fix) —');
@@ -471,7 +501,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     wD.body.innerHTML.indexOf('class="btn primary big hidden" id="nv_drive"') >= 0);
   wD.firePos(ORIGIN[0], ORIGIN[1], 40);
   wD.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
-  wD.reg.nv_route.onclick();
+  /* v103: no Route press — the tap auto-routes */
   await tick(); await tick();
   check('route active → Drive is revealed', !wD.reg.nv_drive.classList.contains('hidden'));
   check('route active → Drive takes the ONE primary slot (Route demoted to ghost)',
@@ -517,6 +547,69 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('End drive closes the drive screen back to the Navigator', wD.reg.nv_drive_screen.classList.contains('hidden'));
   apiD.teardown();
 
+  console.log('— flow: places picker door (v103, shared component) —');
+  /* The Navigator's door 1 renders through the Navigation
+     module's shared picker: recents-only by default, the full
+     list only as filter matches, one tap sets the destination
+     on the pin — and auto-route fires from the pick. */
+  const wPk = makeWorld({
+    navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' },
+    nav_places_migrated: 91,
+    nav_data: {
+      work: [{ id: 'fav-bradi', name: 'Aecon Bradi Pit', address: '', type: 'pit',
+               lat: 51.27206, lng: -114.43179, visits: 2, lastVisit: 1792000000000 }],
+      personal: [], recent: []
+    }
+  }, true);
+  const apiPk = wPk.world.Meticulous.modules.navigator;
+  apiPk.render(wPk.body);
+  check('picker door: default view shows the visited favorite (recents)',
+    wPk.reg.nv_presults.innerHTML.indexOf('Aecon Bradi Pit') >= 0, wPk.reg.nv_presults.innerHTML);
+  check('picker door: default view does NOT show never-visited places (no wall)',
+    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Pit') < 0 && wPk.reg.nv_presults.innerHTML.indexOf('Volker Stevin') < 0,
+    wPk.reg.nv_presults.innerHTML);
+  wPk.reg.nv_pq.value = 'stoney';
+  wPk.reg.nv_pq.fire('input');
+  check('picker door: typing renders the full list AS MATCHES (Stoney appears, Bradi filtered out)',
+    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Pit') >= 0 &&
+    wPk.reg.nv_presults.innerHTML.indexOf('Aecon Bradi Pit') < 0, wPk.reg.nv_presults.innerHTML);
+  wPk.firePos(ORIGIN[0], ORIGIN[1]);
+  wPk.reg.nv_presults.pick('bi-stoney-pit');
+  await tick(); await tick();
+  check('picker door: one tap set the destination on the place pin',
+    wPk.reg.nv_destnote.textContent.indexOf('Destination: Stoney Pit') >= 0, wPk.reg.nv_destnote.textContent);
+  const pkRoutes = wPk.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
+  check('picker door: the pick AUTO-ROUTED (no Route tap)', pkRoutes.length === 1, pkRoutes.length + ' route fetches');
+  if (pkRoutes.length) {
+    const pkSent = JSON.parse(pkRoutes[0].opts.body);
+    check('picker door: the route targets the VERIFIED Stoney pin',
+      pkSent.locations[1].lat === 51.165429 && pkSent.locations[1].lon === -114.213202, JSON.stringify(pkSent.locations));
+  }
+  apiPk.teardown();
+
+  console.log('— pure: picker policy (v103, Navigation module) —');
+  {
+    const wNv = makeWorld({}, true);
+    const navApi = wNv.world.Meticulous.modules.navigation;
+    check('the Navigation module exports the shared picker', !!navApi.pickerEntries && !!navApi.pickerRowHTML && !!navApi.pickerFind);
+    /* the cap + order, read through the pure policy entry */
+    const many = { work: [], personal: [], recent: [] };
+    for (let i = 0; i < 8; i++) {
+      many.work.push({ id: 'v' + i, name: 'Visited ' + i, address: '', type: 'pit', visits: 1, lastVisit: 1000 + i });
+    }
+    many.work.push({ id: 'u1', name: 'Unvisited Pit', address: '', type: 'pit', visits: 0 });
+    wNv.world.App._store.set('nav_data', many);
+    wNv.world.App._store.set('nav_places_migrated', 91);
+    const def = navApi.pickerEntries('work', '');
+    check('pickerEntries default: at most 6 recents', def.recents === true && def.rows.length === 6, 'rows ' + def.rows.length);
+    check('pickerEntries default: most recent first, unvisited excluded',
+      def.rows[0].place.id === 'v7' && def.rows.every(function (e) { return e.place.id !== 'u1'; }),
+      def.rows.map(function (e) { return e.place.id; }).join(','));
+    const filt = navApi.pickerEntries('work', 'pit');
+    check('pickerEntries typed: the FULL combined list renders as matches (9 favorites + 2 built-ins; the recents cap does not apply)',
+      filt.recents === false && filt.rows.length === 11, 'rows ' + filt.rows.length);
+  }
+
   /* ================= 3. statics ================= */
   console.log('— statics —');
   check('index.html loads modules/navigator.js at ?v=<webVersion>', idxSrc.indexOf('modules/navigator.js?v=' + ver.webVersion) >= 0);
@@ -531,10 +624,17 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('v98: Preferences fallback carries the same default rule', prefSrc.indexOf("? 'https://2.31.47.19' : String(s.serverUrl)") >= 0);
   check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
-  check('navigator.js carries the v93 turn-by-turn handoff', navSrc.indexOf('id="nv_ttn"') >= 0 && navSrc.indexOf('function ttnLinks') >= 0);
-  check('the handoff label is the honest one (v101: the drive screen exists — no "coming" copy)',
-    navSrc.indexOf('Opens Google Maps for spoken directions.') >= 0 && navSrc.indexOf('drive screen is coming') < 0);
-  check('MeticulousNav exposes ttnLinks for the handoff', navSrc.indexOf('ttnLinks: ttnLinks') >= 0);
+  check('v103: NO external handoff survives in navigator.js (no button, no link builder, no cascade, no other-app URLs)',
+    navSrc.indexOf('nv_ttn') < 0 && navSrc.indexOf('ttnLinks') < 0 && navSrc.indexOf('waze.com') < 0 &&
+    navSrc.indexOf('google.com/maps/dir') < 0 && navSrc.indexOf('intent://') < 0 && navSrc.indexOf('geo:') < 0 &&
+    navSrc.indexOf('Opens Google Maps') < 0);
+  check('v103: auto-route ships (the latch + its one fire path)', navSrc.indexOf('function maybeAutoRoute') >= 0 &&
+    navSrc.indexOf('S.autoWanted = true') >= 0 && navSrc.indexOf('maybeAutoRoute();') >= 0);
+  check('v103: the Navigator places door is the shared search-first picker (the <select> is gone)',
+    navSrc.indexOf('id="nv_pq"') >= 0 && navSrc.indexOf('id="nv_presults"') >= 0 &&
+    navSrc.indexOf('pickerEntries(') >= 0 && navSrc.indexOf('id="nv_places"') < 0 && navSrc.indexOf('builtinPlaces()') < 0);
+  check('v103: the settings row is quiet (the active mode paints navy, never the primary orange)',
+    navSrc.indexOf("settings.mode === 'truck' ? 'navy' : 'ghost'") >= 0 && navSrc.indexOf("? 'primary' : 'ghost'") < 0);
   check('v101: the drive screen ships (button + overlay + prompt engine)',
     navSrc.indexOf('id="nv_drive"') >= 0 && navSrc.indexOf('id="nv_drive_screen"') >= 0 &&
     navSrc.indexOf('function drivePrompt') >= 0 && navSrc.indexOf('DRIVE_FAR_M') >= 0);

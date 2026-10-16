@@ -2,8 +2,15 @@
    Turn-by-turn truck navigation on Calgary's designated truck network.
    v101: a server route can be DRIVEN in-app — a dedicated full-screen
    drive mode (3D-tilted, heading-up) with far/near spoken prompts
-   through this module's existing speak()/Sound toggle. The v93 Google
-   Maps handoff remains as the alternative on the planning screen.
+   through this module's existing speak()/Sound toggle.
+   v103 (owner ruling, Oct 16, 2026 16:45 MDT — NO LEAVING THE APP):
+   the v93 external maps handoff is DELETED (button, link builder,
+   timed cascade — all of it). Turn-by-turn means OUR Drive screen:
+   pick a destination and the route is requested on its own (no
+   separate Route tap to reach Drive); Drive is the one big primary
+   action; Truck/Car + Follow + Sound sit in one small quiet row;
+   the built-in-places <select> is replaced by the Navigation
+   module's shared search-first picker (recents-only by default).
    Routes come from a self-hosted Valhalla service whose map carries the
    City of Calgary truck-route rules (see the truck-nav build, steps 1–4):
    the truck is kept on legal streets by costing, never by hard bans —
@@ -244,28 +251,10 @@
     return [lat, lng];
   }
 
-  /* v93: the turn-by-turn HANDOFF link set. The phone's own maps
-     app does the spoken driving TODAY; Meticulous's own 3D drive
-     screen still waits on the routing server (owner, Oct 16,
-     2026: turn-by-turn must not wait for the server). Pure: dest
-     is [lat, lng]. The chain, first to last resort: the Google
-     Maps navigation intent (its browser_fallback_url carries the
-     web directions if Maps is absent) → a geo: URI (any maps
-     app) → Waze → Google Maps web directions. */
-  function ttnLinks(dest, label) {
-    if (!dest) return null;
-    var lat = Number(dest[0]), lng = Number(dest[1]);
-    if (!isFinite(lat) || !isFinite(lng)) return null;
-    var q = lat.toFixed(6) + ',' + lng.toFixed(6);
-    var name = String(label || '');
-    var web = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(q) + '&travelmode=driving';
-    var intent = 'intent://navigate?q=' + encodeURIComponent(q) +
-      '#Intent;scheme=google.navigation;package=com.google.android.apps.maps;' +
-      'S.browser_fallback_url=' + encodeURIComponent(web) + ';end';
-    var geo = 'geo:' + q + '?q=' + encodeURIComponent(q + (name ? ' (' + name + ')' : ''));
-    var waze = 'https://waze.com/ul?ll=' + q + '&navigate=yes';
-    return { intent: intent, geo: geo, waze: waze, web: web };
-  }
+  /* v103: the v93 turn-by-turn HANDOFF (its link builder + the
+     timed cascade) is DELETED outright — owner ruling, Oct 16,
+     2026: navigation never leaves the app. There is deliberately
+     NO external-link builder in this region any more. */
   /* ================= NAVPURE-END ================= */
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
@@ -301,8 +290,7 @@
     DEFAULT_SERVER_URL: NAV_DEFAULT_SERVER_URL,
     loadSettings: loadSettings,
     saveSettings: saveSettings,
-    profile: navProfile,
-    ttnLinks: ttnLinks
+    profile: navProfile
   };
 
   /* ---- live session state (one navigation at a time) ---- */
@@ -358,6 +346,11 @@
         routeLine: null, line: null, plan: null, dest: null, destLabel: '',
         pos: null, follow: true, watchId: null, manIdx: -1,
         offSince: 0, rerouting: false, arrived: false, searching: false,
+        /* v103: the auto-route latch — setDest arms it for the NEW
+           destination only (autoKey), maybeAutoRoute consumes it
+           once a position exists. Ending a route never re-arms
+           it: re-routing after End is the driver's own tap. */
+        autoKey: '', autoWanted: false,
         /* v101 drive mode: state bag + its own Leaflet instance and
            arrival timer (kept on S so teardown reaches them). */
         drive: null, driveMap: null, driveLine: null, driveMarker: null,
@@ -379,23 +372,17 @@
         '<div id="nv_map" class="nv-map"></div>' +
         '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
         '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
+        /* v103: Truck/Car + Follow + Sound demoted to ONE small
+           quiet row — same controls, same ids, but no loud
+           primary styling: they are settings, not steps on the
+           way to navigating. The active mode reads navy; the
+           rest are ghost. */
         '<div class="row nv-maprow">' +
-        '<button class="btn small ' + (settings.mode === 'truck' ? 'primary' : 'ghost') + '" id="nv_mode_truck" style="flex:1">🚛 Truck</button>' +
-        '<button class="btn small ' + (settings.mode === 'car' ? 'primary' : 'ghost') + '" id="nv_mode_car" style="flex:1">🚗 Car</button>' +
+        '<button class="btn small ' + (settings.mode === 'truck' ? 'navy' : 'ghost') + '" id="nv_mode_truck" style="flex:1">🚛 Truck</button>' +
+        '<button class="btn small ' + (settings.mode === 'car' ? 'navy' : 'ghost') + '" id="nv_mode_car" style="flex:1">🚗 Car</button>' +
         '<button class="btn small ghost" id="nv_follow" style="flex:1">🎯 Follow: on</button>' +
         '<button class="btn small ghost" id="nv_mute" style="flex:1">' + (settings.muted ? '🔇 Sound: off' : '🔊 Sound: on') + '</button>' +
         '</div></div>';
-
-      /* v84: the built-in pits & job sites (owned by the Navigation
-         module, read lazily so load order never matters) — one tap
-         sets the destination on the pin itself. Address-only
-         built-ins (fuel) are not offered here: they have no pin. */
-      var biPlaces = [];
-      try {
-        if (window.Meticulous && Meticulous.modules.navigation && Meticulous.modules.navigation.builtinPlaces) {
-          biPlaces = Meticulous.modules.navigation.builtinPlaces().filter(function (p) { return p.lat && p.lng; });
-        }
-      } catch (e) { biPlaces = []; }
 
       h += '<div class="nv-sheet">';
       if (!settings.serverUrl) {
@@ -408,26 +395,23 @@
         '<div class="row"><input id="nv_q" placeholder="e.g. Foothills Industrial Park, Calgary" style="flex:1">' +
         '<button class="btn navy" id="nv_search">Search</button></div>' +
         '<div id="nv_results"></div>' +
-        (biPlaces.length ?
-          '<label class="f">Your pits & job sites</label>' +
-          '<select id="nv_places" style="width:100%"><option value="">Choose a place…</option>' +
-          biPlaces.map(function (p, i) {
-            return '<option value="' + i + '">' + esc(p.name) + '</option>';
-          }).join('') + '</select>' : '') +
-        '<p class="note" id="nv_destnote">No destination yet. Search above, tap the map, or pick a saved place in Navigation.</p>' +
-        /* v93: ONE primary action per server state. No server:
-           the turn-by-turn handoff leads (the in-app Route button
-           keeps its exact server-not-set behaviour below it).
-           Server set: Route leads and the handoff sits under it
-           as the quiet secondary. The handoff button + its honest
-           label stay hidden until a destination exists. */
-        (settings.serverUrl
-          ? '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
-            '<button class="btn ghost hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
-            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions.</p>'
-          : '<button class="btn primary big hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
-            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions.</p>' +
-            '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>') +
+        /* v103 door 1: the SAME search-first picker as Navigation
+           (the Navigation module's shared component — recents-only
+           by default, the full list only as filter matches). The
+           v84–v102 built-ins <select> is gone. One tap on a row
+           sets the destination — and setDest auto-routes. */
+        '<label class="f">Your pits & job sites</label>' +
+        '<input id="nv_pq" placeholder="Type to find a place…" style="width:100%">' +
+        '<div id="nv_presults" style="margin-top:4px"></div>' +
+        '<p class="note" id="nv_destnote">No destination yet. Search above, tap the map, or pick a place below.</p>' +
+        /* v103: ONE action path — destination → route (automatic
+           when a server is set) → Drive. Route stays as the
+           manual/re-plan affordance: primary only until a route
+           is active, when Drive takes the slot and Route demotes
+           to a quiet ghost (doRoute/clearRoute paint that). The
+           v93 external handoff button is DELETED (owner ruling:
+           navigation never leaves the app). */
+        '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
         /* v101: the in-app drive screen. Hidden until a server route
            is ACTIVE (doRoute reveals it and takes the primary slot;
            Route demotes to a quiet re-route). Needs a route by
@@ -497,6 +481,17 @@
       }
 
       /* ---------- destination ---------- */
+      /* v103: the destination line — one writer, so every door
+         (search, picker, pin, pending) words it the same way.
+         With a server set there is no "tap Route" instruction:
+         picking the destination IS the instruction (auto-route
+         below). Without one, the line says plainly why no route
+         will come. */
+      function paintDestNote(text) {
+        var dn = body.querySelector('#nv_destnote');
+        if (dn) dn.textContent = text + (S.settings.serverUrl ? '' :
+          ' — routing needs the Navigator server (Preferences → Advanced).');
+      }
       function setDest(latlng, label) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
@@ -504,13 +499,32 @@
           if (S.destMarker) S.destMarker.setLatLng(latlng);
           else S.destMarker = L.marker(latlng).addTo(S.map);
         }
-        var dn = body.querySelector('#nv_destnote');
-        if (dn) dn.textContent = 'Destination: ' + (label || (latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5))) + ' — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
-        var tb = body.querySelector('#nv_ttn'); if (tb) tb.classList.remove('hidden');
-        var tn = body.querySelector('#nv_ttn_note'); if (tn) tn.classList.remove('hidden');
+        paintDestNote('Destination: ' + (label || (latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5))));
         banner('Destination set', S.settings.serverUrl
-          ? 'Tap Route to get ' + (S.settings.mode === 'car' ? 'car' : 'truck') + ' directions.'
-          : 'Tap Turn-by-turn for spoken directions in your maps app.');
+          ? (S.pos ? 'Getting your ' + (S.settings.mode === 'car' ? 'car' : 'truck') + ' route…'
+                   : 'Your route starts as soon as your location lands.')
+          : 'Routing is off — the Navigator server is not set.');
+        /* v103: a NEW destination arms the auto-route latch —
+           the same destination re-set (a reverse-geocode rename,
+           a re-tap of the same pin) does not re-fire it. */
+        var key = latlng[0].toFixed(6) + ',' + latlng[1].toFixed(6);
+        if (key !== S.autoKey) { S.autoKey = key; S.autoWanted = true; }
+        maybeAutoRoute();
+      }
+
+      /* v103: AUTO-ROUTE — arriving with a destination armed
+         (the nav_pending hand-off, or any in-Navigator pick)
+         requests the route on its own when a server URL is set:
+         no separate Route tap stands between the driver and
+         Drive. Fires once per new destination, only when there
+         is a position to route FROM and no route is up yet; if
+         the position is still coming, onPos fires it on the
+         first fix. Route remains as the manual re-plan tap. */
+      function maybeAutoRoute() {
+        if (!S.autoWanted || !S.settings.serverUrl || !S.dest || !S.pos) return;
+        if (S.plan || S.rerouting) return;
+        S.autoWanted = false;
+        doRoute();
       }
 
       /* v101 door 3: tap-the-map pin (owner, Oct 16: anyone not
@@ -525,8 +539,7 @@
       function pinTap(latlng) {
         setDest(latlng, 'Dropped pin');
         var coords = latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5);
-        var dn = body.querySelector('#nv_destnote');
-        if (dn) dn.textContent = 'Destination: Dropped pin (' + coords + ') — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
+        paintDestNote('Destination: Dropped pin (' + coords + ')');
         if (typeof fetch !== 'function') return;
         fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=' + latlng[0] + '&lon=' + latlng[1])
           .then(function (r) { return r.json(); })
@@ -536,8 +549,7 @@
             if (!nm && j.display_name) nm = String(j.display_name).split(',')[0];
             if (!nm) return;
             S.destLabel = nm;
-            var d2 = body.querySelector('#nv_destnote');
-            if (d2) d2.textContent = 'Destination: ' + nm + ' (' + coords + ') — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
+            paintDestNote('Destination: ' + nm + ' (' + coords + ')');
           })
           .catch(function () {});
       }
@@ -571,16 +583,55 @@
           .catch(function () { S.searching = false; box.innerHTML = '<p class="note">Search could not run — check your connection.</p>'; });
       };
 
-      /* v84: built-in place picker — one tap sets the destination */
-      var placeSel = body.querySelector('#nv_places');
-      if (placeSel) placeSel.onchange = function () {
-        if (placeSel.value === '') return;
-        var p = biPlaces[Number(placeSel.value)];
-        placeSel.value = '';
-        if (!p) return;
-        setDest([p.lat, p.lng], p.name);
-        if (S.map) S.map.setView(S.dest, 14);
-      };
+      /* v103 door 1: the places picker — the Navigation module's
+         shared search-first component (pickerEntries /
+         pickerRowHTML / pickerFind), so this door behaves
+         EXACTLY like the Places card: recents-only by default
+         (at most ~6 most recently visited), the full list only
+         as filter matches while typing, FULL names, one tap
+         picks. A pinned place sets the destination on the pin
+         itself (setDest auto-routes); an address-only place
+         hands its address to the search above — the same path
+         an address-only pending destination takes. The module
+         is read lazily so load order never matters; without it
+         the door simply stays empty. */
+      var navPicker = null;
+      try {
+        if (window.Meticulous && Meticulous.modules.navigation &&
+            Meticulous.modules.navigation.pickerEntries) navPicker = Meticulous.modules.navigation;
+      } catch (e) { navPicker = null; }
+      var nvPickQ = '';
+      function paintNvPlaces() {
+        var box = body.querySelector('#nv_presults');
+        if (!box || !navPicker) return;
+        var res = navPicker.pickerEntries('work', nvPickQ);
+        if (!res.rows.length) {
+          box.innerHTML = '<div class="empty">' +
+            (nvPickQ.trim() ? 'No place matches that.' : 'Places you go to will show here — type to find any place.') + '</div>';
+          return;
+        }
+        box.innerHTML = (res.recents ? '<p class="note" style="margin:2px 0 0">🕘 Recent places</p>' : '') +
+          res.rows.map(function (e) { return navPicker.pickerRowHTML(e, ''); }).join('');
+        box.querySelectorAll('[data-pid]').forEach(function (b) {
+          b.onclick = function () {
+            var e = navPicker.pickerFind('work', b.getAttribute('data-pid'));
+            if (!e) return;
+            var p = e.place;
+            if (p.lat && p.lng) {
+              setDest([p.lat, p.lng], p.name);
+              if (S.map) S.map.setView(S.dest, 14);
+            } else if (p.address) {
+              var q = body.querySelector('#nv_q');
+              if (q && searchBtn) { q.value = p.address; searchBtn.onclick(); }
+            }
+          };
+        });
+      }
+      var pqEl = body.querySelector('#nv_pq');
+      if (pqEl && typeof pqEl.addEventListener === 'function') {
+        pqEl.addEventListener('input', function () { nvPickQ = pqEl.value; paintNvPlaces(); });
+      }
+      paintNvPlaces();
 
       /* v87: a place picked in Navigation arrives as a one-shot
          pending destination (owner: places live in ONE field there
@@ -642,6 +693,11 @@
           if (S.follow) S.map.setView(S.pos, first ? 15 : S.map.getZoom());
         }
         if (first && !S.plan) banner('You are here', 'Search for a place, or tap the map to drop a pin.');
+        /* v103: a destination armed before the first fix (the
+           usual nav_pending arrival) routes the moment the
+           position lands — maybeAutoRoute is latched, so later
+           fixes never re-fire it. */
+        if (!S.plan) maybeAutoRoute();
         if (S.plan) trackProgress();
         if (S.drive) driveTick();
       }
@@ -667,6 +723,10 @@
       /* ---------- routing ---------- */
       function clearRoute() {
         if (S.drive) exitDrive();
+        /* v103: ending a route also spends the auto-route latch —
+           the destination stays set, but it never re-routes on
+           its own; Route is the driver's deliberate tap now. */
+        S.autoWanted = false;
         S.plan = null; S.line = null; S.manIdx = -1; S.offSince = 0; S.arrived = false;
         if (S.routeLine && S.map) { S.map.removeLayer(S.routeLine); S.routeLine = null; }
         var st = body.querySelector('#nv_steps'); if (st) st.innerHTML = '<div class="empty">No route yet.</div>';
@@ -926,43 +986,10 @@
       var dExit = body.querySelector('#nvd_exit');
       if (dExit) dExit.onclick = function () { exitDrive(); };
 
-      /* v93: the turn-by-turn handoff. Walks the ttnLinks chain
-         with pauses: if a maps app takes over, the page hides and
-         the later fallbacks never fire; if we're still here, the
-         next resort tries. The destination it uses is the one
-         setDest set — the same pin every other door lands on. */
-      var ttnBtn = body.querySelector('#nv_ttn');
-      if (ttnBtn) ttnBtn.onclick = function () {
-        var links = ttnLinks(S.dest, S.destLabel);
-        if (!links) { note('Pick a destination first — search above or tap the map.'); return; }
-        var left = false;
-        var onHide = function () { left = true; };
-        try {
-          document.addEventListener('visibilitychange', onHide);
-          window.addEventListener('pagehide', onHide);
-        } catch (e) {}
-        function attempt(href, blank) {
-          try {
-            if (blank) { window.open(href, '_blank'); return; }
-            var a = document.createElement('a');
-            a.href = href; a.style.display = 'none';
-            document.body.appendChild(a); a.click();
-            setTimeout(function () { try { a.remove(); } catch (e) {} }, 100);
-          } catch (e) {}
-        }
-        function stillHere() { return !left && !document.hidden; }
-        attempt(links.intent, false);
-        setTimeout(function () { if (stillHere()) attempt(links.geo, false); }, 900);
-        setTimeout(function () { if (stillHere()) attempt(links.waze, true); }, 2000);
-        setTimeout(function () { if (stillHere()) attempt(links.web, true); }, 3100);
-        setTimeout(function () {
-          try {
-            document.removeEventListener('visibilitychange', onHide);
-            window.removeEventListener('pagehide', onHide);
-          } catch (e) {}
-        }, 4200);
-        note('Opening turn-by-turn in your maps app…');
-      };
+      /* v103: the v93 turn-by-turn handoff handler is DELETED
+         with the rest of the handoff — there is no button, no
+         link chain, no leaving the app. Turn-by-turn is the
+         in-app Drive screen (nv_drive → startDrive). */
       var endBtn = body.querySelector('#nv_end');
       if (endBtn) endBtn.onclick = function () { clearRoute(); banner('Where to?', 'Search for a place, or tap the map to drop a pin.'); };
       var followBtn = body.querySelector('#nv_follow');
@@ -987,10 +1014,12 @@
       if (muteBtn) muteBtn.onclick = toggleMute;
       var dMute = body.querySelector('#nvd_mute');
       if (dMute) dMute.onclick = toggleMute;
+      /* v103: the mode pair lives in the quiet row — the active
+         mode paints navy, never the loud primary orange. */
       function paintMode() {
         var t = body.querySelector('#nv_mode_truck'), c = body.querySelector('#nv_mode_car');
-        if (t) t.className = 'btn small ' + (S.settings.mode === 'truck' ? 'primary' : 'ghost');
-        if (c) c.className = 'btn small ' + (S.settings.mode === 'car' ? 'primary' : 'ghost');
+        if (t) t.className = 'btn small ' + (S.settings.mode === 'truck' ? 'navy' : 'ghost');
+        if (c) c.className = 'btn small ' + (S.settings.mode === 'car' ? 'navy' : 'ghost');
         if (t) t.style.flex = '1'; if (c) c.style.flex = '1';
       }
       function setMode(m) {
@@ -999,7 +1028,11 @@
         saveSettings({ mode: m });
         paintMode();
         if (S.dest && S.plan) doRoute();
-        else banner('Mode: ' + (m === 'car' ? 'Car' : 'Truck'), 'Tap Route when ready.');
+        /* v103: a destination armed but not yet routed (its
+           auto-route is still waiting on a position) re-arms
+           under the new mode instead of waiting for a Route tap. */
+        else if (S.dest && S.settings.serverUrl) { S.autoWanted = true; maybeAutoRoute(); }
+        else banner('Mode: ' + (m === 'car' ? 'Car' : 'Truck'), 'Pick a destination when ready.');
       }
       var mt = body.querySelector('#nv_mode_truck'), mc = body.querySelector('#nv_mode_car');
       if (mt) mt.onclick = function () { setMode('truck'); };

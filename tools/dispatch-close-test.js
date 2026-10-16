@@ -414,7 +414,10 @@ async function driveToConfirm(w) {
       dspSrc.indexOf('dspCompletionFor(preview, completionSettings(preview))') >= 0 &&
       dspSrc.indexOf('dspCompletionFor(cur, completionSettings(cur))') >= 0);
     const dialogs = (dspSrc.match(/(alert|confirm)\(/g) || []).length;
-    eq('s: native dialog count unchanged (no new alert/confirm)', dialogs, 4);
+    /* v103: the count DROPS by one on purpose — the history
+       delete confirm moved in-app (dispatch-delete-test drives
+       it); no NEW native dialog may appear. */
+    eq('s: native dialog count (v103: delete confirm is in-app; 3 remain)', dialogs, 3);
     check('s: index.html loads dispatch.js at ?v=<webVersion>',
       idxSrc.indexOf('modules/dispatch.js?v=' + ver.webVersion) >= 0);
   }
