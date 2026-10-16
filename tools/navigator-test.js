@@ -55,6 +55,7 @@ const navSrc = read('modules/navigator.js');
 const appSrc = read('js/app.js');
 const prefSrc = read('modules/preferences.js');
 const idxSrc = read('index.html');
+const cssSrc = read('css/style.css');
 const ver = JSON.parse(read('version.json'));
 const fixture = JSON.parse(read('tools/navigator-fixture-tripb.json'));
 const ORIGIN = [51.0955, -114.099], DEST = [51.1075, -114.0845];
@@ -135,6 +136,41 @@ console.log('— pure: request building —');
   check('fmtDist metres/km', sb.fmtDist(240) === '240 m' && sb.fmtDist(4886) === '4.9 km');
   check('fmtMin', sb.fmtMin(7.02) === '7 min' && sb.fmtMin(65) === '1 h 5 min');
 
+  console.log('— pure: drive screen engine (v101) —');
+  check('plan maneuvers carry street names', plan.maneuvers[0].streets.indexOf('Norquay Heights NW') >= 0 &&
+    plan.maneuvers[5].streets.indexOf('4 Street NW') >= 0);
+  check('currentRoadName at start = Norquay Heights NW', sb.currentRoadName(plan, 0) === 'Norquay Heights NW',
+    sb.currentRoadName(plan, 0));
+  check('currentRoadName at the end falls back to the last named road', sb.currentRoadName(plan, 9) === 'Nottingham Road NW',
+    sb.currentRoadName(plan, 9));
+  const dp0 = sb.driveProgress(plan, 0);
+  check('driveProgress at 0 m: idx 0, ~90 m to the turn, full trip left, full ETA',
+    dp0.idx === 0 && Math.abs(dp0.toTurnM - 90) < 2 && Math.abs(dp0.leftM - 4886) < 2 &&
+    Math.abs(dp0.etaMin - 7.02) < 0.05 && dp0.next === plan.maneuvers[1]);
+  check('driveProgress road at 0 m = Norquay Heights NW', dp0.road === 'Norquay Heights NW', dp0.road);
+  const saidBag = {};
+  check('drivePrompt: 700 m out says nothing', sb.drivePrompt(plan, 0, 700, saidBag) === null);
+  check('drivePrompt: 550 m out speaks the far (pre-transition) line once',
+    sb.drivePrompt(plan, 0, 550, saidBag) === (plan.maneuvers[1].verbalPre || plan.maneuvers[1].instruction) && saidBag['far:1'] === 1);
+  check('drivePrompt: far line is not repeated', sb.drivePrompt(plan, 0, 500, saidBag) === null);
+  check('drivePrompt: 150 m out speaks the near (instruction) line',
+    sb.drivePrompt(plan, 0, 150, saidBag) === plan.maneuvers[1].instruction && saidBag['near:1'] === 1);
+  check('drivePrompt: near line is not repeated', sb.drivePrompt(plan, 0, 100, saidBag) === null);
+  const saidFin = {};
+  check('drivePrompt: the final maneuver gets NO far prompt', sb.drivePrompt(plan, plan.maneuvers.length - 2, 500, saidFin) === null);
+  check('drivePrompt: the final maneuver speaks its arrival line close in',
+    sb.drivePrompt(plan, plan.maneuvers.length - 2, 150, saidFin) ===
+    (plan.maneuvers[9].verbalPre || plan.maneuvers[9].instruction));
+
+  console.log('— pure: coordinate text parsing (v101 field fix) —');
+  check('parseLatLngText: a bare pair parses', deepEq(sb.parseLatLngText('50.951946, -114.027355'), [50.951946, -114.027355]));
+  check('parseLatLngText: a pair inside a name parses (the Butterfly shape)',
+    deepEq(sb.parseLatLngText('Butterfly, 50.9519460, -114.0273550'), [50.951946, -114.027355]));
+  check('parseLatLngText: street text never matches', sb.parseLatLngText('12th Street') === null &&
+    sb.parseLatLngText('Highway 2, 5 km') === null && sb.parseLatLngText('') === null && sb.parseLatLngText(null) === null);
+  check('parseLatLngText: out-of-range pairs are rejected', sb.parseLatLngText('95.123456, -114.027355') === null &&
+    sb.parseLatLngText('50.951946, -190.027355') === null);
+
   console.log('— pure: turn-by-turn handoff links (v93) —');
   check('ttnLinks: no destination → null', sb.ttnLinks(null) === null && sb.ttnLinks(['x', 'y']) === null);
   const lk = sb.ttnLinks(DEST, 'Test B');
@@ -177,7 +213,10 @@ function makeWorld(storeData) {
   };
   const ids = ['nv_banner', 'nv_map', 'nv_mode_truck', 'nv_mode_car', 'nv_follow', 'nv_mute',
     'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps',
-    'nv_ttn', 'nv_ttn_note'];
+    'nv_ttn', 'nv_ttn_note',
+    /* v101: full-screen shell + drive screen */
+    'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
+    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
   reg.nv_banner.children['.nv-banner-main'] = el();
@@ -186,7 +225,7 @@ function makeWorld(storeData) {
   body.querySelector = function (sel) { return reg[sel.slice(1)] || null; };
   body.querySelectorAll = function () { return []; };
 
-  const calls = { fetch: [], polylines: [], spoken: [], views: [], opened: [], anchors: [] };
+  const calls = { fetch: [], polylines: [], spoken: [], views: [], opened: [], anchors: [], markers: [] };
   const mapHandlers = {};
   const mapStub = {
     setView: function (c, z) { calls.views.push([c, z]); return mapStub; },
@@ -197,7 +236,7 @@ function makeWorld(storeData) {
   const L = {
     map: function () { return mapStub; },
     tileLayer: function () { return { addTo: function () {} }; },
-    marker: function () { return { addTo: function () { return this; }, setLatLng: function () {} }; },
+    marker: function (ll) { calls.markers.push(ll); return { addTo: function () { return this; }, setLatLng: function () {} }; },
     circleMarker: function () { return { addTo: function () { return this; }, setLatLng: function () {} }; },
     polyline: function (pts) { calls.polylines.push(pts); return { addTo: function () { return this; }, getBounds: function () { return {}; } }; }
   };
@@ -232,7 +271,7 @@ function makeWorld(storeData) {
   world.window = world;
   vm.createContext(world);
   vm.runInContext(navSrc, world);
-  return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo) { geoCb({ coords: { latitude: la, longitude: lo } }); } };
+  return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo, hd) { geoCb({ coords: { latitude: la, longitude: lo, heading: hd } }); } };
 }
 function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
 
@@ -247,6 +286,10 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w.firePos(ORIGIN[0], ORIGIN[1]);
   w.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
   check('map tap sets the destination note', /Destination:/.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
+  check('v101 tap-pin: the destination line shows the dropped point itself (coordinates)',
+    w.reg.nv_destnote.textContent.indexOf('Dropped pin (51.10750, -114.08450)') >= 0, w.reg.nv_destnote.textContent);
+  check('v101 tap-pin: the destination marker lands exactly on the tap',
+    w.calls.markers.length === 1 && w.calls.markers[0][0] === DEST[0] && w.calls.markers[0][1] === DEST[1]);
   check('server set: Route leads, the handoff sits under it ghost-styled (v93)',
     w.body.innerHTML.indexOf('id="nv_route"') < w.body.innerHTML.indexOf('id="nv_ttn"') &&
     w.body.innerHTML.indexOf('class="btn ghost hidden" id="nv_ttn"') >= 0);
@@ -355,7 +398,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w3.body.innerHTML.indexOf('id="nv_ttn"') < w3.body.innerHTML.indexOf('id="nv_route"') &&
     w3.body.innerHTML.indexOf('class="btn primary big hidden" id="nv_ttn"') >= 0);
   check('no server: the honest handoff label ships in the markup',
-    w3.body.innerHTML.indexOf("Opens Google Maps for spoken directions. Meticulous's own drive screen is coming.") >= 0);
+    w3.body.innerHTML.indexOf('Opens Google Maps for spoken directions.') >= 0);
   check('handoff stays hidden until a destination exists', w3.reg.nv_ttn.classList.contains('hidden'));
   w3.reg.nv_ttn.onclick();
   check('no destination: the tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
@@ -382,6 +425,98 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('cascade 4: Google Maps web directions last', w3.calls.opened[1] === want.web, w3.calls.opened[1]);
   api3.teardown();
 
+  console.log('— flow: pending destination WITH coordinates (v101 Butterfly field fix) —');
+  /* Oct 16 field defect: a hand-added favorite whose pin was saved
+     as its address text arrived as query "Butterfly, 50.9519460,
+     -114.0273550" and the Navigator GEOCODED it, offering a
+     children's playground kilometres away. A pending destination
+     that carries coordinates must be set from them — exactly, and
+     with the geocoder never called. */
+  const wB = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' },
+    nav_pending: { name: 'Butterfly', query: 'Butterfly, 50.9519460, -114.0273550', ts: 1 } });
+  const apiB = wB.world.Meticulous.modules.navigator;
+  apiB.render(wB.body);
+  check('Butterfly: destination set under the favorite name', wB.reg.nv_destnote.textContent.indexOf('Destination: Butterfly') >= 0,
+    wB.reg.nv_destnote.textContent);
+  check('Butterfly: the marker is EXACTLY the favorite pin (50.951946, -114.027355)',
+    wB.calls.markers.length === 1 && Math.abs(wB.calls.markers[0][0] - 50.951946) < 1e-9 &&
+    Math.abs(wB.calls.markers[0][1] - (-114.027355)) < 1e-9, JSON.stringify(wB.calls.markers));
+  check('Butterfly: the search box was not filled with the pin text', wB.reg.nv_q.value === '', JSON.stringify(wB.reg.nv_q.value));
+  check('Butterfly: the geocoder was NEVER called', wB.calls.fetch.filter(function (c) { return c.url.indexOf('nominatim') >= 0; }).length === 0,
+    JSON.stringify(wB.calls.fetch.map(function (c) { return c.url; })));
+  apiB.teardown();
+
+  const wP = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' },
+    nav_pending: { name: 'A2-L20', lat: 50.96649, lng: -114.03178, ts: 1 } });
+  const apiP = wP.world.Meticulous.modules.navigator;
+  apiP.render(wP.body);
+  check('pend lat/lng: destination set from the fields, no fetch of any kind',
+    wP.reg.nv_destnote.textContent.indexOf('Destination: A2-L20') >= 0 && wP.calls.fetch.length === 0 &&
+    wP.calls.markers.length === 1 && wP.calls.markers[0][0] === 50.96649 && wP.calls.markers[0][1] === -114.03178,
+    wP.reg.nv_destnote.textContent);
+  apiP.teardown();
+
+  console.log('— flow: drive screen (v101) —');
+  const wD = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } });
+  const apiD = wD.world.Meticulous.modules.navigator;
+  /* the stub DOM does not parse markup classes — seed the hidden
+     state the real DOM gets from the rendered class attributes */
+  wD.reg.nv_drive.classList.add('hidden');
+  wD.reg.nv_drive_screen.classList.add('hidden');
+  wD.reg.nvd_reroute.classList.add('hidden');
+  apiD.render(wD.body);
+  check('v101: the planning view renders as a full-screen shell with its own Back',
+    wD.body.innerHTML.indexOf('class="nv-shell"') >= 0 && wD.body.innerHTML.indexOf('id="nv_back"') >= 0);
+  check('v101: Drive ships hidden until a route is active',
+    wD.body.innerHTML.indexOf('class="btn primary big hidden" id="nv_drive"') >= 0);
+  wD.firePos(ORIGIN[0], ORIGIN[1], 40);
+  wD.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  wD.reg.nv_route.onclick();
+  await tick(); await tick();
+  check('route active → Drive is revealed', !wD.reg.nv_drive.classList.contains('hidden'));
+  check('route active → Drive takes the ONE primary slot (Route demoted to ghost)',
+    wD.reg.nv_route.className === 'btn ghost big', String(wD.reg.nv_route.className));
+  wD.reg.nv_drive.onclick();
+  check('Drive tap opens the drive screen', !wD.reg.nv_drive_screen.classList.contains('hidden'));
+  check('drive map centres on the truck at navigation zoom (17)',
+    wD.calls.views.some(function (v) { return v[1] === 17; }), JSON.stringify(wD.calls.views));
+  const sbD = { console };
+  vm.createContext(sbD);
+  vm.runInContext(extract(navSrc, 'NAVPURE-BEGIN', 'NAVPURE-END'), sbD);
+  const dLine = sbD.decodeShape(fixture.trip.legs[0].shape);
+  const midPt = dLine[Math.floor(dLine.length * 0.12)];
+  wD.firePos(midPt[0], midPt[1], 90);
+  check('drive screen paints the next instruction + distance',
+    wD.reg.nvd_inst.textContent.length > 0 && wD.reg.nvd_dist.textContent.length > 0,
+    wD.reg.nvd_inst.textContent + ' / ' + wD.reg.nvd_dist.textContent);
+  check('drive screen paints remaining distance + ETA', /left/.test(wD.reg.nvd_eta.textContent), wD.reg.nvd_eta.textContent);
+  check('heading-up: the map spins by −heading around the driver anchor',
+    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  /* off-route while driving: hysteresis, then a re-route request
+     and the rerouting pill on the drive screen */
+  const realNowD = Date.now;
+  let fakeNowD = realNowD();
+  wD.world.Date = { now: function () { return fakeNowD; } };
+  wD.firePos(51.1155, -114.0915, 90);
+  await tick();
+  check('driving: first off-route fix does NOT re-route yet',
+    wD.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
+  fakeNowD += 5000;
+  wD.firePos(51.1155, -114.0915, 90);
+  await tick(); await tick();
+  check('driving: held off-route re-routes from the new position',
+    wD.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 2);
+  check('driving: the drive screen shows its off-route/rerouting pill',
+    !wD.reg.nvd_reroute.classList.contains('hidden'));
+  wD.world.Date = Date;
+  /* arrival at the end of the line ends drive mode cleanly */
+  const endPt = dLine[dLine.length - 1];
+  wD.firePos(endPt[0], endPt[1], 90);
+  check('arrival paints on the drive screen', wD.reg.nvd_inst.textContent === 'You have arrived', wD.reg.nvd_inst.textContent);
+  wD.reg.nvd_exit.onclick();
+  check('End drive closes the drive screen back to the Navigator', wD.reg.nv_drive_screen.classList.contains('hidden'));
+  apiD.teardown();
+
   /* ================= 3. statics ================= */
   console.log('— statics —');
   check('index.html loads modules/navigator.js at ?v=<webVersion>', idxSrc.indexOf('modules/navigator.js?v=' + ver.webVersion) >= 0);
@@ -397,8 +532,20 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
   check('navigator.js carries the v93 turn-by-turn handoff', navSrc.indexOf('id="nv_ttn"') >= 0 && navSrc.indexOf('function ttnLinks') >= 0);
-  check('the handoff label is the honest one', navSrc.indexOf('Opens Google Maps for spoken directions.') >= 0 && navSrc.indexOf('own drive screen is coming.') >= 0);
+  check('the handoff label is the honest one (v101: the drive screen exists — no "coming" copy)',
+    navSrc.indexOf('Opens Google Maps for spoken directions.') >= 0 && navSrc.indexOf('drive screen is coming') < 0);
   check('MeticulousNav exposes ttnLinks for the handoff', navSrc.indexOf('ttnLinks: ttnLinks') >= 0);
+  check('v101: the drive screen ships (button + overlay + prompt engine)',
+    navSrc.indexOf('id="nv_drive"') >= 0 && navSrc.indexOf('id="nv_drive_screen"') >= 0 &&
+    navSrc.indexOf('function drivePrompt') >= 0 && navSrc.indexOf('DRIVE_FAR_M') >= 0);
+  check('v101: pending coordinates are parsed out of the arrival text, never geocoded',
+    navSrc.indexOf('parseLatLngText(pend.query)') >= 0 && navSrc.indexOf('function parseLatLngText') >= 0);
+  check('v101: door 3 — a single map tap drops the pin (pinTap on the map click)',
+    navSrc.indexOf('function pinTap') >= 0 && navSrc.indexOf("S.map.on('click'") >= 0);
+  check('v101: the planning view is a full-screen shell',
+    navSrc.indexOf('class="nv-shell"') >= 0 && cssSrc.indexOf('.nv-shell{position:fixed;inset:0') >= 0);
+  check('v101: drive tilt is the standard navigation pitch (rotateX 52deg, in the 45–60 band)',
+    cssSrc.indexOf('rotateX(52deg)') >= 0 && cssSrc.indexOf('.nv-drive{position:fixed;inset:0') >= 0);
 
   console.log('navigator-test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

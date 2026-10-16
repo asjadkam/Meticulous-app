@@ -1,5 +1,9 @@
-/* Meticulous — Navigator module (v77)
+/* Meticulous — Navigator module (v77; v101 adds the drive screen)
    Turn-by-turn truck navigation on Calgary's designated truck network.
+   v101: a server route can be DRIVEN in-app — a dedicated full-screen
+   drive mode (3D-tilted, heading-up) with far/near spoken prompts
+   through this module's existing speak()/Sound toggle. The v93 Google
+   Maps handoff remains as the alternative on the planning screen.
    Routes come from a self-hosted Valhalla service whose map carries the
    City of Calgary truck-route rules (see the truck-nav build, steps 1–4):
    the truck is kept on legal streets by costing, never by hard bans —
@@ -140,6 +144,7 @@
           instruction: m.instruction || '',
           verbalPre: m.verbal_pre_transition_instruction || '',
           verbalPost: m.verbal_post_transition_instruction || '',
+          streets: (m.street_names || []).slice(),
           lengthKm: len, cumStartKm: cum, cumEndKm: cum + len, type: m.type
         });
         cum += len;
@@ -159,6 +164,59 @@
     return plan.maneuvers.length - 1;
   }
 
+  /* v101 DRIVE SCREEN engine (pure). The drive view shows the road
+     being travelled (the current maneuver's street names — Valhalla
+     names the road each maneuver travels), the distance to the NEXT
+     maneuver's turn, what is left of the trip, and a proportional
+     ETA share of the trip's total minutes. */
+  function currentRoadName(plan, idx) {
+    if (!plan || !plan.maneuvers || !plan.maneuvers.length) return '';
+    var i = Math.min(Math.max(idx || 0, 0), plan.maneuvers.length - 1);
+    for (; i >= 0; i--) {
+      var st = plan.maneuvers[i].streets;
+      if (st && st.length) return st.join(' / ');
+    }
+    return '';
+  }
+
+  function driveProgress(plan, alongM) {
+    var idx = currentManeuverIndex(plan, alongM);
+    var cur = plan.maneuvers[idx] || null;
+    var toTurnM = Math.max(0, (cur ? cur.cumEndKm : plan.totalKm) * 1000 - alongM);
+    var leftM = Math.max(0, plan.totalKm * 1000 - alongM);
+    var etaMin = plan.totalKm > 0 ? plan.totalMin * (leftM / (plan.totalKm * 1000)) : plan.totalMin;
+    return {
+      idx: idx, current: cur, next: plan.maneuvers[idx + 1] || null,
+      toTurnM: toTurnM, leftM: leftM, etaMin: etaMin,
+      road: currentRoadName(plan, idx)
+    };
+  }
+
+  /* Spoken advance prompts for drive mode: each upcoming maneuver
+     is announced ONCE far out (its verbal pre-transition line) and
+     ONCE close in (its crisp instruction). `said` is a caller-owned
+     flag bag ('far:<i>' / 'near:<i>') so the logic stays pure and
+     the caller resets it per route. The final (arrival) maneuver
+     gets no far prompt — only the close-in line. */
+  var DRIVE_FAR_M = 600, DRIVE_NEAR_M = 200;
+  function drivePrompt(plan, idx, toTurnM, said) {
+    if (!plan || !plan.maneuvers || !said) return null;
+    var u = idx + 1;
+    if (u >= plan.maneuvers.length) return null;
+    var next = plan.maneuvers[u];
+    var isFinal = u === plan.maneuvers.length - 1;
+    if (toTurnM <= DRIVE_NEAR_M) {
+      if (said['near:' + u]) return null;
+      said['near:' + u] = 1; said['far:' + u] = 1;
+      return isFinal ? (next.verbalPre || next.instruction) : (next.instruction || next.verbalPre);
+    }
+    if (!isFinal && toTurnM <= DRIVE_FAR_M && !said['far:' + u]) {
+      said['far:' + u] = 1;
+      return next.verbalPre || next.instruction;
+    }
+    return null;
+  }
+
   function fmtDist(m) {
     if (m === null || m === undefined || !isFinite(m)) return '';
     if (m < 1000) return Math.round(m / 10) * 10 + ' m';
@@ -168,6 +226,22 @@
     if (min < 1) return '<1 min';
     if (min < 60) return Math.round(min) + ' min';
     return Math.floor(min / 60) + ' h ' + Math.round(min % 60) + ' min';
+  }
+
+  /* v101 (field fix): pull a "lat, lng" pair out of free text — a
+     whole string ("50.951946, -114.027355") or a name carrying one
+     ("Butterfly, 50.9519460, -114.0273550"). Three-plus decimals on
+     both numbers are required, so street text ("12th Street",
+     "Highway 2, 5 km") can never false-match; ranges are validated.
+     Returns [lat, lng] or null. */
+  function parseLatLngText(text) {
+    if (!text) return null;
+    var m = String(text).match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/);
+    if (!m) return null;
+    var lat = Number(m[1]), lng = Number(m[2]);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return [lat, lng];
   }
 
   /* v93: the turn-by-turn HANDOFF link set. The phone's own maps
@@ -245,6 +319,10 @@
     try { if (S.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(S.watchId); } catch (e) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
     try { if (S.map) S.map.remove(); } catch (e) {}
+    /* v101: the drive screen's map + arrival timer live on S too,
+       so leaving the module mid-drive cleans them up as well. */
+    try { if (S.driveTimer) clearTimeout(S.driveTimer); } catch (e) {}
+    try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
     S = null;
   }
 
@@ -279,20 +357,29 @@
         settings: settings, map: null, userMarker: null, destMarker: null,
         routeLine: null, line: null, plan: null, dest: null, destLabel: '',
         pos: null, follow: true, watchId: null, manIdx: -1,
-        offSince: 0, rerouting: false, arrived: false, searching: false
+        offSince: 0, rerouting: false, arrived: false, searching: false,
+        /* v101 drive mode: state bag + its own Leaflet instance and
+           arrival timer (kept on S so teardown reaches them). */
+        drive: null, driveMap: null, driveLine: null, driveMarker: null,
+        driveTimer: null, heading: null
       };
 
-      var h = '';
-      if (!settings.serverUrl) {
-        h += '<div class="card" style="border:2px solid #f5a623;background:#fff8e6">' +
-          '<b>Navigator server not set — routing unavailable.</b><br>' +
-          '<span style="color:#555">Set the Navigator server URL in Preferences → Advanced. The map and your position still work below.</span></div>';
-      }
-      h += '<div class="card" style="padding:10px">' +
-        '<div id="nv_banner" class="nv-banner"><div class="nv-banner-main">Where to?</div>' +
-        '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
+      /* v101: the Navigator is a FULL-SCREEN view (owner, Oct 16:
+         the small map card inside the scrolling page is rejected).
+         A fixed shell fills the screen: slim header with the way
+         back, the map filling everything between, and the three
+         destination doors (favorites, typed address, tap-the-map
+         pin) plus the route actions in a bottom sheet OVER the
+         shell — the map itself stays visible above it. The drive
+         screen (below) layers over this shell. */
+      var h = '<div class="nv-shell">' +
+        '<div class="nv-shell-head"><button class="btn ghost small" id="nv_back">← Back</button>' +
+        '<span class="nv-shell-title">🧭 Navigator</span></div>' +
+        '<div class="nv-mapzone">' +
         '<div id="nv_map" class="nv-map"></div>' +
-        '<div class="row" style="margin-top:8px">' +
+        '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
+        '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
+        '<div class="row nv-maprow">' +
         '<button class="btn small ' + (settings.mode === 'truck' ? 'primary' : 'ghost') + '" id="nv_mode_truck" style="flex:1">🚛 Truck</button>' +
         '<button class="btn small ' + (settings.mode === 'car' ? 'primary' : 'ghost') + '" id="nv_mode_car" style="flex:1">🚗 Car</button>' +
         '<button class="btn small ghost" id="nv_follow" style="flex:1">🎯 Follow: on</button>' +
@@ -310,6 +397,12 @@
         }
       } catch (e) { biPlaces = []; }
 
+      h += '<div class="nv-sheet">';
+      if (!settings.serverUrl) {
+        h += '<div class="card" style="border:2px solid #f5a623;background:#fff8e6">' +
+          '<b>Navigator server not set — routing unavailable.</b><br>' +
+          '<span style="color:#555">Set the Navigator server URL in Preferences → Advanced. The map and your position still work below.</span></div>';
+      }
       h += '<div class="card"><h3>📍 Destination</h3>' +
         '<label class="f">Address or place</label>' +
         '<div class="row"><input id="nv_q" placeholder="e.g. Foothills Industrial Park, Calgary" style="flex:1">' +
@@ -331,14 +424,47 @@
         (settings.serverUrl
           ? '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
             '<button class="btn ghost hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
-            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions. Meticulous\'s own drive screen is coming.</p>'
+            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions.</p>'
           : '<button class="btn primary big hidden" id="nv_ttn" style="margin-top:8px">▶ Turn-by-turn</button>' +
-            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions. Meticulous\'s own drive screen is coming.</p>' +
+            '<p class="note hidden" id="nv_ttn_note">Opens Google Maps for spoken directions.</p>' +
             '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>') +
+        /* v101: the in-app drive screen. Hidden until a server route
+           is ACTIVE (doRoute reveals it and takes the primary slot;
+           Route demotes to a quiet re-route). Needs a route by
+           construction, so the no-server layout never shows it. */
+        '<button class="btn primary big hidden" id="nv_drive" style="margin-top:8px">▶ Drive</button>' +
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
-      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_steps"><div class="empty">No route yet.</div></div></div>';
+      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div>';
+
+      /* v101 DRIVE SCREEN — a dedicated full-screen mode (fixed
+         overlay; rendered hidden with the module so teardown is the
+         ordinary innerHTML replacement). The map inside is a SECOND
+         Leaflet instance on its own container, created on Drive and
+         removed on exit; position comes from this module's ONE
+         existing watchPosition stream (see onPos) — drive mode adds
+         no GPS consumer of its own. Heading-up + the 3D tilt are
+         CSS transforms wrapped around the map (see style.css):
+         .nv-drive-tilt pitches the plane, .nv-drive-spin rotates
+         it by −heading around the driver anchor (50% / 64%), and
+         the map box is oversized so the corners never show. */
+      h += '<div id="nv_drive_screen" class="nv-drive hidden">' +
+        '<div class="nv-drive-top">' +
+        '<div class="nv-drive-dist" id="nvd_dist"></div>' +
+        '<div class="nv-drive-inst" id="nvd_inst"></div>' +
+        '<div class="nv-drive-road" id="nvd_road"></div></div>' +
+        '<div class="nv-drive-viewport">' +
+        '<div class="nv-drive-tilt"><div class="nv-drive-spin" id="nvd_spin">' +
+        '<div class="nv-drive-mapbox"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
+        '</div></div>' +
+        '<div class="nv-drive-you">▲</div>' +
+        '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div></div>' +
+        '<div class="nv-drive-bar">' +
+        '<div class="nv-drive-eta" id="nvd_eta"></div>' +
+        '<button class="btn ghost" id="nvd_mute">🔊 Sound: on</button>' +
+        '<button class="btn primary" id="nvd_exit">End drive</button>' +
+        '</div></div></div>';
       body.innerHTML = h;
 
       var note = function (t) { var n = body.querySelector('#nv_note'); if (n) n.textContent = t || ''; };
@@ -356,7 +482,7 @@
           maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
         }).addTo(S.map);
         S.map.on('click', function (e) {
-          setDest([e.latlng.lat, e.latlng.lng], 'Dropped pin');
+          pinTap([e.latlng.lat, e.latlng.lng]);
         });
         S.map.on('dragstart', function () {
           if (S.follow) { S.follow = false; paintFollow(); }
@@ -385,6 +511,35 @@
         banner('Destination set', S.settings.serverUrl
           ? 'Tap Route to get ' + (S.settings.mode === 'car' ? 'car' : 'truck') + ' directions.'
           : 'Tap Turn-by-turn for spoken directions in your maps app.');
+      }
+
+      /* v101 door 3: tap-the-map pin (owner, Oct 16: anyone not
+         choosing from favorites needs this door). A single tap
+         drops — or moves — the destination pin, and the
+         destination line shows the point itself (its coordinates),
+         so what will be routed to is never a guess. A best-effort
+         reverse lookup on the SAME free Nominatim service the
+         address search already uses adds the road/place name when
+         it answers — no new service, no key; offline, the line
+         simply stays "Dropped pin (coords)". */
+      function pinTap(latlng) {
+        setDest(latlng, 'Dropped pin');
+        var coords = latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5);
+        var dn = body.querySelector('#nv_destnote');
+        if (dn) dn.textContent = 'Destination: Dropped pin (' + coords + ') — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
+        if (typeof fetch !== 'function') return;
+        fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=' + latlng[0] + '&lon=' + latlng[1])
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j || !S.dest || S.dest[0] !== latlng[0] || S.dest[1] !== latlng[1]) return;
+            var nm = (j.address && (j.address.road || j.address.neighbourhood || j.address.suburb)) || j.name || '';
+            if (!nm && j.display_name) nm = String(j.display_name).split(',')[0];
+            if (!nm) return;
+            S.destLabel = nm;
+            var d2 = body.querySelector('#nv_destnote');
+            if (d2) d2.textContent = 'Destination: ' + nm + ' (' + coords + ') — tap ' + (S.settings.serverUrl ? 'Route.' : 'Turn-by-turn.');
+          })
+          .catch(function () {});
       }
 
       var searchBtn = body.querySelector('#nv_search');
@@ -440,8 +595,30 @@
         var pend = (window.App && App._store) ? App._store.get('nav_pending', null) : null;
         if (pend) {
           App._store.del('nav_pending');
+          /* v101 (field fix, Oct 16): a destination that ARRIVES
+             with coordinates is set from those coordinates — never
+             geocoded. Three arrival shapes, in order: explicit
+             lat/lng fields; a coordinate pair inside the query or
+             address text (a favorite whose pin was saved as its
+             address text lands here — geocoding that text matched
+             a children's playground kilometres away instead of the
+             favorite's own pin); only then, a plain text search.
+             Geocoding is for text the user typed themselves. */
+          var pendCoords = null;
           if (pend.lat && pend.lng) {
-            setDest([Number(pend.lat), Number(pend.lng)], pend.name || '');
+            var pla = Number(pend.lat), plng = Number(pend.lng);
+            if (isFinite(pla) && isFinite(plng)) pendCoords = [pla, plng];
+          }
+          if (!pendCoords) {
+            pendCoords = parseLatLngText(pend.query) || parseLatLngText(pend.address) ||
+              parseLatLngText(pend.name);
+          }
+          if (pendCoords) {
+            var pendName = String(pend.name || '');
+            if (parseLatLngText(pendName)) {
+              pendName = pendName.replace(/,?\s*-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\s*$/, '').trim();
+            }
+            setDest(pendCoords, pendName || 'Dropped pin');
             if (S.map) S.map.setView(S.dest, 14);
           } else if (pend.query) {
             var pq = body.querySelector('#nv_q');
@@ -451,9 +628,14 @@
       } catch (e) {}
 
       /* ---------- GPS follow ---------- */
-      function onPos(lat, lon) {
+      /* v101: heading rides the SAME single watch — drive mode
+         consumes this stream and nothing else. GPS heading is null
+         when stationary; the last real heading is kept so the
+         drive map never spins while the truck is stopped. */
+      function onPos(lat, lon, heading) {
         var first = !S.pos;
         S.pos = [lat, lon];
+        if (heading !== null && heading !== undefined && isFinite(heading)) S.heading = heading;
         if (S.map) {
           if (S.userMarker) S.userMarker.setLatLng(S.pos);
           else S.userMarker = L.circleMarker(S.pos, { radius: 8, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.9 }).addTo(S.map);
@@ -461,18 +643,19 @@
         }
         if (first && !S.plan) banner('You are here', 'Search for a place, or tap the map to drop a pin.');
         if (S.plan) trackProgress();
+        if (S.drive) driveTick();
       }
       /* Seed from the native geo wrapper's last fix when present,
          then follow the browser watcher (works in every build). */
       try {
         var lastFix = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) ||
           (window.App && App.geo && App.geo.last && App.geo.last());
-        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude);
+        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude, lastFix.bearing);
       } catch (e) {}
       if (navigator.geolocation) {
         try {
           S.watchId = navigator.geolocation.watchPosition(
-            function (p) { onPos(p.coords.latitude, p.coords.longitude); },
+            function (p) { onPos(p.coords.latitude, p.coords.longitude, p.coords.heading); },
             function () { if (!S.pos) note('Location is unavailable — allow location for Meticulous to navigate.'); },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
           );
@@ -483,10 +666,15 @@
 
       /* ---------- routing ---------- */
       function clearRoute() {
+        if (S.drive) exitDrive();
         S.plan = null; S.line = null; S.manIdx = -1; S.offSince = 0; S.arrived = false;
         if (S.routeLine && S.map) { S.map.removeLayer(S.routeLine); S.routeLine = null; }
         var st = body.querySelector('#nv_steps'); if (st) st.innerHTML = '<div class="empty">No route yet.</div>';
         var end = body.querySelector('#nv_end'); if (end) end.classList.add('hidden');
+        /* v101: no active route → Drive goes away and Route takes
+           the primary slot back. */
+        var db = body.querySelector('#nv_drive'); if (db) db.classList.add('hidden');
+        var rb = body.querySelector('#nv_route'); if (rb) rb.className = 'btn primary big';
         try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
       }
 
@@ -532,8 +720,18 @@
                 }).join('');
             }
             var end = body.querySelector('#nv_end'); if (end) end.classList.remove('hidden');
+            /* v101: a route is ACTIVE — Drive appears and takes
+               the one primary slot; Route demotes to a quiet
+               re-route. A re-route landing mid-drive re-arms the
+               drive screen on the new plan. */
+            var db = body.querySelector('#nv_drive'); if (db) db.classList.remove('hidden');
+            var rb = body.querySelector('#nv_route'); if (rb) rb.className = 'btn ghost big';
+            if (S.drive) driveOnRoute();
             paintStep();
-            speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
+            /* mid-drive, the drive screen's own prompts own the
+               speech; the planning screen keeps its first-line
+               announcement exactly as before. */
+            if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
             note('');
           })
           .catch(function () {
@@ -581,7 +779,15 @@
           var prev = S.plan.maneuvers[S.manIdx];
           S.manIdx = idx;
           if (prev && prev.verbalPost) speak(prev.verbalPost);
-          else { var cur = S.plan.maneuvers[idx]; if (cur) speak(cur.verbalPre || cur.instruction); }
+          else {
+            var cur = S.plan.maneuvers[idx];
+            /* v101: in drive mode the far/near prompts (drivePrompt)
+               own advance speech — if this maneuver was already
+               announced on approach, don't repeat its line here. */
+            var announced = !!(S.drive && S.drive.said &&
+              (S.drive.said['far:' + idx] || S.drive.said['near:' + idx]));
+            if (cur && !announced) speak(cur.verbalPre || cur.instruction);
+          }
         }
         paintStep();
         var dDest = haversineM(S.pos, S.dest);
@@ -590,11 +796,135 @@
           var last = S.plan.maneuvers[S.plan.maneuvers.length - 1];
           banner('You have arrived', S.destLabel || '');
           speak((last && last.verbalPost) || 'You have arrived.');
+          if (S.drive) driveArrived();
         }
       }
 
+      /* ---------- v101 drive screen ---------- */
+      function startDrive() {
+        if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
+        if (S.drive) return;
+        S.drive = { said: {}, headingApplied: null };
+        var scr = body.querySelector('#nv_drive_screen');
+        if (scr) scr.classList.remove('hidden');
+        if (window.L && body.querySelector('#nv_drive_map')) {
+          try {
+            S.driveMap = L.map('nv_drive_map', {
+              zoomControl: false, attributionControl: false, dragging: false,
+              scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+              keyboard: false, touchZoom: false
+            }).setView(S.pos || S.line[0], 17);
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(S.driveMap);
+            S.driveLine = L.polyline(S.line, {
+              color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 6, opacity: 0.95
+            }).addTo(S.driveMap);
+            if (S.pos) {
+              S.driveMarker = L.circleMarker(S.pos, { radius: 9, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.95 }).addTo(S.driveMap);
+            }
+            setTimeout(function () { try { if (S && S.driveMap) S.driveMap.invalidateSize(); } catch (e) {} }, 120);
+          } catch (e) { S.driveMap = null; }
+        }
+        paintMute();
+        var saidNow = driveTick();
+        if (!saidNow) {
+          var cur = S.plan.maneuvers[S.manIdx] || S.plan.maneuvers[0];
+          if (cur) speak(cur.verbalPre || cur.instruction);
+        }
+      }
+
+      function exitDrive() {
+        if (!S || !S.drive) return;
+        S.drive = null;
+        if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
+        try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
+        S.driveMap = null; S.driveLine = null; S.driveMarker = null;
+        var scr = body.querySelector('#nv_drive_screen');
+        if (scr) scr.classList.add('hidden');
+      }
+
+      /* A re-route landed while driving: fresh plan, fresh prompt
+         flags, fresh line on the drive map. */
+      function driveOnRoute() {
+        if (!S.drive) return;
+        S.drive.said = {};
+        S.drive.headingApplied = null;
+        if (S.driveMap && S.line) {
+          try {
+            if (S.driveLine) S.driveMap.removeLayer(S.driveLine);
+            S.driveLine = L.polyline(S.line, {
+              color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 6, opacity: 0.95
+            }).addTo(S.driveMap);
+          } catch (e) {}
+        }
+        driveTick();
+      }
+
+      /* One drive paint per GPS fix, off the module's one watch.
+         Returns the text spoken (if any) so startDrive can avoid
+         double-announcing. */
+      function driveTick() {
+        if (!S.drive || !S.plan || !S.line || !S.pos || S.arrived) return null;
+        var pr = distToRouteM(S.pos, S.line);
+        var dp = driveProgress(S.plan, pr.along);
+        var showNext = !!dp.next;
+        var distEl = body.querySelector('#nvd_dist');
+        if (distEl) distEl.textContent = fmtDist(showNext ? dp.toTurnM : dp.leftM);
+        var instEl = body.querySelector('#nvd_inst');
+        if (instEl) instEl.textContent = showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : '');
+        var roadEl = body.querySelector('#nvd_road');
+        if (roadEl) roadEl.textContent = dp.road ? 'On ' + dp.road : '';
+        var etaEl = body.querySelector('#nvd_eta');
+        if (etaEl) etaEl.textContent = fmtDist(dp.leftM) + ' · ' + fmtMin(dp.etaMin) + ' left' +
+          (S.destLabel ? ' · to ' + S.destLabel : '');
+        var rrEl = body.querySelector('#nvd_reroute');
+        if (rrEl) {
+          var showRr = S.rerouting || pr.dist > 60;
+          rrEl.classList.toggle('hidden', !showRr);
+          rrEl.textContent = S.rerouting ? 'Rerouting…' : 'Off route';
+        }
+        var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
+        if (say) speak(say);
+        if (S.driveMap) {
+          try {
+            S.driveMap.setView(S.pos, 17);
+            if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
+          } catch (e) {}
+        }
+        /* Heading-up: the spin wrapper rotates by −heading around
+           the driver anchor; stationary fixes carry no heading and
+           S.heading keeps the last real one. */
+        var spin = body.querySelector('#nvd_spin');
+        if (spin && S.heading !== null && S.heading !== undefined && S.drive.headingApplied !== S.heading) {
+          S.drive.headingApplied = S.heading;
+          spin.style.transform = 'rotate(' + (-S.heading) + 'deg)';
+        }
+        return say;
+      }
+
+      /* Arrival owns the drive screen briefly, then drive mode
+         ends itself back to the Navigator (the route stays up on
+         the planning screen until the driver ends it). */
+      function driveArrived() {
+        if (!S.drive) return;
+        var instEl = body.querySelector('#nvd_inst'); if (instEl) instEl.textContent = 'You have arrived';
+        var distEl = body.querySelector('#nvd_dist'); if (distEl) distEl.textContent = '';
+        var roadEl = body.querySelector('#nvd_road'); if (roadEl) roadEl.textContent = S.destLabel || '';
+        var etaEl = body.querySelector('#nvd_eta'); if (etaEl) etaEl.textContent = 'Trip complete';
+        var rrEl = body.querySelector('#nvd_reroute'); if (rrEl) rrEl.classList.add('hidden');
+        if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} }
+        S.driveTimer = setTimeout(function () { exitDrive(); }, 3000);
+      }
+
       /* ---------- controls ---------- */
+      var backBtn = body.querySelector('#nv_back');
+      if (backBtn) backBtn.onclick = function () {
+        try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
+      };
       body.querySelector('#nv_route').onclick = doRoute;
+      var driveBtn = body.querySelector('#nv_drive');
+      if (driveBtn) driveBtn.onclick = startDrive;
+      var dExit = body.querySelector('#nvd_exit');
+      if (dExit) dExit.onclick = function () { exitDrive(); };
 
       /* v93: the turn-by-turn handoff. Walks the ttnLinks chain
          with pauses: if a maps app takes over, the page hides and
@@ -640,13 +970,23 @@
         S.follow = !S.follow; paintFollow();
         if (S.follow && S.pos && S.map) S.map.setView(S.pos, S.map.getZoom());
       };
-      var muteBtn = body.querySelector('#nv_mute');
-      if (muteBtn) muteBtn.onclick = function () {
+      /* v101: ONE sound toggle, two faces (planning card + drive
+         bar) — same settings.muted, same speak() gate. */
+      function paintMute() {
+        var label = S.settings.muted ? '🔇 Sound: off' : '🔊 Sound: on';
+        var b1 = body.querySelector('#nv_mute'); if (b1) b1.textContent = label;
+        var b2 = body.querySelector('#nvd_mute'); if (b2) b2.textContent = label;
+      }
+      function toggleMute() {
         S.settings.muted = !S.settings.muted;
         saveSettings({ muted: S.settings.muted });
-        muteBtn.textContent = S.settings.muted ? '🔇 Sound: off' : '🔊 Sound: on';
+        paintMute();
         if (S.settings.muted) { try { speechSynthesis.cancel(); } catch (e) {} }
-      };
+      }
+      var muteBtn = body.querySelector('#nv_mute');
+      if (muteBtn) muteBtn.onclick = toggleMute;
+      var dMute = body.querySelector('#nvd_mute');
+      if (dMute) dMute.onclick = toggleMute;
       function paintMode() {
         var t = body.querySelector('#nv_mode_truck'), c = body.querySelector('#nv_mode_car');
         if (t) t.className = 'btn small ' + (S.settings.mode === 'truck' ? 'primary' : 'ghost');
