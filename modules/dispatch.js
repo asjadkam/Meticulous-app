@@ -201,6 +201,31 @@
     }
     return (d && typeof d.date === 'string') ? d.date : '';
   }
+  /* v86: the Scheduled field is a DATE input + a TIME input, not
+     one datetime-local. A datetime-local takes a typed time only
+     as part of a complete date+time — a time typed on its own is
+     silently discarded (the field reads ''), which is exactly how
+     the Oct 15 live drive's dispatch got saved with NO scheduled
+     time and the manifest fell back to session times. The two
+     fields each accept typing AND a picker, independently; the
+     stored scheduledAt string format is unchanged
+     ('YYYY-MM-DDTHH:MM', or the date alone when no time is set). */
+  function dspComposeSched(dateStr, timeStr, fallbackDate) {
+    var d = String(dateStr || '').trim(), t = String(timeStr || '').trim();
+    if (d && t) return d + 'T' + t;
+    if (d) return d;
+    if (t) return fallbackDate ? (String(fallbackDate) + 'T' + t) : '';
+    return '';
+  }
+  function dspSplitSched(s) {
+    var out = { date: '', time: '' };
+    if (typeof s !== 'string') return out;
+    var m = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(s);
+    if (m) { out.date = m[1]; out.time = m[2] || ''; return out; }
+    var t = /(\d{2}:\d{2})/.exec(s);
+    if (t) out.time = t[1];
+    return out;
+  }
   function dspMayStart(d, today) {
     var rd = dspRecordDate(d);
     return !rd || rd === today;
@@ -718,8 +743,9 @@
         '<div id="dp_draft_warn"></div>' +
         '<div id="dp_save_err"></div>' +
         '<label class="f">Job site</label><input id="dp_site" placeholder="e.g. Aecon — Deerfoot site">' +
-        '<div class="row"><div><label class="f">Scheduled</label><input id="dp_when" type="datetime-local"></div>' +
-        '<div><label class="f">Truck type</label><input id="dp_equip" placeholder="e.g. Tandem"></div></div>' +
+        '<div class="row"><div><label class="f">Scheduled date</label><input id="dp_date" type="date"></div>' +
+        '<div><label class="f">Start time</label><input id="dp_time" type="time"></div></div>' +
+        '<label class="f">Truck type</label><input id="dp_equip" placeholder="e.g. Tandem">' +
         '<div id="dp_active_note"></div>' +
         '<div id="dp_pin" style="font-size:13px;margin:2px 0 6px;"></div>' +
         '<input type="hidden" id="dp_lat"><input type="hidden" id="dp_lng">' +
@@ -976,7 +1002,7 @@
         var q = function (id) { var n = body.querySelector(id); return n ? n.value : ''; };
         return {
           fields: {
-            jobSite: q('#dp_site'), scheduledAt: q('#dp_when'), equipment: q('#dp_equip'),
+            jobSite: q('#dp_site'), scheduledAt: dspComposeSched(q('#dp_date'), q('#dp_time'), App._today()), equipment: q('#dp_equip'),
             lat: q('#dp_lat'), lng: q('#dp_lng'),
             material: q('#dp_mat'), ticketNo: q('#dp_ticket'),
             amount: q('#dp_amt'), loads: q('#dp_loads'), notes: q('#dp_notes'),
@@ -1029,7 +1055,10 @@
         if (!draft0 || !draft0.fields) return;
         var f = draft0.fields;
         var set = function (id, v) { var n = body.querySelector(id); if (n && v !== undefined && v !== null) n.value = v; };
-        set('#dp_site', f.jobSite); set('#dp_when', f.scheduledAt); set('#dp_equip', f.equipment);
+        set('#dp_site', f.jobSite);
+        var schedParts = dspSplitSched(f.scheduledAt);
+        set('#dp_date', schedParts.date); set('#dp_time', schedParts.time);
+        set('#dp_equip', f.equipment);
         set('#dp_lat', f.lat); set('#dp_lng', f.lng);
         set('#dp_mat', f.material); set('#dp_ticket', f.ticketNo);
         set('#dp_amt', f.amount); if (f.loads) set('#dp_loads', f.loads); set('#dp_notes', f.notes);
@@ -1058,7 +1087,7 @@
           usedSugNote = '';
         }
       }
-      ['#dp_site', '#dp_when', '#dp_equip', '#dp_mat', '#dp_ticket', '#dp_amt', '#dp_loads', '#dp_notes'].forEach(function (id) {
+      ['#dp_site', '#dp_date', '#dp_time', '#dp_equip', '#dp_mat', '#dp_ticket', '#dp_amt', '#dp_loads', '#dp_notes'].forEach(function (id) {
         var n = body.querySelector(id);
         if (n) { n.addEventListener('input', persistDraft); n.addEventListener('change', persistDraft); }
       });
@@ -1196,16 +1225,19 @@
         var msg = '';
         var act = active();
         if (!editingId && act) {
-          var whenEl = body.querySelector('#dp_when');
-          var rd = whenEl ? dspRecordDate({ scheduledAt: whenEl.value || '' }) : '';
+          var dateEl = body.querySelector('#dp_date');
+          var timeEl = body.querySelector('#dp_time');
+          var rd = dateEl ? dspRecordDate({ scheduledAt: dspComposeSched(dateEl.value, timeEl ? timeEl.value : '', App._today()) }) : '';
           if (rd && rd !== App._today()) {
             msg = '🚛 Today\'s dispatch stays active — this saves for ' + fmtDay(rd) + ' and will not start now.';
           }
         }
         e.innerHTML = msg ? '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin:6px 0 10px;">' + esc(msg) + '</div>' : '';
       }
-      var whenNode = body.querySelector('#dp_when');
-      if (whenNode) { whenNode.addEventListener('input', paintActiveNote); whenNode.addEventListener('change', paintActiveNote); }
+      ['#dp_date', '#dp_time'].forEach(function (sel) {
+        var schedNode = body.querySelector(sel);
+        if (schedNode) { schedNode.addEventListener('input', paintActiveNote); schedNode.addEventListener('change', paintActiveNote); }
+      });
 
       /* v48: restore a kept draft (fields + tickets + note) */
       if (draft0) { restoreDraft(); renderTicketList(); updateNameEl(); }
@@ -1239,7 +1271,12 @@
             /* v35: rate/amount from a rate confirmation */
             if (form.amount && !body.querySelector('#dp_amt').value) body.querySelector('#dp_amt').value = form.amount;
             /* v31: scheduled datetime + truck type + map pin from OCR */
-            if (form.scheduledAt && !body.querySelector('#dp_when').value) body.querySelector('#dp_when').value = form.scheduledAt;
+            if (form.scheduledAt) {
+              var sp86 = dspSplitSched(form.scheduledAt);
+              var dEl86 = body.querySelector('#dp_date'), tEl86 = body.querySelector('#dp_time');
+              if (dEl86 && sp86.date && !dEl86.value) dEl86.value = sp86.date;
+              if (tEl86 && sp86.time && !tEl86.value) tEl86.value = sp86.time;
+            }
             if (form.equipment && !body.querySelector('#dp_equip').value) body.querySelector('#dp_equip').value = form.equipment;
             if (form.lat !== undefined && form.lat !== null && form.lng !== undefined && form.lng !== null) {
               body.querySelector('#dp_lat').value = form.lat;
@@ -1325,7 +1362,7 @@
         var drvEl = body.querySelector('#dp_driver'); // v52: absent when no P&L drivers
         return {
           jobSite: body.querySelector('#dp_site').value.trim(),
-          scheduledAt: body.querySelector('#dp_when').value || '', // v31: dispatch datetime from OCR/manual
+          scheduledAt: dspComposeSched(body.querySelector('#dp_date').value, body.querySelector('#dp_time').value, App._today()), // v31/v86: dispatch date+time from the split fields
           equipment: body.querySelector('#dp_equip').value.trim(), // v31: truck type (Tandem…)
           lat: latV !== '' ? parseFloat(latV) : null,               // v31: map pin from OCR coords
           lng: lngV !== '' ? parseFloat(lngV) : null,
@@ -1599,6 +1636,15 @@
             '<button type="button" class="btn secondary" id="dp_ct_cam" style="flex:1;">📷 Take photo</button>' +
             '<button type="button" class="btn secondary" id="dp_ct_pick" style="flex:1;">📁 Choose file</button>' +
             '</div>' +
+            /* v86: the photo is ONE door, never the only door (the
+               owner's standing capture rule, same as fuel). A card
+               he never held can't block the close: typing the ticket
+               number + foreman hours by hand lands on the exact same
+               confirm view. Before v86 this step offered the camera
+               or nothing, so the Oct 15 live drive fell back to a
+               plain Complete and lost the foreman-hours entry. */
+            '<p class="note">No photo? Type the ticket number and the foreman hours by hand instead — the close works exactly the same.</p>' +
+            '<button type="button" class="btn navy" id="dp_ct_manual" style="width:100%;margin-bottom:8px;">✍️ Type it instead — no photo</button>' +
             '<input type="file" id="dp_ct_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
             '<input type="file" id="dp_ct_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
             '<div id="dp_ct_status" style="font-size:14px;margin:6px 0;"></div>' +
@@ -1609,13 +1655,18 @@
           wrap.querySelector('#dp_ct_cam').onclick = function () { camIn.click(); };
           wrap.querySelector('#dp_ct_pick').onclick = function () { fileIn.click(); };
           wrap.querySelector('#dp_ct_cancel').onclick = function () { closeState = null; paintCloseFlow(); };
+          wrap.querySelector('#dp_ct_manual').onclick = function () {
+            closeToConfirm({ id: ticketId(), photo: null, ocrType: 'haul_card', manual: true, date: App._today() }, false);
+          };
           camIn.onchange = handleClosePhoto;
           fileIn.onchange = handleClosePhoto;
           return;
         }
         /* ---- confirm step ---- */
         var readLines = '';
-        if (closeState.readFail) {
+        if (t.manual) {
+          readLines = '<div class="b">✍️ Typed by hand — no photo attached. The ticket number and hours below are the record.</div>';
+        } else if (closeState.readFail) {
           readLines = '<div class="b" style="color:var(--orange)">⚠️ That photo couldn\'t be read — it is still attached below as the record. Type the hours from the card.</div>';
         } else if (t.docRead) {
           if (t.docRead.found && t.docRead.found.length) {
@@ -1625,12 +1676,17 @@
             readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(t.docRead.missing.join(', ')) + '</div>';
           }
         }
-        var inputs = '';
+        /* v86: the ticket number is an editable field on EVERY
+           confirm (it was display-only before, so a hand-typed
+           close had nowhere to put the number at all — and a
+           misread number on a photo close couldn't be fixed). */
+        var inputs = '<label class="f">Ticket / card #</label>' +
+          '<input id="dp_cf_ticketno" type="text" value="' + esc(t.cardNumber || t.orderNo || t.ticketNo || '') + '" placeholder="e.g. 23177">';
         if (t.ocrType === 'scale_ticket') {
-          inputs = '<label class="f">Net weight (tonnes)</label>' +
+          inputs += '<label class="f">Net weight (tonnes)</label>' +
             '<input id="dp_cf_net" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(t.netWeight || '') + '">';
         } else {
-          inputs = '<label class="f">Foreman hours (from the card)</label>' +
+          inputs += '<label class="f">Foreman hours (from the card)</label>' +
             '<input id="dp_cf_hours" type="number" inputmode="decimal" min="0" step="0.25" value="' + esc(t.foremanHours || '') + '" placeholder="e.g. 9.5">';
           if (t.ocrType === 'haul_card') {
             inputs += '<label class="f">Payment unit (checked on card)</label><select id="dp_cf_punit">' +
@@ -1675,6 +1731,18 @@
         var t = {};
         for (var k in closeState.ticket) { if (Object.prototype.hasOwnProperty.call(closeState.ticket, k)) t[k] = closeState.ticket[k]; }
         if (!wrap) return t;
+        var noEl = wrap.querySelector('#dp_cf_ticketno');
+        if (noEl) {
+          /* a typed number wins; an EMPTY field never erases a
+             number the read already found (the field opens showing
+             it — empty here means untouched, not cleared). */
+          var nv2 = noEl.value.trim();
+          if (nv2) {
+            if (t.cardNumber || t.ocrType === 'haul_card') t.cardNumber = nv2;
+            else if (t.orderNo) t.orderNo = nv2;
+            else t.ticketNo = nv2;
+          }
+        }
         var hEl = wrap.querySelector('#dp_cf_hours'); if (hEl) t.foremanHours = hEl.value.trim();
         var pEl = wrap.querySelector('#dp_cf_punit'); if (pEl) t.paymentUnit = pEl.value;
         var nEl = wrap.querySelector('#dp_cf_net'); if (nEl) t.netWeight = nEl.value.trim();

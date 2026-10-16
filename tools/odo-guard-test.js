@@ -112,6 +112,19 @@ const gateBlock = slice(appSrc, 'function odoMasterNow', 'function onbWirePhoto'
   eq('A24 save: empty input ignored', D('', 168759, false).action, 'ignore');
   eq('A25 save: un-poisoning — a poisoned 519326 master can be corrected down', JSON.stringify(D('168934', 519326, true)), JSON.stringify({ action: 'correct', value: 168934 }));
   eq('A26 save: un-poisoning still needs the arm', JSON.stringify(D('168934', 519326, false)), JSON.stringify({ action: 'keep', value: 519326 }));
+  /* v86: the decision is TWO-SIDED — the Oct 15 live drive typed
+     519,326 into the FUEL form and the old "at-or-above sets" rule
+     waved it into the master. A jump past master + 1,000 is now
+     refused unarmed and a correction only when armed; the bump
+     refuses jumps too (its refusal key is sparse — present only on
+     a refusal, so A17/A18's exact shapes stand). */
+  eq('A27 save: jump past the master, unarmed, keeps (the fuel-save poison)', JSON.stringify(D('519326', 168759, false)), JSON.stringify({ action: 'keep', value: 168759 }));
+  eq('A28 save: jump past the master, correction armed, corrects', JSON.stringify(D('519326', 168759, true)), JSON.stringify({ action: 'correct', value: 519326 }));
+  eq('A29 save: exactly +1,000 km still sets (a long day is plausible)', JSON.stringify(D('169759', 168759, false)), JSON.stringify({ action: 'set', value: 169759 }));
+  eq('A30 save: +1,001 km is a jump', JSON.stringify(D('169760', 168759, false)), JSON.stringify({ action: 'keep', value: 168759 }));
+  store.set('mt_odo', '168759');
+  eq('A31 bump: a jump is refused, master untouched', JSON.stringify(X.bumpOdometer(519326)), JSON.stringify({ value: 168759, raised: false, previous: 168759, refused: 'jump' }));
+  eq('A32 bump: the master really is untouched after the refusal', X.masterOdometer(), 168759);
 }
 
 /* ==================================================================

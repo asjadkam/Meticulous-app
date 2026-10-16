@@ -380,7 +380,11 @@ console.log('(d) Dispatch — the Use tap, driven end to end (Oct 14 19:22 field
   eq('draft carries the scheduled time', draft.fields.scheduledAt, tomorrowStr() + 'T08:00');
   eq('draft carries the equipment', draft.fields.equipment, 'Tandem');
   eq('FORM shows the job site (the load is visible)', w.body.querySelector('#dp_site').value, 'Aecon Inf');
-  eq('FORM shows the scheduled time', w.body.querySelector('#dp_when').value, tomorrowStr() + 'T08:00');
+  /* v86: the Scheduled field is a date input + a time input now —
+     the single datetime-local silently discarded a typed time (see
+     dispatch.js dspComposeSched) — so the form shows the pair. */
+  eq('FORM shows the scheduled date', w.body.querySelector('#dp_date').value, tomorrowStr());
+  eq('FORM shows the scheduled time', w.body.querySelector('#dp_time').value, '08:00');
   eq('FORM shows the equipment', w.body.querySelector('#dp_equip').value, 'Tandem');
   has('FORM banner names the load (not a silent draft)', w.body.querySelector('#dp_draft_note').innerHTML, 'Loaded from your suggestions');
   has('FORM banner names the suggestion', w.body.querySelector('#dp_draft_note').innerHTML, 'Aecon Inf');

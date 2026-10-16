@@ -1909,6 +1909,17 @@
     var n = parseFloat(v);
     var prev = masterOdometer();
     if (!(n > 0)) return { value: prev, raised: false, previous: prev };
+    /* v86: the bump is a WRITE, so the two-sided gate applies here
+       too — a value more than ODO_MAX_JUMP_KM past the master is
+       refused (refused: 'jump'), never written. Before v86 this
+       upward-only bump let ANY larger number through, which is how
+       the Fuel save carried the 519,326 receipt invoice number into
+       the master live on Oct 15, past the v80 read gate. Callers
+       that need to move the master by more than the gate (a real
+       correction) go through odoSaveDecision with the user's arm. */
+    if (prev !== null && n > prev + ODO_MAX_JUMP_KM) {
+      return { value: prev, raised: false, previous: prev, refused: 'jump' };
+    }
     if (prev === null || n > prev) {
       store.set('mt_odo', String(n));
       return { value: n, raised: true, previous: prev };
@@ -1924,11 +1935,24 @@
      reading would sit "below the master" forever with no way back).
      Unarmed + lower → keep the master and say so; the caller
      restores the field to the master so the stale number can't
-     ride along on the next save. Pure: (typed, master, armed). */
+     ride along on the next save. Pure: (typed, master, armed).
+     v86: EVERY master write routes through this decision (Fuel,
+     Maintenance and onboarding joined Preferences), and the gate
+     is two-sided — see the jump branch inside. */
   function odoSaveDecision(typed, master, correctionArmed) {
     var n = parseFloat(typed);
     if (!(n > 0)) return { action: 'ignore', value: (master === undefined ? null : master) };
     if (master === null || master === undefined || !(master > 0)) return { action: 'set', value: n };
+    /* v86: the decision is TWO-SIDED, like the read gate — a value
+       more than ODO_MAX_JUMP_KM ABOVE the master is as impossible
+       as one below it (the Oct 15 fuel-save poison: 519,326 against
+       a 168,759 master, waved through by the old "at-or-above sets"
+       rule because the Fuel form never consulted this decision).
+       Unarmed it keeps the master; armed it is a correction — the
+       same supervised door as the downward un-poisoning fix. */
+    if (n > master + ODO_MAX_JUMP_KM) {
+      return correctionArmed ? { action: 'correct', value: n } : { action: 'keep', value: master };
+    }
     if (n >= master) return { action: 'set', value: n };
     if (correctionArmed) return { action: 'correct', value: n };
     return { action: 'keep', value: master };
@@ -2239,9 +2263,16 @@
       }
     } catch (e) {}
     // v28: odometer baseline -> Maintenance PM starting point
+    // v86: routed through the SAME supervised decision as every
+    // other master write — a first reading (no master yet) sets it;
+    // a re-onboarding value that trips the two-sided gate (below
+    // the master, or impossibly far past it) leaves the master be.
     try {
       if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) {
-        App._store.set('mt_odo', String(o.odometerBaseline));
+        var obDec = odoSaveDecision(o.odometerBaseline, odoMasterNow(), false);
+        if (obDec.action === 'set' || obDec.action === 'correct') {
+          App._store.set('mt_odo', String(obDec.value));
+        }
       }
     } catch (e) {}
     // v28: safety sticker expiry -> Maintenance annual date + safety reminder

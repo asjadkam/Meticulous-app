@@ -181,8 +181,12 @@ const maintPersist = persistMatch ? (0, eval)('(' + persistMatch[1] + ')') : nul
   ok('wiring passes a no-op persist (extracted verbatim)', !!persistMatch);
   ok('wiring labels origin maintenance', /_wirePhotoOCR\('mt_odo', 'odometer', function \(\) \{\}, \{ origin: \{ module: 'maintenance', label: 'Maintenance' \} \}\)/.test(mtSrc));
   ok('queued-result peek scoped to maintenance', mtSrc.indexOf("peekResult('odometer', 'maintenance')") >= 0 && mtSrc.indexOf("takeResult('odometer', 'maintenance')") >= 0);
-  const saveHandler = mtSrc.match(/#mt_odo_save'\)\.onclick = function \(\) \{([\s\S]{0,240}?)\n      \};/);
-  ok('Save handler unchanged: reads #mt_odo, W(\'odo\', v)', !!saveHandler && saveHandler[1].indexOf("parseFloat(body.querySelector('#mt_odo').value)") >= 0 && saveHandler[1].indexOf("W('odo', v)") >= 0, saveHandler ? '' : 'handler not found');
+  const saveHandler = mtSrc.match(/#mt_odo_save'\)\.onclick = function \(\) \{([\s\S]*?)\n      \};/);
+  /* v86: the handler changed ON PURPOSE — it used to write the
+     typed number straight over the master (any value, either
+     direction); it now routes through App._odoSaveDecision and
+     writes the DECISION's value. */
+  ok('Save handler routes the master through the supervised decision (v86)', !!saveHandler && saveHandler[1].indexOf("parseFloat(body.querySelector('#mt_odo').value)") >= 0 && saveHandler[1].indexOf('App._odoSaveDecision') >= 0 && saveHandler[1].indexOf("W('odo', dec.value)") >= 0, saveHandler ? '' : 'handler not found');
   eq('exactly one W(\'odo\', …) write in the module (the Save)', (mtSrc.match(/W\('odo',/g) || []).length, 1);
 
   console.log('— static: app.js generalization is opt-in —');

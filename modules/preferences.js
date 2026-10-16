@@ -118,11 +118,13 @@
         '<div id="pf_odo_prev"></div><div id="pf_odo_status" class="note"></div>' +
         '<input id="pf_odo" type="number" inputmode="decimal" value="' + esc(odoMaster !== null ? String(odoMaster) : (o.odometerBaseline || '')) + '">' +
         /* v80: the correction door. Hidden until the typed number
-           sits BELOW the master (the wiring below shows it live).
-           Odometers only move up, so a lower save is refused —
-           unless the user ticks this box to say the saved reading
-           itself is wrong (the supervised exception that un-poisons
-           a master a misread once set). */
+           trips the gate against the master (the wiring below shows
+           it live). Odometers only move up, so a lower save is
+           refused — unless the user ticks this box to say the saved
+           reading itself is wrong (the supervised exception that
+           un-poisons a master a misread once set). v86: the gate is
+           two-sided — an implausible jump past the master opens the
+           same door, worded for that direction. */
         '<div id="pf_odo_fixrow" style="display:none;margin-top:6px;">' +
         '<p class="note" id="pf_odo_fixnote" style="color:#c2410c;font-weight:600"></p>' +
         '<label class="chk"><input type="checkbox" id="pf_odo_fix"> This corrects a wrong odometer reading</label></div>' +
@@ -309,8 +311,15 @@
             o.odometerBaseline = String(dec.value);
             if (dec.action === 'correct') odoNote = ' Odometer corrected to ' + Number(dec.value).toLocaleString('en-CA') + ' km.';
           } else if (dec.action === 'keep') {
+            /* v86: the refusal words match the direction — a value
+               way PAST the master (the two-sided gate's jump side)
+               is refused for the opposite reason than a lower one. */
+            var typedWhy = (window.App && App._odoImplausible && o.odometerBaseline !== String(dec.value))
+              ? App._odoImplausible(o.odometerBaseline) : null;
             o.odometerBaseline = String(dec.value);
-            odoNote = ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was lower, and odometers only move up. If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.';
+            odoNote = typedWhy === 'jump'
+              ? ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was way past it, and a reading that far ahead is almost certainly another number (a receipt\'s invoice number, say). If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.'
+              : ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was lower, and odometers only move up. If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.';
           }
           if (o.safetyExpiry) App._store.set('mt_annualDate', o.safetyExpiry);
         } catch (e) {}
@@ -320,7 +329,10 @@
         alert('Preferences saved.' + odoNote);
       };
       /* v80: show the correction door live — only while the typed
-         odometer sits below the master it would have to correct. */
+         odometer trips the gate against the master it would have
+         to correct. v86: the gate is two-sided, so the door also
+         opens for an implausible JUMP past the master, worded for
+         that direction. */
       (function () {
         var odoEl = body.querySelector('#pf_odo');
         var row = body.querySelector('#pf_odo_fixrow');
@@ -328,7 +340,11 @@
         if (!odoEl || !row || odoMaster === null) return;
         function paintFix() {
           var v = parseFloat(odoEl.value);
-          if (v > 0 && v < odoMaster) {
+          var why = (v > 0 && window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
+          if (why === 'jump') {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s way past the odometer now (' + Number(odoMaster).toLocaleString('en-CA') + ' km) — a truck can\'t gain that much between readings, so it\'s likely another number (a receipt\'s invoice number, say). Saving keeps ' + Number(odoMaster).toLocaleString('en-CA') + ' km unless you tick the box to say the saved reading is wrong.';
+          } else if (why === 'below') {
             row.style.display = '';
             if (note) note.textContent = 'That\'s lower than the odometer now (' + Number(odoMaster).toLocaleString('en-CA') + ' km). Odometers only move up — saving keeps ' + Number(odoMaster).toLocaleString('en-CA') + ' km unless you tick the box to say the saved reading is wrong.';
           } else {

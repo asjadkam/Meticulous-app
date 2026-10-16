@@ -162,6 +162,14 @@
         '<input type="file" id="fu_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="fu_odo_read" style="font-size:13px;margin-top:4px;"></div></div>' +
         '<div><label class="f">Litres</label><input id="fu_l" type="number" inputmode="decimal"></div></div>' +
+        /* v86: the correction door for THIS form — the same one
+           Preferences has. Hidden until the typed odometer trips
+           the two-sided gate against the master (below it, or
+           impossibly far past it); those are the saves the master
+           refuses unarmed (see the save handler below). */
+        '<div id="fu_odo_fixrow" style="display:none;margin-top:6px;">' +
+        '<p class="note" id="fu_odo_fixnote" style="color:#c2410c;font-weight:600"></p>' +
+        '<label class="chk"><input type="checkbox" id="fu_odo_fix"> This corrects a wrong odometer reading</label></div>' +
         '<div class="row"><div><label class="f">Cost $</label><input id="fu_cost" type="number" inputmode="decimal"></div>' +
         '<div><label class="f">Station</label><input id="fu_stn" placeholder="e.g. Petro-Pass"></div></div>' +
         '<label class="f">📷 Receipt photo</label>' +
@@ -467,6 +475,33 @@
         });
       }
 
+      /* v86: paint the correction door live — it shows only while
+         the typed odometer trips the two-sided gate against the
+         master (App._odoImplausible), with the reason in plain
+         words, exactly like Preferences. */
+      (function () {
+        var odoEl = body.querySelector('#fu_odo');
+        var row = body.querySelector('#fu_odo_fixrow');
+        var note = body.querySelector('#fu_odo_fixnote');
+        if (!odoEl || !row) return;
+        function paintFix() {
+          var master = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+          var v = parseFloat(odoEl.value);
+          var why = (v > 0 && master !== null && window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
+          if (why === 'jump') {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s way past your odometer now (' + Number(master).toLocaleString('en-CA') + ' km) — it can\'t be right; it\'s likely another number (a receipt\'s invoice number, say). Saving will keep the odometer at ' + Number(master).toLocaleString('en-CA') + ' km and save the fill-up without that reading — unless you tick the box to say the saved reading is wrong.';
+          } else if (why === 'below') {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s lower than your odometer now (' + Number(master).toLocaleString('en-CA') + ' km). Odometers only move up — the master stays where it is unless you tick the box to say the saved reading is wrong.';
+          } else {
+            row.style.display = 'none';
+          }
+        }
+        odoEl.addEventListener('input', paintFix);
+        paintFix();
+      })();
+
       body.querySelector('#fu_add').onclick = function () {
         /* v75: the guard runs FIRST for new and edited fills alike —
            litres AND cost both empty never saves (the blank phone
@@ -488,12 +523,46 @@
         // and MPG/trend ignore odo-less rows (they filter on x.odo).
         var odo = parseFloat(body.querySelector('#fu_odo').value);
         var hasOdo = odo > 0;
+        /* v86: THE MASTER DECISION FOR THIS SAVE — the two-sided
+           supervised decision (App._odoSaveDecision), the same one
+           Preferences saves through. Before v86 this form fed the
+           typed number straight into the upward-only bump, so a
+           reading impossibly far past the master (519,326 — a
+           receipt's invoice number — against a 168,759 master,
+           live Oct 15) poisoned the master with no warning. Now:
+           an unarmed JUMP is refused — the fill-up still saves
+           (with no odometer reading on a new fill; its own
+           previous reading on an edit) and the master never
+           moves; an armed one is a correction and writes through;
+           anything plausible keeps the v39 bump behaviour. */
+        var odoPlan = { mode: hasOdo ? 'bump' : 'none', value: odo, master: null };
+        if (hasOdo && window.App && App._odoSaveDecision && App._masterOdometer) {
+          var masterNow86 = App._masterOdometer();
+          var fixEl86 = body.querySelector('#fu_odo_fix');
+          var dec86 = App._odoSaveDecision(odo, masterNow86, !!(fixEl86 && fixEl86.checked));
+          var why86 = (window.App && App._odoImplausible) ? App._odoImplausible(odo) : null;
+          if (dec86.action === 'correct') odoPlan = { mode: 'correct', value: dec86.value, master: masterNow86 };
+          else if (dec86.action === 'keep' && why86 === 'jump') odoPlan = { mode: 'refuse', value: odo, master: masterNow86 };
+          else if (dec86.action === 'ignore') odoPlan = { mode: 'none', value: odo, master: masterNow86 };
+        }
+        function odoOutcomeNote() {
+          if (odoPlan.mode === 'correct') return '✓ Master odometer corrected to ' + fmtKm(odoPlan.value) + ' km.';
+          if (odoPlan.mode === 'refuse') {
+            return '⚠️ Odometer NOT updated: ' + fmtKm(odoPlan.value) + ' km is way past your current odometer (' + fmtKm(odoPlan.master) + ' km) — it can\'t be right (it\'s likely another number, like a receipt\'s invoice number), so the fill-up was saved without changing the odometer. If that number really is your odometer, edit the fill-up, tick “This corrects a wrong odometer reading”, and save again.';
+          }
+          return null; /* the bump path words itself via masterOnSave */
+        }
         var f = fills();
         var formVals = {
           date: body.querySelector('#fu_date').value || App._today(),
           litres: litresV, cost: costV,
           station: body.querySelector('#fu_stn').value.trim(),
-          odo: body.querySelector('#fu_odo').value
+          /* a refused jump never lands on the record either: an
+             edit keeps the entry's own previous reading, a new
+             fill goes in with none (the v44 odo-less convention). */
+          odo: odoPlan.mode === 'refuse'
+            ? String((editFillIdx !== null && f[editFillIdx] && f[editFillIdx].odo) || '')
+            : body.querySelector('#fu_odo').value
         };
         if (editFillIdx !== null && f[editFillIdx]) {
           /* v75: EDIT — update the SAME entry in place (no duplicate),
@@ -508,14 +577,17 @@
           try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
           if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
           editFillIdx = null; editErr = '';
-          var un = hasOdo ? masterOnSave(odo) : '';
+          var un = '';
+          if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} un = odoOutcomeNote(); }
+          else if (odoPlan.mode === 'refuse') { un = odoOutcomeNote(); }
+          else if (hasOdo) { un = masterOnSave(odo); }
           saveNote = un || '✓ Fill-up updated.';
           Meticulous.modules.fuel.render(body);
           return;
         }
         var rec = { date: formVals.date };
         if (fuReadTime) rec.time = fuReadTime;
-        if (hasOdo) rec.odo = odo;
+        if (hasOdo && odoPlan.mode !== 'refuse') rec.odo = odo;
         rec.litres = litresV;
         rec.cost = costV;
         rec.station = formVals.station;
@@ -534,7 +606,9 @@
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
         editErr = '';
-        saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.';
+        if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} saveNote = odoOutcomeNote(); }
+        else if (odoPlan.mode === 'refuse') { saveNote = odoOutcomeNote(); }
+        else { saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.'; }
         Meticulous.modules.fuel.render(body);
       };
       /* v42: receipt photo → OCR on the Other-expenses card — same

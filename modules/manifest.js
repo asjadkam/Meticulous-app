@@ -354,7 +354,12 @@
        below stays a separate cross-check. */
     if (t.loads && c.loads > 0) {
       L.push({ k: 'kv', a: 'Loads', b: String(c.loads) });
-      if (c.loadsSrc === 'taps') L.push({ k: 'note', a: 'Counted with the +1 load button while working.' });
+      /* v86: the note CARRIES the count — on Oct 15 a live drive
+         read this annotation as the loads content and reported the
+         number missing; the count now appears in the note itself
+         as well as on the Loads line, so the two can never be seen
+         apart. */
+      if (c.loadsSrc === 'taps') L.push({ k: 'note', a: 'Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
     }
     if (t.geoloads && c.geoDay && c.geoDay.sites) {
       L.push({ k: 'kv', a: 'Loads counted by GPS', b: String(c.geoDay.count || 0) });
@@ -516,7 +521,7 @@
          collect) — the plain Loads line; GPS below stays separate. */
       if (t.loads && c.loads > 0) {
         h += '<div class="kv"><span>🚛 Loads</span><b>' + c.loads + '</b></div>';
-        if (c.loadsSrc === 'taps') h += '<div class="note" style="margin:2px 0 6px">Counted with the +1 load button while working.</div>';
+        if (c.loadsSrc === 'taps') h += '<div class="note" style="margin:2px 0 6px">Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
       }
       /* v50: GPS-counted loads — counted from the truck's GPS cycling
          between the active dispatch's load-site and dump-site pins

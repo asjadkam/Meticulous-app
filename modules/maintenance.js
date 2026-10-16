@@ -263,6 +263,13 @@
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +
         '<div class="row"><div><label class="f">Update odometer (km)</label><input id="mt_odo" type="number" inputmode="decimal" placeholder="' + (d.odo > 0 ? Math.round(d.odo) : '') + '"></div>' +
         '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_odo_save">Save</button></div></div>' +
+        /* v86: the correction door for THIS card — the same one
+           Preferences and Fuel have. Hidden until the typed reading
+           trips the two-sided gate against the master; the Save
+           below refuses an unarmed gated value (see its handler). */
+        '<div id="mt_odo_fixrow" style="display:none;margin-top:6px;">' +
+        '<p class="note" id="mt_odo_fixnote" style="color:#c2410c;font-weight:600"></p>' +
+        '<label class="chk"><input type="checkbox" id="mt_odo_fix"> This corrects a wrong odometer reading</label></div>' +
         /* v61: snap the dash instead of typing — two small quiet
            buttons (camera / file, owner's standing two-button rule)
            wired to the shared odometer photo pipeline below. The
@@ -594,11 +601,56 @@
         }
       } catch (e) {}
 
+      /* v86: paint the correction door live — shown only while the
+         typed reading trips the two-sided gate against the master
+         (App._odoImplausible), worded per direction. */
+      (function () {
+        var odoEl = body.querySelector('#mt_odo');
+        var row = body.querySelector('#mt_odo_fixrow');
+        var note = body.querySelector('#mt_odo_fixnote');
+        if (!odoEl || !row) return;
+        function paintFix() {
+          var master = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+          var v = parseFloat(odoEl.value);
+          var why = (v > 0 && master !== null && window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
+          if (why === 'jump') {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s way past the odometer now (' + kmStr(master) + ') — it can\'t be right; it\'s likely another number (a receipt\'s invoice number, say). Saving keeps ' + kmStr(master) + ' unless you tick the box to say the saved reading is wrong.';
+          } else if (why === 'below') {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s lower than the odometer now (' + kmStr(master) + '). Odometers only move up — saving keeps ' + kmStr(master) + ' unless you tick the box to say the saved reading is wrong.';
+          } else {
+            row.style.display = 'none';
+          }
+        }
+        odoEl.addEventListener('input', paintFix);
+        paintFix();
+      })();
+
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);
         if (!(v > 0)) { alert('Enter a valid odometer reading.'); return; }
-        W('odo', v);
+        /* v86: this Save writes the ONE master odometer (mt_odo) —
+           it now goes through the same two-sided supervised
+           decision as Preferences and Fuel. Before v86 it wrote
+           the typed number straight over the master — any value,
+           either direction, not even upward-only. */
+        var master = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+        var fixEl = body.querySelector('#mt_odo_fix');
+        var dec = (window.App && App._odoSaveDecision)
+          ? App._odoSaveDecision(v, master, !!(fixEl && fixEl.checked))
+          : { action: 'set', value: v };
+        if (dec.action === 'keep') {
+          var why = (window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
+          alert(why === 'jump'
+            ? 'Odometer kept at ' + kmStr(master) + ' — ' + kmStr(v) + ' is way past it, so it can\'t be right (it\'s likely another number, like a receipt\'s invoice number). If the saved reading itself is wrong, tick “This corrects a wrong odometer reading” and tap Save again.'
+            : 'Odometer kept at ' + kmStr(master) + ' — odometers only move up. If the saved reading itself is wrong, tick “This corrects a wrong odometer reading” and tap Save again.');
+          return;
+        }
+        if (dec.action === 'ignore') { alert('Enter a valid odometer reading.'); return; }
+        W('odo', dec.value);
         api.render(body);
+        if (dec.action === 'correct') alert('Odometer corrected to ' + kmStr(dec.value) + '.');
       };
 
       body.querySelector('#mt_add').onclick = function () {
