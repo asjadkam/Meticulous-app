@@ -577,14 +577,30 @@
      relaunch mid-shift keeps the day). Fresh at every fresh start. */
   function trkAccum() {
     var t = App.tracker;
-    if (!t.accum || typeof t.accum !== 'object') t.accum = { weightKg: 0, loadCount: 0, tripCount: 0 };
+    if (!t.accum || typeof t.accum !== 'object') t.accum = { weightKg: 0, loadCount: 0, tripCount: 0, manualLoads: 0 };
     if (typeof t.accum.weightKg !== 'number') t.accum.weightKg = 0;
     if (typeof t.accum.loadCount !== 'number') t.accum.loadCount = 0;
     if (typeof t.accum.tripCount !== 'number') t.accum.tripCount = 0;
+    if (typeof t.accum.manualLoads !== 'number') t.accum.manualLoads = 0;
     return t.accum;
   }
   function resetAccum() {
-    App.tracker.accum = { weightKg: 0, loadCount: 0, tripCount: 0 };
+    App.tracker.accum = { weightKg: 0, loadCount: 0, tripCount: 0, manualLoads: 0 };
+  }
+  /* v82 (item 3b): the one-tap load counter for hourly card work.
+     The AECON haul card carries NO load count (one card = the whole
+     day) and the GPS counter can only run when both site pins exist
+     — the dump site is given out loud on site — so before this the
+     manifest's Loads could only ever be 0/absent. One tap per load
+     dumped, counted on the session accumulator; the close flow
+     pre-fills its Loads field from this count for his confirm, and
+     the stopped session carries it (manualLoads) to the manifest. */
+  function trackerAddLoadTap() {
+    if (!sessionActive()) return null;
+    var a = trkAccum();
+    a.manualLoads += 1;
+    trackerSave();
+    return a;
   }
   /* Manual "+ Add load" (Weight mode): weight entered in t/kg/lbs,
      stored as kg. Allowed whenever the session is active (running OR
@@ -634,6 +650,9 @@
       entry.loadCount = a.loadCount || 0;
     }
     if (a.tripCount > 0) entry.tripCount = a.tripCount;
+    /* v82: the day's tapped load count rides the session to the
+       manifest (kept apart from the Weight mode's loadCount). */
+    if (a.manualLoads > 0) entry.manualLoads = a.manualLoads;
   }
   function liveKmNow() {
     try { if (window.LiveMiles && LiveMiles.currentKm) return LiveMiles.currentKm(); } catch (e) {}
@@ -689,12 +708,18 @@
   function paintTrackerExtra(mode) {
     var box = el('trkExtra');
     if (!box) return;
-    var sig = mode + '|' + App.tracker.status;
+    /* v82: the load-tap button shows its running count, so the
+       count is part of the repaint signature for those modes. */
+    var taps = (mode === 'Hourly' || mode === 'Miles') ? trkAccum().manualLoads : 0;
+    var sig = mode + '|' + App.tracker.status + '|' + taps;
     if (sig === _extraSig) return;
     _extraSig = sig;
     var h = '';
     if (sessionActive() && mode === 'Weight') h = '<button type="button" class="trkAddBtn" id="trkAddLoadBtn">＋ Add load</button>';
     else if (sessionActive() && mode === 'Trip') h = '<button type="button" class="trkAddBtn" id="trkAddTripBtn">＋ Load</button>';
+    /* v82 (item 3b): hourly/miles card work gets the big one-tap
+       load counter — one tap per load dumped, no form. */
+    else if (sessionActive()) h = '<button type="button" class="trkAddBtn" id="trkLoadTapBtn">🚛 +1 load' + (taps ? ' · ' + taps + ' today' : '') + '</button>';
     box.innerHTML = h;
   }
   /* v41: "+ Add load" sheet (Weight mode) + public tracker APIs for
@@ -722,6 +747,8 @@
   App.loadSheetCancel = function () { closeLoadSheet(); };
   App.trackerAddLoad = function (w, u) { var a = trackerAddLoad(w, u); trackerTick(); return a; };
   App.trackerAddTrip = function () { var a = trackerAddTrip(); trackerTick(); return a; };
+  App.trackerAddLoadTap = function () { var a = trackerAddLoadTap(); trackerTick(); return a; };
+  App.trackerLoadTaps = function () { return sessionActive() ? trkAccum().manualLoads : 0; };
   App.noteDispatchCompleted = function (info) { var okd = noteDispatchCompleted(info); trackerTick(); return okd; };
 
   function trackerTick() {
@@ -928,6 +955,23 @@
     try { maybePromptOdo('end'); } catch (e) {}
   }
   App.trackerStop = function () { stopSessionAt(Date.now()); };
+  /* v82: a USER-initiated completion of the active dispatch closes
+     the shift with it (owner, Oct 15: "Closed dispatch was suppose
+     to close my shift!"). Dispatch calls this ONLY from its two
+     completion taps (plain Complete, close-with-ticket Confirm) —
+     both complete the ACTIVE dispatch by construction. This is the
+     only dispatch-driven stop there is: the dispatch END TIME /
+     window passing never stops a session (Oct 14 law — a session
+     ends when the driver stops it, and this stop IS the driver
+     stopping it, by closing his dispatch). Goes through the same
+     stopSessionAt as the tracker's own Stop, so the saved session
+     is identical either way (live miles, accumulated loads/weight,
+     odometer prompt). Returns true when a session was stopped. */
+  App.stopSessionOnDispatchClose = function () {
+    if (!sessionActive()) return false;
+    stopSessionAt(Date.now());
+    return true;
+  };
   function closeTrackerEndSheet() {
     el('trkEndSheet').classList.remove('open');
     el('scrim').classList.remove('show');
@@ -2533,6 +2577,7 @@
       var id = ev.target && ev.target.id;
       if (id === 'trkAddTripBtn') App.trackerAddTrip();
       else if (id === 'trkAddLoadBtn') App.openLoadSheet();
+      else if (id === 'trkLoadTapBtn') App.trackerAddLoadTap();
     };
     el('trkClock').onclick = function (ev) {
       if (ev.target && ev.target.id === 'trkUnitBtn' && payMode() === 'Weight') {

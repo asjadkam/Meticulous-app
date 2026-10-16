@@ -411,7 +411,7 @@ console.log('(d) Dispatch — the Use tap, driven end to end (Oct 14 19:22 field
   eq('draft cleared by the verified save', w.store.get('dsp_draft', null), null);
 }
 
-console.log('(d2) Dispatch — a busy form refuses Use LOUDLY, at the tap');
+console.log('(d2) Dispatch — Use with a busy form: intake never fights the form (v82)');
 {
   const w = makeDspWorld('driver');
   const entry = w.sb.DispatchIngest.intake('Tomorrow 8:00am\nTandem\nAecon Inf\nGo Empty To A2-L20:', 'paste');
@@ -422,10 +422,19 @@ console.log('(d2) Dispatch — a busy form refuses Use LOUDLY, at the tap');
   const useBtns = wrap.querySelectorAll('[data-suguse]');
   eq('Use button wired', useBtns.length, 1);
   useBtns[0].onclick();
-  eq('suggestion NOT consumed by a refused Use', w.sb.DispatchIngest.list().length, 1);
+  /* v82 contract (supersedes the v76 refusal): Use still works —
+     the suggestion is saved as a SCHEDULED dispatch for its own
+     day through the verified save; the busy form is not touched. */
+  eq('suggestion consumed by the busy-path Use', w.sb.DispatchIngest.list().length, 0);
   eq('busy draft untouched', (w.store.get('dsp_draft') || {}).fields.jobSite, 'Typed already');
-  eq('no record created by a refused Use', w.store.get('dsp_list', []).length, 0);
-  has('refusal explained AT THE TAP (top of the card)', wrap.innerHTML, 'unsaved dispatch in the form below');
+  const bl = w.store.get('dsp_list', []);
+  eq('exactly one record created by the busy-path Use', bl.length, 1);
+  eq('busy-path record is a plain scheduled save (not started)', bl[0] && bl[0].status, 'saved');
+  eq('busy-path record is for the suggestion\'s day', bl[0] && String(bl[0].scheduledAt || '').slice(0, 10), tomorrowStr());
+  eq('busy-path record carries the job site', bl[0] && bl[0].jobSite, 'Aecon Inf');
+  eq('no active dispatch created', w.store.get('dsp_active', null), null);
+  /* the busy path ends in a full render — re-query the card */
+  has('the save is explained AT THE TAP (top of the card)', w.body.querySelector('#dp_ingest').innerHTML, 'left exactly as it is');
 }
 
 console.log('(d3) Dispatch — the office face (F3)');

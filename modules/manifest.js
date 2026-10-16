@@ -7,7 +7,8 @@
   var SECTIONS = [
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
     ['incident', 'Incident list'], ['start', 'Start Time'], ['end', 'End Time'],
-    ['odoStart', 'Start Odometer'], ['odoEnd', 'End Odometer'], ['geoloads', 'GPS-counted loads'],
+    ['odoStart', 'Start Odometer'], ['odoEnd', 'End Odometer'], ['loads', 'Loads hauled'],
+    ['geoloads', 'GPS-counted loads'],
     ['earned', 'Total Earned Income']
   ];
 
@@ -124,7 +125,45 @@
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
     }
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live };
+    /* v82 (item 3b): the day's LOADS — the count the driver himself
+       confirmed, which the manifest never had (its only loads line
+       was the GPS cross-check, and the GPS counter cannot run when
+       the dump site is given out loud on site — so a full day of
+       hauling printed Loads 0). Priority, never a sum — the sources
+       are overlapping records of the SAME loads:
+         1. counts carried on the day's tickets (confirmed in the
+            close flow — the haul card itself carries no count);
+         2. the session's +1 load taps (app.js manualLoads), plus
+            a still-running day's live taps;
+         3. a Weight day's counted loads (session loadCount).
+       The dispatch record's own loads field is NOT a source: the
+       form defaults it to '1', so it cannot prove a count. */
+    var loads = 0, loadsSrc = '';
+    var tkLoads = 0;
+    dispatches.forEach(function (x) {
+      (x.tickets || []).forEach(function (tk) {
+        var v = parseFloat(tk && tk.loads);
+        if (v > 0) tkLoads += v;
+      });
+    });
+    if (tkLoads > 0) { loads = tkLoads; loadsSrc = 'tickets'; }
+    if (!loads) {
+      var tapLoads = 0;
+      sessions.forEach(function (s) { tapLoads += parseInt(s.manualLoads, 10) || 0; });
+      try {
+        var trk2 = (window.App && App.tracker) || G('tracker', null);
+        if (d === App._today() && trk2 && trk2.accum && (trk2.status === 'running' || trk2.status === 'paused')) {
+          tapLoads += parseInt(trk2.accum.manualLoads, 10) || 0;
+        }
+      } catch (e) {}
+      if (tapLoads > 0) { loads = tapLoads; loadsSrc = 'taps'; }
+    }
+    if (!loads) {
+      var wLoads = 0;
+      sessions.forEach(function (s) { wLoads += parseInt(s.loadCount, 10) || 0; });
+      if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
+    }
+    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -217,6 +256,13 @@
           L.push({ k: 'note', a: ln });
         });
       });
+    }
+    /* v82 (item 3b): the driver's own confirmed load count for the
+       day (see collect) — printed as plain "Loads"; the GPS line
+       below stays a separate cross-check. */
+    if (t.loads && c.loads > 0) {
+      L.push({ k: 'kv', a: 'Loads', b: String(c.loads) });
+      if (c.loadsSrc === 'taps') L.push({ k: 'note', a: 'Counted with the +1 load button while working.' });
     }
     if (t.geoloads && c.geoDay && c.geoDay.sites) {
       L.push({ k: 'kv', a: 'Loads counted by GPS', b: String(c.geoDay.count || 0) });
@@ -366,6 +412,12 @@
             lines.map(function (ln) { return '<div style="margin:3px 0">' + esc(ln) + '</div>'; }).join('') +
             '</div></details>';
         });
+      }
+      /* v82 (item 3b): the driver's own confirmed load count (see
+         collect) — the plain Loads line; GPS below stays separate. */
+      if (t.loads && c.loads > 0) {
+        h += '<div class="kv"><span>🚛 Loads</span><b>' + c.loads + '</b></div>';
+        if (c.loadsSrc === 'taps') h += '<div class="note" style="margin:2px 0 6px">Counted with the +1 load button while working.</div>';
       }
       /* v50: GPS-counted loads — counted from the truck's GPS cycling
          between the active dispatch's load-site and dump-site pins

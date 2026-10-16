@@ -392,6 +392,16 @@
     /* photo stored once — inside tickets[] when tickets carry it;
        top-level only for the legacy no-ticket case. */
     d.photo = tk.length ? null : (orig.photo || null);
+    /* v82 (item 3b): loads hauled, when the tickets carry counts,
+       total onto the record — the manifest reads the day's loads
+       from the tickets/the record. Tickets without counts leave
+       the record's own loads exactly as it was. */
+    var loadSum = 0, anyLoads = false;
+    tk.forEach(function (t) {
+      var v = parseFloat(t && t.loads);
+      if (v > 0) { loadSum += v; anyLoads = true; }
+    });
+    if (anyLoads) d.loads = String(loadSum);
     d.status = 'completed';
     d.endedAt = endedAt;
     return d;
@@ -466,6 +476,40 @@
     if (p.length !== 3) return String(iso || '');
     try { return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }); }
     catch (e) { return String(iso || ''); }
+  }
+  /* v82: the relative day word for a date, computed FRESH against
+     today at render time. Suggestion cards used to print the word
+     baked in when the message was parsed (f.timeLabel): a message
+     read on Oct 14 said "Tomorrow" for the Oct 15 dispatch, and on
+     Oct 15 the card STILL said "Tomorrow 8:00am" for that day's own
+     dispatch (BUGS.md, Oct 15 07:07). The stored scheduledAt /
+     segmentDate is the truth; the word is derived, never stored. */
+  function dspRelDay(isoDate, today) {
+    if (!isoDate || !today) return '';
+    if (isoDate === today) return 'Today';
+    var p = String(isoDate).split('-'), t = String(today).split('-');
+    if (p.length !== 3 || t.length !== 3) return fmtDay(isoDate);
+    var diff = Math.round((Date.UTC(+p[0], +p[1] - 1, +p[2]) - Date.UTC(+t[0], +t[1] - 1, +t[2])) / 86400000);
+    if (diff === 1) return 'Tomorrow';
+    if (diff === -1) return 'Yesterday';
+    return fmtDay(isoDate);
+  }
+  /* v82: the clock for a suggestion card — the part after '·' in
+     the ingest timeLabel when it carried one, else the scheduledAt
+     time, rendered like the ingest labels ('8:00am'). */
+  function dspClockLabel(f) {
+    f = f || {};
+    if (f.timeLabel) {
+      var i = String(f.timeLabel).indexOf('·');
+      if (i !== -1) { var c = String(f.timeLabel).slice(i + 1).trim(); if (c) return c; }
+    }
+    var m = /T(\d{1,2}):(\d{2})/.exec(f.scheduledAt || '');
+    if (m) {
+      var h = parseInt(m[1], 10), ap = h >= 12 ? 'pm' : 'am';
+      h = h % 12 || 12;
+      return h + ':' + m[2] + ap;
+    }
+    return '';
   }
 
   /* v65: dispatch INGESTION — a one-shot note for the "📩 Suggested
@@ -754,12 +798,16 @@
         var confByDate = {};
         conf.forEach(function (c) { confByDate[c.date] = c.count; });
         var h = '<div class="card">';
+        /* v76: tap-point feedback for Use renders HERE, beside the
+           buttons. v82: hoisted above the suggestions/empty split —
+           a successful Use consumes the LAST suggestion, and the
+           empty branch never showed the confirmation at all. */
+        if (ingestTopFlash) {
+          h += '<div style="border:2px solid var(--orange);background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px">' + ingestTopFlash + '</div>';
+        }
         if (sug.length) {
           h += '<h3>📩 Suggested dispatches <span class="pill">' + sug.length + '</span></h3>' +
             '<p class="note">From messages you pasted or shared — whoever sent them. Tap <b>Use</b> to put one in the form below. Nothing is saved until you tap Save there.</p>' +
-            /* v76: tap-point feedback for Use — refusals AND the
-               success pointer render HERE, beside the buttons. */
-            (ingestTopFlash ? '<div style="border:2px solid var(--orange);background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px">' + ingestTopFlash + '</div>' : '') +
             conf.map(function (c) {
               return '<div style="border:2px solid #b45309;background:#fdf6e9;border-radius:10px;padding:8px 10px;margin-bottom:8px;color:#7c4a03">⚠️ <b>' + c.count + ' dispatches for ' + esc(fmtDay(c.date)) + '</b> — more than one sender dispatched this day. Pick the right one below; nothing is chosen for you.</div>';
             }).join('') +
@@ -767,14 +815,22 @@
               var f = e.fields || {};
               var title = f.jobSite || f.destination || 'Dispatch';
               var bits = [];
-              if (f.timeLabel) bits.push('🕗 ' + esc(f.timeLabel));
+              var eDate = f.segmentDate || (/^\d{4}-\d{2}-\d{2}/.test(f.scheduledAt || '') ? String(f.scheduledAt).slice(0, 10) : '');
+              /* v82: the day word is derived from the suggestion's
+                 DATE right now — never the word baked in at ingest
+                 (it went stale overnight: "Tomorrow 8:00am" shown
+                 for today's own dispatch). */
+              if (eDate) {
+                var ck = dspClockLabel(f);
+                bits.push('🕗 ' + esc(dspRelDay(eDate, App._today()) + (ck ? ' · ' + ck : '')));
+              }
+              else if (f.timeLabel) bits.push('🕗 ' + esc(f.timeLabel));
               else if (f.scheduledAt) bits.push('🕗 ' + esc(String(f.scheduledAt).replace('T', ' ')));
               if (e.senderHint) bits.push('From: ' + esc(e.senderHint));
               if (f.equipment) bits.push('🚛 ' + esc(f.equipment));
               if (f.type === 'empty') bits.push('Travel empty');
               if (f.type === 'loaded') bits.push('Loaded haul');
               if (f.destination && f.destination !== f.jobSite) bits.push('→ ' + esc(f.destination));
-              var eDate = f.segmentDate || (/^\d{4}-\d{2}-\d{2}/.test(f.scheduledAt || '') ? String(f.scheduledAt).slice(0, 10) : '');
               var raw = String(e.rawText || '');
               if (raw.length > 140) raw = raw.slice(0, 140) + '…';
               return '<div class="listitem"><div style="flex:1"><div class="a">' + esc(title) + '</div>' +
@@ -859,12 +915,44 @@
             }
             /* v76: a refusal explains itself AT THE TAP (top of the
                card) — the old text rendered at the card's bottom by
-               the paste box, off-screen from the button he pressed. */
-            ingestTopFlash = (res && res.reason === 'editing')
-              ? 'Finish or cancel the edit in the form below first — then tap Use.'
-              : (res && res.reason === 'gone')
-                ? 'That suggestion is no longer there — the list has been refreshed.'
-                : 'You have an unsaved dispatch in the form below — save it first (or clear the form), then tap Use.';
+               the paste box, off-screen from the button he pressed.
+               v82: a busy form is no longer a dead end at all — the
+               owner's rule is that intake never fights the active
+               form. When the form holds an edit or an unsaved entry,
+               Use saves the suggestion as a SCHEDULED dispatch for
+               its own day through the module's verified save (never
+               started, never touches the form, the draft or the
+               active dispatch), and the suggestion is consumed only
+               after that save verifies. The form's contents stay
+               exactly as they were. */
+            if (res && (res.reason === 'editing' || res.reason === 'draft-busy')) {
+              var sugId = b.getAttribute('data-suguse');
+              var sugEntry = null;
+              try {
+                (DispatchIngest.list() || []).forEach(function (e2) { if (e2 && e2.id === sugId) sugEntry = e2; });
+              } catch (e) {}
+              if (sugEntry && window.DispatchIngest && DispatchIngest.formFieldsFor) {
+                var sFields = DispatchIngest.formFieldsFor(sugEntry);
+                sFields.date = dspRecordDate(sFields) || App._today();
+                var sRec = dspBuildRecord(sFields, [], null, uid());
+                var sRes = dspSaveRecord(sRec, false);
+                if (sRes.ok) {
+                  try { DispatchIngest.dismiss(sugId); } catch (e) {}
+                  fbSave(sRec);
+                  manifestFeedPush('dispatch', 'Dispatch saved from a suggestion (form was busy): ' + (sRec.jobSite || ''));
+                  ingestTopFlash = '✓ Your form below was left exactly as it is — this suggestion was saved as a scheduled dispatch for ' +
+                    esc(dspRelDay(sFields.date, App._today())) + ' instead. It is in your dispatch list below.';
+                  api.render(body);
+                  return;
+                }
+                ingestTopFlash = '⚠️ That save did NOT go through — the suggestion is still here and your form was not touched. Free up some phone space and tap Use again.';
+                paintIngest();
+                return;
+              }
+            }
+            ingestTopFlash = (res && res.reason === 'gone')
+              ? 'That suggestion is no longer there — the list has been refreshed.'
+              : 'Finish or cancel the edit in the form below first — then tap Use.';
             paintIngest();
           };
         });
@@ -1431,6 +1519,20 @@
         manifestFeedPush('dispatch', 'Dispatch completed: ' + (cur.jobSite || '') +
           (cur.ticketNo ? ' · ticket #' + cur.ticketNo : '') + (amt > 0 ? ' · $' + amt.toFixed(2) : '') +
           (plan.disclosure ? ' · ' + plan.disclosure : ''));
+        /* v82: closing the ACTIVE dispatch closes the shift with it
+           (owner, Oct 15: "Closed dispatch was suppose to close my
+           shift!"). This runs ONLY here — inside the completion the
+           driver himself tapped (plain Complete or the
+           close-with-ticket Confirm; both complete the active
+           dispatch by construction, and both end in applyCompletion).
+           Nothing stops a session because a dispatch window passed:
+           the v53 autostart / dispatch-end paths never call this.
+           Runs AFTER noteDispatchCompleted above, so the day's
+           trip/weight accumulations land on the session it saves. */
+        var shiftClosed = false;
+        try {
+          if (window.App && App.stopSessionOnDispatchClose) shiftClosed = !!App.stopSessionOnDispatchClose();
+        } catch (e) {}
         /* v52: when travel was held out (office completion), the result
            text says so in plain words — the money is never dropped
            silently. Same pre-existing alert; extended message only. */
@@ -1438,6 +1540,7 @@
         if (plan.disclosure) {
           doneMsg = 'Dispatch completed' + (revEntry ? ' — $' + revEntry.amount + ' logged to Revenue' : '') + '. ' + plan.disclosure;
         }
+        if (shiftClosed) doneMsg += ' Your shift was closed with it — the tracker is stopped.';
         alert(doneMsg);
       }
 
@@ -1535,6 +1638,17 @@
                 return '<option' + (t.paymentUnit === x ? ' selected' : '') + '>' + x + '</option>';
               }).join('') + '</select>';
           }
+          /* v82 (item 3b): LOADS for hourly card work — the card
+             itself carries no count, so the count is confirmed
+             here, in the same one pass as the hours. Pre-filled
+             from the day's +1 load taps when he used them; blank
+             stays unrecorded rather than inventing a number. */
+          var tapsNow = 0;
+          try { if (window.App && App.trackerLoadTaps) tapsNow = App.trackerLoadTaps() || 0; } catch (e) {}
+          var loadsVal = (t.loads !== null && t.loads !== undefined && t.loads !== '') ? t.loads : (tapsNow > 0 ? String(tapsNow) : '');
+          inputs += '<label class="f">Loads hauled today</label>' +
+            '<input id="dp_cf_loads" type="number" inputmode="numeric" min="0" step="1" value="' + esc(loadsVal) + '" placeholder="e.g. 6">' +
+            (tapsNow > 0 && String(loadsVal) === String(tapsNow) ? '<div class="b">Counted from your +1 load taps today — change it if it\'s off.</div>' : '');
         }
         wrap.innerHTML =
           '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
@@ -1564,6 +1678,7 @@
         var hEl = wrap.querySelector('#dp_cf_hours'); if (hEl) t.foremanHours = hEl.value.trim();
         var pEl = wrap.querySelector('#dp_cf_punit'); if (pEl) t.paymentUnit = pEl.value;
         var nEl = wrap.querySelector('#dp_cf_net'); if (nEl) t.netWeight = nEl.value.trim();
+        var lEl = wrap.querySelector('#dp_cf_loads'); if (lEl) t.loads = lEl.value.trim();
         return t;
       }
       /* the confirm view's promise — computed by the SAME assembly
