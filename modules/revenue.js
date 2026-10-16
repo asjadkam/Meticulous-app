@@ -97,29 +97,66 @@
     } catch (e) { return null; }
   }
 
-  /* Map: dateStr -> { hours, base, extrasAmt, amount, hasEntry, live }
-     - hours: worked hours exactly as recorded (entries' hours + live
-       session hours) — they already include travel; nothing is added.
-     - amount: base (entries by payFor + live session value) + extras. */
+  /* Map: dateStr -> { hours, base, extrasAmt, amount, hasEntry, live,
+     unconfirmed, duplicate }
+     - hours: the CONFIRMED source's hours for the day (see below) +
+       the live session's — they already include travel; nothing is
+       added.
+     - amount: base (grouped entries + live session value) + extras.
+     v81: ONE GROUPED TRUTH. Day money comes from the SAME builder
+     the invoice prints from (Meticulous.shared.buildRevenueLines,
+     modules/invoice.js): per day, a dispatch completion wins, a
+     manual entry is next, a lone tracker entry counts but is
+     flagged unconfirmed, and several tracker entries with no
+     confirmed source count NOTHING and are flagged duplicate —
+     the day is never summed twice. (Pre-v81 this summed the raw
+     entries: Oct 15's completion $333.50 AND its tracker double
+     $291.16 both landed, and the screen called the poisoned sum
+     "Earnings".) The raw-sum path remains only as a fallback for a
+     build where the shared builder somehow didn't load. */
   function dayAgg() {
     var ctx = payCtx();
     var o = App._store.get('onboarding', {});
     var map = {};
     function slot(ds) {
-      if (!map[ds]) map[ds] = { hours: 0, base: 0, extrasAmt: 0, amount: 0, hasEntry: false, live: false };
+      if (!map[ds]) map[ds] = { hours: 0, base: 0, extrasAmt: 0, amount: 0, hasEntry: false, live: false, unconfirmed: false, duplicate: false };
       return map[ds];
     }
-    entries().forEach(function (e) {
-      if (!e.date) return;
-      var s = slot(e.date);
-      s.hasEntry = true;
-      s.base += payFor(e, ctx.std, o.payRate);
-      s.hours += parseFloat(e.hours) || 0;
-    });
-    extras().forEach(function (x) {
-      if (!x.date) return;
-      slot(x.date).extrasAmt += parseFloat(x.amount) || 0;
-    });
+    var built = null;
+    try {
+      if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
+        built = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std);
+      }
+    } catch (e) { built = null; }
+    if (built) {
+      built.lines.forEach(function (l) {
+        if (!l.date) return;
+        var s = slot(l.date);
+        if (l.src === 'extra') { s.extrasAmt += Number(l.amt) || 0; return; }
+        s.base += Number(l.amt) || 0;
+        s.hasEntry = true;
+        if (l.unconfirmed) s.unconfirmed = true;
+      });
+      (built.duplicateDates || []).forEach(function (ds) {
+        var s = slot(ds);
+        s.hasEntry = true;
+        s.duplicate = true;
+      });
+      var dh = built.dayHours || {};
+      Object.keys(dh).forEach(function (ds) { slot(ds).hours += dh[ds] || 0; });
+    } else {
+      entries().forEach(function (e) {
+        if (!e.date) return;
+        var s = slot(e.date);
+        s.hasEntry = true;
+        s.base += payFor(e, ctx.std, o.payRate);
+        s.hours += parseFloat(e.hours) || 0;
+      });
+      extras().forEach(function (x) {
+        if (!x.date) return;
+        slot(x.date).extrasAmt += parseFloat(x.amount) || 0;
+      });
+    }
     var live = liveSession();
     if (live) {
       var s = slot(live.date);
@@ -192,7 +229,7 @@
       hours += s.hours;
       if (s.hasEntry) {
         worked++;
-        list.push({ date: ds, hours: s.hours, amount: s.amount, live: s.live });
+        list.push({ date: ds, hours: s.hours, amount: s.amount, live: s.live, unconfirmed: !!s.unconfirmed, duplicate: !!s.duplicate });
       }
     });
     list.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
@@ -350,7 +387,7 @@
      Harness-extractable: may use entries, extras, dayAgg, payCtx,
      payFor, App._store and App._odoDailyKm. */
   function dayDetailData(ds) {
-    var agg = dayAgg()[ds] || { hours: 0, base: 0, extrasAmt: 0, amount: 0, hasEntry: false, live: false };
+    var agg = dayAgg()[ds] || { hours: 0, base: 0, extrasAmt: 0, amount: 0, hasEntry: false, live: false, unconfirmed: false, duplicate: false };
     var ctx = payCtx();
     var o = App._store.get('onboarding', {});
     var ents = [];
@@ -401,6 +438,7 @@
     });
     return {
       date: ds, hours: agg.hours, amount: agg.amount, extrasAmt: agg.extrasAmt, live: !!agg.live,
+      unconfirmed: !!agg.unconfirmed, duplicate: !!agg.duplicate,
       entries: ents, extras: xtras, sessions: sessions, fuel: fuel, dispatches: dispatches
     };
   }
@@ -485,6 +523,10 @@
       '<div class="kv"><span>Earnings</span><b>$' + d.amount.toFixed(2) + '</b></div>' +
       (d.extrasAmt > 0 ? '<div class="note" style="margin-top:6px">Earnings include $' + d.extrasAmt.toFixed(2) + ' in extras (listed below).</div>' : '') +
       (d.live ? '<div class="note" style="margin-top:6px">● Tracker still running — this day is counted live; the finished session lands here when you stop.</div>' : '') +
+      /* v81: the day's provenance, in plain words — the totals above
+         follow the invoice's rule (one confirmed source per day). */
+      (d.duplicate ? '<div class="note" style="margin-top:6px;color:#c2410c;font-weight:600">⚠️ This day has more than one tracker entry and no dispatch completion to confirm it, so it is NOT counted in your totals. Fix it below — keep the right entry and delete the other.</div>' : '') +
+      (d.unconfirmed ? '<div class="note" style="margin-top:6px">This day\'s total comes from the tracker only — unconfirmed. Complete the day\'s dispatch (or check the entry below) to confirm it.</div>' : '') +
       '</div>';
     if (dayErr) {
       h += '<div class="card"><div style="color:#c2410c;font-weight:600">⚠️ ' + esc(dayErr) + '</div></div>';
@@ -871,7 +913,9 @@
             return '<div class="listitem" data-day="' + d.date + '" style="cursor:pointer"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) +
               '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
               '<div class="b">' + fmtH(d.hours) + 'h' +
-              (d.live ? ' · ● still running' : '') + ' · tap for details</div></div>';
+              (d.live ? ' · ● still running' : '') +
+              (d.duplicate ? ' · ⚠️ not counted — check this day' : (d.unconfirmed ? ' · from tracker — unconfirmed' : '')) +
+              ' · tap for details</div></div>';
           }).join('') : '<div class="empty">No days recorded this month yet. Import below or run the tracker.</div>') + '</div>';
 
         /* v38 (B2): paste-import from the hours sheet. */

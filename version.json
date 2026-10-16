@@ -1,7 +1,7 @@
 {
   "version": 34,
   "apkUrl": "",
-  "webVersion": 80,
+  "webVersion": 81,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -14,7 +14,7 @@
     "css/style.css": "9f92ac5c458c4b99a78edf5ced10b2eb2a4961f48f99975cf5a138f4aaced6f0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "b6fd1559f3d28efda74fe0fac1aa521cf690eb920c6acdaa15800dac36b5586c",
+    "index.html": "add17ce6f3d7a2585f8621beb24df9fd9df196256f08e55b7e7bb2a6461cbef0",
     "js/app.js": "fccfc524e40471ed52f21d4f0e01d99007429df7cbb845c1d1654478ece23235",
     "js/cloudsync.js": "75da8d638aecdb6e2a93fd8af0963e782110863b1b91c7c551906b5469f777b3",
     "js/dispatch-ingest.js": "49defbc38d3f268db050b2ce7b285f78836961547edeb1bb09c8f6895d850555",
@@ -33,7 +33,7 @@
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
     "modules/dispatch.js": "e03355236801eb9ae8b9cf79de46fb663b0eedf3468fba9b22241df5620f0912",
     "modules/fuel.js": "a6e5a868d254f3be69d92929faafe6ff22ce2ae05733691aaade207c61479957",
-    "modules/invoice.js": "41df71ed0f838cca36778b683fe808a23a15bca96d030b69bb2d933a8f71fc40",
+    "modules/invoice.js": "f596a8225bdb65f52cd0aff92ce060f86a06ff5f5a023c3cb944a2548902fdb6",
     "modules/maintenance.js": "642cab4fa53e9c6956b7d3b176c484aca990fbb84fc602b5e060189ca2e2990e",
     "modules/manifest.js": "7cb55e01e074a344c6b2f2ea247ead655825a439831064e35da9c3183f75e1a7",
     "modules/navigation.js": "3b437cfc38ba0791818ba77fa39653114e0be65a0195d9cf953d03ffc5d77d2e",
@@ -41,7 +41,7 @@
     "modules/pnl.js": "2b9d2aab1cf447bc4f0ca283492a5aafe6cd90638979d2e436fc079fb45b62e1",
     "modules/preferences.js": "4934c319ca2364b758fd3ed88ce8c9566080fd5900b0759b47c0399c6e3fb1c2",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
-    "modules/revenue.js": "d20bf03bc9ea043a20657a235ca7d6895b55a40a598a22709a1f74663cf8ba7f",
+    "modules/revenue.js": "ea53410d208c6cf11866aba43ac0f2bfdfc478ea0a223f20bff40d9487681382",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

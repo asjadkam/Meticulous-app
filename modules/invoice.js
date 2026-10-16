@@ -225,6 +225,11 @@
     rate = parseFloat(rate) || 0;
     std = String(std || '').toLowerCase();
     var raw = [];
+    /* v81: hours accumulate in a SIDE map (never on the line
+       objects — their shape is the invoice's contract) so Revenue
+       can show the chosen source's hours beside the chosen money:
+       dayHours[date] = the hours of whichever group won the day. */
+    var hoursByDateSrc = {};
     (entries || []).forEach(function (e) {
       var amt = 0, desc = '';
       if (std === 'hourly') { amt = (parseFloat(e.hours) || 0) * rate; desc = (e.hours || 0) + ' hrs @ $' + rate; }
@@ -232,35 +237,58 @@
       else if (std === 'trip') { amt = (parseFloat(e.trips) || 0) * rate; desc = (e.trips || 0) + ' trips @ $' + rate; }
       else if (std === 'weight') { amt = (parseFloat(e.tons) || 0) * rate; desc = (e.tons || 0) + ' tons @ $' + rate; }
       else { amt = parseFloat(e.amount) || 0; desc = e.note || e.date; }
-      if (amt > 0) raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: invCycEntrySrc(e) });
+      if (amt > 0) {
+        var src = invCycEntrySrc(e);
+        raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: src });
+        var hd = hoursByDateSrc[e.date] || (hoursByDateSrc[e.date] = {});
+        hd[src] = (hd[src] || 0) + (parseFloat(e.hours) || 0);
+      }
     });
     var byDate = {};
     raw.forEach(function (l) {
       var g = byDate[l.date] || (byDate[l.date] = { dispatch: [], tracker: [], entry: [] });
       if (g[l.src]) g[l.src].push(l); else g.entry.push(l);
     });
-    var lines = [], duplicateDates = [], unconfirmedDates = [];
+    var lines = [], duplicateDates = [], unconfirmedDates = [], dayHours = {};
     Object.keys(byDate).sort().forEach(function (date) {
-      var g = byDate[date], chosen = null;
+      var g = byDate[date], chosen = null, chosenSrc = null;
       if (g.dispatch.length) {
         chosen = g.dispatch.length === 1 ? invCycCloneLine(g.dispatch[0]) : invCycCombinedLine(g.dispatch, 'dispatch');
+        chosenSrc = 'dispatch';
       } else if (g.entry.length) {
         chosen = g.entry.length === 1 ? invCycCloneLine(g.entry[0]) : invCycCombinedLine(g.entry, 'entry');
+        chosenSrc = 'entry';
       } else if (g.tracker.length === 1) {
         chosen = invCycCloneLine(g.tracker[0]);
         chosen.unconfirmed = true;
         unconfirmedDates.push(date);
+        chosenSrc = 'tracker';
       } else if (g.tracker.length > 1) {
         duplicateDates.push(date);
       }
-      if (chosen) lines.push(chosen);
+      if (chosen) {
+        lines.push(chosen);
+        var hd2 = hoursByDateSrc[date] || {};
+        dayHours[date] = hd2[chosenSrc] || 0;
+      }
     });
     (extras || []).forEach(function (x) {
       var v = parseFloat(x.amount) || 0;
       if (v !== 0) lines.push({ desc: (x.type || 'Extra') + ' — ' + x.date, amt: v, date: x.date, src: 'extra' });
     });
-    return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates };
+    return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates, dayHours: dayHours };
   }
+  /* v81: the grouped per-day truth is shared — Revenue's screens
+     and totals consume the SAME builder the invoice prints from, so
+     a day can never total one way in Revenue and another on the
+     invoice (Oct 15: Revenue's raw sum said $3,572.16 while the
+     confirmed days totalled $3,306.00). */
+  try {
+    window.Meticulous = window.Meticulous || {};
+    Meticulous.shared = Meticulous.shared || {};
+    Meticulous.shared.buildRevenueLines = invCycBuildRevenueLines;
+    Meticulous.shared.revenueEntrySource = invCycEntrySrc;
+  } catch (e) {}
   /* Dates whose invoice lines come from BOTH a dispatch completion
      and the tracker — the classic double count. Lines carry
      {date, src} (see revenueLines). Returns short labels, sorted. */
