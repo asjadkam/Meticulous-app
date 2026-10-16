@@ -1,7 +1,7 @@
 {
   "version": 34,
   "apkUrl": "",
-  "webVersion": 87,
+  "webVersion": 88,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",

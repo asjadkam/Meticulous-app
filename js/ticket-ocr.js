@@ -583,7 +583,7 @@
     if (!s) return null;
     s = String(s);
     var m;
-    if ((m = s.match(/(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})/))) {           // 24-Apr-18
+    if ((m = s.match(/\b(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})\b/))) {       // 24-Apr-18 — \b both ends (v88): unanchored, the tail of a longer digit run could pose as the day ("8001\nOct 14" -> day "01", year "14" -> 2014-10-01)
       var mo1 = MONTHS[m[2].slice(0, 3).toLowerCase()];
       var y1 = parseInt(m[3], 10); if (y1 < 100) y1 += 2000;
       if (mo1) return isoDate(y1, mo1, parseInt(m[1], 10));
@@ -593,7 +593,7 @@
       if (mo2) return isoDate(parseInt(m[3], 10), mo2, parseInt(m[2], 10));
     }
     if ((m = s.match(/(\d{4})-(\d{2})-(\d{2})/))) return m[0];                   // 2026-10-14
-    if ((m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) {                      // 3/26/2020
+    if ((m = s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/))) {                  // 3/26/2020 — \b both ends, same v88 anchoring
       var y3 = parseInt(m[3], 10); if (y3 < 100) y3 += 2000;
       return isoDate(y3, parseInt(m[1], 10), parseInt(m[2], 10));
     }
