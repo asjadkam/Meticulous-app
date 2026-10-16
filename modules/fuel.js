@@ -300,13 +300,19 @@
                 (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
             } else {
               fuSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
-              /* v59: local read found nothing → power-read escalation
-                 (generic path: the cloud transcribes the photo, the
-                 SAME local parser extracts the fields, the same form
-                 is filled — Save fill-up stays the confirm). Silent
-                 when power read is off or no key is set. */
-              fuPowerRead(ocrUrl, token);
             }
+            /* v59: local read found nothing → power-read escalation
+               (generic path: the cloud transcribes the photo, the
+               SAME local parser extracts the fields, the same form
+               is filled — Save fill-up stays the confirm).
+               v80: a PARTIAL read escalates too when the two money
+               fields — litres or cost — are among the missing
+               (Oct 15: a real Mobil receipt landed NOTHING in this
+               form; a station+date-only read would have stranded
+               the numbers he actually needs). The local finds stay
+               in the fields; the power read only fills the gaps
+               (fillField never overwrites). */
+            if (!parsed.litres || !parsed.cost) fuPowerRead(ocrUrl, token);
           }).catch(function () {
             if (token !== fuOcrToken) return;
             fuSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
@@ -397,14 +403,22 @@
                odometer is a misread, not a reading — it counts as a
                failed read (never filled) and escalates, same as an
                empty parse. Falls back to the v59 empty-only rule if
-               the power-read module is somehow absent. */
+               the power-read module is somehow absent.
+               v80: the gate is two-sided — a value wildly ABOVE the
+               master fails too (Oct 15: this read returned 519,326,
+               the INVOICE NO. on the fuel receipt, against a 168,759
+               master, and the old one-sided gate filled it). The
+               message names the direction in plain words. */
             var odoFailed = (window.PowerRead && PowerRead.odoReadFailed)
               ? PowerRead.odoReadFailed(km) : !km;
             if (km && !odoFailed) {
               body.querySelector('#fu_odo').value = km;
               setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
             } else {
-              if (km) setStatus('<span style="color:#e67e22">That read (<b>' + fmtKm(km) + ' km</b>) is below your current odometer — it can\'t be right. Trying the power read…</span>');
+              var why = (km && window.PowerRead && PowerRead.odoImplausible) ? PowerRead.odoImplausible(km) : null;
+              var master = (window.PowerRead && PowerRead.masterOdo) ? PowerRead.masterOdo() : null;
+              if (km && why === 'jump') setStatus('<span style="color:#e67e22">That read (<b>' + fmtKm(km) + ' km</b>) is way past your current odometer' + (master ? ' (<b>' + fmtKm(master) + ' km</b>)' : '') + ' — it can\'t be right; it\'s likely another number in the photo (a receipt\'s invoice number, say). Type the real reading. Trying the power read…</span>');
+              else if (km) setStatus('<span style="color:#e67e22">That read (<b>' + fmtKm(km) + ' km</b>) is below your current odometer — it can\'t be right. Trying the power read…</span>');
               else setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>');
               /* v59: power-read escalation — fills this same field
                  only; Save fill-up remains the confirm and the master

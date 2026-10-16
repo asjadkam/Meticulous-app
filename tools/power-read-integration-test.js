@@ -279,7 +279,7 @@ async function partMaintenance() {
     eq('M3 escalation was still attempted by the wiring', w.escalateCalls.length, 1);
     eq('M3 zero provider calls without a key', w.fetchCalls.length, 0);
     const line = w.body.querySelector('#mt_ns_read').innerHTML;
-    ok('M3 read line EXPLAINS the skip (⚡ + no key on THIS device)', /⚡ Power read didn't run/.test(line) && /THIS device/.test(line), line);
+    ok('M3 read line EXPLAINS the skip (⚡ + key not set, on-device only)', /⚡ Power Read key not set — reads are on-device only/.test(line), line);
     eq('M3 fields left exactly as stored', w.body.querySelector('#mt_ns_odo').value, '175429');
     eq('M3 master untouched', w.store.get('mt_odo', ''), '168518');
   }
@@ -400,20 +400,47 @@ async function partApp() {
     eq('A1b persist not called while gated', w.persistCalls.length, 0);
   }
 
-  /* A2: plausible read ABOVE the master → accepted, NO escalation
-     (cost discipline: the power read is not a per-photo tax). */
+  /* A2: plausible read ABOVE the master (within the jump) →
+     accepted, NO escalation (cost discipline: the power read is
+     not a per-photo tax). v80: "plausible above" now means within
+     ODO_MAX_JUMP_KM — the v63 fixture value 182,345 (+13,827) is a
+     wild jump since Oct 15 and lives in A2b below. */
   {
     const w = makeAppWorld({
       seed: [['mt_odo', '168518'], ['powerReadKey', 'TESTKEY-123']],
-      ocrText: 'TOTAL 182345 km',
+      ocrText: 'TOTAL 168934 km',
       fetchHandler: () => { throw new Error('fetch must not be called for a plausible read'); },
     });
     snapAppPhoto(w);
     await flush();
-    eq('A2 plausible value filled', w.els.pf_odo.value, '182345');
-    eq('A2 plausible value persisted', JSON.stringify(w.persistCalls), JSON.stringify([['odometer', '182345']]));
+    eq('A2 plausible value filled', w.els.pf_odo.value, '168934');
+    eq('A2 plausible value persisted', JSON.stringify(w.persistCalls), JSON.stringify([['odometer', '168934']]));
     eq('A2 NO escalation for a plausible read', w.escalateCalls.length, 0);
     eq('A2 zero provider calls', w.fetchCalls.length, 0);
+  }
+
+  /* A2b: THE RECEIPT CASE (Oct 15, 2026) — local read 519,326 (a
+     fuel receipt's INVOICE NO.) with master 168,518. v63's one-sided
+     gate FILLED it. v80: the two-sided gate counts it failed → no
+     fill, no persist, escalation fires, and the cloud's plausible
+     answer lands as a tap-to-use chip, never auto-applied. */
+  {
+    const w = makeAppWorld({
+      seed: [['mt_odo', '168518'], ['powerReadKey', 'TESTKEY-123']],
+      ocrText: 'INVOICE NO 519326',
+      fetchHandler: () => geminiOk({ value: 168934 }),
+    });
+    snapAppPhoto(w);
+    await flush();
+    eq('A2b escalation fired on the wild jump', w.escalateCalls.length, 1);
+    eq('A2b field NOT filled with 519326', w.els.pf_odo.value, '');
+    eq('A2b persist NEVER called with the misread', w.persistCalls.length, 0);
+    eq('A2b master unchanged', w.store.get('mt_odo', ''), '168518');
+    ok('A2b status explains the jump', /519,326/.test(w.els.pf_odo_status.innerHTML) || /Power read found/.test(w.els.pf_odo_status.innerHTML), w.els.pf_odo_status.innerHTML);
+    const box = w.doc.getElementById('pf_odo_chips');
+    const btns = box ? box.findAll(e => e.tagName === 'BUTTON') : [];
+    eq('A2b exactly one power-read chip', btns.length, 1);
+    eq('A2b chip offers the plausible 168,934 km', btns[0] && btns[0].textContent, '168,934 km');
   }
 
   /* A3: NO master yet (first-run onboarding) → the same 45,100 is a
@@ -521,18 +548,19 @@ async function partFuel() {
     eq('F2 master untouched (Save not pressed)', w.store.get('mt_odo', ''), '168518');
   }
 
-  /* F3: fuel odometer plausible → filled locally, NO escalation. */
+  /* F3: fuel odometer plausible → filled locally, NO escalation.
+     v80: plausible-above means within the jump (see A2). */
   {
     const w = makeFuelWorld({
       seed: [['mt_odo', '168518'], ['powerReadKey', 'TESTKEY-123']],
-      ocrText: 'TOTAL 182345 km',
+      ocrText: 'TOTAL 168934 km',
       fetchHandler: () => { throw new Error('fetch must not be called for a plausible read'); },
     });
     const pick = w.body.querySelector('#fu_odo_in');
     pick.files = [{ name: 'dash.jpg' }];
     pick.onchange({ target: pick });
     await flush();
-    eq('F3 plausible value filled locally', w.body.querySelector('#fu_odo').value, '182345');
+    eq('F3 plausible value filled locally', w.body.querySelector('#fu_odo').value, '168934');
     eq('F3 no escalation', w.escalateCalls.length, 0);
   }
 
@@ -550,7 +578,7 @@ async function partFuel() {
     eq('F4 escalation attempted by the wiring', w.escalateCalls.length, 1);
     eq('F4 zero provider calls without a key', w.fetchCalls.length, 0);
     const line = w.body.querySelector('#fu_read').innerHTML;
-    ok('F4 read line explains the skip', /⚡ Power read didn't run/.test(line), line);
+    ok('F4 read line explains the skip', /⚡ Power Read key not set — reads are on-device only/.test(line), line);
   }
 }
 

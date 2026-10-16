@@ -92,11 +92,16 @@ async function main() {
      Oct 14 dash case — a WRONG value that exists must count as failed. */
   check('localFailed odometer: 45100 below master 168518 → true (v63 gate)', PowerRead.localFailed('odometer', { value: '45100' }) === true);
   check('localFailed odometer: equal to master → false', PowerRead.localFailed('odometer', { value: '168518' }) === false);
-  check('localFailed odometer: 182345 above master → false', PowerRead.localFailed('odometer', { value: '182345' }) === false);
+  /* v80: the gate is TWO-SIDED (Oct 15: a receipt's invoice number,
+     519326, sat ABOVE the master and the v63 gate waved it through).
+     Above-within-the-jump still passes; a wild jump fails. */
+  check('localFailed odometer: 169345 above master within the jump → false', PowerRead.localFailed('odometer', { value: '169345' }) === false);
+  check('localFailed odometer: 519326 a wild jump above master → true (v80 gate)', PowerRead.localFailed('odometer', { value: '519326' }) === true);
   check('masterOdo reads mt_odo', PowerRead.masterOdo() === 168518);
   check('odoReadFailed: empty/null → true', PowerRead.odoReadFailed('') === true && PowerRead.odoReadFailed(null) === true && PowerRead.odoReadFailed(undefined) === true);
   check('odoReadFailed: 1 below master → true', PowerRead.odoReadFailed(168517) === true);
-  check('odoReadFailed: above master → false', PowerRead.odoReadFailed(200000) === false);
+  check('odoReadFailed: above master within the jump → false', PowerRead.odoReadFailed(169000) === false);
+  check('odoReadFailed: 200000 a wild jump above master → true (v80)', PowerRead.odoReadFailed(200000) === true);
 
   fetchCalls = [];
   let out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
@@ -105,7 +110,7 @@ async function main() {
      the v59 total silence is what hid the Oct 14 sticker failure. */
   let un = null;
   out = await PowerRead.escalate({ reader: 'sticker', image: IMG, onStatus: s => { un = s; } });
-  check('no key + onStatus → unavailable(nokey) surfaced, still skipped, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'nokey' && /THIS device/.test(un.message || '') && fetchCalls.length === 0, JSON.stringify(un));
+  check('no key + onStatus → unavailable(nokey) surfaced, still skipped, zero fetch', out.status === 'skipped' && !!un && un.state === 'unavailable' && un.reason === 'nokey' && /Power Read key not set — reads are on-device only/.test(un.message || '') && fetchCalls.length === 0, JSON.stringify(un));
   PowerRead.setKey('TESTKEY-123');
   PowerRead.setOn(false);
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
@@ -203,13 +208,16 @@ async function main() {
 
   /* ---------- 6. model fallback chain ---------- */
   fetchCalls = [];
-  fetchHandler = url => (url.indexOf(PowerRead.MODELS[0]) >= 0 ? geminiErr(404, 'Model not found') : geminiOk({ value: 20047 }));
+  /* v80: the answer value must be PLAUSIBLE against the seeded
+     master (168518) — an impossible value is gated before delivery
+     (odo-guard-test B5), which is not what this chain test is about. */
+  fetchHandler = url => (url.indexOf(PowerRead.MODELS[0]) >= 0 ? geminiErr(404, 'Model not found') : geminiOk({ value: 168547 }));
   got = null;
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG, onResult: r => { got = r; } });
-  check('404 on first model → second model answers', out.status === 'done' && got.fields.value === '20047');
+  check('404 on first model → second model answers', out.status === 'done' && got.fields.value === '168547');
   check('working model remembered', mockStore.get('powerReadModel', '') === PowerRead.MODELS[1]);
   fetchCalls = [];
-  fetchHandler = () => geminiOk({ value: 20047 });
+  fetchHandler = () => geminiOk({ value: 168547 });
   await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('next read goes straight to remembered model', fetchCalls.length === 1 && fetchCalls[0].url.indexOf(PowerRead.MODELS[1]) >= 0, fetchCalls.map(c => c.url).join(' | '));
 

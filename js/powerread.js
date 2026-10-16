@@ -58,10 +58,57 @@
   function sset(k, v) { var s = store(); if (s) s.set(k, v); }
 
   /* ---------- settings ---------- */
-  PowerRead.getKey = function () { return String(sget('powerReadKey', '') || '').trim(); };
-  PowerRead.setKey = function (v) { sset('powerReadKey', String(v || '').trim()); };
-  PowerRead.isOn = function () { return sget('powerReadOn', true) !== false; };
-  PowerRead.setOn = function (on) { sset('powerReadOn', !!on); };
+  /* v80: the key (and the on/off switch) ALSO live in a raw
+     localStorage slot OUTSIDE the mt_ store namespace. Why: the
+     store copy is the synced one (cloudsync mirrors every mt_ key,
+     so a signed-in reinstall pulls it back), but a reinstall that
+     wipes the WebView's mt_ data — or a store reset before the key
+     ever synced — took the key with it (Oct 15: the owner's phone
+     showed an empty key field a day after he pasted it). The mirror
+     slot is written on every set and read as a fallback; a mirror
+     hit restores the store copy (self-heal), which then re-syncs.
+     Nothing here survives a full device wipe — that is what the
+     cloud copy is for — but an app-side data loss no longer takes
+     the key alone. */
+  var MIRROR_SLOT = 'meticulous.pr';
+  function mirrorRead() {
+    try {
+      var raw = localStorage.getItem(MIRROR_SLOT);
+      if (!raw) return null;
+      var j = JSON.parse(raw);
+      return (j && typeof j === 'object') ? j : null;
+    } catch (e) { return null; }
+  }
+  function mirrorWrite(patch) {
+    try {
+      var j = mirrorRead() || {};
+      for (var k in patch) { if (Object.prototype.hasOwnProperty.call(patch, k)) j[k] = patch[k]; }
+      localStorage.setItem(MIRROR_SLOT, JSON.stringify(j));
+    } catch (e) {}
+  }
+  PowerRead.getKey = function () {
+    var k = String(sget('powerReadKey', '') || '').trim();
+    if (k) return k;
+    var m = mirrorRead();
+    var mk = (m && typeof m.key === 'string') ? m.key.trim() : '';
+    if (mk) { sset('powerReadKey', mk); return mk; }   // self-heal the store copy
+    return '';
+  };
+  PowerRead.setKey = function (v) {
+    var k = String(v || '').trim();
+    sset('powerReadKey', k);
+    mirrorWrite({ key: k });
+  };
+  PowerRead.isOn = function () {
+    var v = sget('powerReadOn', null);
+    if (v === null || v === undefined) {
+      var m = mirrorRead();
+      if (m && typeof m.on === 'boolean') { sset('powerReadOn', m.on); return m.on; }
+      return true;
+    }
+    return v !== false;
+  };
+  PowerRead.setOn = function (on) { sset('powerReadOn', !!on); mirrorWrite({ on: !!on }); };
   PowerRead.hasKey = function () { return PowerRead.getKey().length > 0; };
   PowerRead.enabled = function () { return PowerRead.isOn() && PowerRead.hasKey(); };
 
@@ -97,17 +144,39 @@
    * and never escalated.) A plausible value (>= master, or no master
    * yet — first-run onboarding) passes: the power read costs per
    * call, and cost discipline says escalate only the
-   * impossible-or-absent. */
+   * impossible-or-absent.
+   *
+   * v80: the gate is TWO-SIDED. Oct 15: the Fuel odometer read
+   * returned 519,326 — the INVOICE NO. printed on the fuel receipt
+   * in frame — against a 168,759 master. Above the master, the
+   * one-sided gate waved it through and the number landed in the
+   * form. A candidate more than ODO_MAX_JUMP_KM past the master is
+   * just as impossible as one below it: the truck cannot gain
+   * 1,000+ km between readings a driver makes. odoImplausible
+   * names the direction so each screen can say, in plain words,
+   * which way the read is impossible. (A value the USER types is
+   * never gated — typing is the confirm. Only machine candidates
+   * are distrusted.) */
+  PowerRead.ODO_MAX_JUMP_KM = 1000;
   PowerRead.masterOdo = function () {
     var s = store(); if (!s) return null;
     var v = parseFloat(s.get('mt_odo', ''));
     return (isFinite(v) && v > 0) ? v : null;
   };
+  /* 'below' | 'jump' | null (plausible, or no master to judge by) */
+  PowerRead.odoImplausible = function (value) {
+    var v = parseFloat(value);
+    if (!(v > 0)) return null;
+    var m = PowerRead.masterOdo();
+    if (!m) return null;
+    if (v < m) return 'below';
+    if (v > m + PowerRead.ODO_MAX_JUMP_KM) return 'jump';
+    return null;
+  };
   PowerRead.odoReadFailed = function (value) {
     var v = parseFloat(value);
     if (!(v > 0)) return true;
-    var m = PowerRead.masterOdo();
-    return !!(m && v < m);
+    return PowerRead.odoImplausible(v) !== null;
   };
   PowerRead.hasFields = function (reader, fields) {
     if (!fields) return false;
@@ -342,7 +411,7 @@
           message = '⚡ Power read is turned off — switch it on in Preferences → Advanced and tough photos get a second, stronger read.';
         } else {
           reason = 'nokey';
-          message = '⚡ Power read didn\'t run — no Gemini key is saved on THIS device yet. Paste your free key in Preferences → Advanced once, and tough photos get a second, stronger read.';
+          message = '⚡ Power Read key not set — reads are on-device only. Paste your free Gemini key in Preferences → Advanced once, and tough photos get a second, stronger read.';
         }
         try { opts.onStatus({ state: 'unavailable', reason: reason, message: message }); } catch (e) {}
       }
@@ -357,6 +426,22 @@
     status('working', '⚡ Asking the power read…');
     return PowerRead.read(reader, opts.image).then(function (res) {
       if (res.ok) {
+        /* v80: a cloud odometer answer is a candidate like any
+           other — it passes the SAME plausibility gate before any
+           screen may fill it. An impossible value (below the
+           master, or a wild jump past it) is reported in plain
+           words and never delivered as a result. */
+        if (reader === 'odometer' && res.fields && res.fields.value) {
+          var why = PowerRead.odoImplausible(res.fields.value);
+          if (why) {
+            var m = PowerRead.masterOdo();
+            var msg = why === 'jump'
+              ? '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — that\'s way past your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.'
+              : '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — below your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.';
+            status('error', msg);
+            return { status: 'implausible', message: msg };
+          }
+        }
         try { if (opts.onResult) opts.onResult({ fields: res.fields || {}, reader: reader }); } catch (e) {}
         return { status: 'done', fields: res.fields || {} };
       }
@@ -390,7 +475,13 @@
           var q2 = getQueue();
           q2 = q2.filter(function (e) { return e.id !== entry.id; });
           setQueue(q2);
-          if (PowerRead.hasFields(entry.reader, res.fields)) {
+          /* v80: queued odometer answers pass the same plausibility
+             gate — an impossible value is dropped here rather than
+             offered later as a tap-to-use chip against a master it
+             can never match. */
+          var usable = PowerRead.hasFields(entry.reader, res.fields) &&
+            !(entry.reader === 'odometer' && res.fields.value && PowerRead.odoImplausible(res.fields.value));
+          if (usable) {
             var rs = getResults();
             rs.push({ id: entry.id, reader: entry.reader, fields: res.fields, origin: entry.origin || null, ts: Date.now(), seen: false });
             setResults(rs);

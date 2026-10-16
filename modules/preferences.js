@@ -13,6 +13,15 @@
          so, so a wrong default is easy to spot and fix. */
       var rawRole = o.userRole;
       var effRole = (window.App && App.userRole) ? App.userRole() : 'driver';
+      /* v80: the Truck card's odometer field shows the ONE master
+         odometer (mt_odo) when one exists — that is the truck's
+         current reading, whatever set it last. The onboarding
+         baseline is only the fallback for a truck with no master
+         yet. (Before v80 the field rendered the stale setup-day
+         baseline while the master advanced through fuel saves, and
+         Save preferences then wrote the stale number back OVER the
+         master — a silent rewind on every save.) */
+      var odoMaster = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
       var ROLE_LABEL = { driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' };
       var h = '<div class="card"><h3>👤 Account</h3>' +
         '<label class="f">Account type</label><select id="pf_acct">' +
@@ -100,15 +109,24 @@
          in front of). Truck number/type and the safety sticker stay:
          an office manages the fleet's trucks and inspections. */
       if (effRole !== 'office') {
-        h += '<label class="f">Odometer baseline (km)</label>' +
+        h += '<label class="f">Odometer (km)</label>' +
         '<div style="display:flex;gap:8px;margin:6px 0;">' +
         '<button type="button" class="btn secondary" id="pf_odo_cam" style="flex:1;">📷 Retake photo</button>' +
         '<button type="button" class="btn secondary" id="pf_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<input type="file" id="pf_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<input type="file" id="pf_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="pf_odo_prev"></div><div id="pf_odo_status" class="note"></div>' +
-        '<input id="pf_odo" type="number" inputmode="decimal" value="' + esc(o.odometerBaseline || '') + '">' +
-        '<p class="note">Starting point for oil changes and services in Maintenance.</p>' +
+        '<input id="pf_odo" type="number" inputmode="decimal" value="' + esc(odoMaster !== null ? String(odoMaster) : (o.odometerBaseline || '')) + '">' +
+        /* v80: the correction door. Hidden until the typed number
+           sits BELOW the master (the wiring below shows it live).
+           Odometers only move up, so a lower save is refused —
+           unless the user ticks this box to say the saved reading
+           itself is wrong (the supervised exception that un-poisons
+           a master a misread once set). */
+        '<div id="pf_odo_fixrow" style="display:none;margin-top:6px;">' +
+        '<p class="note" id="pf_odo_fixnote" style="color:#c2410c;font-weight:600"></p>' +
+        '<label class="chk"><input type="checkbox" id="pf_odo_fix"> This corrects a wrong odometer reading</label></div>' +
+        '<p class="note">Your truck\'s current reading — it also drives oil changes and services in Maintenance. Fuel saves and day photos move it up automatically.</p>' +
         /* v46: optional start/end-of-day odometer photos for every pay
            mode (by-mile drivers get the prompts automatically). Stored
            on onboarding.odoDailyPhotos, default OFF; read live by the
@@ -268,16 +286,58 @@
         o.safetyExpiry = g('pf_safety');
         var odoTglSave = body.querySelector('#pf_odo_photos');
         o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
-        // v28: push through to Maintenance stores so PM baselines stay in sync
+        /* v80: the master odometer moves through the SUPERVISED
+           decision (App._odoSaveDecision), never by blindly copying
+           the field: at-or-above the master sets it; below it applies
+           ONLY with the correction box ticked; unarmed-and-lower
+           keeps the master, restores the stored baseline to the
+           master (so the refused number can't ride the next save),
+           and the outcome is said out loud in the saved message.
+           (The v28 direct copy this replaces rewound the master to
+           the setup-day baseline on every save.) */
+        var odoNote = '';
         try {
-          if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) App._store.set('mt_odo', String(o.odometerBaseline));
+          var masterNow = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+          var fixEl = body.querySelector('#pf_odo_fix');
+          /* office renders have no odometer field — the decision
+             (and its note) belongs only to a save that carried one. */
+          var dec = (!body.querySelector('#pf_odo') || !(window.App && App._odoSaveDecision))
+            ? { action: 'ignore', value: masterNow }
+            : App._odoSaveDecision(o.odometerBaseline, masterNow, !!(fixEl && fixEl.checked));
+          if (dec.action === 'set' || dec.action === 'correct') {
+            App._store.set('mt_odo', String(dec.value));
+            o.odometerBaseline = String(dec.value);
+            if (dec.action === 'correct') odoNote = ' Odometer corrected to ' + Number(dec.value).toLocaleString('en-CA') + ' km.';
+          } else if (dec.action === 'keep') {
+            o.odometerBaseline = String(dec.value);
+            odoNote = ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was lower, and odometers only move up. If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.';
+          }
           if (o.safetyExpiry) App._store.set('mt_annualDate', o.safetyExpiry);
         } catch (e) {}
         App._store.set('onboarding', o);
         App.onAuth(App.user);
         try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
-        alert('Preferences saved.');
+        alert('Preferences saved.' + odoNote);
       };
+      /* v80: show the correction door live — only while the typed
+         odometer sits below the master it would have to correct. */
+      (function () {
+        var odoEl = body.querySelector('#pf_odo');
+        var row = body.querySelector('#pf_odo_fixrow');
+        var note = body.querySelector('#pf_odo_fixnote');
+        if (!odoEl || !row || odoMaster === null) return;
+        function paintFix() {
+          var v = parseFloat(odoEl.value);
+          if (v > 0 && v < odoMaster) {
+            row.style.display = '';
+            if (note) note.textContent = 'That\'s lower than the odometer now (' + Number(odoMaster).toLocaleString('en-CA') + ' km). Odometers only move up — saving keeps ' + Number(odoMaster).toLocaleString('en-CA') + ' km unless you tick the box to say the saved reading is wrong.';
+          } else {
+            row.style.display = 'none';
+          }
+        }
+        odoEl.addEventListener('input', paintFix);
+        paintFix();
+      })();
       /* v31: wire the odometer/safety photo retake buttons to the same OCR
          used in onboarding. Persists immediately to the stored onboarding
          and to the Maintenance PM stores. */
@@ -287,8 +347,13 @@
             try {
               var ob = App._store.get('onboarding', {}) || {};
               if (kind === 'odometer') {
+                /* v80: a photo read updates the FIELD's stored
+                   draft (the baseline) only — the master odometer
+                   moves at Save preferences through the supervised
+                   decision, never on a raw read. (Before v80 this
+                   wrote mt_odo directly — even DOWNWARD, since it
+                   bypassed the upward-only bump.) */
                 ob.odometerBaseline = v;
-                if (v && parseFloat(v) > 0) App._store.set('mt_odo', String(v));
               } else {
                 ob.safetyExpiry = v;
                 if (v) App._store.set('mt_annualDate', v);
@@ -310,7 +375,14 @@
           var prOdo = PowerRead.peekResult('odometer');
           if (prOdo && prOdo.fields && prOdo.fields.value) {
             var prSt = body.querySelector('#pf_odo_status');
-            if (prSt) {
+            /* v80: a queued value is still a machine candidate —
+               if it is impossible against the master, say so in
+               plain words instead of offering a Use button. */
+            var prWhy = (window.App && App._odoImplausible) ? App._odoImplausible(prOdo.fields.value) : null;
+            if (prSt && prWhy) {
+              prSt.innerHTML = '⚡ A power read from your earlier dash photo got <b>' + Number(prOdo.fields.value).toLocaleString('en-CA') + ' km</b> — that can\'t be right against your current odometer' + (odoMaster !== null ? ' (' + Number(odoMaster).toLocaleString('en-CA') + ' km)' : '') + ', so it wasn\'t kept.';
+              try { PowerRead.takeResult('odometer'); } catch (e) {}
+            } else if (prSt) {
               prSt.innerHTML = '⚡ <b>Power read — check before using:</b> from your earlier dash photo: ';
               var prBtn = document.createElement('button');
               prBtn.type = 'button';
@@ -320,13 +392,15 @@
                 var inp = body.querySelector('#pf_odo');
                 if (inp) inp.value = prOdo.fields.value;
                 try { PowerRead.takeResult('odometer'); } catch (e) {}
+                /* v80: the tap fills the field + the stored draft —
+                   the master moves at Save preferences (supervised),
+                   not on this tap. */
                 try {
                   var ob = App._store.get('onboarding', {}) || {};
                   ob.odometerBaseline = prOdo.fields.value;
-                  if (parseFloat(prOdo.fields.value) > 0) App._store.set('mt_odo', String(prOdo.fields.value));
                   App._store.set('onboarding', ob);
                 } catch (e) {}
-                prSt.innerHTML = '⚡ Power read: using <b>' + Number(prOdo.fields.value).toLocaleString('en-CA') + ' km</b> — thanks for confirming.';
+                prSt.innerHTML = '⚡ Power read: <b>' + Number(prOdo.fields.value).toLocaleString('en-CA') + ' km</b> is in the field — tap Save preferences to keep it.';
               };
               prSt.appendChild(prBtn);
             }
@@ -482,7 +556,15 @@
         if (!note) return;
         function paint(extra) {
           if (!window.PowerRead) { note.textContent = 'Power read is not loaded in this version.'; return; }
-          var bits = ['Free key: open Google AI Studio → “Get API key” → paste it above. Each read costs a fraction of a cent.'];
+          var bits = [];
+          /* v80: the key's state is the first line, verified by
+             re-reading storage at every paint — a saved key shows
+             as saved (BUGS Oct 15: the key vanished silently once;
+             now its absence is stated, never discovered mid-read). */
+          bits.push(PowerRead.hasKey()
+            ? '✓ Key saved on this device.'
+            : 'Power Read key not set — reads are on-device only.');
+          bits.push('Free key: open Google AI Studio → “Get API key” → paste it above. Each read costs a fraction of a cent.');
           bits.push('Power reads this month: ' + PowerRead.monthCount() + '.');
           var q = 0;
           try { q = PowerRead.queueLength(); } catch (e) {}

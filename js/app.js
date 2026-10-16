@@ -1023,7 +1023,8 @@
           if (inp) inp.value = km;
           endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
         } else {
-          if (km) endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
+          if (km && odoImplausible(km) === 'jump') endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is way past your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right; it\'s likely another number in the photo. Trying the power read…');
+          else if (km) endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
           else endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.');
           endSheetOdoPowerRead(ocrUrl, token);
         }
@@ -1259,7 +1260,8 @@
              stays the confirm. v63: an impossible below-master value
              (odoLocalFailed) takes the same path — never filled into
              the sheet — and a skip is reported, never silent. */
-          if (km) setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
+          if (km && odoImplausible(km) === 'jump') setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is way past your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right; it\'s likely another number in the photo. Trying the power read…');
+          else if (km) setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
           else setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
           odoSheetPowerRead(ocrUrl, kindAtStart);
         }
@@ -1823,8 +1825,32 @@
     }
     function isTotal(c) { return c.digits >= 5 && c.digits <= 6 && !c.dec; }
     var pick = largest(onKm.filter(isTotal)) || largest(all.filter(isTotal)) || largest(all);
+    /* v80: plausible-first. When a master odometer exists and the
+       ranked winner is IMPOSSIBLE against it (below it, or more
+       than ODO_MAX_JUMP_KM past it — Oct 15: a receipt's INVOICE NO.
+       519326 outranked the dash), prefer the largest PLAUSIBLE
+       candidate in frame, KM-line candidates first. When nothing in
+       frame is plausible the winner stands and the callers' gate
+       rejects it with a plain message + power-read escalation —
+       the parser never invents a value that wasn't printed. The
+       typeof guards keep this leaf function whole when a test
+       harness extracts it on its own: no master context, no
+       plausible-first — the pre-v80 ranking, unchanged. */
+    var master = (typeof masterOdometer === 'function') ? masterOdometer() : null;
+    var jumpKm = (typeof ODO_MAX_JUMP_KM === 'number') ? ODO_MAX_JUMP_KM : 1000;
+    if (pick && master && (pick.v < master || pick.v > master + jumpKm)) {
+      var plaus = all.filter(function (c) { return c.v >= master && c.v <= master + jumpKm; });
+      var pPick = largest(onKm.filter(function (c) { return plaus.indexOf(c) >= 0; })) || largest(plaus);
+      if (pPick) pick = pPick;
+    }
     return pick ? String(pick.v) : null;
   }
+  /* v80: how far past the master a machine-read odometer candidate
+     may sit before it counts as impossible. A truck cannot gain
+     1,000+ km between readings its driver makes; anything further
+     is another number in frame (an invoice no., a phone number…).
+     PowerRead.ODO_MAX_JUMP_KM mirrors this value. */
+  var ODO_MAX_JUMP_KM = 1000;
   /* v39: ONE master odometer, stored once in the synced store key
      'mt_odo' (the key onboarding/Preferences/Maintenance already use).
      Every capture point (onboarding, Preferences, Fuel, the by-mile day
@@ -1844,6 +1870,24 @@
       return { value: n, raised: true, previous: prev };
     }
     return { value: prev, raised: false, previous: prev };
+  }
+  /* v80: the SUPERVISED odometer save decision (Preferences). The
+     master moves UP on any confirmed save at or above it. A save
+     BELOW the master is a correction — it applies ONLY when the
+     user explicitly armed it ("This corrects a wrong reading"),
+     because that is the one door that can fix a poisoned master
+     (Oct 15: had the 519,326 misread been saved, every later true
+     reading would sit "below the master" forever with no way back).
+     Unarmed + lower → keep the master and say so; the caller
+     restores the field to the master so the stale number can't
+     ride along on the next save. Pure: (typed, master, armed). */
+  function odoSaveDecision(typed, master, correctionArmed) {
+    var n = parseFloat(typed);
+    if (!(n > 0)) return { action: 'ignore', value: (master === undefined ? null : master) };
+    if (master === null || master === undefined || !(master > 0)) return { action: 'set', value: n };
+    if (n >= master) return { action: 'set', value: n };
+    if (correctionArmed) return { action: 'correct', value: n };
+    return { action: 'keep', value: master };
   }
   /* ODO-MASTER-END */
   var _ONB_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
@@ -1892,8 +1936,24 @@
     if (!km) return true;
     var v = parseFloat(km);
     if (!(v > 0)) return true;
+    return odoImplausible(v) !== null;
+  }
+  /* v80: WHY a machine-read candidate is impossible against the
+     master — 'below' (odometers never run backwards) or 'jump'
+     (more than ODO_MAX_JUMP_KM past it: another number in frame,
+     e.g. the 519,326 invoice no. of Oct 15) — or null when the
+     value is plausible (or there is no master to judge by). Every
+     odometer photo surface words its rejection from this, so the
+     driver hears one consistent plain explanation. Mirrors
+     PowerRead.odoImplausible. */
+  function odoImplausible(km) {
+    var v = parseFloat(km);
+    if (!(v > 0)) return null;
     var m = odoMasterNow();
-    return !!(m && v < m);
+    if (!m) return null;
+    if (v < m) return 'below';
+    if (v > m + ODO_MAX_JUMP_KM) return 'jump';
+    return null;
   }
 
   function onbWirePhoto(prefix, kind, persistFn, opts) {
@@ -1926,13 +1986,20 @@
               persist(kind, km);
               onbSetStatus(prefix, '✓ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
             } else if (km && odoLocalFailed(km)) {
-              /* v63 plausibility gate: the value exists but sits
-                 BELOW the master odometer — physically impossible,
-                 so it counts as a FAILED read: never filled, never
-                 persisted, and the power read gets its crack at the
-                 photo below (its answer still lands as a tap-to-use
-                 chip, never auto-applied). */
-              onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but the odometer is already at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right. Trying the power read…');
+              /* v63 plausibility gate: the value exists but is
+                 impossible against the master odometer, so it counts
+                 as a FAILED read: never filled, never persisted, and
+                 the power read gets its crack at the photo below (its
+                 answer still lands as a tap-to-use chip, never
+                 auto-applied). v80: the gate is two-sided and the
+                 message names the direction — below the master
+                 (v63), or a wild jump past it (Oct 15: a receipt's
+                 invoice number outranked the dash). */
+              if (odoImplausible(km) === 'jump') {
+                onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but your odometer is at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right — it\'s likely another number in the photo. Trying the power read…');
+              } else {
+                onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but the odometer is already at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right. Trying the power read…');
+              }
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
             }
@@ -1993,7 +2060,11 @@
         onUpdate: function (res) {
           if (token !== _onbOcrToken) return;
           var cur = fieldEl ? String(fieldEl.value || '').replace(/[^\d]/g, '') : '';
-          var list = (res.odo || []).filter(function (c) { return String(c.value) !== cur; }).slice(0, 4);
+          /* v80: hunt chips are machine candidates too — an
+             impossible one (below the master, or a wild jump past
+             it, like a receipt's invoice number) is never offered
+             as a tap-to-use chip. */
+          var list = (res.odo || []).filter(function (c) { return String(c.value) !== cur && !odoImplausible(c.value); }).slice(0, 4);
           box.innerHTML = '';
           if (!list.length) return;
           var lbl = document.createElement('div');
@@ -2569,6 +2640,8 @@
   App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
+  App._odoImplausible = odoImplausible; // v80: 'below' | 'jump' | null for a machine-read candidate
+  App._odoSaveDecision = odoSaveDecision; // v80: supervised Preferences odometer save (correction door)
   App._odoDailyKm = odoDailyKm; // v46: session start/end pair -> the day's km (or null), used by Revenue
   try { if (window.CloudSync) CloudSync.attach(store); } catch (e) {} // v27: Firestore mirror
   /* v30 OTA: wait for the over-the-air updater before booting. OTA.ready()

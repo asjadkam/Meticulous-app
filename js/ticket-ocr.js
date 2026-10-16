@@ -1117,23 +1117,72 @@
         trip = { litres: tL, price: tP, total: tC };
       }
     }
+    /* v80: LOOSE verified triple. Pump receipts also print the sale
+       as a labelled column — "78.175 L / PRICE/L 2.479 / AMOUNT
+       $193.80" — where words sit BETWEEN the numbers and the strict
+       pattern above can never match (Oct 15: a real Mobil receipt
+       in exactly this shape landed nothing). Scan the decimal tokens
+       in reading order and test consecutive windows of three —
+       litres-shaped (3 decimals, 5–2000), price-shaped (3 decimals,
+       0.3–6), total-shaped (2 decimals) — trusting only a window
+       whose own arithmetic checks out, the same immunity the strict
+       triple has. A token like an invoice number (no decimals)
+       never enters the scan. */
+    if (!trip) {
+      var toks = [], tkm, tokRe = /([\d,]+\.\d{1,4})/g;
+      while ((tkm = tokRe.exec(t)) !== null) {
+        var raw = tkm[1].replace(/,/g, '');
+        var dp = (raw.split('.')[1] || '').length;
+        toks.push({ v: parseFloat(raw), dp: dp });
+      }
+      for (var ti = 0; ti + 2 < toks.length && !trip; ti++) {
+        var A = toks[ti], B = toks[ti + 1], C = toks[ti + 2];
+        if (A.dp === 3 && A.v >= 5 && A.v <= 2000 &&
+            B.dp === 3 && B.v > 0.3 && B.v < 6 &&
+            C.dp === 2 && Math.abs(A.v * B.v - C.v) <= 0.06 + C.v * 0.01) {
+          trip = { litres: A.v, price: B.v, total: C.v };
+        }
+      }
+    }
 
-    /* Total cost — the TOTAL line wins; \b keeps SUBTOTAL out. GST/HST
-       lines never carry the TOTAL label, so they can't be picked up. */
-    var cost = firstMatch(t, [
+    /* Total cost — the TOTAL line wins; \b keeps SUBTOTAL out.
+       v80: the patterns run FIRST over the text with GST/HST lines
+       removed — these pump receipts print "GST INCLUDED IN TOTAL
+       $9.23", and the bare TOTAL pattern would otherwise take the
+       TAX as the total whenever the real total line is garbled or
+       missing (the Oct 15 failure, second act). The last patterns
+       tolerate an OCR-garbled TOTAL (T0TAL, TOTA1) and a missing $. */
+    var tNoTax = t.split('\n').filter(function (l) { return !/GST|HST/i.test(l); }).join('\n');
+    var COST_PATTERNS = [
       /\bTOTAL\b[\s:]*CAD\s*\$\s*([\d,]+\.\d{2})/i,
+      /\bTOTAL\b[\s:]*CAD\s*([\d,]+\.\d{2})/i,
       /\bTOTAL\b[\s:]*\$\s*([\d,]+\.\d{2})/i,
       /\bTOTAL\b[\s:]+\$?\s*([\d,]+\.\d{2})/i,
       /\bPURCHASE\b[\s:]*\$\s*([\d,]+\.\d{2})/i,
-      /\bAMOUNT\s+DUE\b[\s:]*\$?\s*([\d,]+\.\d{2})/i
-    ]);
+      /\bAMOUNT\s+DUE\b[\s:]*\$?\s*([\d,]+\.\d{2})/i,
+      /\bAMOUNT\b[\s:]*\$\s*([\d,]+\.\d{2})/i,
+      /\bT[O0]TA[L1]\b[\s:]*\$?\s*([\d,]+\.\d{2})/i
+    ];
+    var cost = firstMatch(tNoTax, COST_PATTERNS);
+    if (!cost) {
+      /* Second pass for a genuine total line that mentions the tax
+         ("TOTAL (INCL. GST) $193.80"): only lines that START with
+         the TOTAL label qualify — a "GST INCLUDED IN TOTAL 9.23"
+         line starts with GST and stays excluded. */
+      var leadLines = t.split('\n').filter(function (l) { return /^\s*T[O0]TA[L1]\b/i.test(l); }).join('\n');
+      cost = firstMatch(leadLines, COST_PATTERNS);
+    }
     if (cost) f.cost = clean(num(cost), 2);
     else if (trip) f.cost = clean(trip.total, 2);
 
     /* Litres — labeled first, then the verified column triple, then
-       "45.2 L @ 1.939" and "83.965 L" shapes. */
+       "45.2 L @ 1.939" and "83.965 L" shapes. v80: the label may sit
+       on the line ABOVE its number (labelled-column receipts), so a
+       second pattern lets the value follow the label across a line
+       break (up to 20 non-digit characters). */
     var lit = firstMatch(t, [
-      /(?:LITRES|LITERS|VOLUME|QTY|QUANTITY)[\s:]*([\d,]+\.\d{1,3})/i
+      /(?:LITRES|LITERS|VOLUME|QTY|QUANTITY)[\s:]*([\d,]+\.\d{1,3})/i,
+      /(?:LITRES|LITERS|VOLUME)\D{0,20}?([\d,]+\.\d{1,3})\b/i
     ]);
     if (lit) f.litres = clean(num(lit), 3);
     else if (trip) f.litres = clean(trip.litres, 3);
@@ -1153,7 +1202,8 @@
       }
     }
 
-    /* Price per litre — from the triple or an explicit $/L figure. */
+    /* Price per litre — from the triple or an explicit $/L figure.
+       v80: the label-reach pattern covers "PRICE/L\n2.479" layouts. */
     if (!f.pricePerLitre) {
       if (trip) f.pricePerLitre = clean(trip.price, 3);
       else {
@@ -1161,10 +1211,20 @@
           /\$\s*([\d,]+\.\d{3})\s*\/\s*L\b/i,
           /([\d,]+\.\d{3})\s*\(\$\/L\)/i,
           /\bPRICE\s*\/\s*L\b[\s:]*\$?\s*([\d,]+\.\d{3})/i,
-          /\bPRICE\b[\s:]*\$?\s*([\d,]+\.\d{3})/i
+          /\bPRICE\b[\s:]*\$?\s*([\d,]+\.\d{3})/i,
+          /\bPRICE(?:\s*\/\s*L)?\b\D{0,20}?([\d,]+\.\d{3})\b/i
         ]);
         if (pp) { var pv = num(pp); if (pv > 0.3 && pv < 6) f.pricePerLitre = clean(pv, 3); }
       }
+    }
+
+    /* v80: cost derivation for EVERY path — when the total line
+       itself didn't survive OCR but litres and the per-litre price
+       both did, their product IS the total within the printed
+       price's rounding (the `at` path has always trusted this; the
+       labelled paths now get it too). 78.175 × 2.479 = 193.80. */
+    if (!f.cost && f.litres && f.pricePerLitre) {
+      f.cost = clean(num(f.litres) * num(f.pricePerLitre), 2);
     }
 
     /* Station — brand in the header (first lines win over body text). */
