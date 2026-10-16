@@ -187,7 +187,13 @@ const maintPersist = persistMatch ? (0, eval)('(' + persistMatch[1] + ')') : nul
      direction); it now routes through App._odoSaveDecision and
      writes the DECISION's value. */
   ok('Save handler routes the master through the supervised decision (v86)', !!saveHandler && saveHandler[1].indexOf("parseFloat(body.querySelector('#mt_odo').value)") >= 0 && saveHandler[1].indexOf('App._odoSaveDecision') >= 0 && saveHandler[1].indexOf("W('odo', dec.value)") >= 0, saveHandler ? '' : 'handler not found');
-  eq('exactly one W(\'odo\', …) write in the module (the Save)', (mtSrc.match(/W\('odo',/g) || []).length, 1);
+  /* v97: the pin's count moved ON PURPOSE — v97 adds the second
+     supervised write (applyOdoCorrection, the dash-photo correction
+     flow), also a decision value. The invariant that matters is
+     unchanged: EVERY W('odo', …) in the module writes dec.value
+     from App._odoSaveDecision — no stray master write exists. */
+  eq('exactly two W(\'odo\', …) writes in the module (Save + v97 correction flow)', (mtSrc.match(/W\('odo',/g) || []).length, 2);
+  ok('every W(\'odo\', …) write is the decision value', (mtSrc.match(/W\('odo', [^)]*\)/g) || []).every(function (w) { return w === "W('odo', dec.value)"; }));
 
   console.log('— static: app.js generalization is opt-in —');
   ok('onbWirePhoto accepts opts', /function onbWirePhoto\(prefix, kind, persistFn, opts\)/.test(appSrc));

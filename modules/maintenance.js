@@ -33,6 +33,10 @@
 
   function typeById(id) {
     for (var i = 0; i < TYPES.length; i++) if (TYPES[i].id === id) return TYPES[i];
+    /* v97: odometer-correction audit entries (see ODO-CORRECTION
+       region) are history-only — never a loggable service type, so
+       they stay out of TYPES (no dropdown row, no interval row). */
+    if (id === 'odocorr') return { id: id, name: 'Odometer correction', km: 0 };
     return { id: id, name: id, km: 0 };
   }
 
@@ -122,8 +126,29 @@
   /* ---- Fuel mileage (same math as Fuel module trend) ---- */
   function fills() { return App._store.get('fuel_fills', []) || []; }
 
+  /* v97: is a recorded reading usable as odometer evidence? A fill or
+     service reading that sits impossibly far past the master (the
+     two-sided gate's 'jump' — more than ODO_MAX_JUMP_KM above it) is
+     bad data, e.g. the Oct 15 fuel receipt whose invoice number
+     (519,326) was saved as the fill-up's odometer against a 168,759
+     master. Such readings are ignored by the odometer math below:
+     before v97 they drove currentOdo() (Maintenance showed the
+     poisoned 519,326 and called the oil 343,897 km overdue) and
+     mileageStats() (the same poisoned fill printed as a 350,816 km
+     "leg"). With no master there is nothing to judge against and
+     every reading passes, exactly as before. NOTE: leg distances
+     themselves never write the master — Live Miles (js/miles.js)
+     keeps its own keys; this gate is about recorded readings only. */
+  function plausibleReading(o) {
+    if (!(o > 0)) return false;
+    try {
+      if (window.App && App._odoImplausible) return App._odoImplausible(o) !== 'jump';
+    } catch (e) {}
+    return true;
+  }
+
   function mileageStats() {
-    var f = fills().filter(function (x) { return x.odo && parseFloat(x.litres) > 0; })
+    var f = fills().filter(function (x) { return x.odo && parseFloat(x.litres) > 0 && plausibleReading(parseFloat(x.odo)); })
       .sort(function (a, b) { return a.odo - b.odo; });
     var km = 0, litres = 0, cost = 0;
     for (var i = 1; i < f.length; i++) {
@@ -146,11 +171,64 @@
   function currentOdo() {
     var manual = parseFloat(S('odo', ''));
     var max = 0;
-    fills().forEach(function (x) { var o = parseFloat(x.odo) || 0; if (o > max) max = o; });
-    events().forEach(function (x) { var o = parseFloat(x.odo) || 0; if (o > max) max = o; });
+    /* v97: 'jump'-implausible readings (see plausibleReading) no
+       longer count — a poisoned fill/event must not be able to hold
+       the displayed odometer (and every due countdown) hostage after
+       the master itself has been corrected. */
+    fills().forEach(function (x) { var o = parseFloat(x.odo) || 0; if (o > max && plausibleReading(o)) max = o; });
+    events().forEach(function (x) { var o = parseFloat(x.odo) || 0; if (o > max && plausibleReading(o)) max = o; });
     if (manual > 0) return Math.max(manual, max);
     return max;
   }
+
+  /* ODO-CORRECTION-BEGIN (v97) — the verified correction path.
+     The master odometer (mt_odo) moves ONLY through the two-sided
+     supervised decision (App._odoSaveDecision / bumpOdometer):
+     ordinary writes are upward-only and jump-refused, and GPS leg
+     accumulation never touches it at all. The ONE door that may move
+     it DOWN (or past the jump gate) is an explicit correction — the
+     owner photographs the dash, checks the read, and confirms here.
+     applyOdoCorrection runs that decision ARMED, writes the master,
+     and appends an audit entry to the service history (date, old
+     value, new value) so every correction can be checked later.
+     Self-contained on S/W + App._today/_masterOdometer/
+     _odoSaveDecision so the test suite can extract and drive it. */
+  function logOdoCorrection(oldV, newV, source) {
+    var ev = S('events', []);
+    var rec = {
+      date: App._today(),
+      odo: newV,
+      type: 'odocorr',
+      cost: '0.00',
+      notes: 'Odometer corrected from ' + Math.round(oldV).toLocaleString('en-CA') + ' km to ' +
+        Math.round(newV).toLocaleString('en-CA') + ' km' + (source ? ' (' + source + ')' : '')
+    };
+    ev.push(rec);
+    W('events', ev);
+    if (window.FB && FB.saveDoc) { try { FB.saveDoc('maintenance', 'm' + Date.now(), rec); } catch (e) {} }
+    return rec;
+  }
+
+  function applyOdoCorrection(v, source) {
+    var n = parseFloat(v);
+    if (!(n > 0)) return { action: 'ignore', value: null, previous: null, logged: null };
+    var master = null;
+    try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
+    if (master === null || master === undefined) { var m0 = parseFloat(S('odo', '')); master = (m0 > 0) ? m0 : null; }
+    var dec = (window.App && App._odoSaveDecision)
+      ? App._odoSaveDecision(n, master, true)
+      : { action: 'set', value: n };
+    if (dec.action === 'ignore' || dec.action === 'keep') {
+      return { action: dec.action, value: master, previous: master, logged: null };
+    }
+    W('odo', dec.value);
+    var logged = null;
+    if (master !== null && master !== undefined && dec.value !== master) {
+      logged = logOdoCorrection(master, dec.value, source);
+    }
+    return { action: dec.action, value: dec.value, previous: master, logged: logged };
+  }
+  /* ODO-CORRECTION-END */
 
   /* ---- Due-item computation ---- */
   function dueItems() {
@@ -222,6 +300,9 @@
     _allowed: function () { return true; },
     _dueItems: dueItems,
     _mileageStats: mileageStats,
+    _currentOdo: currentOdo,
+    _applyOdoCorrection: applyOdoCorrection,
+    _logOdoCorrection: logOdoCorrection,
     _nextService: nextService,
     _oilDueState: oilDueState,
     _migrateNextService: migrateNextService,
@@ -280,6 +361,24 @@
         '<div class="row"><button type="button" class="btn small ghost" id="mt_odo_cam" style="flex:1;">📷 Take photo</button>' +
         '<button type="button" class="btn small ghost" id="mt_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<div id="mt_odo_prev"></div><div id="mt_odo_status" class="note"></div>' +
+        '</div>';
+
+      /* v97: the verified correction card — clearly separate from the
+         everyday Update odometer above. This is the one place the
+         odometer can move DOWN: snap the dash, check the read, save
+         the correction; it is written into the service history. The
+         field id doubles as the photo-pipeline prefix (mt_fix_cam /
+         mt_fix_pick / mt_fix_cam_in / mt_fix_in / mt_fix_status),
+         wired fill-only below exactly like the v61 card. */
+      h += '<div class="card"><h3>🛠️ Correct odometer from dash photo</h3>' +
+        '<p class="note">Only for when the odometer saved in the app is itself wrong — a bad photo read, or a number that was never an odometer (a receipt\'s invoice number, say). Snap the dash, check the reading, then save the correction. Every correction is written into the service history below, with the old and new readings, so it can always be checked.</p>' +
+        '<div class="row"><div><label class="f">Correct odometer (km)</label><input id="mt_fix" type="number" inputmode="decimal" placeholder="e.g. 168940"></div>' +
+        '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_fix_save">Save correction</button></div></div>' +
+        '<input type="file" id="mt_fix_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="mt_fix_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div class="row"><button type="button" class="btn small ghost" id="mt_fix_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn small ghost" id="mt_fix_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<div id="mt_fix_prev"></div><div id="mt_fix_status" class="note"></div>' +
         '</div>';
 
       /* --- Upcoming --- */
@@ -649,8 +748,36 @@
         }
         if (dec.action === 'ignore') { alert('Enter a valid odometer reading.'); return; }
         W('odo', dec.value);
+        /* v97: a correction through this door is audited too — same
+           service-history entry the dash-photo flow writes. */
+        if (dec.action === 'correct' && master !== null && master !== undefined && dec.value !== master) {
+          try { logOdoCorrection(master, dec.value, 'typed reading'); } catch (e) {}
+        }
         api.render(body);
         if (dec.action === 'correct') alert('Odometer corrected to ' + kmStr(dec.value) + '.');
+      };
+
+      /* v97: the dash-photo correction card. The photo pipeline is
+         wired FILL-ONLY (no-op persist, same as the v61 card): every
+         read path only fills #mt_fix — nothing writes the master
+         until Save correction is tapped, and that save runs the
+         armed supervised decision via applyOdoCorrection, which
+         also writes the audit entry. */
+      try {
+        if (App._wirePhotoOCR) {
+          App._wirePhotoOCR('mt_fix', 'odometer', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
+        }
+      } catch (e) {}
+      var fixSaveBtn = body.querySelector('#mt_fix_save');
+      if (fixSaveBtn) fixSaveBtn.onclick = function () {
+        var fv = parseFloat(body.querySelector('#mt_fix').value);
+        if (!(fv > 0)) { alert('Snap the dash or type the real odometer reading first.'); return; }
+        var res = applyOdoCorrection(fv, 'dash photo');
+        if (res.action === 'ignore' || res.action === 'keep') { alert('Enter a valid odometer reading.'); return; }
+        api.render(body);
+        alert(res.logged
+          ? 'Odometer corrected to ' + kmStr(res.value) + ' — the correction is written into the service history below.'
+          : 'Odometer saved at ' + kmStr(res.value) + '.');
       };
 
       body.querySelector('#mt_add').onclick = function () {
