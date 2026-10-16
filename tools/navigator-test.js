@@ -17,12 +17,14 @@
  *      POSTs the proven payload shape, draws the polyline, fills the
  *      banner + steps from the real response, speaks the first verbal
  *      line, and an off-route fix held past the hysteresis re-routes.
- *      With NO server URL the module states "Navigator server not
- *      set — routing unavailable" and never fetches a route.
+ *      With the server address DELIBERATELY CLEARED (an explicit '' is
+ *      saved) the module states "Navigator server not set — routing
+ *      unavailable" and never fetches a route. With NO address ever
+ *      saved (v98) it routes against the shipped default server.
  *   3. STATICS: module registry + teardown hook in app.js, Preferences
- *      card + Advanced server row, index.html pins; and the app ships
- *      with NO routing-server address baked in (no loopback/private
- *      literals anywhere in the module).
+ *      card + Advanced server row, index.html pins; and the ONE
+ *      routing-server address baked in is the shipped v98 default
+ *      (no loopback/private literals anywhere in the module).
  */
 const fs = require('fs');
 const path = require('path');
@@ -284,9 +286,12 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w.world.Date = Date;
   api.teardown();
 
-  console.log('— flow: no server set —');
-  const w2 = makeWorld({});
+  console.log('— flow: server deliberately cleared —');
+  /* v98: '' is a SAVED value (the user cleared the field in
+     Preferences) — the default must NOT resurrect over it. */
+  const w2 = makeWorld({ navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' } });
   const api2 = w2.world.Meticulous.modules.navigator;
+  check('a cleared server stays cleared (no default resurrection)', w2.world.MeticulousNav.loadSettings().serverUrl === '');
   check('status says the server is not set', /not set/.test(api2.status()), api2.status());
   api2.render(w2.body);
   check('module states routing unavailable, in plain words', w2.body.innerHTML.indexOf('Navigator server not set — routing unavailable') >= 0);
@@ -296,8 +301,50 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('no route fetch is attempted without a server', w2.calls.fetch.length === 0);
   api2.teardown();
 
+  console.log('— flow: default server, never set (v98) —');
+  const w4 = makeWorld({});
+  const api4 = w4.world.Meticulous.modules.navigator;
+  check('v98: MeticulousNav exposes the shipped default', w4.world.MeticulousNav.DEFAULT_SERVER_URL === 'https://185.31.47.19',
+    w4.world.MeticulousNav.DEFAULT_SERVER_URL);
+  check('v98: never-saved → loadSettings returns the default', w4.world.MeticulousNav.loadSettings().serverUrl === 'https://185.31.47.19',
+    w4.world.MeticulousNav.loadSettings().serverUrl);
+  check('v98: a saved custom server still wins over the default',
+    makeWorld({ navigator: { serverUrl: 'http://nav.test' } }).world.MeticulousNav.loadSettings().serverUrl === 'http://nav.test');
+  check('v98: status reports the truck profile under the default (not "not set")',
+    /Truck/.test(api4.status()) && !/not set/.test(api4.status()), api4.status());
+  api4.render(w4.body);
+  check('v98: no unset-server warning under the default', w4.body.innerHTML.indexOf('routing unavailable') < 0);
+  w4.reg.nv_ttn.classList.add('hidden');
+  w4.reg.nv_ttn_note.classList.add('hidden');
+  w4.firePos(ORIGIN[0], ORIGIN[1]);
+  w4.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  check('v98: default set: destination note points at Route', /tap Route\./.test(w4.reg.nv_destnote.textContent), w4.reg.nv_destnote.textContent);
+  check('v98: default set: Route leads, the handoff sits under it ghost-styled (v93)',
+    w4.body.innerHTML.indexOf('id="nv_route"') < w4.body.innerHTML.indexOf('id="nv_ttn"') &&
+    w4.body.innerHTML.indexOf('class="btn ghost hidden" id="nv_ttn"') >= 0);
+  w4.reg.nv_route.onclick();
+  await tick(); await tick();
+  const dCalls = w4.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
+  check('v98: Route POSTs to the shipped default <server>/route', dCalls.length === 1 && dCalls[0].url === 'https://185.31.47.19/route',
+    dCalls.length ? dCalls[0].url : 'no fetch');
+  if (dCalls.length) {
+    const dSent = JSON.parse(dCalls[0].opts.body);
+    check('v98: default route body is the truck costing shape', dSent.costing === 'truck' &&
+      dSent.costing_options.truck.use_truck_route === 1.0 && dSent.costing_options.truck.hgv_no_access_penalty === 100000);
+  }
+  /* v93 handoff behavior unchanged under the default: same cascade,
+     same first link, built from the set destination. */
+  const timers4 = [];
+  w4.world.setTimeout = function (fn, ms) { timers4.push({ fn: fn, ms: ms }); return timers4.length; };
+  w4.reg.nv_ttn.onclick();
+  const want4 = w4.world.MeticulousNav.ttnLinks(DEST, 'Dropped pin');
+  check('v98: handoff cascade still fires the Google Maps intent first', w4.calls.anchors[0] === want4.intent, w4.calls.anchors[0]);
+  api4.teardown();
+
   console.log('— flow: turn-by-turn handoff (v93) —');
-  const w3 = makeWorld({});
+  /* the handoff-primary layout is the NO-server presentation — since
+     v98 that state is reached via a deliberately cleared address. */
+  const w3 = makeWorld({ navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' } });
   const api3 = w3.world.Meticulous.modules.navigator;
   /* the stub DOM does not parse markup classes — seed the hidden
      state the real DOM gets from the rendered class attribute */
@@ -343,7 +390,10 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('app.js runs module teardown on exit (v77 hook)', appSrc.indexOf('function teardownModule()') >= 0 && appSrc.indexOf('prev.teardown()') >= 0);
   check('preferences has the Navigator profile card', prefSrc.indexOf('pf_nv_height') >= 0 && prefSrc.indexOf('pf_nv_hazmat') >= 0);
   check('preferences Advanced has the Navigator server URL', prefSrc.indexOf('pf_nav_url') >= 0 && prefSrc.indexOf('Navigator server') >= 0);
-  check('navigator.js ships NO baked-in server address', !/127\.0\.0\.1|localhost|:8002|198\.19\.|192\.168\./.test(navSrc));
+  check('navigator.js carries no loopback/private server literals', !/127\.0\.0\.1|localhost|:8002|198\.19\.|192\.168\./.test(navSrc));
+  check('v98: the one baked-in address is the shipped default server', navSrc.indexOf("var NAV_DEFAULT_SERVER_URL = 'https://185.31.47.19'") >= 0);
+  check('v98: MeticulousNav exposes the default (Preferences/tests)', navSrc.indexOf('DEFAULT_SERVER_URL: NAV_DEFAULT_SERVER_URL') >= 0);
+  check('v98: Preferences fallback carries the same default rule', prefSrc.indexOf("? 'https://185.31.47.19' : String(s.serverUrl)") >= 0);
   check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
   check('navigator.js carries the v93 turn-by-turn handoff', navSrc.indexOf('id="nv_ttn"') >= 0 && navSrc.indexOf('function ttnLinks') >= 0);

@@ -205,7 +205,14 @@ const SESS = [{ date: TODAY, seconds: 7200, endedAt: '2026-10-15T17:00:00.000Z' 
 console.log('— navigator preview —');
 {
   const w = makeWorld('modules/navigator.js', {});
-  eq('no server set', w.Meticulous.modules.navigator.status(), 'Server not set — routing off');
+  eq('never set: the shipped default server routes (v98)', w.Meticulous.modules.navigator.status(),
+    'Truck · 24 t · Calgary truck routes');
+}
+{
+  const w = makeWorld('modules/navigator.js', {
+    navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' }
+  });
+  eq('server deliberately cleared: routing off (v98)', w.Meticulous.modules.navigator.status(), 'Server not set — routing off');
 }
 {
   const w = makeWorld('modules/navigator.js', {

@@ -7,12 +7,17 @@
 
    The module is honest about its one dependency: the routing service
    URL lives in Preferences (Navigator card + Advanced > Navigator
-   server URL). When it is unset the module says so in plain words and
-   routing stays unavailable — no address is baked into the app.
+   server URL). v98: the app ships with the Meticulous routing server
+   as the DEFAULT (NAV_DEFAULT_SERVER_URL below), so a user who has
+   never saved an address routes through it out of the box. A saved
+   address always wins, and a deliberately cleared one ('' saved on
+   purpose) keeps routing off — the module still says so in plain
+   words rather than silently falling back to the default.
 
    Persists via App._store (localStorage, mt_ prefix), key 'navigator':
    { profile: {height,width,length,weight,axleLoad,axles,hazmat},
-     serverUrl: '', muted: false, mode: 'truck' }.
+     serverUrl: <absent until the user sets or clears it>, muted: false,
+     mode: 'truck' }.
 */
 (function () {
   'use strict';
@@ -190,12 +195,21 @@
   /* ================= NAVPURE-END ================= */
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
+  /* v98: the routing server the app ships with. It applies ONLY when
+     the user has never saved an address (no serverUrl key in the
+     store): a saved address always wins, and a deliberately cleared
+     '' stays cleared — loadSettings never resurrects the default over
+     a saved value. (The nav.meticuloustechnologies.com name replaces
+     this IP literal once its DNS lands.) */
+  var NAV_DEFAULT_SERVER_URL = 'https://185.31.47.19';
+
   function loadSettings() {
     var s = {};
     try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
     return {
       profile: navProfile(s.profile),
-      serverUrl: String(s.serverUrl || ''),
+      serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
+        ? NAV_DEFAULT_SERVER_URL : String(s.serverUrl),
       muted: !!s.muted,
       mode: s.mode === 'car' ? 'car' : 'truck'
     };
@@ -210,6 +224,7 @@
   /* Exposed for Preferences (same defaults, same store key). */
   window.MeticulousNav = {
     DEFAULT_PROFILE: NAV_DEFAULT_PROFILE,
+    DEFAULT_SERVER_URL: NAV_DEFAULT_SERVER_URL,
     loadSettings: loadSettings,
     saveSettings: saveSettings,
     profile: navProfile,

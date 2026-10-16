@@ -259,9 +259,11 @@
         '<button class="btn ghost hidden" id="pf_parkforget">Forget this place</button></div>' +
         /* v77 (Navigator): the routing server URL is plumbing — a user
            sets it once (or never) — so it lives here in Advanced, not
-           on the Navigator card. Empty means the Navigator honestly
-           reports routing unavailable; the app ships with NO server
-           address built in. Persists the moment it changes. */
+           on the Navigator card. v98: the field shows the effective
+           address — the app ships with the Meticulous routing server
+           as the default; clearing the field saves an explicit '' and
+           the Navigator honestly reports routing unavailable.
+           Persists the moment it changes. */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">🧭 Navigator server</p>' +
         '<p class="note">Where the Navigator gets its truck routes. Your truck\'s size and weight are set on the Navigator card above.</p>' +
@@ -750,7 +752,12 @@
         function navLoad() {
           if (window.MeticulousNav && MeticulousNav.loadSettings) return MeticulousNav.loadSettings();
           var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-          return { profile: s.profile || {}, serverUrl: String(s.serverUrl || '') };
+          /* v98: the same default rule as MeticulousNav.loadSettings
+             (never-saved → the shipped default; a saved value, even a
+             deliberate '', wins). The literal is duplicated on purpose:
+             this fallback exists for when the module failed to load. */
+          return { profile: s.profile || {}, serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
+            ? 'https://185.31.47.19' : String(s.serverUrl) };
         }
         function navSave(patch) {
           if (window.MeticulousNav && MeticulousNav.saveSettings) { MeticulousNav.saveSettings(patch); return; }
