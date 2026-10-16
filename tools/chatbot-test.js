@@ -318,7 +318,7 @@ console.log('— G: weather —');
 console.log('— H: statics —');
 {
   has('H1 index.html loads the chatbot at the live pin', idxSrc, 'js/chatbot.js?v=' + ver.webVersion);
-  eq('H2 webVersion is 101 (v101: Navigator drive screen)', ver.webVersion, 101);
+  eq('H2 webVersion is 102 (v102: AI proxy live + search-first picker)', ver.webVersion, 102);
   eq('H3 native stays 35', ver.version, 35);
   ok(ver.apkUrl.indexOf('meticulous-v35.apk') !== -1, 'H4 apkUrl untouched', ver.apkUrl);
   /* The key correction (owner, Oct 16, 2026): no API-key field,
@@ -331,6 +331,9 @@ console.log('— H: statics —');
   has('H9 and it refuses to guess', C.OFFLINE_LINE, "won't guess at it");
   ok(!/chatQueue|queue.*question/i.test(chatSrc), 'H10 unanswered questions are never queued or stored');
   ok(chatSrc.indexOf('chatProxyUrl') !== -1, 'H11 the server-proxy seam exists for the server ship');
+  ok(chatSrc.indexOf('https://2.31.47.19/ai/chat') !== -1, 'H11b v102: the chat default proxy URL ships in the bundle (our own server)');
+  ok(!/45\.31\.47\.19|185\.31\.47\.19/.test(chatSrc), 'H11c v102: no dead server address in chatbot.js');
+  ok(chatSrc.indexOf('X-Meticulous-App') !== -1, 'H11d v102: chat proxy calls carry the shared app token header');
   has('H12 greeting teaches range, specific first', C.GREETING, 'holes do I slide');
   has('H13 greeting carries the weather example', C.GREETING, 'weather waiting at my drop');
   eq('H14 chip pool', C.CHIPS.length, 8);

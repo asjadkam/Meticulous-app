@@ -107,6 +107,11 @@ async function main() {
   check('odoReadFailed: above master within the jump → false', PowerRead.odoReadFailed(169000) === false);
   check('odoReadFailed: 200000 a wild jump above master → true (v80)', PowerRead.odoReadFailed(200000) === true);
 
+  /* v102: the shipped DEFAULT proxy URL is itself a route, so
+     this suite's no-route world clears the URL explicitly (the
+     navigator-default semantics: never saved = the default,
+     saved '' = deliberately off, reads stay on-device). */
+  mockStore.set('powerReadProxyUrl', '');
   fetchCalls = [];
   let out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('no key → skipped, zero fetch calls', out.status === 'skipped' && fetchCalls.length === 0);
@@ -259,6 +264,7 @@ async function main() {
   check('v94: proxy read succeeds and maps fields', out.status === 'done' && gotFields && gotFields.value === '168547', JSON.stringify(out));
   check('v94: the call went to the proxy, not Google', fetchCalls.length === 1 && fetchCalls[0].url === 'https://nav.example.test/powerread', fetchCalls.map(c => c.url).join(' | '));
   check('v94: proxy body carries reader + image only (no key material)', !!fetchCalls[0] && fetchCalls[0].opts.body.indexOf('TESTKEY') < 0 && JSON.parse(fetchCalls[0].opts.body).reader === 'odometer');
+  check('v102: the proxy call carries the shared app token header', !!fetchCalls[0] && fetchCalls[0].opts.headers['X-Meticulous-App'] === PowerRead.APP_TOKEN);
   /* the toggle still gates the proxy route */
   PowerRead.setOn(false);
   fetchCalls = [];
@@ -276,10 +282,10 @@ async function main() {
   fetchHandler = () => Promise.reject(new Error('down'));
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('v94: proxy network failure → waiting + queued', out.status === 'waiting' && PowerRead.queueLength() === 1);
-  mockStore.del('powerReadProxyUrl');
+  mockStore.set('powerReadProxyUrl', '');
   fetchHandler = () => geminiOk({ value: 168549 });
   await PowerRead.processQueue();
-  check('v94: the queued read drains via the saved key once the proxy is gone', PowerRead.queueLength() === 0 && !!PowerRead.peekResult('odometer'));
+  check('v102: the queued read drains via the saved key once the proxy is cleared', PowerRead.queueLength() === 0 && !!PowerRead.peekResult('odometer'));
   PowerRead.takeResult('odometer');
   /* the pre-v94 saved key still works SILENTLY on its own */
   fetchCalls = [];
@@ -287,8 +293,18 @@ async function main() {
   out = await PowerRead.escalate({ reader: 'odometer', image: IMG });
   check('v94: saved-key read still succeeds with the key in the header only', out.status === 'done' && fetchCalls.length === 1 && fetchCalls[0].opts.headers['x-goog-api-key'] === 'TESTKEY-123' && fetchCalls[0].url.indexOf('generativelanguage') >= 0);
   PowerRead.setKey('');
+  mockStore.set('powerReadProxyUrl', '');
+  check('v102: proxy cleared + no key → not enabled, escalate skips with zero fetch', PowerRead.hasRoute() === false && PowerRead.enabled() === false);
+  /* v102: never-saved is NOT no-route any more — the shipped
+     default points at our own server and IS the route. */
   mockStore.del('powerReadProxyUrl');
-  check('v94: neither route → not enabled, escalate skips with zero fetch', PowerRead.hasRoute() === false && PowerRead.enabled() === false);
+  check('v102: proxy URL never saved → the shipped default is the route', PowerRead.proxyUrl() === 'https://2.31.47.19/ai/powerread' && PowerRead.proxyUrl() === PowerRead.DEFAULT_PROXY_URL && PowerRead.hasRoute() === true && PowerRead.enabled() === true);
+  check('v102: the shipped default is our own server (no dead addresses)', PowerRead.DEFAULT_PROXY_URL === 'https://2.31.47.19/ai/powerread' && src.indexOf('45.31.47.19') < 0 && src.indexOf('185.31.47.19') < 0);
+  const chatSrc2 = fs.readFileSync(path.join(ROOT, 'js', 'chatbot.js'), 'utf8');
+  const tokOf = function (x) { const m = x.match(/APP_TOKEN\s*=\s*'([0-9a-f]+)'/); return m && m[1]; };
+  check('v102: app token parity — chatbot.js and powerread.js carry the SAME token', !!tokOf(src) && tokOf(src) === tokOf(chatSrc2));
+  check('v102: chatbot default proxy URL is our own server', chatSrc2.indexOf('https://2.31.47.19/ai/chat') >= 0 && !/45\.31\.47\.19|185\.31\.47\.19/.test(chatSrc2));
+  mockStore.set('powerReadProxyUrl', '');
 
   console.log('\npower-read: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

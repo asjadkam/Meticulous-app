@@ -2,10 +2,15 @@
 /* Meticulous v91 — NAVIGATION PLACES: THE DROPDOWN, DRIVEN, and
  * THE GREAT PLACES MOVE.
  *
- * v87 contract (unchanged): ONE filter input + ONE select, one
- * primary action (Navigate, into the app's OWN Navigator via the
+ * v87 contract: ONE filter input drives the picker, one primary
+ * action (Navigate, into the app's OWN Navigator via the
  * nav_pending hand-off), the Add form behind its button, work
  * visits logged to the Manifest, personal visits never logged.
+ * v102: the <select> listbox is GONE (owner: with 48 favorites it
+ * was a cramped scroll-box with truncated names) — matches render
+ * as full-width tappable rows (data-pid) with FULL names, one tap
+ * picks, and the default order is most-recent / most-visited /
+ * alphabetical. This suite drives the rows the way a thumb does.
  *
  * v91 (owner, Oct 16, 2026): the shipped dropdown no longer holds
  * his 25 personal places as built-ins — a fresh install shows
@@ -79,6 +84,36 @@ function makeSelect() {
   });
   return e;
 }
+/* v102: the results-list stub. Setting its innerHTML parses the
+   data-pid rows the module paints; rows are cached per paint so
+   the onclick the module wires survives until the next paint, and
+   pick(id) clicks the row a driver would tap. */
+function makeResults() {
+  const e = makeEl();
+  e._rows = {};
+  Object.defineProperty(e, 'innerHTML', {
+    configurable: true,
+    get: function () { return e._html; },
+    set: function (v) {
+      e._html = String(v);
+      e._rows = {};
+      const re = /data-pid="([^"]+)"/g;
+      let m;
+      while ((m = re.exec(e._html))) {
+        const pid = m[1];
+        e._rows[pid] = { _pid: pid, onclick: null,
+          getAttribute: function (n) { return n === 'data-pid' ? pid : null; },
+          click: function () { if (this.onclick) this.onclick(); } };
+      }
+    }
+  });
+  e.querySelectorAll = function (sel) {
+    if (sel !== '[data-pid]') return [];
+    return Object.keys(e._rows).map(function (k) { return e._rows[k]; });
+  };
+  e.pick = function (pid) { const r = e._rows[pid]; if (r) r.click(); };
+  return e;
+}
 function makeNavBody() {
   const body = { _html: '', _byId: {}, _tabs: [], _rgos: [] };
   Object.defineProperty(body, 'innerHTML', {
@@ -103,7 +138,7 @@ function makeNavBody() {
     }
   });
   body.querySelector = function (sel) {
-    if (!body._byId[sel]) body._byId[sel] = (sel === '#nv_sel' || sel === '#nv_yard') ? makeSelect() : makeEl();
+    if (!body._byId[sel]) body._byId[sel] = (sel === '#nv_yard') ? makeSelect() : (sel === '#nv_results') ? makeResults() : makeEl();
     return body._byId[sel];
   };
   body.querySelectorAll = function (sel) {
@@ -113,7 +148,8 @@ function makeNavBody() {
   };
   return body;
 }
-function optionCount(selEl) { return (selEl._html.match(/<option /g) || []).length; }
+function rowCount(resEl) { return (resEl._html.match(/data-pid=/g) || []).length; }
+function firstPid(resEl) { const m = /data-pid="([^"]+)"/.exec(resEl._html); return m && m[1]; }
 
 function makeNavWorld(mem) {
   const opened = [], alerts = [];
@@ -201,17 +237,18 @@ function favByName(mem, name) {
   const wf = makeNavWorld(memF);
   const bf = makeNavBody();
   wf.api.render(bf);
-  const selF = bf.querySelector('#nv_sel');
+  const resF = bf.querySelector('#nv_results');
   const detailF = bf.querySelector('#nv_detail');
   check('the filter input renders', bf._html.indexOf('id="nv_q"') >= 0);
-  check('the select renders', bf._html.indexOf('id="nv_sel"') >= 0);
+  check('v102: the results list renders (and NO select listbox)', bf._html.indexOf('id="nv_results"') >= 0 && bf._html.indexOf('id="nv_sel"') < 0);
   check('the Yard pick renders (one quiet select)', bf._html.indexOf('id="nv_yard"') >= 0);
-  check('fresh dropdown holds EXACTLY the 2 famous built-ins', optionCount(selF) === 2, 'got ' + optionCount(selF));
-  check('both are tagged Built-in', (selF._html.match(/· Built-in/g) || []).length === 2);
-  check('Stoney Pit and Volker Stevin are the two', selF._html.indexOf('Stoney Pit') >= 0 && selF._html.indexOf('Volker Stevin') >= 0);
+  check('fresh list holds EXACTLY the 2 famous built-ins', rowCount(resF) === 2, 'got ' + rowCount(resF));
+  check('both are tagged Built-in', (resF._html.match(/· Built-in/g) || []).length === 2);
+  check('Stoney Pit and Volker Stevin are the two', resF._html.indexOf('Stoney Pit') >= 0 && resF._html.indexOf('Volker Stevin') >= 0);
+  check('v102: unvisited places order alphabetically (Stoney before Volker)', firstPid(resF) === 'bi-stoney-pit');
   check('NONE of the owner’s 25 is anywhere on the fresh screen',
     ['Aecon Bradi Pit', '12th Street', 'A2-L20', 'Simply Stone', 'P Hauling yard', 'Mobil — Westwinds', 'Pier 3', 'North Plant']
-      .every(function (n) { return (bf._html + selF._html).indexOf(n) < 0; }));
+      .every(function (n) { return (bf._html + resF._html).indexOf(n) < 0; }));
   check('nothing copied into favorites on a fresh install', !memF.nav_data || !(memF.nav_data.work || []).length);
   check('the migration flag was still set (never re-runs)', memF.nav_places_migrated === 91, JSON.stringify(memF.nav_places_migrated));
   check('the panel asks for a pick, plainly', detailF._html.indexOf('Pick a place above.') >= 0);
@@ -231,15 +268,18 @@ function favByName(mem, name) {
   bf.querySelector('#nv_add').click();
   check('the favorite saved', memF.nav_data && memF.nav_data.work.length === 1 && memF.nav_data.work[0].name === 'My Test Yard');
   check('back at the list the new place is SELECTED, tagged Yours', detailF._html.indexOf('My Test Yard') >= 0 && detailF._html.indexOf('Yours') >= 0);
-  check('the list now holds 3 options (2 famous + his)', optionCount(selF) === 3, 'got ' + optionCount(selF));
+  check('the list now holds 3 rows (2 famous + his)', rowCount(resF) === 3, 'got ' + rowCount(resF));
+  check('v102: the new favorite leads the list is false — unvisited sort is alphabetical (My Test Yard first)', firstPid(resF) === memF.nav_data.work[0].id);
 
   console.log('— FRESH: filter + navigate a famous built-in —');
   const qF = bf.querySelector('#nv_q');
   qF.value = 'stoney'; qF.fire('input');
-  check('filter narrows to the matching famous pit', optionCount(selF) === 1 && selF._html.indexOf('Stoney Pit') >= 0);
+  check('filter narrows to ONLY the matching famous pit', rowCount(resF) === 1 && resF._html.indexOf('Stoney Pit') >= 0 && resF._html.indexOf('Volker Stevin') < 0);
+  qF.value = 'test yard'; qF.fire('input');
+  check('v102: a partial word finds the favorite by its FULL name', rowCount(resF) === 1 && resF._html.indexOf('My Test Yard') >= 0);
   qF.value = ''; qF.fire('input');
-  check('clearing the filter restores the full list', optionCount(selF) === 3);
-  selF.value = 'bi-stoney-pit'; selF.fire('change');
+  check('clearing the filter restores the full list', rowCount(resF) === 3);
+  resF.pick('bi-stoney-pit');
   check('the panel shows the place, tagged Built-in', detailF._html.indexOf('Stoney Pit') >= 0 && detailF._html.indexOf('Built-in') >= 0);
   check('the panel offers the ONE primary action', !!detailF.querySelector('#nv_go').onclick);
   detailF.querySelector('#nv_go').click();
@@ -257,12 +297,12 @@ function favByName(mem, name) {
   const w = makeNavWorld(mem);
   const body = makeNavBody();
   w.api.render(body);
-  const sel = body.querySelector('#nv_sel');
+  const res = body.querySelector('#nv_results');
   const detail = body.querySelector('#nv_detail');
   check('all 25 arrived as work favorites', mem.nav_data.work.length === 25, 'got ' + mem.nav_data.work.length);
-  check('the work list shows 2 built-ins + his 25', optionCount(sel) === 27, 'got ' + optionCount(sel));
-  check('his 25 are tagged Yours', (sel._html.match(/· Yours/g) || []).length === 25);
-  check('the famous two are tagged Built-in', (sel._html.match(/· Built-in/g) || []).length === 2);
+  check('the work list shows 2 built-ins + his 25', rowCount(res) === 27, 'got ' + rowCount(res));
+  check('his 25 are tagged Yours', (res._html.match(/· Yours/g) || []).length === 25);
+  check('the famous two are tagged Built-in', (res._html.match(/· Built-in/g) || []).length === 2);
   const a2 = favByName(mem, 'A2-L20');
   check('A2-L20 kept its exact pin', !!a2 && a2.lat === 50.96649 && a2.lng === -114.03178, JSON.stringify(a2));
   const bradi = favByName(mem, 'Aecon Bradi Pit');
@@ -276,10 +316,10 @@ function favByName(mem, name) {
   console.log('— EXISTING: filter, navigate, log —');
   const q = body.querySelector('#nv_q');
   q.value = 'bradi'; q.fire('input');
-  check('filter narrows to the migrated favorite', optionCount(sel) === 1 && sel._html.indexOf('Aecon Bradi Pit') >= 0 && sel._html.indexOf('Yours') >= 0);
+  check('filter narrows to ONLY the migrated favorite', rowCount(res) === 1 && res._html.indexOf('Aecon Bradi Pit') >= 0 && res._html.indexOf('Yours') >= 0);
   q.value = ''; q.fire('input');
-  check('clearing the filter restores all 27', optionCount(sel) === 27);
-  sel.value = bradi.id; sel.fire('change');
+  check('clearing the filter restores all 27', rowCount(res) === 27);
+  res.pick(bradi.id);
   check('the panel shows the migrated place as Yours, with Remove', detail._html.indexOf('Aecon Bradi Pit') >= 0 &&
     detail._html.indexOf('Yours') >= 0 && detail._html.indexOf('Remove this place') >= 0);
   detail.querySelector('#nv_go').click();
@@ -287,7 +327,10 @@ function favByName(mem, name) {
     JSON.stringify(mem.nav_pending));
   check('the visit hit the manifest feed', (mem.manifest_feed || []).some(function (f) { return f.summary === 'Navigated to work site: Aecon Bradi Pit'; }));
   check('the visit counted on the favorite', favByName(mem, 'Aecon Bradi Pit').visits === 1);
-  sel.value = mob.id; sel.fire('change');
+  w.api.render(body);
+  check('v102: after a visit, the most recently visited place LEADS the list', firstPid(body.querySelector('#nv_results')) === bradi.id,
+    'first=' + firstPid(body.querySelector('#nv_results')));
+  res.pick(mob.id);
   detail.querySelector('#nv_go').click();
   check('the pin-less favorite hands over its address as the search text', !!mem.nav_pending &&
     mem.nav_pending.query === 'Mobil — Westwinds, 300-3633 Westwinds Dr NE, Calgary' && mem.nav_pending.lat === undefined,
@@ -295,19 +338,20 @@ function favByName(mem, name) {
 
   console.log('— EXISTING: a deleted migrated favorite STAYS deleted —');
   const stone = favByName(mem, 'Simply Stone');
-  sel.value = stone.id; sel.fire('change');
+  res.pick(stone.id);
   detail.querySelector('#nv_remove').click();
   check('the favorite is gone', mem.nav_data.work.length === 24 && !favByName(mem, 'Simply Stone'));
   check('re-running the migration adds nothing back', w.api.migrateLegacyPlaces() === 0 && mem.nav_data.work.length === 24);
   w.api.render(body);
-  check('after a re-render it is still gone', !favByName(mem, 'Simply Stone') && optionCount(sel) === 26);
+  check('after a re-render it is still gone', !favByName(mem, 'Simply Stone') && rowCount(body.querySelector('#nv_results')) === 26);
 
   console.log('— EXISTING: personal tab — his Home, never logged —');
   body._tabs.filter(function (t) { return t.getAttribute('data-tab') === 'personal'; })[0].click();
-  check('personal list holds ONLY his Home (no built-ins, no work favorites)', optionCount(sel) === 1 && sel._html.indexOf('Home') >= 0 && sel._html.indexOf('Built-in') < 0,
-    'options ' + optionCount(sel));
+  const resP = body.querySelector('#nv_results');
+  check('personal list holds ONLY his Home (no built-ins, no work favorites)', rowCount(resP) === 1 && resP._html.indexOf('Home') >= 0 && resP._html.indexOf('Built-in') < 0,
+    'rows ' + rowCount(resP));
   const feedBefore = (mem.manifest_feed || []).length;
-  sel.value = 'home1'; sel.fire('change');
+  resP.pick('home1');
   detail.querySelector('#nv_go').click();
   check('personal Navigate hands off the address', !!mem.nav_pending && mem.nav_pending.query === 'Home, 1243 Cornerstone Blvd NE');
   check('personal visits NEVER reach the manifest feed', (mem.manifest_feed || []).length === feedBefore);

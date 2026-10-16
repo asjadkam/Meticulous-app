@@ -14,9 +14,16 @@
    more work?"): users are NEVER asked for a key. There is no key
    field, prompt, or nag anywhere in the app. Transport order:
    (a) the Meticulous server proxy — store key 'powerReadProxyUrl',
-       set by the server ship, deliberately NO UI (the chatbot's
-       chatProxyUrl seam is the same pattern); the proxy holds
-       Meticulous's own key server-side;
+       deliberately NO UI (the chatbot's chatProxyUrl seam is the
+       same pattern); the proxy holds Meticulous's own key
+       server-side. v102: THE PROXY IS LIVE — DEFAULT_PROXY_URL
+       below ships in the bundle, so every install has route (a)
+       out of the box (navigator-default semantics: the default
+       applies only while no URL was ever saved; a saved URL wins;
+       a deliberately cleared '' stays cleared, reads stay
+       on-device). Proxy calls carry the shared app token header
+       (X-Meticulous-App) — an abuse turnstile the server requires
+       alongside the app Origin, not a user credential;
    (b) a key saved on the device before v94 (the owner's own setup)
        — still read silently so existing installs keep working.
    When neither route exists the module is simply quiet: reads stay
@@ -53,6 +60,14 @@
      first model that answers is remembered (powerReadModel). */
   PowerRead.MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
   PowerRead.ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
+
+  /* v102: our own AI proxy on the Navigator's box (same host,
+     same origin pinning). DEFAULT_PROXY_URL applies only while
+     the store key was never saved — see proxyUrl(). APP_TOKEN
+     must stay equal to the literal in js/chatbot.js (test-pinned
+     parity) and to the server's METICULOUS_APP_TOKEN env value. */
+  PowerRead.DEFAULT_PROXY_URL = 'https://2.31.47.19/ai/powerread';
+  PowerRead.APP_TOKEN = 'c686ca1a3319a1f8c883f4282d036912e8c5433c5a0119d5';
 
   var QUEUE_MAX = 4;
 
@@ -119,7 +134,11 @@
   /* v94: route (a) — the server proxy. Its URL lives in the synced
      store, written by the server ship (or a future default); there
      is deliberately NO UI for it anywhere in the app. */
-  PowerRead.proxyUrl = function () { return String(sget('powerReadProxyUrl', '') || '').trim(); };
+  PowerRead.proxyUrl = function () {
+    var v = sget('powerReadProxyUrl', null);
+    if (v === null || v === undefined) return PowerRead.DEFAULT_PROXY_URL;
+    return String(v || '').trim();
+  };
   PowerRead.hasRoute = function () { return !!PowerRead.proxyUrl() || PowerRead.hasKey(); };
   PowerRead.enabled = function () { return PowerRead.isOn() && PowerRead.hasRoute(); };
 
@@ -321,7 +340,7 @@
     if (!f) return Promise.resolve({ ok: false, kind: 'network', message: '⚡ Power read needs a network connection.' });
     return f(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Meticulous-App': PowerRead.APP_TOKEN },
       body: JSON.stringify({ reader: reader, image: dataUrl })
     }).then(function (resp) {
       return resp.json().then(function (j) { return { status: resp.status, json: j }; }, function () { return { status: resp.status, json: null }; });

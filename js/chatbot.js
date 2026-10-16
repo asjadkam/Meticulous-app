@@ -30,9 +30,11 @@
  *      Power Read uses, MINUS any key errand: there is NO API-key
  *      field, prompt, or nag anywhere in this feature (owner
  *      correction, Oct 16, 2026 — "why are we asking users to do
- *      more work?"). A future server proxy URL (chatProxyUrl, set
- *      by the server ship — no UI here) is tried first; the owner's
- *      own pre-existing Power Read setup is the interim transport.
+ *      more work?"). The server proxy (chatProxyUrl — no UI here)
+ *      is tried first; v102 ships its default URL in the bundle,
+ *      so the proxy is live for every install (see remoteAsk).
+ *      The owner's own pre-existing Power Read setup is the
+ *      fallback transport.
  *      When no brain is reachable the bot answers from layers 1–4
  *      where they fit and otherwise says ONE honest line. Nothing
  *      is queued, stored, or promised.
@@ -837,12 +839,24 @@
 
   /* ---------- layer 5: the general brain, through Power Read's
      seam with NO key UI of ours. A server proxy URL wins when one
-     exists (set by the server ship; no field anywhere here). ---- */
+     exists (no field anywhere here). v102: THE PROXY IS LIVE —
+     CHAT_DEFAULT_PROXY_URL ships in the bundle and applies only
+     while no URL was ever saved (navigator-default semantics:
+     a saved URL wins; a deliberately cleared '' stays cleared
+     and the general layer stays offline). Calls carry the
+     shared app token header (X-Meticulous-App) the server
+     requires alongside the app Origin. ---- */
+  var CHAT_DEFAULT_PROXY_URL = 'https://2.31.47.19/ai/chat';
+  /* Parity: this literal must stay equal to PowerRead.APP_TOKEN
+     in js/powerread.js and to the server's env (test-pinned). */
+  var METICULOUS_APP_TOKEN = 'c686ca1a3319a1f8c883f4282d036912e8c5433c5a0119d5';
   function remoteAsk(text) {
-    var proxy = String(sget('chatProxyUrl', '') || '').trim();
+    var saved = sget('chatProxyUrl', null);
+    var proxy = (saved === null || saved === undefined)
+      ? CHAT_DEFAULT_PROXY_URL : String(saved || '').trim();
     if (proxy) {
       return fetch(proxy, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Meticulous-App': METICULOUS_APP_TOKEN },
         body: JSON.stringify({ q: text })
       }).then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) { return (j && (j.a || j.answer || j.text)) ? String(j.a || j.answer || j.text) : null; })

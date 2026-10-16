@@ -19,6 +19,17 @@
    button"): it opens from one "+ Add favorite" button and closes
    back to the list with the new place selected.
    Persists via App._store (localStorage, mt_ prefix).
+   v102 (owner field complaint, Oct 16, 2026 15:57 MDT — with 48
+   favorites the v87 select listbox was a cramped scroll-box with
+   names truncated mid-word: "looking for one is a chore. There
+   should be a search button"): THE PICKER IS SEARCH-FIRST. The
+   filter field is the primary element; the <select> listbox is
+   GONE. Matches render as clean full-width rows — FULL names,
+   never truncated — and one tap on a row picks the place and
+   arms the detail panel's Navigate. Default order puts the
+   driver's own rhythm first: most recently visited, then most
+   visited, then alphabetical (places never visited carry no
+   visits data and fall to the alphabetical group).
 */
 (function () {
   'use strict';
@@ -279,6 +290,20 @@
     return (TYPE_ICON[p.type] || '📍') + ' ' + p.name +
       (p.type ? ' — ' + p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours');
   }
+  /* v102: the picker's default order — the driver's own rhythm
+     first (most recently visited, then most visited), everything
+     never visited after, alphabetical. Built-ins carry no visit
+     data, so they land in the alphabetical group. */
+  function pickerOrder(list) {
+    return list.slice().sort(function (a, b) {
+      var pa = a.place, pb = b.place;
+      var la = pa.lastVisit || 0, lb = pb.lastVisit || 0;
+      if (lb !== la) return lb - la;
+      var va = pa.visits || 0, vb = pb.visits || 0;
+      if (vb !== va) return vb - va;
+      return String(pa.name).localeCompare(String(pb.name));
+    });
+  }
 
   var api = {
     builtinPlaces: builtinPlaces,
@@ -302,7 +327,7 @@
       /* ---- v87: the places surface — ONE field, one action ---- */
       h += '<div class="card"><h3>' + (tab === 'work' ? '📍 Places' : '🏠 Personal places') + '</h3>' +
         '<input id="nv_q" placeholder="Type to find a place…" value="' + esc(pickQ) + '" style="width:100%">' +
-        '<select id="nv_sel" style="width:100%;margin-top:8px"></select>' +
+        '<div id="nv_results" style="margin-top:8px"></div>' +
         '<div id="nv_detail" style="margin-top:10px"></div>' +
         '<button class="btn ghost" id="nv_addopen" style="margin-top:10px">＋ Add ' + (tab === 'work' ? 'favorite' : 'place') + '</button>' +
         /* the Add form lives behind that button — never the landing face */
@@ -343,23 +368,36 @@
 
       body.innerHTML = h;
 
-      /* ---- the picker: filter repaints ONLY the option list (the
-         input keeps focus); picking repaints ONLY the detail. ---- */
-      var selEl = body.querySelector('#nv_sel');
+      /* ---- the picker (v102): filter repaints ONLY the results
+         list (the input keeps focus); one tap on a row picks the
+         place and repaints the detail (Navigate armed). Rows are
+         full-width buttons with FULL names — white-space:normal
+         so a long name wraps instead of truncating. ---- */
+      var resEl = body.querySelector('#nv_results');
       var detailEl = body.querySelector('#nv_detail');
-      function paintOptions() {
-        var list = placesFor(kind).filter(function (e) { return entryMatches(e, pickQ.trim().toLowerCase()); });
+      function paintResults() {
+        var list = pickerOrder(placesFor(kind).filter(function (e) { return entryMatches(e, pickQ.trim().toLowerCase()); }));
         if (!list.length) {
-          selEl.innerHTML = '<option value="" disabled>' +
-            (pickQ.trim() ? 'No place matches that.' : 'No places yet.') + '</option>';
-          selEl.size = 2;
+          resEl.innerHTML = '<div class="empty">' +
+            (pickQ.trim() ? 'No place matches that.' : 'No places yet.') + '</div>';
           return list;
         }
-        selEl.innerHTML = list.map(function (e) {
-          return '<option value="' + esc(e.place.id) + '"' +
-            (e.place.id === selId[kind] ? ' selected' : '') + '>' + esc(optionLabel(e)) + '</option>';
+        resEl.innerHTML = list.map(function (e) {
+          var p = e.place, picked = p.id === selId[kind];
+          return '<button class="btn ghost" data-pid="' + esc(p.id) + '" ' +
+            'style="width:100%;text-align:left;margin-top:6px;white-space:normal;height:auto">' +
+            '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
+            '<span class="b" style="display:block">' +
+            esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + (p.address ? ' · ' + p.address : '')) +
+            '</span></button>';
         }).join('');
-        selEl.size = Math.min(8, Math.max(2, list.length));
+        resEl.querySelectorAll('[data-pid]').forEach(function (b) {
+          b.onclick = function () {
+            selId[kind] = b.getAttribute('data-pid');
+            paintResults();
+            paintDetail();
+          };
+        });
         return list;
       }
       function paintDetail() {
@@ -390,24 +428,12 @@
           api.render(body);
         };
       }
-      paintOptions();
+      paintResults();
       paintDetail();
       var qEl = body.querySelector('#nv_q');
       qEl.addEventListener('input', function () {
         pickQ = qEl.value;
-        paintOptions();
-      });
-      selEl.addEventListener('change', function () {
-        selId[kind] = selEl.value;
-        paintDetail();
-      });
-      /* a plain click on a listbox row does not always fire change
-         (re-picking the same row); treat it as the pick too */
-      selEl.addEventListener('click', function () {
-        if (selEl.value && selEl.value !== selId[kind]) {
-          selId[kind] = selEl.value;
-          paintDetail();
-        }
+        paintResults();
       });
 
       /* ---- tabs ---- */

@@ -145,6 +145,10 @@ function prWorld(seedStore, seedLs) {
   /* seeds are LOGICAL store keys (the same keys the app passes to
      App._store — 'mt_odo' the odometer key, 'powerReadKey', …) */
   Object.keys(seedStore || {}).forEach(k => store.set(k, seedStore[k]));
+  /* v102: the B worlds drive the saved-key / no-route transports.
+     The shipped DEFAULT proxy URL would otherwise be the route by
+     merely being absent, so clear it unless a world seeds it. */
+  if (!seedStore || !('powerReadProxyUrl' in seedStore)) store.set('powerReadProxyUrl', '');
   const sb = {
     console,
     navigator: { onLine: true },

@@ -158,7 +158,9 @@ ok('the built-in region itself holds none of the 25 names', FIXTURE.every(f => !
 /* ================= C: wiring ================= */
 console.log('\n— C: wiring —');
 ok('Navigation api exposes builtinPlaces', navSrc.includes('builtinPlaces: builtinPlaces'));
-ok('v87: the ONE picker field renders (filter input + select)', navSrc.includes('id="nv_q"') && navSrc.includes('id="nv_sel"'));
+ok('v102: search-first picker renders (filter input + results list; the select listbox is GONE)', navSrc.includes('id="nv_q"') && navSrc.includes('id="nv_results"') && !navSrc.includes('id="nv_sel"'));
+ok('v102: picker rows are tappable full-width buttons with untruncated names', navSrc.includes('data-pid') && navSrc.includes('white-space:normal'));
+ok('v102: picker default order = most recent, then most visited, then alphabetical', navSrc.includes('function pickerOrder') && navSrc.includes('lastVisit'));
 ok('v87: combined list assembly (built-ins + favorites, tagged by source)', navSrc.includes('function placesFor') && navSrc.includes("src: 'builtin'") && navSrc.includes("src: 'fav'"));
 ok('v87: Navigate hands the PIN over via nav_pending', navSrc.includes("App._store.set('nav_pending'") && navSrc.includes('pend.lat = fav.lat'));
 ok('v87: Navigate opens the in-app Navigator', navSrc.includes("App.openModule('navigator')"));

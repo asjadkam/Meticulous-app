@@ -160,6 +160,11 @@ function geminiErr(status, message) {
 function makeBaseWorld(opts) {
   const store = makeStore();
   (opts.seed || []).forEach(([k, v]) => store.set(k, v));
+  /* v102: these worlds model installs whose cloud transport is
+     the saved key (or nothing at all). The shipped DEFAULT proxy
+     URL would otherwise become the route by merely being absent
+     (and win over the key), so clear it unless a world seeds it. */
+  if (!(opts.seed || []).some(([k]) => k === 'powerReadProxyUrl')) store.set('powerReadProxyUrl', '');
   const fetchCalls = [];
   const fetchMock = (url, o) => { fetchCalls.push({ url, opts: o }); return opts.fetchHandler(url, o); };
   const doc = makeDocument();
