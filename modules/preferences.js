@@ -632,6 +632,15 @@
               ? 'Battery: Unrestricted — battery saver can\'t stop tracking mid-shift. ✓'
               : 'Battery: Battery saver can stop tracking mid-shift. Set Meticulous to “Unrestricted” battery so a shift is never cut short.');
             if (s.sessionActive) lines.push('Right now: a shift is being tracked in the background.');
+            /* v92: the armed day, in plain words — counting that
+               starts by itself, before the app is ever opened. */
+            if (s.armStarted && s.sessionActive) {
+              lines.push('Today\'s counting started by itself — the app never had to be opened first.');
+            } else if (s.armed && s.armFireMs) {
+              var armWhen = new Date(s.armFireMs).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+              var armDay = new Date(s.armFireMs).toDateString() === new Date().toDateString() ? 'today' : 'tomorrow';
+              lines.push('Next shift: counting starts by itself ' + armDay + ' at ' + armWhen + ' — no need to open the app first.');
+            }
             note.textContent = lines.join(' ');
             show(allowBtn, !s.backgroundLocation);
             show(battBtn, !s.batteryExempt);

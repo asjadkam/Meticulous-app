@@ -21,6 +21,28 @@
  * ShiftTrack plugin: available() is false, every method is inert,
  * and the app behaves exactly as before (foreground counting +
  * wake lock). Nothing in here ever throws into the tracker.
+ *
+ * v92 (native v35): THE ARMED DAY. Until now the service could only
+ * record once a session existed, and a session could only begin in
+ * the WebView — so the 8:00 auto-start silently waited for the app
+ * to be opened, and the morning's pre-session driving (home -> site)
+ * was dropped as "stale" by the drain below. The native shell now
+ * keeps its own schedule: while the app is alive, js/app.js arms the
+ * next workday (armDay: sessionKey + fire time = planned start minus
+ * a 60-minute lead, the same window the miles engine's adoption
+ * rules already bless), and at the fire time the native side starts
+ * recording on its own. This file's halves of that bargain:
+ *  - armDay()/disarmDay() wrappers + the 'dayarm' store record that
+ *    remembers the day's true counting window;
+ *  - the drain's freshness cutoff widens to that window, so crumbs
+ *    the service observed before the session's start FOLD instead
+ *    of being cleared unread;
+ *  - foldIntoRecord() creates the day's record when none exists —
+ *    natively observed miles are never acked into the void;
+ *  - the once-per-session ask also covers the battery state: if
+ *    Android can still starve the service (battery not Unrestricted,
+ *    or the service was refused), the driver hears it once, in
+ *    plain words, with the one-tap fix — never a nag loop.
  */
 (function () {
   'use strict';
@@ -49,6 +71,48 @@
   var draining = false;
   var drainTimer = null;
   var bannerDone = {};        // sessionKey -> true once the ask is settled
+
+  /* ---------------- the armed day (v92) ---------------- */
+
+  /* The web-side memory of the armed day: { key, fireMs, startMs,
+     date }. It is what lets a later drain know the day's counting
+     window legitimately began BEFORE the session's own start (the
+     service was recording the drive from home). Written when the
+     arm is placed, refreshed from the plugin's status on boot, and
+     kept (not cleared) when the session starts — the window is a
+     fact about the day, not about the arm's pending state. */
+  function loadDayArm() {
+    var s = store();
+    if (!s) return null;
+    var rec = null;
+    try { rec = s.get('dayarm', null); } catch (e) {}
+    return (rec && rec.key) ? rec : null;
+  }
+  function storeDayArm(rec) {
+    var s = store();
+    if (!s || !rec || !rec.key) return;
+    try { s.set('dayarm', rec); } catch (e) {}
+  }
+  function clearDayArm() {
+    var s = store();
+    if (!s) return;
+    try { if (s.del) s.del('dayarm'); else s.set('dayarm', null); } catch (e) {}
+  }
+  function dateOfKeyMs(ms) {
+    var d = new Date(ms || Date.now());
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  /* The stored arm that belongs to a drain: same session key, or
+     the same calendar date (a hand-started session takes a
+     different key than the armed one, but it is the same workday
+     and the same window — LiveMiles' adoption slack agrees). */
+  function dayArmFor(key, startMs) {
+    var rec = loadDayArm();
+    if (!rec) return null;
+    if (rec.key === key) return rec;
+    if (startMs && rec.date && rec.date === dateOfKeyMs(startMs)) return rec;
+    return null;
+  }
 
   /* ---------------- status ---------------- */
 
@@ -86,7 +150,11 @@
      (session already stopped, or orphaned by a WebView death):
      rebuild the day's miles record with a throwaway engine begun
      from the persisted snapshot, so the same join/dedupe rules
-     apply as in the live path. Returns true when the record moved. */
+     apply as in the live path. Returns true when the record moved.
+     v92: when no record exists yet — the armed day recorded a whole
+     morning before any WebView existed to begin one — the record is
+     CREATED from the crumbs. Observed miles must never be acked
+     into the void just because the web layer arrived late. */
   function foldIntoRecord(key, crumbs) {
     var s = store();
     if (!s || !key || !crumbs || !crumbs.length) return false;
@@ -94,8 +162,17 @@
     try { lm = window.LiveMiles || null; } catch (e) {}
     if (!lm || !lm._engine) return false;
     var d = s.get('livemiles', null);
-    if (!d || !d.days || !d.days[key]) return false;
+    if (!d || typeof d !== 'object') d = { days: {} };
+    if (!d.days || typeof d.days !== 'object') d.days = {};
     var rec = d.days[key];
+    if (!rec) {
+      var keyMs = parseInt(String(key).slice(1), 10) || Date.now();
+      rec = {
+        key: key, date: dateOfKeyMs(keyMs), totalM: 0,
+        anchor: null, crumbs: [], hasFix: false, updatedAt: Date.now()
+      };
+      d.days[key] = rec;
+    }
     var eng = lm._engine.createMilesTracker();
     eng.begin(key, rec);
     var r = eng.mergeCrumbs(crumbs);
@@ -134,8 +211,27 @@
   /* Drain the service's breadcrumbs for a session: fold them into
      the live engines when the session is on screen, or into the
      stored record when it is not, then ack natively up to the
-     newest crumb READ (crumbs from before this session's start are
-     stale leftovers — never folded, still cleared). */
+     newest crumb READ (crumbs from before this day's counting
+     window are stale leftovers — never folded, still cleared).
+     v92: the window no longer starts at the session. When the day
+     was ARMED, the service legitimately recorded from the arm's
+     fire time — the drive from home before the 8:00 session is the
+     owner's own kilometres, and dropping them was the Oct 16 bug.
+     The cutoff is the earliest of: session start - 1 min, the
+     stored arm's fire time, and the native side's own startedAt
+     for this key (set when the alarm began the recording). */
+  function drainCutoffMs(key, startMs) {
+    var cutoff = startMs ? startMs - 60000 : 0;
+    var arm = dayArmFor(key, startMs);
+    if (arm && arm.fireMs && (!cutoff || arm.fireMs - 60000 < cutoff)) {
+      cutoff = arm.fireMs - 60000;
+    }
+    if (lastStatus && lastStatus.sessionKey === key &&
+        lastStatus.startedAt && (!cutoff || lastStatus.startedAt - 60000 < cutoff)) {
+      cutoff = lastStatus.startedAt - 60000;
+    }
+    return cutoff;
+  }
   function drain(key) {
     var p = plugin();
     if (!p || !key || draining) return Promise.resolve(false);
@@ -145,11 +241,12 @@
       if (!crumbs.length) return false;
       var maxT = 0;
       var startMs = parseInt(String(key).slice(1), 10) || 0;
+      var cutoff = drainCutoffMs(key, startMs);
       var fresh = [];
       for (var i = 0; i < crumbs.length; i++) {
         var t = +crumbs[i].t || 0;
         if (t > maxT) maxT = t;
-        if (!startMs || t >= startMs - 60000) fresh.push(crumbs[i]);
+        if (!cutoff || t >= cutoff) fresh.push(crumbs[i]);
       }
       if (trackerActive()) {
         // v69: while the tracker is live, these crumbs fold through
@@ -204,30 +301,57 @@
   /* Show the ask inside the tracker card when a running session is
      not fully set up for background counting. Once per session: when
      the driver answers (or grants), it stays away for that session
-     and comes back for the next one — no mid-shift nagging. */
+     and comes back for the next one — no mid-shift nagging.
+     v92: the battery state joins the ask. A foreground service the
+     phone may kill is the difference between a counted day and the
+     Oct 14–16 undercounts, so when battery is not Unrestricted —
+     or the service has already been refused by the phone — the
+     driver hears it ONCE here, in plain words, with the one-tap
+     fix. Same once-per-session rule; nothing stands or repeats. */
   function paintBanner() {
     var elm = bannerEl();
     if (!elm) return;
     var s = lastStatus;
+    var svcRefused = !!(s && s.lastError &&
+      (s.lastError === 'foreground-service-refused' ||
+       s.lastError === 'day-start-refused' ||
+       s.lastError === 'watchdog-restart-refused'));
+    var battRisk = !!(s && (s.batteryExempt === false || svcRefused));
+    var kind = null;
+    if (s && !s.fineLocation) kind = 'nofine';
+    else if (s && !s.backgroundLocation) kind = 'bg';
+    else if (battRisk) kind = 'battery';
     var show = !!(plugin() && currentKey && trackerActive() && s &&
-      !bannerDone[currentKey] && (!s.fineLocation || !s.backgroundLocation));
+      !bannerDone[currentKey] && kind);
     if (!show) {
       elm.classList.add('hidden');
       elm.innerHTML = '';
       return;
     }
-    var noFine = !s.fineLocation;
+    var noFine = kind === 'nofine';
     elm.innerHTML = '';
     var txt = document.createElement('span');
-    txt.textContent = noFine
+    txt.textContent = kind === 'battery'
+      ? (svcRefused
+          ? 'The phone stopped background counting. Set Meticulous battery to “Unrestricted” so your miles can\'t be cut off mid-shift.'
+          : 'Battery saver can stop your miles mid-shift. Set Meticulous battery to “Unrestricted” so counting can\'t be cut off.')
+      : noFine
       ? 'Location is off, so miles can\'t be counted. Tap Allow and pick “Allow all the time”.'
       : 'Counting stops when the app closes. Set location to “Allow all the time” so your miles keep counting.';
     var allow = document.createElement('button');
     allow.className = 'trkEdit';
-    allow.textContent = 'Allow';
+    allow.textContent = kind === 'battery' ? 'Open battery settings' : 'Allow';
     allow.onclick = function () {
       var p = plugin();
       if (!p) return;
+      if (kind === 'battery') {
+        // The fix lives on a system screen; the ask is settled for
+        // this session either way (once means once).
+        try { p.openBatterySettings(); } catch (e) {}
+        bannerDone[currentKey] = true;
+        paintBanner();
+        return;
+      }
       p.requestBackground().then(function () {
         return refreshStatus();
       }).then(function (s2) {
@@ -276,18 +400,54 @@
 
     /* A work session started (manual or auto-start). Start the
        service for it, fold anything it may already hold, and put
-       the permission ask up if the session is not fully set up. */
+       the permission ask up if the session is not fully set up.
+       v92: a live session supersedes any pending day-arm (the
+       native start() consumes a matching/past arm itself; this
+       disarm covers the rest) — but the stored dayarm record is
+       KEPT: it remembers the window this day's crumbs belong to. */
     sessionStarted: function (key) {
       var p = plugin();
       if (!p || !key) return;
       currentKey = key;
       p.start({ sessionKey: key }).then(function () {
+        if (typeof p.disarmDay === 'function') {
+          try { p.disarmDay(); } catch (e) {}
+        }
         return refreshStatus();
       }).then(function () {
         paintBanner();
         startDrainLoop();
         drain(key);
       }).catch(function () {});
+    },
+
+    /* v92: arm the next workday natively (called from js/app.js's
+       App.armNativeDay, which owns the plan math). arm:
+       { key, fireMs, startMs, date }. Inert on shells without the
+       armDay method (pre-v35 APKs) — those keep today's behavior:
+       counting starts when the app wakes. */
+    armDay: function (arm) {
+      var p = plugin();
+      if (!p || typeof p.armDay !== 'function' || !arm || !arm.key) {
+        return Promise.resolve(null);
+      }
+      storeDayArm({ key: arm.key, fireMs: arm.fireMs, startMs: arm.startMs, date: arm.date });
+      return p.armDay({
+        sessionKey: arm.key, fireMs: arm.fireMs,
+        startMs: arm.startMs, date: arm.date
+      }).then(function (r) {
+        refreshStatus();
+        return r;
+      }).catch(function () { return null; });
+    },
+
+    /* v92: cancel the arm AND forget the stored window (the plan
+       is gone — auto-start off, office role, no upcoming day). */
+    disarmDay: function () {
+      var p = plugin();
+      clearDayArm();
+      if (!p || typeof p.disarmDay !== 'function') return Promise.resolve(null);
+      return p.disarmDay().catch(function () { return null; });
     },
 
     /* The app came back to life. If the native side says a session
@@ -299,7 +459,22 @@
       var p = plugin();
       if (!p) return;
       refreshStatus().then(function (s) {
-        if (!s || !s.sessionActive) return;
+        if (!s) return;
+        // v92: whatever the native side knows about the armed day
+        // refreshes the stored window FIRST — a drain below may be
+        // folding crumbs that predate the session's own start.
+        if (s.armed || s.armStarted || s.sessionActive) {
+          var aKey = s.sessionKey || s.armSessionKey;
+          if (aKey) {
+            storeDayArm({
+              key: aKey,
+              fireMs: s.armFireMs || s.startedAt || 0,
+              startMs: s.armStartMs || 0,
+              date: s.armDate || ''
+            });
+          }
+        }
+        if (!s.sessionActive) return;
         var key = s.sessionKey || currentKey;
         if (!key) return;
         currentKey = key;

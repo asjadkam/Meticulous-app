@@ -78,6 +78,7 @@
       if (inp && inp.value && App.setAutostartOverride) {
         App.setAutostartOverride(inp.value);
         try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+        try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
         refresh();
       }
     };
@@ -85,6 +86,7 @@
     if (clrBtn) clrBtn.onclick = function () {
       if (App.clearAutostartOverride) App.clearAutostartOverride();
       try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+      try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
       refresh();
     };
   }
@@ -118,6 +120,7 @@
     );
     App._store.set('onboarding', o);
     try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+        try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
   }
 
   Meticulous.modules.autostart = {

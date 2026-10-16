@@ -176,7 +176,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 34; // <- bump on every native (APK) release
+      var APK_VERSION = 35; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -892,6 +892,8 @@
       try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v63: native background tracking (new shell only) rides it too
       try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
+      // v92: today is underway — the native arm now belongs to the NEXT day
+      try { App.armNativeDay(); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
     }
     // v62: the screen wake lock follows the session state — a pause
@@ -916,6 +918,9 @@
     try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
     // v63: native background tracking — final crumb drain + service stop
     try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (e) {}
+    // v92: with today closed, arm tomorrow natively — the evening a
+    // dispatch lands is exactly when tomorrow's plan becomes known.
+    try { App.armNativeDay(); } catch (e) {}
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
@@ -1552,6 +1557,72 @@
     return store.set('autostart_override', null);
   };
   /* AUTOSTART-ENGINE-END */
+
+  /* v92: ARM THE NEXT WORKDAY NATIVELY (native v35 shell).
+     The plan above decides WHEN a session should start; until now
+     only this WebView could act on it, so a dead app at 8:00 meant
+     the day counted nothing until the driver opened the app — and
+     the drive from home before the session was never recorded at
+     all. The shell now keeps the schedule itself (ShiftTrack.armDay
+     -> a native alarm -> the foreground service): while the app is
+     alive we hand it the next planned start, and at the fire time
+     it begins recording on its own.
+     Fire time = planned start minus a 60-minute lead: the morning's
+     drive TO the site is the driver's own kilometres, and 60
+     minutes is exactly the pre-session window the miles engine's
+     adoption rules (js/miles.js ADOPT_FIRST_SLACK_MS) already
+     treat as belonging to the day. The arm's session key is the
+     SAME 's<startMs>' an anchored auto-start will pin, so when the
+     session later begins (by the alarm's recording, by auto-start,
+     or by hand) the day's record is one record.
+     Recomputed on boot, on resume, after session start/stop and
+     after any plan change (checkAutoStart's callers nudge it);
+     the native side treats a repeat of the same arm as a no-op. */
+  var ARM_LEAD_MS = 60 * 60 * 1000; // = ADOPT_FIRST_SLACK_MS in js/miles.js
+  App.armNativeDay = function () {
+    try {
+      var ST = window.ShiftTrack;
+      if (!ST || typeof ST.armDay !== 'function') return;
+      if (App.userRole && App.userRole() === 'office') { ST.disarmDay(); return; }
+      var p = autoStartPrefs();
+      if (!p.enabled) { ST.disarmDay(); return; }
+      var active = store.get('dsp_active', null);
+      var list = store.get('dsp_list', []);
+      var ov = store.get('autostart_override', null);
+      var t = App.tracker || { status: 'idle' };
+      var now = new Date();
+      var plan = null;
+      // Today first — but only while its start is still the next
+      // event: no session running yet, and auto-start hasn't
+      // already fired (or been declined) for today.
+      if (t.status === 'idle') {
+        var today = todayStr(now);
+        if (!autoStartFired(today)) {
+          var plT = autostartPlan(p, active, list, ov, today, now.getDay());
+          if (plT.willStart) {
+            var msT = autostartTodayMs(today, plT.time);
+            plan = { date: today, startMs: msT, key: 's' + msT };
+          }
+        }
+      }
+      if (!plan) {
+        var tm = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        var tmr = todayStr(tm);
+        var plM = autostartPlan(p, active, list, ov, tmr, tm.getDay());
+        if (plM.willStart) {
+          var msM = autostartTodayMs(tmr, plM.time);
+          plan = { date: tmr, startMs: msM, key: 's' + msM };
+        }
+      }
+      if (!plan) { ST.disarmDay(); return; }
+      ST.armDay({
+        key: plan.key,
+        fireMs: plan.startMs - ARM_LEAD_MS,
+        startMs: plan.startMs,
+        date: plan.date
+      });
+    } catch (e) {}
+  };
 
   /* ---------------- v34: sync status popup (tap the top-bar dot) ----------------
      The dot's state used to live only in its `title` tooltip — invisible on
@@ -2523,6 +2594,9 @@
     try { if (window.ShiftTrack) ShiftTrack.syncOnBoot(); } catch (e) {}
     // v27: if the auto-start time passed while the app was closed, start or prompt now
     try { App.checkAutoStart(); } catch (e) {}
+    // v92: hand the NEXT planned start to the native shell, so
+    // tomorrow's counting can begin with this app completely dead.
+    try { App.armNativeDay(); } catch (e) {}
 
     // v59: power-read queue — retry waiting cloud reads on app open
     // and the moment connectivity returns. Inert without a key.
@@ -2645,6 +2719,9 @@
       // v27: when the app comes back, check whether the auto-start time arrived
       if (document.visibilityState === 'visible') {
         try { App.checkAutoStart(); } catch (e2) {}
+        // v92: a dispatch saved or changed while we were away may
+        // have moved the next day's plan — re-arm the native side.
+        try { App.armNativeDay(); } catch (e5) {}
         // v59: resume is also a power-read retry point
         try { if (window.PowerRead) PowerRead.processQueue(); } catch (e3) {}
         // v62: foreground return — re-hold the screen for a running
