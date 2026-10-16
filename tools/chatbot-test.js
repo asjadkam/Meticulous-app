@@ -312,7 +312,7 @@ console.log('— G: weather —');
 console.log('— H: statics —');
 {
   has('H1 index.html loads the chatbot at the live pin', idxSrc, 'js/chatbot.js?v=' + ver.webVersion);
-  eq('H2 webVersion is 94 (v94 moved the pin; the chatbot is unchanged)', ver.webVersion, 94);
+  eq('H2 webVersion is 95 (v95 moved the pin; the chatbot is unchanged)', ver.webVersion, 95);
   eq('H3 native stays 35', ver.version, 35);
   ok(ver.apkUrl.indexOf('meticulous-v35.apk') !== -1, 'H4 apkUrl untouched', ver.apkUrl);
   /* The key correction (owner, Oct 16, 2026): no API-key field,

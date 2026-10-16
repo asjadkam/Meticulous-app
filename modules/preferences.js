@@ -53,7 +53,13 @@
           '<button class="btn ghost" id="pf_pw_btn" style="margin-top:10px;">Change password</button>' +
           '<p class="note" id="pf_pw_note"></p>';
       } else {
-        securityCard += '<p class="note">Sign in to change your password.</p>';
+        /* v95: THE SIGN-IN DOOR (Preferences spot) — at the top of the
+           Security card, in the open, never behind the Advanced drawer:
+           a signed-out user sees it the moment Preferences opens. One
+           tap routes to the app's sign-in form (App.goSignIn); local
+           data is untouched. */
+        securityCard += '<button class="btn primary" id="pf_signin">Sign in</button>' +
+          '<p class="note">You are not signed in — this device is in Local mode, so your data lives only here. Sign in to back it up, sync your devices, and change your password.</p>';
       }
       securityCard += '</div>';
 
@@ -182,8 +188,18 @@
          Reset onboarding questions is fenced off at the bottom of
          Advanced in danger colours. Layout only — no save behaviour
          changed. */
-      h += '<div class="card"><h3>⚙️ Advanced</h3>' +
-        '<button class="btn ghost" id="pf_checkupd">Check for updates</button>' +
+      /* v95 (owner, Oct 16, on the Preferences screenshot): "Put the
+         entire advanced drawer in a button somewhere, not in the wide
+         open like that." The whole Advanced area now sits behind ONE
+         quiet button, CLOSED when Preferences opens; unfolding it
+         reveals exactly the rows that were here before — same controls,
+         ids, order and behaviour, v94 copy standing. The wiring below
+         queries the same ids (elements in a hidden container are still
+         in the DOM), so nothing about how the rows work changes. */
+      h += '<div class="card">' +
+        '<button class="btn ghost" id="pf_adv_toggle" aria-expanded="false" style="width:100%;text-align:left;">⚙️ Advanced <span id="pf_adv_caret" style="float:right;">▸</span></button>' +
+        '<div id="pf_adv_body" class="hidden">' +
+        '<button class="btn ghost" id="pf_checkupd" style="margin-top:14px;">Check for updates</button>' +
         '<p class="note" id="pf_updnote"></p>' +
         /* v54 (owner, Oct 14): Notifications row — plumbing a user
            doesn't click daily, so it lives here in Advanced, in the
@@ -254,7 +270,7 @@
         '<p class="note" id="pf_nav_note"></p></div>' +
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
-        '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div>';
+        '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div></div>';
       /* v32: cloud-sync diagnostics used to be their own card here;
          v52 moved them into Advanced as a troubleshooting row (owner:
          "you only need this as a troubleshooting tool"). The status +
@@ -451,6 +467,19 @@
           App._store.set('onboarding', ob);
         };
       } catch (e) {}
+      /* v95: Preferences sign-in door (Security card, signed-out
+         renders only — the button exists only in that render) */
+      var signInBtn = body.querySelector('#pf_signin');
+      if (signInBtn) signInBtn.onclick = function () { if (window.App && App.goSignIn) App.goSignIn(); };
+      /* v95: the Advanced drawer toggle — flips the container only;
+         every control inside keeps its own wiring below, untouched. */
+      body.querySelector('#pf_adv_toggle').onclick = function () {
+        var advBody = body.querySelector('#pf_adv_body');
+        var advOpen = advBody.classList.toggle('hidden') === false;
+        this.setAttribute('aria-expanded', advOpen ? 'true' : 'false');
+        var advCaret = body.querySelector('#pf_adv_caret');
+        if (advCaret) advCaret.textContent = advOpen ? '▾' : '▸';
+      };
       /* v34: change-password handler (Security card, signed-in only) */
       var pwBtn = body.querySelector('#pf_pw_btn');
       if (pwBtn) pwBtn.onclick = function () {

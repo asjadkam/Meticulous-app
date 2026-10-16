@@ -1,7 +1,7 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 94,
+  "webVersion": 95,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -14,8 +14,8 @@
     "css/style.css": "a6fd260298c998b01cb49d1766cbae01bb106335c2e6bb8a343dc73cd3250cd7",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "8b5a6160b74e686436a5d1094c0ac62d54b8ea4eb86451d048068a8f6cdf2ad0",
-    "js/app.js": "7b99bb65aa4bcb3e93357c6afe1546f5daabe64be5205327fa55c60145bbe022",
+    "index.html": "ab8a3b9cd7764f64f370bc28416f9530b450cf74ce8a037e79075e55a8413947",
+    "js/app.js": "26323c1b130bf8ca12b55958402dcb811c0dc5e66929ca41ee924f426bee954e",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "93d35f274c3f07b94ec5ee7e3dbde5c80a2081cc9ccd48f886353aa9f4de4a61",
     "js/cloudsync.js": "75da8d638aecdb6e2a93fd8af0963e782110863b1b91c7c551906b5469f777b3",
@@ -42,7 +42,7 @@
     "modules/navigation.js": "7f049415040f8f4bdd8509e75cbc414ce00be4b7dfb8c13f9825b281bbd10dd3",
     "modules/navigator.js": "f2749ed8ca494eff748654b882614d5dc71bb4527e191c91a8804c3dd0ba9948",
     "modules/pnl.js": "2b9d2aab1cf447bc4f0ca283492a5aafe6cd90638979d2e436fc079fb45b62e1",
-    "modules/preferences.js": "515be874fca4a822363250769947db6ab296f49a1518cb606ad4c66da86f87a5",
+    "modules/preferences.js": "7ee9997cf120706def3739e1913a08ce02d9aa8428120c2a68c98cc51ca3d3af",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
     "modules/revenue.js": "ea53410d208c6cf11866aba43ac0f2bfdfc478ea0a223f20bff40d9487681382",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",

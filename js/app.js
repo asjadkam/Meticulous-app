@@ -202,6 +202,12 @@
     el('sbEmail').textContent = em || 'Local mode';
     var nm = store.get('onboarding', {}).accountType || 'Driver';
     el('sbName').textContent = nm + (user ? '' : ' (offline)');
+    /* v95: the sign-in door in the drawer's account block — visible
+       exactly when there is no signed-in user (Local mode), painted by
+       this same funnel, so it can never disagree with the account
+       lines above it or appear mid-session for a signed-in user. */
+    var sbDoor = el('sbSignIn');
+    if (sbDoor) sbDoor.classList.toggle('hidden', !!user);
     try { ensureUserRole(); } catch (e) {} // v52: stamp the role default before dashboards build
     syncTrial();
     buildSidebar();
@@ -2570,6 +2576,24 @@
     if (el('btnGoSignIn')) el('btnGoSignIn').onclick = function () { showAuthForm('signin'); };
     if (el('btnAuthBack')) el('btnAuthBack').onclick = showAuthLand;
     if (el('authSkipLand')) el('authSkipLand').onclick = el('authSkip').onclick;
+    /* v95: THE SIGN-IN DOOR (owner, Oct 16 — a Local-mode user had NO
+       reachable sign-in at all: the only route was Preferences →
+       Advanced → "Reset onboarding questions", a destructive-sounding
+       detour whose native confirm() browser automation auto-cancels,
+       and which strands a human behind a reset they never asked for).
+       The door routes straight to the sign-in form. It touches
+       NOTHING else: no onboarding flag, no local data; a completed
+       sign-in continues through the ordinary afterAuth() path (the
+       existing merge/sync behaviour), and the form's own "Continue
+       without an account" stays the way back to the Local dashboard.
+       Entering from a module (Preferences) first returns #main to the
+       dashboard, so a completed sign-in — or a skip back — lands
+       where the boot path lands, never on a stale module render. */
+    App.goSignIn = function () {
+      try { App.showDashboard(); } catch (e) {}
+      showAuthForm('signin');
+      App.showView('auth');
+    };
   }
 
   /* ---------------- init ---------------- */
@@ -2652,6 +2676,10 @@
       el('sidebar').classList.add('open'); el('scrim').classList.add('show');
       el('scrim').onclick = closeSidebar;
     };
+    /* v95: the drawer's sign-in door (rendered in the account block;
+       shown/hidden by App.onAuth) — close the drawer, open the form. */
+    var sbDoorBtn = el('sbSignIn');
+    if (sbDoorBtn) sbDoorBtn.onclick = function () { closeSidebar(); if (App.goSignIn) App.goSignIn(); };
     el('scrim').onclick = closeSidebar;
     el('btnBell').onclick = function () { App.openModule('reminders'); };
     var sdEl = el('syncDot');

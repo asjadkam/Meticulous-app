@@ -349,6 +349,56 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(pref.indexOf('>Server address</label>') >= 0, 'v94 prefs: Navigator server field carries the shorter label');
   ok(pref.indexOf('No server set — the Navigator will say routing is unavailable.') >= 0, 'v94 prefs: the one-line no-server note stays');
   ok(pref.indexOf('Free key:') === -1 && pref.indexOf('Key saved on this device') === -1, 'v94 prefs: no key-state paint remains in the Power read note');
+
+  /* v95 (owner, Oct 16, 2026): TWO rulings from his screenshots.
+     (1) THE SIGN-IN DOOR: a Local-mode user had no reachable sign-in
+     (the only route was Advanced → Reset onboarding questions, whose
+     confirm() automation auto-cancels). Preferences carries ONE
+     primary "Sign in" at the top of the Security card in the
+     signed-out render — in the open, never inside Advanced.
+     (2) THE ADVANCED DRAWER: "Put the entire advanced drawer in a
+     button somewhere, not in the wide open like that" — the whole
+     Advanced area sits behind ONE quiet toggle, closed by default,
+     its contents byte-identical in ids/order/behaviour. */
+  eq((pref.match(/id="pf_signin"/g) || []).length, 1, 'v95 prefs: exactly one Sign in door (Security card, signed-out render)');
+  ok(pref.indexOf('id="pf_signin"') > pref.indexOf('var signedIn'), 'v95 prefs: the door is built with the Security card');
+  ok(pref.indexOf('id="pf_signin"') < pref.indexOf('id="pf_adv_body"'), 'v95 prefs: the door is NOT inside the Advanced drawer markup');
+  ok(pref.indexOf('btn primary" id="pf_signin"') >= 0, 'v95 prefs: the door is primary-styled (one unmissable action)');
+  ok(pref.indexOf("querySelector('#pf_signin')") >= 0 && pref.indexOf('App.goSignIn') >= 0, 'v95 prefs: the door is wired to App.goSignIn');
+  ok(pref.indexOf('Sign in to change your password.') === -1, 'v95 prefs: the old dead-end note (a sign-in with no door) is gone');
+  eq((pref.match(/id="pf_adv_toggle"/g) || []).length, 1, 'v95 prefs: exactly one Advanced toggle button');
+  eq((pref.match(/id="pf_adv_body"/g) || []).length, 1, 'v95 prefs: exactly one Advanced container');
+  ok(/id="pf_adv_body" class="hidden"/.test(pref), 'v95 prefs: Advanced renders CLOSED by default');
+  ok(pref.indexOf('<h3>⚙️ Advanced</h3>') === -1, 'v95 prefs: the old wide-open Advanced header is gone');
+  const iTgl = pref.indexOf('id="pf_adv_toggle"');
+  const iAdvBody = pref.indexOf('id="pf_adv_body"');
+  ok(iTgl >= 0 && iAdvBody > iTgl, 'v95 prefs: the toggle sits above its container');
+  ['pf_checkupd', 'pf_push', 'pf_syncnow', 'pf_pr_on', 'pf_bgallow', 'pf_bgbatt', 'pf_parkset', 'pf_nav_url', 'pf_resetonb'].forEach(function (id) {
+    eq((pref.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'v95 prefs: Advanced control #' + id + ' survives exactly once');
+    ok(pref.indexOf('id="' + id + '"') > iAdvBody, 'v95 prefs: #' + id + ' renders INSIDE the collapsed container');
+  });
+  ok(pref.indexOf('h += securityCard') > pref.indexOf('id="pf_resetonb"'), 'v95 prefs: Security stays OUTSIDE Advanced (appended after the drawer, last card)');
+  ok(pref.indexOf("querySelector('#pf_adv_toggle')") >= 0 && pref.indexOf("classList.toggle('hidden')") >= 0 && pref.indexOf('aria-expanded') >= 0, 'v95 prefs: the toggle is wired (flips the container, reports its state)');
+  ok(pref.indexOf("confirm('Show the setup questions again") >= 0, 'v95 prefs: Reset onboarding keeps its own confirm + purpose, unchanged');
+}
+
+/* ================= 5. The sign-in door (js/app.js + index.html) ================= */
+{
+  const idx = read('index.html');
+  eq((idx.match(/id="sbSignIn"/g) || []).length, 1, 'v95 door: exactly one drawer Sign in button in index.html');
+  ok(/class="btn primary hidden" id="sbSignIn"/.test(idx), 'v95 door: primary-styled and hidden until App.onAuth paints it');
+  ok(idx.indexOf('id="sbSignIn"') > idx.indexOf('id="sidebar"') && idx.indexOf('id="sbSignIn"') < idx.indexOf('id="sbNav"'), 'v95 door: sits in the drawer account block, above the nav');
+  ok(appSrc.indexOf('App.goSignIn = function') >= 0, 'v95 door: App.goSignIn exists');
+  const gStart = appSrc.indexOf('App.goSignIn = function');
+  const gBody = appSrc.slice(gStart, appSrc.indexOf('};', gStart) + 2);
+  ok(gBody.indexOf("showAuthForm('signin')") >= 0 && gBody.indexOf("App.showView('auth')") >= 0, 'v95 door: goSignIn routes straight to the sign-in form');
+  ok(gBody.indexOf('App.showDashboard()') >= 0, 'v95 door: goSignIn first returns #main to the dashboard (no stale module render after sign-in)');
+  ok(!/store\.|onboarded|localStorage/.test(gBody), 'v95 door: goSignIn touches NO store, NO onboarding flag, NO local data');
+  const oaStart = appSrc.indexOf('App.onAuth = function');
+  const oaBody = appSrc.slice(oaStart, oaStart + 1400);
+  ok(oaBody.indexOf('sbSignIn') >= 0 && oaBody.indexOf("classList.toggle('hidden', !!user)") >= 0, 'v95 door: App.onAuth paints the door iff there is no signed-in user');
+  ok(appSrc.indexOf("el('sbSignIn')") >= 0 && appSrc.indexOf('closeSidebar(); if (App.goSignIn) App.goSignIn();') >= 0, 'v95 door: the drawer button is wired (close drawer → goSignIn)');
+  ok(appSrc.indexOf("el('authSkip').onclick = enterLocalMode") >= 0 && idx.indexOf('id="authSkip"') >= 0, 'v95 door: the form keeps its "Continue without an account" way back to the Local dashboard');
 }
 
 console.log('\nrole-package-test: ' + pass + '/' + (pass + fail) + ' passed');
