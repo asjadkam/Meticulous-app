@@ -11,6 +11,25 @@
    action; Truck/Car + Follow + Sound sit in one small quiet row;
    the built-in-places <select> is replaced by the Navigation
    module's shared search-first picker (recents-only by default).
+   v104 (owner verdict, Oct 16, 2026 17:19 MDT — "That's not turn
+   by turn"): a route that computes is not yet navigation. (1) On
+   a go-now arm — a destination handed over via nav_pending (the
+   Navigation→Navigate hand-off, incl. its address-search path) —
+   or whenever the truck is already moving (GPS speed ≥ 2 m/s),
+   a successful route ENTERS the Drive screen by itself; parked
+   manual planning stays in the plan view. The entry fires once
+   per destination arm: exiting Drive spends it, and no later
+   re-route for the same destination can pull the driver back
+   in. (2) The ▶ Drive primary is pinned at the TOP of the sheet,
+   above the Destination card, so an active route's next action
+   is never below the fold. (3) Route failures say what actually
+   happened (server silent / server error + HTTP status / no
+   route exists) — the v93-era banner that guessed at the server
+   URL is gone. (4) The opening-paint balloon (a giant blue disc
+   over the map in the owner's Oct 16 videos — the user-position
+   circleMarker rendered during the un-settled first paint) is
+   fixed by gating the first position paint on the map-settle
+   pass and making that first view jump without animation.
    Routes come from a self-hosted Valhalla service whose map carries the
    City of Calgary truck-route rules (see the truck-nav build, steps 1–4):
    the truck is kept on legal streets by costing, never by hard bans —
@@ -351,6 +370,18 @@
            once a position exists. Ending a route never re-arms
            it: re-routing after End is the driver's own tap. */
         autoKey: '', autoWanted: false,
+        /* v104: the auto-Drive arm. goNowKey = the destination key
+           when it arrived as a go-now hand-off (nav_pending) — a
+           successful route to it enters Drive by itself. Any
+           destination also enters Drive on route-ready while the
+           truck is moving (speed, from the same watch). Fires
+           once per arm: driveAutoSpent is set by the entry itself
+           and by any Drive exit, and reset by a NEW destination. */
+        goNowKey: '', pendGoNow: false, driveAutoSpent: false,
+        speed: null,
+        /* v104: position paints on the planning map wait for the
+           settle pass (mapSettled) — see the map init below. */
+        mapSettled: false, viewPainted: false,
         /* v101 drive mode: state bag + its own Leaflet instance and
            arrival timer (kept on S so teardown reaches them). */
         drive: null, driveMap: null, driveLine: null, driveMarker: null,
@@ -385,6 +416,16 @@
         '</div></div>';
 
       h += '<div class="nv-sheet">';
+      /* v104: ▶ Drive is pinned at the TOP of the sheet — the
+         first thing in it, above the Destination card and its
+         recents. Owner's Oct 16 video: the route computed, but
+         Drive sat below the Destination card's place list, out
+         of the viewport — an active route's one next action can
+         never hide under a scroll fold. Hidden until a server
+         route is ACTIVE (doRoute reveals it; clearRoute hides
+         it again) — the id and classes are unchanged, only the
+         slot moved. */
+      h += '<button class="btn primary big hidden" id="nv_drive" style="margin-bottom:8px">▶ Drive</button>';
       if (!settings.serverUrl) {
         h += '<div class="card" style="border:2px solid #f5a623;background:#fff8e6">' +
           '<b>Navigator server not set — routing unavailable.</b><br>' +
@@ -410,13 +451,11 @@
            is active, when Drive takes the slot and Route demotes
            to a quiet ghost (doRoute/clearRoute paint that). The
            v93 external handoff button is DELETED (owner ruling:
-           navigation never leaves the app). */
+           navigation never leaves the app).
+           v104: the Drive button itself no longer lives here —
+           it is pinned at the TOP of the sheet (see above), so
+           revealing it never leaves it below this card's fold. */
         '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
-        /* v101: the in-app drive screen. Hidden until a server route
-           is ACTIVE (doRoute reveals it and takes the primary slot;
-           Route demotes to a quiet re-route). Needs a route by
-           construction, so the no-server layout never shows it. */
-        '<button class="btn primary big hidden" id="nv_drive" style="margin-top:8px">▶ Drive</button>' +
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
@@ -471,7 +510,26 @@
         S.map.on('dragstart', function () {
           if (S.follow) { S.follow = false; paintFollow(); }
         });
-        setTimeout(function () { try { S.map.invalidateSize(); } catch (e) {} }, 250);
+        /* v104: the settle pass. The owner's Oct 16 videos show a
+           giant blue disc ballooning over the map for a frame or
+           two as the Navigator opens — the user-position
+           circleMarker (fill #3f7de0, ring #1F3764 — the disc's
+           exact colours) painted, and the view animated, while
+           the shell was still settling and Leaflet's size/zoom
+           state was bogus. So the first position paint WAITS for
+           this pass: invalidateSize lands, the gate opens, and
+           any position that already arrived paints then (its
+           first view jumps without animation — see paintPos).
+           The disc cannot form, and later fixes paint live as
+           before. */
+        setTimeout(function () {
+          try {
+            if (!S || !S.map) return;
+            S.map.invalidateSize();
+            S.mapSettled = true;
+            paintPos();
+          } catch (e) {}
+        }, 250);
       } else if (mapEl) {
         mapEl.innerHTML = '<div class="empty" style="padding:18px">The map library could not load — it needs internet once. Routing controls below still work.</div>';
       }
@@ -492,7 +550,7 @@
         if (dn) dn.textContent = text + (S.settings.serverUrl ? '' :
           ' — routing needs the Navigator server (Preferences → Advanced).');
       }
-      function setDest(latlng, label) {
+      function setDest(latlng, label, goNow) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
         if (S.map) {
@@ -508,7 +566,22 @@
            the same destination re-set (a reverse-geocode rename,
            a re-tap of the same pin) does not re-fire it. */
         var key = latlng[0].toFixed(6) + ',' + latlng[1].toFixed(6);
-        if (key !== S.autoKey) { S.autoKey = key; S.autoWanted = true; }
+        if (key !== S.autoKey) {
+          S.autoKey = key; S.autoWanted = true;
+          /* v104: a new destination is a new arm for auto-Drive
+             too — entry gets its one shot again, and the arm is
+             a go-now arm only when this setDest carries the
+             hand-off's intent (goNow), or a pending hand-off is
+             still being carried through the search door — an
+             intent the FIRST destination set consumes, so a
+             later parked pick in the same session stays a
+             planning pick. */
+          S.driveAutoSpent = false;
+          S.goNowKey = (goNow || S.pendGoNow) ? key : '';
+          S.pendGoNow = false;
+        } else if (goNow) {
+          S.goNowKey = key;
+        }
         maybeAutoRoute();
       }
 
@@ -669,9 +742,16 @@
             if (parseLatLngText(pendName)) {
               pendName = pendName.replace(/,?\s*-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\s*$/, '').trim();
             }
-            setDest(pendCoords, pendName || 'Dropped pin');
+            /* v104: the hand-off IS the go-now intent — when this
+               route lands, Drive opens by itself (maybeAutoEnter-
+               Drive). */
+            setDest(pendCoords, pendName || 'Dropped pin', true);
             if (S.map) S.map.setView(S.dest, 14);
           } else if (pend.query) {
+            /* v104: the address path keeps the intent on file —
+               the setDest that lands from this search (the row
+               the driver taps) inherits it (see setDest). */
+            S.pendGoNow = true;
             var pq = body.querySelector('#nv_q');
             if (pq && searchBtn) { pq.value = pend.query; searchBtn.onclick(); }
           }
@@ -682,16 +762,34 @@
       /* v101: heading rides the SAME single watch — drive mode
          consumes this stream and nothing else. GPS heading is null
          when stationary; the last real heading is kept so the
-         drive map never spins while the truck is stopped. */
-      function onPos(lat, lon, heading) {
+         drive map never spins while the truck is stopped.
+         v104: speed rides it too (the already-moving signal for
+         auto-Drive) — same treatment, the last real value kept. */
+      /* v104: the ONLY writer of the position paint on the
+         planning map (marker + follow view), called from onPos
+         once the map has settled and from the settle pass itself
+         for a position that arrived earlier. The first PAINTED
+         view jumps straight to navigation zoom without animation
+         — an animated zoom over an unsettled size is what blew
+         the marker up into the opening disc (see the map init). */
+      function paintPos() {
+        if (!S.map || !S.pos) return;
+        if (S.userMarker) S.userMarker.setLatLng(S.pos);
+        else S.userMarker = L.circleMarker(S.pos, { radius: 8, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.9 }).addTo(S.map);
+        if (S.follow) {
+          if (!S.viewPainted) { S.viewPainted = true; S.map.setView(S.pos, 15, { animate: false }); }
+          else S.map.setView(S.pos, S.map.getZoom());
+        }
+      }
+      function onPos(lat, lon, heading, speed) {
         var first = !S.pos;
         S.pos = [lat, lon];
         if (heading !== null && heading !== undefined && isFinite(heading)) S.heading = heading;
-        if (S.map) {
-          if (S.userMarker) S.userMarker.setLatLng(S.pos);
-          else S.userMarker = L.circleMarker(S.pos, { radius: 8, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.9 }).addTo(S.map);
-          if (S.follow) S.map.setView(S.pos, first ? 15 : S.map.getZoom());
-        }
+        if (speed !== null && speed !== undefined && isFinite(speed)) S.speed = speed;
+        /* v104: before the settle pass, the position is recorded
+           but NOT painted (the gate in the map init paints it
+           the moment the map's size is real). */
+        if (S.map && S.mapSettled) paintPos();
         if (first && !S.plan) banner('You are here', 'Search for a place, or tap the map to drop a pin.');
         /* v103: a destination armed before the first fix (the
            usual nav_pending arrival) routes the moment the
@@ -706,12 +804,12 @@
       try {
         var lastFix = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) ||
           (window.App && App.geo && App.geo.last && App.geo.last());
-        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude, lastFix.bearing);
+        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude, lastFix.bearing, lastFix.speed);
       } catch (e) {}
       if (navigator.geolocation) {
         try {
           S.watchId = navigator.geolocation.watchPosition(
-            function (p) { onPos(p.coords.latitude, p.coords.longitude, p.coords.heading); },
+            function (p) { onPos(p.coords.latitude, p.coords.longitude, p.coords.heading, p.coords.speed); },
             function () { if (!S.pos) note('Location is unavailable — allow location for Meticulous to navigate.'); },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
           );
@@ -738,6 +836,27 @@
         try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
       }
 
+      /* v104: AUTO-ENTER DRIVE — a computed route is not yet
+         turn-by-turn (owner, Oct 16, 2026: "That's not turn by
+         turn" over a live plan view). When a route lands, Drive
+         opens BY ITSELF when this was a go-now flow — the
+         destination arrived via nav_pending (goNowKey matches
+         the armed destination) — or when the truck is already
+         moving (last GPS speed ≥ 2 m/s). Parked manual planning
+         (a place picked in here, truck still) keeps the plan
+         view and its now-unmissable Drive button. Once per arm:
+         the entry — and any later Drive exit — spends the arm,
+         so an off-route or mode-change re-route for the same
+         destination never drags the driver back in. */
+      function maybeAutoEnterDrive() {
+        if (!S || S.drive || S.driveAutoSpent || !S.plan) return;
+        var goNow = !!S.autoKey && S.goNowKey === S.autoKey;
+        var moving = S.speed !== null && S.speed !== undefined && isFinite(S.speed) && S.speed >= 2;
+        if (!goNow && !moving) return;
+        S.driveAutoSpent = true;
+        startDrive();
+      }
+
       function doRoute() {
         if (!S.settings.serverUrl) {
           banner('Navigator server not set — routing unavailable.', 'Set the Navigator server URL in Preferences → Advanced.');
@@ -751,8 +870,11 @@
         banner('Routing…', '');
         var url = S.settings.serverUrl.replace(/\/+$/, '') + '/route';
         var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode);
+        /* v104: the HTTP status rides along so the failure line
+           below can name what ACTUALLY happened (see the catch). */
+        var httpStatus = 0;
         fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody) })
-          .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+          .then(function (r) { httpStatus = r.status || 0; if (!r.ok) throw new Error('http'); return r.json(); })
           .then(function (data) {
             S.rerouting = false;
             if (!data || !data.trip || !data.trip.legs || !data.trip.legs.length) throw new Error('empty');
@@ -783,10 +905,16 @@
             /* v101: a route is ACTIVE — Drive appears and takes
                the one primary slot; Route demotes to a quiet
                re-route. A re-route landing mid-drive re-arms the
-               drive screen on the new plan. */
+               drive screen on the new plan.
+               v104: Drive now sits at the TOP of the sheet (see
+               the sheet markup) — revealing it there puts the one
+               next action in the driver's first glance. */
             var db = body.querySelector('#nv_drive'); if (db) db.classList.remove('hidden');
             var rb = body.querySelector('#nv_route'); if (rb) rb.className = 'btn ghost big';
             if (S.drive) driveOnRoute();
+            /* v104: …and on a go-now arm (or already rolling)
+               nobody has to tap it at all — Drive opens itself. */
+            else maybeAutoEnterDrive();
             paintStep();
             /* mid-drive, the drive screen's own prompts own the
                speech; the planning screen keeps its first-line
@@ -794,9 +922,22 @@
             if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
             note('');
           })
-          .catch(function () {
+          .catch(function (err) {
             S.rerouting = false;
-            banner('Could not get a route.', 'Check the Navigator server URL in Preferences → Advanced and your connection.');
+            /* v104: the failure line says what ACTUALLY happened,
+               in one short line — never the old guess ("Check the
+               Navigator server URL…"), which blamed the settings
+               for what was really a dead address, a CORS wall, or
+               a silent server (the Oct 16 field hunt). Three
+               classes: no answer at all (the fetch itself threw),
+               an answer with an error status, and an answer with
+               no buildable route in it. */
+            var msg;
+            if (err && err.message === 'empty') msg = 'No route could be built between here and there.';
+            else if (httpStatus) msg = 'The route server answered with an error (HTTP ' + httpStatus + ').';
+            else msg = "The route server didn't answer — check your connection and try again.";
+            banner('Could not get a route.', '');
+            note(msg);
           });
       }
 
@@ -878,10 +1019,20 @@
             S.driveLine = L.polyline(S.line, {
               color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 6, opacity: 0.95
             }).addTo(S.driveMap);
-            if (S.pos) {
-              S.driveMarker = L.circleMarker(S.pos, { radius: 9, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.95 }).addTo(S.driveMap);
-            }
-            setTimeout(function () { try { if (S && S.driveMap) S.driveMap.invalidateSize(); } catch (e) {} }, 120);
+            /* v104: the position marker joins the settle pass
+               below, not this first paint — the same un-settled-
+               size balloon the planning map grew (see the map
+               init) must never form on this map either. driveTick
+               keeps it glued to the truck once it exists. */
+            setTimeout(function () {
+              try {
+                if (!S || !S.driveMap) return;
+                S.driveMap.invalidateSize();
+                if (S.drive && S.pos && !S.driveMarker) {
+                  S.driveMarker = L.circleMarker(S.pos, { radius: 9, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.95 }).addTo(S.driveMap);
+                }
+              } catch (e) {}
+            }, 120);
           } catch (e) { S.driveMap = null; }
         }
         paintMute();
@@ -894,6 +1045,10 @@
 
       function exitDrive() {
         if (!S || !S.drive) return;
+        /* v104: leaving Drive — by the driver's tap or by the
+           arrival hand-back — spends the arm: no re-route for
+           this destination will auto-enter again. */
+        S.driveAutoSpent = true;
         S.drive = null;
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
         try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}

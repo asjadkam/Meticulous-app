@@ -238,7 +238,7 @@ function resultsEl() {
   e.pick = function (pid) { const r = e._rows[pid]; if (r) r.click(); };
   return e;
 }
-function makeWorld(storeData, withNavModule) {
+function makeWorld(storeData, withNavModule, fetchMode) {
   const store = {
     get: function (k, d) { return storeData[k] !== undefined ? storeData[k] : d; },
     set: function (k, v) { storeData[k] = v; },
@@ -303,8 +303,17 @@ function makeWorld(storeData, withNavModule) {
     SpeechSynthesisUtterance: function (t) { this.text = t; },
     fetch: function (url, opts) {
       calls.fetch.push({ url: url, opts: opts });
-      const payload = url.indexOf('/route') >= 0 ? fixture : [];
-      return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+      /* v104: route fetches can be made to fail three ways —
+         'throw' (the fetch itself rejects: no answer at all),
+         'http503' (an answer with an error status), 'empty'
+         (an OK answer with no buildable trip in it). */
+      if (url.indexOf('/route') >= 0) {
+        if (fetchMode === 'throw') return Promise.reject(new Error('network down'));
+        if (fetchMode === 'http503') return Promise.resolve({ ok: false, status: 503, json: function () { return Promise.resolve({}); } });
+        if (fetchMode === 'empty') return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ trip: { legs: [] } }); } });
+        return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(fixture); } });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve([]); } });
     }
   };
   world.window = world;
@@ -314,7 +323,7 @@ function makeWorld(storeData, withNavModule) {
      wired to the real shared component. */
   if (withNavModule) vm.runInContext(navModSrc, world);
   vm.runInContext(navSrc, world);
-  return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo, hd) { geoCb({ coords: { latitude: la, longitude: lo, heading: hd } }); } };
+  return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo, hd, sp) { geoCb({ coords: { latitude: la, longitude: lo, heading: hd, speed: sp } }); } };
 }
 function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
 
@@ -610,6 +619,120 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
       filt.recents === false && filt.rows.length === 11, 'rows ' + filt.rows.length);
   }
 
+  console.log('— flow: auto-enter Drive on a go-now arm (v104) —');
+  /* Owner verdict, Oct 16, 2026: the route computed and the plan
+     view sat there — "That's not turn by turn." A destination
+     handed over via nav_pending is a go-now arm: when its route
+     lands, Drive opens by itself — no Drive tap, stationary or
+     not. Exiting Drive spends the arm: a later re-route for the
+     same destination must NOT pull the driver back in. */
+  const wG = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' },
+    nav_pending: { name: 'A2-L20', lat: 50.96649, lng: -114.03178, ts: 1 } });
+  const apiG = wG.world.Meticulous.modules.navigator;
+  wG.reg.nv_drive.classList.add('hidden');
+  wG.reg.nv_drive_screen.classList.add('hidden');
+  wG.reg.nvd_reroute.classList.add('hidden');
+  apiG.render(wG.body);
+  check('v104: hand-off armed: no route before the first fix', wG.calls.fetch.length === 0);
+  wG.firePos(ORIGIN[0], ORIGIN[1]); // stationary — no speed on the fix
+  await tick(); await tick();
+  const gRoutes = function () { return wG.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length; };
+  check('v104: hand-off arm auto-routed on the first fix', gRoutes() === 1, gRoutes() + ' route fetches');
+  check('v104: GO-NOW — Drive opened BY ITSELF on route-ready (no Drive tap, truck stationary)',
+    !wG.reg.nv_drive_screen.classList.contains('hidden'));
+  wG.reg.nvd_exit.onclick();
+  check('v104: End drive returns to the plan view', wG.reg.nv_drive_screen.classList.contains('hidden'));
+  const realNowG = Date.now;
+  let fakeNowG = realNowG();
+  wG.world.Date = { now: function () { return fakeNowG; } };
+  wG.firePos(51.1155, -114.0915);
+  await tick();
+  check('v104: after exit, first off-route fix does not re-route yet', gRoutes() === 1);
+  fakeNowG += 5000;
+  wG.firePos(51.1155, -114.0915);
+  await tick(); await tick();
+  check('v104: after exit, a held off-route DOES re-route (the plan lives on)', gRoutes() === 2, gRoutes() + ' route fetches');
+  check('v104: …but the re-route does NOT re-enter Drive — the arm was spent by the exit',
+    wG.reg.nv_drive_screen.classList.contains('hidden'));
+  wG.world.Date = Date;
+  apiG.teardown();
+
+  console.log('— flow: auto-enter gating — parked planning vs already moving (v104) —');
+  /* Parked manual planning (a place picked inside the Navigator,
+     no speed on the fix) keeps the plan view — with Drive
+     revealed and pinned at the sheet's top. The same manual pick
+     while already rolling (speed ≥ 2 m/s) enters Drive on its
+     own; a crawl under the threshold does not. */
+  const wS = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } });
+  const apiS = wS.world.Meticulous.modules.navigator;
+  wS.reg.nv_drive.classList.add('hidden');
+  wS.reg.nv_drive_screen.classList.add('hidden');
+  apiS.render(wS.body);
+  check('v104: Drive renders at the TOP of the sheet — before the Destination card, its note and the recents list',
+    wS.body.innerHTML.indexOf('class="nv-sheet"') >= 0 &&
+    wS.body.innerHTML.indexOf('id="nv_drive"') > wS.body.innerHTML.indexOf('class="nv-sheet"') &&
+    wS.body.innerHTML.indexOf('id="nv_drive"') < wS.body.innerHTML.indexOf('id="nv_destnote"') &&
+    wS.body.innerHTML.indexOf('id="nv_drive"') < wS.body.innerHTML.indexOf('id="nv_presults"'));
+  wS.firePos(ORIGIN[0], ORIGIN[1]);
+  wS.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  await tick(); await tick();
+  check('v104: parked manual pick routed (auto-route stands)', wS.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
+  check('v104: parked manual pick REVEALS Drive (the primary is in hand)', !wS.reg.nv_drive.classList.contains('hidden'));
+  check('v104: parked manual pick does NOT auto-enter — planning stays in the plan view',
+    wS.reg.nv_drive_screen.classList.contains('hidden'));
+  apiS.teardown();
+
+  const wM = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } });
+  const apiM = wM.world.Meticulous.modules.navigator;
+  wM.reg.nv_drive_screen.classList.add('hidden');
+  apiM.render(wM.body);
+  wM.firePos(ORIGIN[0], ORIGIN[1], null, 8); // rolling at 8 m/s
+  wM.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  await tick(); await tick();
+  check('v104: MOVING manual pick auto-enters Drive on route-ready (speed ≥ 2 m/s off the one watch)',
+    !wM.reg.nv_drive_screen.classList.contains('hidden'));
+  apiM.teardown();
+
+  const wC = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } });
+  const apiC = wC.world.Meticulous.modules.navigator;
+  wC.reg.nv_drive_screen.classList.add('hidden');
+  apiC.render(wC.body);
+  wC.firePos(ORIGIN[0], ORIGIN[1], null, 1); // a 1 m/s crawl — below the moving threshold
+  wC.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  await tick(); await tick();
+  check('v104: a sub-threshold crawl (1 m/s) does NOT auto-enter',
+    wC.reg.nv_drive_screen.classList.contains('hidden'));
+  apiC.teardown();
+
+  console.log('— flow: real route errors (v104) —');
+  /* The failure line names what ACTUALLY happened — the old
+     banner guessed at the server URL for every failure class
+     (and was wrong in the Oct 16 field hunt). Three classes,
+     three lines, all in the note area; the banner keeps its
+     plain "Could not get a route." */
+  const errCases = [
+    ['throw', "The route server didn't answer", 'no answer at all (fetch threw)'],
+    ['http503', 'The route server answered with an error (HTTP 503)', 'an error status, named'],
+    ['empty', 'No route could be built between here and there', 'an answer with no route in it']
+  ];
+  for (const ec of errCases) {
+    const wE = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } }, false, ec[0]);
+    const apiE = wE.world.Meticulous.modules.navigator;
+    apiE.render(wE.body);
+    wE.firePos(ORIGIN[0], ORIGIN[1]);
+    wE.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+    await tick(); await tick();
+    check('v104: error class "' + ec[2] + '" says exactly what happened',
+      wE.reg.nv_note.textContent.indexOf(ec[1]) >= 0, wE.reg.nv_note.textContent);
+    check('v104: error class "' + ec[2] + '": banner stays plain, no route is drawn, no guessing text',
+      wE.reg.nv_banner.children['.nv-banner-main'].textContent === 'Could not get a route.' &&
+      wE.calls.polylines.length === 0 &&
+      wE.reg.nv_note.textContent.indexOf('Check the Navigator server URL') < 0 &&
+      wE.reg.nv_banner.children['.nv-banner-sub'].textContent.indexOf('Check the Navigator server URL') < 0,
+      wE.reg.nv_banner.children['.nv-banner-main'].textContent + ' / ' + wE.reg.nv_note.textContent);
+    apiE.teardown();
+  }
+
   /* ================= 3. statics ================= */
   console.log('— statics —');
   check('index.html loads modules/navigator.js at ?v=<webVersion>', idxSrc.indexOf('modules/navigator.js?v=' + ver.webVersion) >= 0);
@@ -646,6 +769,22 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     navSrc.indexOf('class="nv-shell"') >= 0 && cssSrc.indexOf('.nv-shell{position:fixed;inset:0') >= 0);
   check('v101: drive tilt is the standard navigation pitch (rotateX 52deg, in the 45–60 band)',
     cssSrc.indexOf('rotateX(52deg)') >= 0 && cssSrc.indexOf('.nv-drive{position:fixed;inset:0') >= 0);
+  check('v104: the old guessing error text is GONE from navigator.js (it blamed the settings for every failure)',
+    navSrc.indexOf('Check the Navigator server URL in Preferences') < 0);
+  check('v104: route failures name the real cause — silent server / HTTP status / no route between here and there',
+    navSrc.indexOf("The route server didn't answer") >= 0 &&
+    navSrc.indexOf('The route server answered with an error (HTTP ') >= 0 &&
+    navSrc.indexOf('No route could be built between here and there') >= 0);
+  check('v104: auto-enter ships — the go-now arm, the spent latch, speed off the one watch',
+    navSrc.indexOf('function maybeAutoEnterDrive') >= 0 && navSrc.indexOf('goNowKey') >= 0 &&
+    navSrc.indexOf('driveAutoSpent') >= 0 && navSrc.indexOf('p.coords.speed') >= 0);
+  check('v104: in the markup, Drive is the sheet\'s first element — before the Destination card',
+    navSrc.indexOf('class="nv-sheet"') >= 0 &&
+    navSrc.indexOf('id="nv_drive"') > navSrc.indexOf('class="nv-sheet"') &&
+    navSrc.indexOf('id="nv_drive"') < navSrc.indexOf('📍 Destination'));
+  check('v104: the first position paint waits for the map-settle pass (opening-balloon fix)',
+    navSrc.indexOf('mapSettled') >= 0 && navSrc.indexOf('function paintPos') >= 0 &&
+    navSrc.indexOf('animate: false') >= 0);
 
   console.log('navigator-test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

@@ -502,8 +502,8 @@ function cStatus(extra) {
     ok(/versionCode 10/.test(gradle) && /versionName "1\.8"/.test(gradle),
       'E7 native version bumped (code 10 / name 1.8)');
     const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
-    /* v103: webVersion moved to 103 (in-app navigation only; native unchanged) */
-    ok(vj.webVersion === 103 && vj.version === 35, 'E8 version.json: web 103, native 35');
+    /* v104: webVersion moved to 104 (auto-enter Drive; native unchanged) */
+    ok(vj.webVersion === 104 && vj.version === 35, 'E8 version.json: web 104, native 35');
     const appSrc2 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
     ok(/var APK_VERSION = 35;/.test(appSrc2), 'E9 app.js APK_VERSION = 35');
     const idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
