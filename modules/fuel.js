@@ -255,7 +255,12 @@
          until the user actually edits the field.) */
       ['#fu_date', '#fu_l', '#fu_cost', '#fu_stn'].forEach(function (id) {
         var e = body.querySelector(id);
-        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
+        if (e) e.addEventListener('input', function () {
+          e.setAttribute('data-touched', '1');
+          /* v85: a hand-changed date detaches the receipt's time —
+             the time belongs to the receipt's day, not his edit. */
+          if (id === '#fu_date') fuReadTime = '';
+        });
       });
       function fillField(id, v) {
         var e = body.querySelector(id);
@@ -269,6 +274,10 @@
          rendition + recognizeWithRotation) → fill the form, and SAY
          what was read / missed. Never silent. */
       var fuOcrToken = 0;
+      /* v85: the receipt's sale time, read in the same pass as the
+         other fields and shown in the read line; saved on the
+         record at Save. Not a form field — nothing extra to type. */
+      var fuReadTime = '';
       function fuSetRead(html) { var d = body.querySelector('#fu_read'); if (d) d.innerHTML = html; }
       function fuHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
@@ -295,6 +304,7 @@
             fillField('#fu_cost', parsed.cost);
             fillField('#fu_stn', parsed.station);
             fillField('#fu_date', parsed.date);
+            if (parsed.time) fuReadTime = parsed.time;
             if (rep.found.length) {
               fuSetRead('⛽ Read: ' + esc(rep.found.join(' · ')) +
                 (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
@@ -330,6 +340,7 @@
         fillField('#fu_cost', parsed.cost);
         fillField('#fu_stn', parsed.station);
         fillField('#fu_date', parsed.date);
+        if (parsed.time) fuReadTime = parsed.time;
         fuSetRead(label + ' ' + esc(rep.found.join(' · ')) +
           (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
       }
@@ -488,6 +499,7 @@
           /* v75: EDIT — update the SAME entry in place (no duplicate),
              verified the v48 way before anything else happens. */
           var updated = applyFillEdit(f[editFillIdx], formVals);
+          if (fuReadTime) updated.time = fuReadTime;
           f[editFillIdx] = updated;
           if (!saveFillsVerified(f)) {
             showErr('Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the saved fill-up is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.');
@@ -502,6 +514,7 @@
           return;
         }
         var rec = { date: formVals.date };
+        if (fuReadTime) rec.time = fuReadTime;
         if (hasOdo) rec.odo = odo;
         rec.litres = litresV;
         rec.cost = costV;

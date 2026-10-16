@@ -268,7 +268,7 @@ function geminiOk(payload) {
   eq('C1 labelled layout: litres', f1.litres, '78.175');
   eq('C2 labelled layout: price/L', f1.pricePerLitre, '2.479');
   eq('C3 labelled layout: cost', f1.cost, '193.8');
-  eq('C4 labelled layout: station', f1.station, 'Mobil');
+  eq('C4 labelled layout: station (v85: with its number)', f1.station, 'Mobil @ 1739');
   eq('C5 labelled layout: date', f1.date, '2026-10-15');
   eq('C6 labelled layout: confidence complete', f1._confidence, 4);
 

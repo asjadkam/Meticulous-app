@@ -1252,6 +1252,15 @@
     for (var bi = 0; bi < BRANDS.length && !f.station; bi++) {
       if (BRANDS[bi][1].test(head) || BRANDS[bi][1].test(t)) f.station = BRANDS[bi][0];
     }
+    /* v85: the station NUMBER when the header carries one — "Mobil
+       @ 1742 Gas Stn" / "Mobil @ 1739 Gas Stn" are DIFFERENT
+       stations in the owner's records (Westwinds vs Heritage
+       Meadows), and a bare brand merges them. */
+    if (f.station) {
+      var brandEsc = f.station.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var snm = head.match(new RegExp(brandEsc + '\\s*@\\s*(\\d{3,5})', 'i'));
+      if (snm) f.station = f.station + ' @ ' + snm[1];
+    }
 
     /* Date — ISO as printed, else the DATE: label via normDate, else any
        date normDate can find in the text. */
@@ -1260,6 +1269,18 @@
     else {
       var draw = firstMatch(t, [/DATE[\s:]*([A-Za-z0-9\/\- ]{6,14})/i]);
       f.date = normDate(draw) || normDate(t);
+    }
+    /* v85: the transaction TIME (the form lands date/time in one
+       pass). First clock-shaped token wins — receipts print the
+       sale time once, beside the date; prices have no colon, so
+       they can never match. Stored 24h 'HH:MM'. */
+    var tmm = t.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\s*([aApP][mM])?\b/);
+    if (tmm) {
+      var th = parseInt(tmm[1], 10), tmin = parseInt(tmm[2], 10);
+      if (tmm[3]) { th = th % 12; if (/p/i.test(tmm[3])) th += 12; }
+      if (th >= 0 && th <= 23 && tmin >= 0 && tmin <= 59) {
+        f.time = ('0' + th).slice(-2) + ':' + ('0' + tmin).slice(-2);
+      }
     }
 
     var count = 0;
@@ -1282,6 +1303,15 @@
     add(!!parsed.cost, parsed.cost ? '$' + parsed.cost : '', 'cost');
     add(!!parsed.station, parsed.station || '', 'station');
     add(!!parsed.date, parsed.date || '', 'date');
+    /* v85: the sale time rides the read line (display form) — it is
+       shown for his check and saved on the record, never a form
+       field he has to babysit. */
+    if (parsed.time) {
+      var tp = parsed.time.split(':');
+      var th2 = parseInt(tp[0], 10);
+      var tap = th2 >= 12 ? 'PM' : 'AM';
+      found.push(((th2 % 12) || 12) + ':' + tp[1] + ' ' + tap);
+    }
     if (parsed.pricePerLitre) found.push('@ ' + parsed.pricePerLitre + '/L');
     return { found: found, missing: missing };
   };
