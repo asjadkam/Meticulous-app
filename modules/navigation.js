@@ -15,8 +15,66 @@
   var esc = function (s) { return App._esc(s); };
 
   var TYPE_OPTS = ['pit', 'job site', 'dump site'];
-  var TYPE_ICON = { 'pit': '⛏️', 'job site': '🏗️', 'dump site': '🚧' };
+  var TYPE_ICON = { 'pit': '⛏️', 'job site': '🏗️', 'dump site': '🚧', 'fuel': '⛽' };
   var tab = 'work'; // active tab: 'work' | 'personal'
+
+  /* ================= NAV-BUILTIN-BEGIN =================
+     v84: BUILT-IN PLACES (owner, Oct 15: the Work favorites were
+     EMPTY and "how do I even input a address?" — nobody thumb-types
+     41 places; the addresses lived in Muse-side files, never in
+     the app). These are compiled from the owner's own 2026 dispatch
+     history (job-sites directory + confirmed pits list, Oct 15,
+     2026): every entry carries the RESOLVED pin from his messages —
+     nothing guessed, nothing looked up. Only CONFIRMED places with
+     coordinates are seeded (the unconfirmed pits — Star Pit,
+     Black Diamond, South plant — are NOT here; Aecon Scale Star
+     Pit's pin could not be proven to mark the pit rather than the
+     haul-to, so it waits for a proven pin). The two fuel entries
+     carry street addresses from his receipts (no pin was ever
+     shared for them; navigation falls back to the address query).
+     Built-ins are not stored in nav_data: they cannot be deleted,
+     do not sync, and are the same on every install. Personal
+     favorites are untouched. */
+  var BUILTIN_RAW = [
+    ['12th Street', 51.000861, -114.033528, 'pit', 'Clay loading · one pin covers both sides — confirm North/South before rolling', ''],
+    ['Aecon Bradi Pit', 51.2720600, -114.4317900, 'pit', 'Loads 80mm · near Cochrane', ''],
+    ['Simply Stone', 50.96851, -114.0334, 'pit', 'Stone yard', ''],
+    ['L5', 50.96657, -114.03564, 'pit', 'Aecon Inf load point', ''],
+    ['Pier 3', 50.95537, -114.02769, 'job site', 'Enter through Remington', ''],
+    ['North Plant', 51.1832681, -114.0366215, 'job site', '', ''],
+    ['Southland Under Bridge', 50.967364, -114.033821, 'job site', 'Under the bridge, Southland', ''],
+    ['Greenline', 51.00779, -114.02766, 'job site', 'Load point — also used as a dump spot', ''],
+    ['Twins East', 50.9552222, -114.0249722, 'job site', 'Aecon Inf', ''],
+    ['A2-L20', 50.96649, -114.03178, 'job site', 'Possibly the same pond complex as L20 Pond', ''],
+    ['L20 Pond', 50.96602, -114.03211, 'job site', '', ''],
+    ['L30 CIP', 50.9794722, -114.0388056, 'job site', 'The CIP dump pin is this same spot', ''],
+    ['CIP (dump pin)', 50.9794722, -114.0388056, 'dump site', 'Dump for 12th Street clay · same spot as L30 CIP', ''],
+    ['Ivor East Pond', 50.95134, -114.01563, 'job site', '', ''],
+    ['Remington', 50.9605833, -114.0300000, 'job site', 'Also the entrance for Pier 3', ''],
+    ['Remington — bridge spot', 50.95300, -114.02235, 'job site', 'The bridge in Remington', ''],
+    ['Deerfoot / Bow Bottom exit', 50.9510199, -114.0257907, 'job site', 'Northbound Deerfoot exit from Bow Bottom Trail — right side of the ramp', ''],
+    ['Maple Ridge', 50.96044, -114.03176, 'job site', '', ''],
+    ['Amrize', 50.9942951, -114.0334216, 'dump site', 'Hauling-to site · several gates/piles in this area — confirm the pin for the day', ''],
+    ['Burco Blvd (dump spot)', 50.9943056, -114.0334167, 'dump site', 'The "dump here" pin from the Burco Blvd 40mm drain run', ''],
+    ['P Hauling yard (Ryan King)', 50.8785371, -114.0116239, 'job site', 'Ryan King / P Hauling address pin', ''],
+    ['Volker — Cochrane job', 51.1770806, -114.4612953, 'job site', 'Via Hwy 22 to Griffin — avoid the no-truck route', ''],
+    ['Lillydale Chicken', 51.0339417, -114.0380928, 'job site', 'Pin sent with a "Go Empty To" dispatch', '12059 44 St SE, Calgary'],
+    ['Mobil — Westwinds', null, null, 'fuel', 'His main diesel stop', '300-3633 Westwinds Dr NE, Calgary'],
+    ['Mobil — Heritage Meadows', null, null, 'fuel', '', '100-20 Heritage Meadows Way SE, Calgary']
+  ];
+  var BUILTINS = BUILTIN_RAW.map(function (r) {
+    return {
+      id: 'bi-' + r[0].toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      name: r[0], lat: r[1], lng: r[2], type: r[3], note: r[4],
+      address: r[5] || '', builtin: true
+    };
+  });
+  function builtinPlaces() { return BUILTINS.slice(); }
+  function findBuiltin(id) {
+    for (var i = 0; i < BUILTINS.length; i++) if (BUILTINS[i].id === id) return BUILTINS[i];
+    return null;
+  }
+  /* ================= NAV-BUILTIN-END ================= */
 
   function data() {
     return S('data', { work: [], personal: [], recent: [] });
@@ -54,7 +112,11 @@
   /* Record a navigation. Work visits are logged to Manifest; personal never. */
   function recordNav(fav, kind) {
     var d = data();
-    d.recent.unshift({ id: uid(), name: fav.name, address: fav.address || '', kind: kind, ts: Date.now() });
+    var rec = { id: uid(), name: fav.name, address: fav.address || '', kind: kind, ts: Date.now() };
+    /* v84: a place's pin rides the recent entry, so "Go again"
+       navigates to the same pin, not a name search. */
+    if (fav.lat && fav.lng) { rec.lat = fav.lat; rec.lng = fav.lng; }
+    d.recent.unshift(rec);
     d.recent = d.recent.slice(0, 20);
     if (kind === 'work') {
       for (var i = 0; i < d.work.length; i++) {
@@ -71,7 +133,11 @@
 
   function openNav(app, fav, kind) {
     recordNav(fav, kind);
-    var q = fav.address ? fav.name + ', ' + fav.address : fav.name;
+    /* v84: a place with a pin navigates to the PIN — a name search
+       can land on the wrong gate; the coordinates are the spot the
+       dispatcher actually sent. */
+    var q = (fav.lat && fav.lng) ? (fav.lat + ',' + fav.lng)
+      : (fav.address ? fav.name + ', ' + fav.address : fav.name);
     window.open(navUrl(app, q), '_blank', 'noopener');
   }
 
@@ -84,6 +150,7 @@
   }
 
   var api = {
+    builtinPlaces: builtinPlaces,
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';
@@ -129,6 +196,14 @@
       });
       h += '</div>';
 
+      /* ---- v84: built-in places (work tab) ---- */
+      if (tab === 'work') {
+        h += '<div class="card"><h3>📍 Built-in places <span class="pill">' + BUILTINS.length + '</span></h3>' +
+          '<p class="note">Your pits, job sites and fuel stops from this season\'s dispatches — already here, nothing to type. Tap a place to navigate to its pin.</p>' +
+          '<input id="nv_bi_q" placeholder="Search places — try “Bradi” or “CIP”" style="width:100%">' +
+          '<div id="nv_bi_list" style="margin-top:8px"></div></div>';
+      }
+
       /* ---- Recent destinations ---- */
       h += '<div class="card"><h3>🕘 Recent destinations</h3>';
       if (!d.recent.length) {
@@ -172,6 +247,7 @@
         var dd = data();
         var arr = kind === 'work' ? dd.work : dd.personal;
         for (var i = 0; i < arr.length; i++) if (arr[i].id === id) return arr[i];
+        if (kind === 'work') { var bi = findBuiltin(id); if (bi) return bi; }
         return null;
       }
       body.querySelectorAll('[data-navapp]').forEach(function (b) {
@@ -195,11 +271,38 @@
           for (var i = 0; i < dd.recent.length; i++) if (dd.recent[i].id === id) { r = dd.recent[i]; break; }
           if (!r) return;
           /* Re-navigate: reuses favorite record if it still exists so visits keep counting. */
-          var fav = findFav(id, r.kind) || { id: r.id, name: r.name, address: r.address };
+          var fav = findFav(id, r.kind) || { id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng };
           openNav(defApp, fav, r.kind);
           api.render(body);
         };
       });
+
+      /* ---- v84: built-in places list + search ---- */
+      var biList = body.querySelector('#nv_bi_list');
+      function paintBuiltins() {
+        if (!biList) return;
+        var qEl = body.querySelector('#nv_bi_q');
+        var q = (qEl && qEl.value || '').trim().toLowerCase();
+        var hits = BUILTINS.filter(function (p) {
+          return !q || p.name.toLowerCase().indexOf(q) !== -1 ||
+            (p.note || '').toLowerCase().indexOf(q) !== -1 || p.type.indexOf(q) !== -1;
+        });
+        biList.innerHTML = hits.length ? hits.map(function (f) {
+          return '<div class="listitem"><div class="a">' + (TYPE_ICON[f.type] || '📍') + ' ' + esc(f.name) +
+            ' <span class="pill">' + esc(f.type) + '</span></div>' +
+            (f.note ? '<div class="b">' + esc(f.note) + '</div>' : '') +
+            '<div class="b">' + ((f.lat && f.lng) ? esc(f.lat + ', ' + f.lng) : esc(f.address)) + '</div>' +
+            '<div style="margin-top:8px">' + navButtons(f, 'work') + '</div></div>';
+        }).join('') : '<div class="empty">No built-in place matches that — try a shorter word.</div>';
+        biList.querySelectorAll('[data-navapp]').forEach(function (b) {
+          b.onclick = function () {
+            var fav = findBuiltin(b.getAttribute('data-navid'));
+            if (fav) openNav(b.getAttribute('data-navapp'), fav, 'work');
+          };
+        });
+      }
+      var biQ = body.querySelector('#nv_bi_q');
+      if (biQ) { biQ.addEventListener('input', paintBuiltins); paintBuiltins(); }
     }
   };
 

@@ -260,11 +260,28 @@
         '<button class="btn small ghost" id="nv_mute" style="flex:1">' + (settings.muted ? '🔇 Sound: off' : '🔊 Sound: on') + '</button>' +
         '</div></div>';
 
+      /* v84: the built-in pits & job sites (owned by the Navigation
+         module, read lazily so load order never matters) — one tap
+         sets the destination on the pin itself. Address-only
+         built-ins (fuel) are not offered here: they have no pin. */
+      var biPlaces = [];
+      try {
+        if (window.Meticulous && Meticulous.modules.navigation && Meticulous.modules.navigation.builtinPlaces) {
+          biPlaces = Meticulous.modules.navigation.builtinPlaces().filter(function (p) { return p.lat && p.lng; });
+        }
+      } catch (e) { biPlaces = []; }
+
       h += '<div class="card"><h3>📍 Destination</h3>' +
         '<label class="f">Address or place</label>' +
         '<div class="row"><input id="nv_q" placeholder="e.g. Foothills Industrial Park, Calgary" style="flex:1">' +
         '<button class="btn navy" id="nv_search">Search</button></div>' +
         '<div id="nv_results"></div>' +
+        (biPlaces.length ?
+          '<label class="f">Your pits & job sites</label>' +
+          '<select id="nv_places" style="width:100%"><option value="">Choose a place…</option>' +
+          biPlaces.map(function (p, i) {
+            return '<option value="' + i + '">' + esc(p.name) + '</option>';
+          }).join('') + '</select>' : '') +
         '<p class="note" id="nv_destnote">No destination yet. Search above, tap the map, or pick a saved place in Navigation.</p>' +
         '<button class="btn primary big" id="nv_route" style="margin-top:8px">🧭 Route</button>' +
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
@@ -342,6 +359,17 @@
             });
           })
           .catch(function () { S.searching = false; box.innerHTML = '<p class="note">Search could not run — check your connection.</p>'; });
+      };
+
+      /* v84: built-in place picker — one tap sets the destination */
+      var placeSel = body.querySelector('#nv_places');
+      if (placeSel) placeSel.onchange = function () {
+        if (placeSel.value === '') return;
+        var p = biPlaces[Number(placeSel.value)];
+        placeSel.value = '';
+        if (!p) return;
+        setDest([p.lat, p.lng], p.name);
+        if (S.map) S.map.setView(S.dest, 14);
       };
 
       /* ---------- GPS follow ---------- */
