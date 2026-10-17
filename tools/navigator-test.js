@@ -298,7 +298,11 @@ function makeWorld(storeData, withNavModule, fetchMode) {
     'nv_pq', 'nv_presults',
     /* v101: full-screen shell + drive screen */
     'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
-    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
+    /* v101: full-screen shell + drive screen.
+       v139 PIN MOVE: 'nvd_spin' → 'nvd_plane' — the nested
+       tilt/spin/mapbox stack is gone; the one transformed
+       element is the bounded plane (see BUGS.md v139). */
+    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_plane', 'nvd_mute', 'nvd_exit'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
   reg.nv_presults = resultsEl();
@@ -608,16 +612,20 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     /^\d{1,2}:\d{2} [AP]M$/.test(wD.reg.nvd_eta_main.textContent), wD.reg.nvd_eta_main.textContent);
   check('v124: drive bar sub line carries Arrive + minutes + distance left',
     /^Arrive ·/.test(wD.reg.nvd_eta_sub.textContent) && /left/.test(wD.reg.nvd_eta_sub.textContent) && /min/.test(wD.reg.nvd_eta_sub.textContent), wD.reg.nvd_eta_sub.textContent);
-  check('heading-up: the map spins by −heading around the driver anchor',
-    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  /* v139 PIN MOVE: was 'heading-up: the map spins by −heading'
+     asserting the spin element's bare 'rotate(-90deg)'. The
+     plane now carries ONE composed transform — pitch + heading
+     on a single bounded element (see BUGS.md v139). */
+  check('heading-up (v139): the plane\'s composed transform spins by −heading around the driver anchor',
+    wD.reg.nvd_plane.style.transform === 'perspective(1100px) rotateX(45deg) rotate(-90deg)', String(wD.reg.nvd_plane.style.transform));
   /* v124: a GPS stream that reports NO heading (some devices
      never send one) — movement itself becomes the heading once a
      fix travels ≥10 m, so heading-up still engages. From midPt a
      ~200 m hop north-east reads as a bearing near 32°. */
   wD.firePos(midPt[0] + 0.0015, midPt[1] + 0.0015, null);
-  const spinDeg = parseFloat((/rotate\((-?\d+(?:\.\d+)?)deg\)/.exec(String(wD.reg.nvd_spin.style.transform)) || [])[1]);
-  check('v124: no GPS heading → the spin follows the movement bearing',
-    isFinite(spinDeg) && spinDeg < -20 && spinDeg > -45, String(wD.reg.nvd_spin.style.transform));
+  const spinDeg = parseFloat((/rotate\((-?\d+(?:\.\d+)?)deg\)/.exec(String(wD.reg.nvd_plane.style.transform)) || [])[1]);
+  check('v124: no GPS heading → the plane follows the movement bearing',
+    isFinite(spinDeg) && spinDeg < -20 && spinDeg > -45, String(wD.reg.nvd_plane.style.transform));
 
   /* v128 — THE BLINK PINS, on the real driveTick, instrumented.
      Owner recording Oct 17 10:25: ~once a second the route line,
@@ -641,14 +649,14 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   const base128 = { adds: dMap._adds, removes: dMap._removes, views: dMap._views.length, pans: dMap._panTos.length, html: htmlOf() };
   const ptAt = function (f) { return dLine[Math.floor(dLine.length * f)]; };
   const pA = ptAt(0.18); wD.firePos(pA[0], pA[1], 90);
-  check('v128: a real heading change still spins the map',
-    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  check('v128: a real heading change still turns the plane',
+    wD.reg.nvd_plane.style.transform === 'perspective(1100px) rotateX(45deg) rotate(-90deg)', String(wD.reg.nvd_plane.style.transform));
   const pB = ptAt(0.22); wD.firePos(pB[0], pB[1], 91);
-  check('v128: 1° of heading jitter does NOT touch the spin (the 2° deadband)',
-    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  check('v128: 1° of heading jitter does NOT touch the plane (the 2° deadband)',
+    wD.reg.nvd_plane.style.transform === 'perspective(1100px) rotateX(45deg) rotate(-90deg)', String(wD.reg.nvd_plane.style.transform));
   const pC = ptAt(0.26); wD.firePos(pC[0], pC[1], 96);
-  check('v128: a 6° turn clears the deadband and spins',
-    wD.reg.nvd_spin.style.transform === 'rotate(-96deg)', String(wD.reg.nvd_spin.style.transform));
+  check('v128: a 6° turn clears the deadband and turns the plane',
+    wD.reg.nvd_plane.style.transform === 'perspective(1100px) rotateX(45deg) rotate(-96deg)', String(wD.reg.nvd_plane.style.transform));
   [0.30, 0.34, 0.38].forEach(function (f) { const p = ptAt(f); wD.firePos(p[0], p[1], 96); });
   check('v128: six drive ticks added ZERO layers to the drive map', dMap._adds === base128.adds,
     dMap._adds + ' vs baseline ' + base128.adds);
@@ -922,8 +930,14 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     navSrc.indexOf('function pinTap') >= 0 && navSrc.indexOf("S.map.on('click'") >= 0);
   check('v101: the planning view is a full-screen shell',
     navSrc.indexOf('class="nv-shell"') >= 0 && cssSrc.indexOf('.nv-shell{position:fixed;inset:0') >= 0);
-  check('v101: drive tilt is the standard navigation pitch (rotateX 52deg, in the 45–60 band)',
-    cssSrc.indexOf('rotateX(52deg)') >= 0 && cssSrc.indexOf('.nv-drive{position:fixed;inset:0') >= 0);
+  /* v139 PIN MOVE: was the v101 tilt pin (rotateX 52deg in the
+     CSS tilt layer). The tilt now lives in the plane's ONE
+     composed transform at 45° — the stable end of the 45–60
+     band (see BUGS.md v139). */
+  check('v139 (was v101): the tilt is 45°, composed into the bounded plane\'s single transform — no CSS tilt layer remains',
+    navSrc.indexOf('perspective(1100px) rotateX(45deg) rotate(') >= 0 &&
+    cssSrc.indexOf('.nv-drive-plane{') >= 0 && cssSrc.indexOf('.nv-drive-tilt{') < 0 &&
+    cssSrc.indexOf('.nv-drive{position:fixed;inset:0') >= 0);
   check('v104: the old guessing error text is GONE from navigator.js (it blamed the settings for every failure)',
     navSrc.indexOf('Check the Navigator server URL in Preferences') < 0);
   check('v104: route failures name the real cause — silent server / HTTP status / no route between here and there',

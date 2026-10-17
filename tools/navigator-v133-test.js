@@ -62,6 +62,14 @@
  * here exactly, and the fix removes the churn AND the starvation
  * structure, which is why the pins are structural, not sampled.
  *
+ * v139 SUPERSESSION NOTE (Oct 17, 2026): the three STRUCTURE
+ * pins that closed this suite (chrome compositor promotion,
+ * tilt will-change) were deliberately replaced by v139 and are
+ * cited at their checks — on the owner's glass the promoted
+ * chrome broke anyway; the architecture, not the promotion,
+ * was the defect. This suite's BEHAVIOUR pins (the driveText
+ * write-on-change meters) bind v139 unchanged.
+ *
  * Run: node tools/navigator-v133-test.js
  */
 const fs = require('fs');
@@ -163,7 +171,7 @@ function makeWorld(storeData, fixtureOverride) {
     'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps',
     'nv_pq', 'nv_presults',
     'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
-    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
+    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_plane', 'nvd_mute', 'nvd_exit'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
   reg.nv_presults = resultsEl();
@@ -352,16 +360,30 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
 
   api.teardown();
 
-  console.log('— structure pins (the compositor half of the guarantee) —');
-  check('v133: the banner (.nv-drive-top) carries its OWN compositing promotion (translateZ(0) + will-change) — its raster no longer shares the plane\'s fate',
-    /\.nv-drive-top\{[^}]*transform:translateZ\(0\)[^}]*will-change:transform/.test(cssSrc) ||
-    /\.nv-drive-top\{[^}]*will-change:transform[^}]*transform:translateZ\(0\)/.test(cssSrc));
-  check('v133: the ETA bar (.nv-drive-bar) carries its OWN compositing promotion (translateZ(0) + will-change)',
-    /\.nv-drive-bar\{[^}]*transform:translateZ\(0\)[^}]*will-change:transform/.test(cssSrc) ||
-    /\.nv-drive-bar\{[^}]*will-change:transform[^}]*transform:translateZ\(0\)/.test(cssSrc));
-  check('v133: the tilt plane no longer claims will-change (its rotateX is static after mount — the claim was a permanent full-plane layer burning the tile budget)',
-    !/\.nv-drive-tilt\{[^}]*will-change/.test(cssSrc) &&
-    /\.nv-drive-tilt\{[^}]*transform:rotateX\(52deg\)/.test(cssSrc));
+  console.log('— structure pins —');
+  /* v139 SUPERSESSION (owner, Oct 17 12:48 MDT): the three pins
+     that closed this suite at v133 asserted the chrome's OWN
+     compositing promotion (translateZ(0) + will-change) and the
+     tilt's lost will-change as the blanking fix. On the owner's
+     glass the promoted chrome still broke — displaced, clipped,
+     dropped — because it shared the compositor with the 340%
+     three-context plane. v139 removes the plane architecture
+     AND the promotions together (see BUGS.md v139 +
+     tools/navigator-v139-test.js for the new structural pins).
+     The v133 BEHAVIOUR pins (driveText write-on-change, zero
+     same-value/empty assignments) are untouched and still bind
+     — the failure was paint, not writes. What remains here pins
+     the supersession itself, so this file cannot silently drift
+     back to asserting the retired theory. */
+  check('v139 (supersedes the v133 promotion pin): the banner carries NO transform and NO will-change — plain layout paint',
+    /\.nv-drive-top\{[^}]*\}/.test(cssSrc) &&
+    !/\.nv-drive-top\{[^}]*(transform:|will-change)/.test(cssSrc));
+  check('v139 (supersedes the v133 promotion pin): the ETA bar carries NO transform and NO will-change — plain layout paint',
+    /\.nv-drive-bar\{[^}]*\}/.test(cssSrc) &&
+    !/\.nv-drive-bar\{[^}]*(transform:|will-change)/.test(cssSrc));
+  check('v139 (supersedes the v133 tilt pins): the tilt/spin/mapbox layers are GONE from the CSS — one bounded plane instead',
+    !/\.nv-drive-tilt\{/.test(cssSrc) && !/\.nv-drive-spin\{/.test(cssSrc) && !/\.nv-drive-mapbox\{/.test(cssSrc) &&
+    /\.nv-drive-plane\{[^}]*width:190%/.test(cssSrc));
   const tickSrc = navSrc.slice(navSrc.indexOf('function driveTick()'), navSrc.indexOf('function driveArrived()'));
   check('v133: driveTick writes chrome text ONLY through the cached writer (no direct textContent assignment to the five nodes)',
     tickSrc.indexOf('driveText(') >= 0 &&

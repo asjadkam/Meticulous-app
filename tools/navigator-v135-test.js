@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+/* v139 SUPERSESSION NOTE (Oct 17, 2026): three pins in this file
+ * were deliberately moved by v139 and are cited at their checks —
+ * K1 (the dock's translateY(-50%) → arithmetic centring, NO
+ * transform), K6 (the marker's CSS width/translate centring →
+ * AVATAR_BOX margins), and G2/G7/G9 (glyph signatures keyed on
+ * the redrawn dimensional art). Everything else in this suite —
+ * no U-turns, arrival honesty, the dock's behaviour, the wake
+ * lock, K7/K8/K9's opacity/transition discipline — binds v139
+ * unchanged. See BUGS.md v139. */
 /* navigator-v135-test.js — v135 "DRIVE: TRUCK TRUTH" (owner field
  * notes, Oct 17, 2026 12:05–12:11 MDT, from the recorded Ivor
  * East Pond trips; evidence:
@@ -280,7 +289,7 @@ function encodeShape(points) {
       'nv_q', 'nv_search', 'nv_results', 'nv_destnote', 'nv_route', 'nv_end', 'nv_note', 'nv_steps',
       'nv_pq', 'nv_presults',
       'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
-      'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_spin',
+      'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_plane',
       'nvd_mute', 'nvd_exit', 'nvd_you', 'nvd_avatar_picker'];
     const reg = {};
     ids.forEach(function (id) { reg[id] = el(); });
@@ -586,8 +595,11 @@ function encodeShape(points) {
     const markup = w.container._html;
     check('G1 the drive markup paints a TRUCK avatar (SVG), not the old 30px ▲ text',
       markup.indexOf('id="nvd_you"') >= 0 && markup.indexOf('<svg') >= 0 && markup.indexOf('>▲<') < 0);
-    check('G2 the default avatar is the DUMP truck (its steel box panel is in the glyph)',
-      markup.indexOf('#9db8d9') >= 0);
+    /* v139 PIN MOVE: was keyed on the flat art's box-outline
+       colour (#9db8d9). The dimensional dump glyph's signature
+       is its steel-box gradient (id bxdump<slot>). */
+    check('G2 the default avatar is the DUMP truck (its dimensional steel box is in the glyph)',
+      markup.indexOf('bxdumpm') >= 0);
     check('G3 the chooser offers all four kinds with the dump truck selected',
       (markup.match(/data-avatar=/g) || []).length === 4 &&
       /class="nv-avatar-opt on" data-avatar="dump"/.test(markup));
@@ -602,8 +614,11 @@ function encodeShape(points) {
     check('G6 the choice persists through the navigator settings store',
       w.storeData.navigator && w.storeData.navigator.avatar === 'semi',
       JSON.stringify(w.storeData.navigator));
+    /* v139 PIN MOVE: was keyed on the flat trailer fill
+       (#e8edf5); the dimensional semi's signature is its
+       corrugated-trailer gradient (id trsemi<slot>). */
     check('G7 the glyph swaps AT THE TAP (semi trailer now painted)',
-      w.reg.nvd_you._html.indexOf('#e8edf5') >= 0, w.reg.nvd_you._html.slice(0, 80));
+      w.reg.nvd_you._html.indexOf('trsemim') >= 0, w.reg.nvd_you._html.slice(0, 80));
     check('G8 the chooser closes on the choice and marks it selected',
       w.reg.nvd_avatar_picker.classList.contains('hidden') &&
       w.avOpts[1].classList.contains('on') && !w.avOpts[0].classList.contains('on'));
@@ -611,7 +626,7 @@ function encodeShape(points) {
     w.api.teardown();
     w.api.render(w.container);
     check('G9 a fresh render paints the persisted choice (semi in the markup)',
-      w.container._html.indexOf('#e8edf5') >= 0 &&
+      w.container._html.indexOf('trsemim') >= 0 &&
       w.world.MeticulousNav.loadSettings().avatar === 'semi');
     /* Mutate-only: the drive tick must never repaint the marker. */
     w.firePos(ORIGIN[0], ORIGIN[1], 40);
@@ -788,9 +803,15 @@ function encodeShape(points) {
   console.log('— K. static pins —');
   {
     const dock = (cssSrc.match(/body\.mt-driving #chatFab\{[^}]*\}/) || [''])[0];
-    check('K1 the dock pins the FAB to the side edge, centred, above the drive screen',
-      /top:50%/.test(dock) && /right:calc\(6px/.test(dock) && /z-index:2100/.test(dock) &&
-      /transform:translateY\(-50%\)/.test(dock), dock);
+    /* v139 PIN MOVE (supersedes the v135 K1 placement pin): the
+       dock keeps its place (right edge, vertically centred,
+       above the drive screen) but the translateY(-50%)
+       transform is GONE — the 52px button is centred by
+       arithmetic (top:calc(50% - 26px)), so the docked mic
+       carries no transform at all (see BUGS.md v139). */
+    check('K1 v139: the dock pins the FAB to the side edge, centred by arithmetic, above the drive screen — and carries NO transform',
+      /top:calc\(50% - 26px\)/.test(dock) && /right:calc\(6px/.test(dock) && /z-index:2100/.test(dock) &&
+      !/(^|[;{])\s*transform\s*:/.test(dock), dock);
     check('K2 the dock does NOT hide the FAB (side-docking beat the v125-era hide)',
       dock.length > 0 && dock.indexOf('display:none') < 0, dock);
     check('K3 the chat sheet + scrim rise above the drive screen while driving (the docked mic must open)',
@@ -802,9 +823,15 @@ function encodeShape(points) {
       cssSrc.indexOf('body.mt-driving #fbFab{display:none!important;}') >= 0 &&
       cssSrc.indexOf('CHAT FAB, #chatFab') >= 0);
     const youRule = (cssSrc.match(/\.nv-drive-you\{[^}]*\}/) || [''])[0];
-    check('K6 the avatar is BIG and tappable (52px wide, pointer-events:auto, centred on the anchor)',
-      /width:52px/.test(youRule) && /pointer-events:auto/.test(youRule) &&
-      /translate\(-50%,-50%\)/.test(youRule), youRule);
+    /* v139 PIN MOVE (supersedes the v135 K6 geometry pin): the
+       marker keeps its anchor and its tap, but the centring
+       transform and the fixed 52px CSS width are GONE — the box
+       is sized per kind from AVATAR_BOX by the render/paintYou
+       and centred by negative margins (see navigator.js). */
+    check('K6 v139: the avatar is BIG and tappable (pointer-events:auto, on the 50%/64% anchor) with NO transform and NO fixed width in CSS — the box comes from AVATAR_BOX',
+      /pointer-events:auto/.test(youRule) && /left:50%/.test(youRule) && /top:64%/.test(youRule) &&
+      !/(^|[;{])\s*transform\s*:/.test(youRule) && !/width:/.test(youRule) &&
+      navSrc.indexOf('AVATAR_BOX') >= 0 && navSrc.indexOf('avatarBoxStyle') >= 0, youRule);
     check('K7 FADING: no opacity transition or animation exists ANYWHERE in the stylesheet',
       !/transition\s*:[^;}]*opacity/.test(cssSrc) && !/animation\s*:[^;}]*opacity/.test(cssSrc));
     const driveBlocks = cssSrc.match(/\.nv-(drive|avatar)[^{]*\{[^}]*\}/g) || [];

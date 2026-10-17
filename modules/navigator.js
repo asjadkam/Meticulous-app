@@ -391,9 +391,9 @@
   }
 
   /* v128: the smallest absolute difference between two headings,
-     in degrees (0–180). The drive screen's spin deadband reads
+     in degrees (0–180). The drive screen's heading deadband reads
      it: GPS heading at speed jitters degree-by-degree between
-     fixes, and every transform write on the tilted plane restarts
+     fixes, and every transform write on the plane restarts
      its rasterization — below 2° of real turn, nothing may move. */
   function angDeltaDeg(a, b) {
     var d = Math.abs(a - b) % 360;
@@ -468,37 +468,106 @@
      is painted once per render and swapped only on the driver's
      own tap in the chooser — the drive tick never touches it
      (the v133 mutate-only guarantee is untouched). 'arrow' keeps
-     the classic chevron for drivers who prefer it. */
+     the classic chevron for drivers who prefer it.
+     v139 (owner, Oct 17 12:46 MDT: "This truck looks horrible,
+     better 3d image of a truck! Still cartoonish but should have
+     allot more details then a 2d image slapped on"): the flat
+     two-tone glyphs are redrawn as DETAILED, DIMENSIONAL trucks —
+     gradient-shaded cab with glass, mirrors, bumper and lights;
+     a steel dump box with a recessed bed, rim light and ribs;
+     wheels with tyres AND hubs; a soft ground shadow PAINTED
+     INTO the art (the marker element carries no filter any
+     more — see .nv-drive-you in style.css). Still stylised,
+     still crisp: inline SVG, no image files. Gradient ids are
+     suffixed per kind AND per slot ('m' marker / 'p' picker) so
+     the five on-screen instances never share a paint server.
+     AVATAR_BOX is each kind's element box in px — the marker is
+     centred on the anchor by negative margins from this table
+     (paintYou + the render), never by a transform. */
   var AVATAR_KINDS = ['dump', 'semi', 'pickup', 'arrow'];
   var AVATAR_LABELS = { dump: 'Dump truck', semi: 'Semi', pickup: 'Pickup', arrow: 'Arrow' };
-  function avatarGlyph(kind) {
-    var wheels = '<rect x="1.5" y="16" width="6" height="13" rx="2" fill="#10151f"/>' +
-      '<rect x="40.5" y="16" width="6" height="13" rx="2" fill="#10151f"/>' +
-      '<rect x="1.5" y="50" width="6" height="13" rx="2" fill="#10151f"/>' +
-      '<rect x="40.5" y="50" width="6" height="13" rx="2" fill="#10151f"/>';
+  var AVATAR_BOX = { dump: [54, 84], semi: [54, 92], pickup: [52, 78], arrow: [54, 72] };
+  function avatarBoxStyle(kind) {
+    var b = AVATAR_BOX[kind] || AVATAR_BOX.dump;
+    return 'width:' + b[0] + 'px;height:' + b[1] + 'px;margin-left:' + (-b[0] / 2) + 'px;margin-top:' + (-b[1] / 2) + 'px';
+  }
+  function avatarGlyph(kind, slot) {
+    var u = kind + (slot === 'p' ? 'p' : 'm');
+    var defsOpen = '<defs>' +
+      '<linearGradient id="cb' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#3d64a0"/><stop offset=".55" stop-color="#274a7e"/><stop offset="1" stop-color="#152a4e"/></linearGradient>' +
+      '<linearGradient id="gl' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#e2f0ff"/><stop offset="1" stop-color="#7fa8d9"/></linearGradient>';
+    var wheel = function (x, y) {
+      return '<rect x="' + x + '" y="' + y + '" width="7" height="12" rx="2.5" fill="#12161f"/>' +
+        '<rect x="' + (x + 1.8) + '" y="' + (y + 3) + '" width="3.4" height="6" rx="1.4" fill="#4a5872"/>';
+    };
+    var cab = function (top) {
+      return '<rect x="10.5" y="' + (top + 3) + '" width="33" height="23" rx="6" fill="url(#cb' + u + ')" stroke="#0d1830" stroke-width="1.5"/>' +
+        '<rect x="13" y="' + (top + 0.5) + '" width="28" height="4.5" rx="2.2" fill="#4a6ea3"/>' +
+        '<path d="M14.5 ' + (top + 8.5) + ' h25 l-2.6 7 h-19.8 z" fill="url(#gl' + u + ')" stroke="#e8f2ff" stroke-width=".8"/>' +
+        '<rect x="14.5" y="' + (top + 17.5) + '" width="25" height="6.5" rx="2" fill="#2c4d84"/>' +
+        '<circle cx="27" cy="' + (top + 20.7) + '" r="1.7" fill="#f5a623" stroke="#8a5a00" stroke-width=".6"/>' +
+        '<rect x="5.5" y="' + (top + 7) + '" width="4" height="7" rx="1.5" fill="#16294d"/>' +
+        '<rect x="44.5" y="' + (top + 7) + '" width="4" height="7" rx="1.5" fill="#16294d"/>' +
+        '<rect x="9.5" y="' + (top - 1.2) + '" width="35" height="3" rx="1.5" fill="#93a9c9"/>' +
+        '<rect x="12.5" y="' + (top - 0.6) + '" width="6" height="2" rx="1" fill="#ffe9a8"/>' +
+        '<rect x="35.5" y="' + (top - 0.6) + '" width="6" height="2" rx="1" fill="#ffe9a8"/>';
+    };
     if (kind === 'semi') {
-      return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
-        '<rect x="9" y="27" width="30" height="45" rx="3" fill="#e8edf5" stroke="#1F3764" stroke-width="2.5"/>' +
-        '<rect x="11" y="5" width="26" height="20" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
-        '<rect x="15" y="9" width="18" height="6" rx="2" fill="#bcd6ff"/></svg>';
+      return '<svg viewBox="0 0 54 92" aria-hidden="true">' + defsOpen +
+        '<linearGradient id="tr' + u + '" x1="0" y1="0" x2="1" y2="0">' +
+        '<stop offset="0" stop-color="#c3d0e2"/><stop offset=".5" stop-color="#eef3fa"/><stop offset="1" stop-color="#b4c4d9"/></linearGradient></defs>' +
+        '<ellipse cx="27" cy="48" rx="23" ry="43" fill="#0a1220" opacity=".20"/>' +
+        wheel(1.5, 13) + wheel(45.5, 13) + wheel(1.5, 25) + wheel(45.5, 25) +
+        wheel(1.5, 62) + wheel(45.5, 62) + wheel(1.5, 74) + wheel(45.5, 74) +
+        '<rect x="12" y="29" width="30" height="5" fill="#1b2a47"/>' +
+        '<rect x="8" y="33" width="38" height="56" rx="3" fill="url(#tr' + u + ')" stroke="#5a6c88" stroke-width="1.5"/>' +
+        '<path d="M11 41h32M11 48h32M11 55h32M11 62h32M11 69h32M11 76h32" stroke="#7d92b0" stroke-width="1" opacity=".55"/>' +
+        '<rect x="11" y="81" width="32" height="6" fill="none" stroke="#5a6c88" stroke-width="1.2"/>' +
+        '<path d="M27 81v6" stroke="#5a6c88" stroke-width="1.2"/>' +
+        cab(4) + '</svg>';
     }
     if (kind === 'pickup') {
-      return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
-        '<rect x="9" y="32" width="30" height="38" rx="3" fill="#33507f" stroke="#ffffff" stroke-width="2"/>' +
-        '<rect x="14" y="37" width="20" height="28" rx="2" fill="#22355a"/>' +
-        '<rect x="10" y="7" width="28" height="23" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
-        '<rect x="14" y="11" width="20" height="7" rx="2" fill="#bcd6ff"/></svg>';
+      return '<svg viewBox="0 0 52 78" aria-hidden="true">' + defsOpen +
+        '<linearGradient id="bd' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#2a4069"/><stop offset="1" stop-color="#3a568a"/></linearGradient></defs>' +
+        '<ellipse cx="26" cy="41" rx="22" ry="36" fill="#0a1220" opacity=".20"/>' +
+        wheel(1.5, 13) + wheel(43.5, 13) + wheel(1.5, 52) + wheel(43.5, 52) +
+        '<rect x="9" y="5" width="34" height="68" rx="7" fill="url(#cb' + u + ')" stroke="#0d1830" stroke-width="1.5"/>' +
+        '<path d="M13.5 12.5 h25 l-2.6 7 h-19.8 z" fill="url(#gl' + u + ')" stroke="#e8f2ff" stroke-width=".8"/>' +
+        '<rect x="13.5" y="21.5" width="25" height="6.5" rx="2" fill="#2c4d84"/>' +
+        '<rect x="12" y="36" width="28" height="34" rx="3" fill="url(#bd' + u + ')" stroke="#101c33" stroke-width="1.5"/>' +
+        '<path d="M14 45h24M14 53h24M14 61h24" stroke="#ffffff" stroke-width="1" opacity=".14"/>' +
+        '<rect x="12" y="67" width="28" height="3" fill="#101c33" opacity=".6"/>' +
+        '<rect x="8.5" y="2.8" width="35" height="3" rx="1.5" fill="#93a9c9"/>' +
+        '<rect x="11.5" y="3.4" width="6" height="2" rx="1" fill="#ffe9a8"/>' +
+        '<rect x="34.5" y="3.4" width="6" height="2" rx="1" fill="#ffe9a8"/></svg>';
     }
     if (kind === 'arrow') {
-      return '<svg viewBox="0 0 48 76" aria-hidden="true">' +
-        '<polygon points="24,3 43,68 24,53 5,68" fill="#1F3764" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/></svg>';
+      return '<svg viewBox="0 0 54 72" aria-hidden="true">' + defsOpen +
+        '<linearGradient id="ar' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#4a7ec2"/><stop offset="1" stop-color="#1F3764"/></linearGradient></defs>' +
+        '<ellipse cx="27" cy="38" rx="17" ry="31" fill="#0a1220" opacity=".20"/>' +
+        '<polygon points="27,4 46,62 27,48 8,62" fill="url(#ar' + u + ')" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>' +
+        '<polygon points="27,13 38.5,53 27,43.5 15.5,53" fill="#ffffff" opacity=".16"/></svg>';
     }
     /* dump — the default: cab over a steel dump box. */
-    return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
-      '<rect x="8" y="30" width="32" height="42" rx="3" fill="#33507f" stroke="#ffffff" stroke-width="2"/>' +
-      '<rect x="13" y="35" width="22" height="32" rx="2" fill="none" stroke="#9db8d9" stroke-width="2"/>' +
-      '<rect x="10" y="6" width="28" height="22" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
-      '<rect x="14" y="10" width="20" height="7" rx="2" fill="#bcd6ff"/></svg>';
+    return '<svg viewBox="0 0 54 84" aria-hidden="true">' + defsOpen +
+      '<linearGradient id="bx' + u + '" x1="0" y1="0" x2="1" y2="0">' +
+      '<stop offset="0" stop-color="#5d779f"/><stop offset=".18" stop-color="#879cb9"/><stop offset=".5" stop-color="#adbed8"/><stop offset=".82" stop-color="#879cb9"/><stop offset="1" stop-color="#546c92"/></linearGradient>' +
+      '<linearGradient id="bd' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#2a4069"/><stop offset="1" stop-color="#3a568a"/></linearGradient></defs>' +
+      '<ellipse cx="27" cy="44" rx="23" ry="38" fill="#0a1220" opacity=".20"/>' +
+      wheel(1.5, 15) + wheel(45.5, 15) + wheel(1.5, 52) + wheel(45.5, 52) + wheel(1.5, 64) + wheel(45.5, 64) +
+      '<rect x="10" y="30" width="34" height="50" rx="4" fill="#1b2a47"/>' +
+      '<rect x="8.5" y="31" width="37" height="49" rx="4" fill="url(#bx' + u + ')" stroke="#132038" stroke-width="1.5"/>' +
+      '<rect x="13" y="35.5" width="28" height="40" rx="3" fill="url(#bd' + u + ')"/>' +
+      '<rect x="13" y="35.5" width="28" height="3" fill="#101c33" opacity=".55"/>' +
+      '<path d="M13 46h28M13 56h28M13 66h28" stroke="#ffffff" stroke-width="1.2" opacity=".14"/>' +
+      '<path d="M13 47.5h28M13 57.5h28M13 67.5h28" stroke="#000000" stroke-width="1" opacity=".18"/>' +
+      '<rect x="11" y="76.5" width="32" height="3" rx="1.5" fill="#132038"/>' +
+      cab(4) + '</svg>';
   }
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
@@ -751,11 +820,17 @@
          Leaflet instance on its own container, created on Drive and
          removed on exit; position comes from this module's ONE
          existing watchPosition stream (see onPos) — drive mode adds
-         no GPS consumer of its own. Heading-up + the 3D tilt are
-         CSS transforms wrapped around the map (see style.css):
-         .nv-drive-tilt pitches the plane, .nv-drive-spin rotates
-         it by −heading around the driver anchor (50% / 64%), and
-         the map box is oversized so the corners never show. */
+         no GPS consumer of its own.
+         v139: the 3D stack is ONE element now — .nv-drive-plane,
+         a 190% plane centred on the driver anchor (50% / 64%),
+         carrying the map; the tick writes its single composed
+         transform (see planeTransform + style.css). EVERYTHING
+         else on the face — banner, marker, chooser, reroute pill,
+         bar — is a direct child of .nv-drive, outside the plane
+         and outside the viewport box, in a plain untransformed
+         context (the v135 tree kept the marker/chooser/pill
+         inside the perspective viewport; the banner/bar were
+         promoted layers beside it — all of them broke on glass). */
       h += '<div id="nv_drive_screen" class="nv-drive hidden">' +
         '<div class="nv-drive-top">' +
         '<div class="nv-drive-dist" id="nvd_dist"></div>' +
@@ -763,22 +838,23 @@
         '<div class="nv-drive-inst" id="nvd_inst"></div>' +
         '<div class="nv-drive-road" id="nvd_road"></div></div></div>' +
         '<div class="nv-drive-viewport">' +
-        '<div class="nv-drive-tilt"><div class="nv-drive-spin" id="nvd_spin">' +
-        '<div class="nv-drive-mapbox"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
-        '</div></div>' +
+        '<div class="nv-drive-plane" id="nvd_plane"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
+        '</div>' +
         /* v135: the avatar is a TRUCK now (see avatarGlyph), and
            it is TAPPABLE — a tap opens the chooser docked above
            the bar; the choice persists in the navigator settings
            and applies at the tap. The chooser lists the kinds in
-           AVATAR_KINDS order with the current one marked. */
-        '<div class="nv-drive-you" id="nvd_you" title="Your truck — tap to change">' + avatarGlyph(settings.avatar) + '</div>' +
+           AVATAR_KINDS order with the current one marked.
+           v139: the marker is sized + margin-centred inline from
+           AVATAR_BOX (paintYou keeps it so on a change). */
+        '<div class="nv-drive-you" id="nvd_you" title="Your truck — tap to change" style="' + avatarBoxStyle(settings.avatar) + '">' + avatarGlyph(settings.avatar, 'm') + '</div>' +
         '<div class="nv-avatar-picker hidden" id="nvd_avatar_picker">' +
         AVATAR_KINDS.map(function (k) {
           return '<button class="nv-avatar-opt' + (k === settings.avatar ? ' on' : '') + '" data-avatar="' + k + '">' +
-            avatarGlyph(k) + '<span>' + AVATAR_LABELS[k] + '</span></button>';
+            avatarGlyph(k, 'p') + '<span>' + AVATAR_LABELS[k] + '</span></button>';
         }).join('') +
         '</div>' +
-        '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div></div>' +
+        '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div>' +
         '<div class="nv-drive-bar">' +
         /* v125: the ETA stack is NEVER blank — it renders with a
            visible placeholder from the moment Drive opens, and
@@ -788,7 +864,7 @@
            successful tick is a bar that can show nothing. */
         '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main">--:--</div>' +
         '<div class="nv-drive-eta-sub" id="nvd_eta_sub">Getting your arrival time…</div></div>' +
-        '<button class="btn ghost" id="nvd_mute">🔊 Sound: on</button>' +
+        '<button class="btn ghost nv-mute' + (settings.muted ? ' muted' : '') + '" id="nvd_mute" aria-pressed="' + (settings.muted ? 'true' : 'false') + '" aria-label="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '" title="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '">' + muteIcon(settings.muted) + '</button>' +
         '<button class="btn primary" id="nvd_exit">End drive</button>' +
         '</div></div></div>';
       body.innerHTML = h;
@@ -1401,6 +1477,20 @@
         }
       }
 
+      /* v139: THE plane's one transform — pitch and heading
+         composed on a single element (see .nv-drive-plane in
+         style.css for the architecture). The composition order
+         reproduces the old nested tilt∘spin geometry exactly:
+         the in-plane rotate applies first, the rotateX pitches
+         the result around the screen-horizontal axis through the
+         anchor (the plane's centre), and the perspective term
+         projects with its vanishing point AT the anchor. One
+         element, one raster, one writer (the drive tick, ≥2°
+         deadband). */
+      function planeTransform(headingDeg) {
+        return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
+      }
+
       /* v124: the route line is the DOMINANT element on the drive
          map — a white casing under a heavy coloured core, so the
          road ahead reads at a glance against any tile. Before, a
@@ -1419,8 +1509,9 @@
       /* v135: FADING — the drive wake lock. The audit (see
          BUGS.md) found NO app-controlled opacity fade anywhere in
          the Drive face: the chrome has no opacity transition or
-         animation, the spin transitions transform only, and the
-         drive tile layer has run fadeAnimation:false since v125.
+         animation (v139: the plane carries no transition at all),
+         and the drive tile layer has run fadeAnimation:false
+         since v125.
          What DOES fade a navigation screen mid-drive is the OS
          display timeout dimming the whole glass — and the app
          held no wake lock for the Drive screen (the tracker's
@@ -1686,21 +1777,31 @@
             }
           } catch (e) {}
         }
-        /* Heading-up: the spin wrapper rotates by −heading around
-           the driver anchor; stationary fixes carry no heading and
-           S.heading keeps the last real one.
+        /* Heading-up: the plane rotates by −heading around the
+           driver anchor (its own centre). Stationary fixes carry
+           no heading and S.heading keeps the last real one.
            v128: a ≥2° deadband gates the write — GPS heading at
            speed jitters degree-by-degree, and every transform
-           assignment restarts the .45s transition on the giant
-           tilted plane (constant re-rasterization = torn frames).
-           A real turn clears 2° in a single fix; jitter never
-           reaches it. */
-        var spin = body.querySelector('#nvd_spin');
-        if (spin && S.heading !== null && S.heading !== undefined &&
-            (S.drive.headingApplied === null || S.drive.headingApplied === undefined ||
-             angDeltaDeg(S.heading, S.drive.headingApplied) >= 2)) {
-          S.drive.headingApplied = S.heading;
-          spin.style.transform = 'rotate(' + (-S.heading) + 'deg)';
+           assignment re-projects the plane (constant re-raster =
+           torn frames). A real turn clears 2° in a single fix;
+           jitter never reaches it.
+           v139: the write is the plane's ONE composed transform
+           (planeTransform) — the v135 tree wrote a bare rotate()
+           on a nested spin layer inside a static tilt inside a
+           perspective parent, three 3D contexts deep. And where
+           v135 wrote nothing until a heading existed (a flat,
+           untilted map at drive open), the plane is now painted
+           from the first tick: with no heading yet it composes
+           at the last applied heading, or north-up — a nav view
+           from the first frame, never a flat map. */
+        var plane = body.querySelector('#nvd_plane');
+        if (plane && (S.drive.headingApplied === null || S.drive.headingApplied === undefined ||
+            (S.heading !== null && S.heading !== undefined &&
+             angDeltaDeg(S.heading, S.drive.headingApplied) >= 2))) {
+          var hdg = (S.heading !== null && S.heading !== undefined)
+            ? S.heading : (S.drive.headingApplied || 0);
+          S.drive.headingApplied = hdg;
+          plane.style.transform = planeTransform(hdg);
         }
         return say;
       }
@@ -1746,9 +1847,20 @@
       var youEl = body.querySelector('#nvd_you');
       var avPicker = body.querySelector('#nvd_avatar_picker');
       function paintYou() {
-        if (youEl) youEl.innerHTML = avatarGlyph(S.settings.avatar);
-        if (avPicker) avPicker.querySelectorAll('[data-avatar]').forEach(function (b) {
-          b.classList.toggle('on', b.getAttribute('data-avatar') === S.settings.avatar);
+        if (youEl) {
+          youEl.innerHTML = avatarGlyph(S.settings.avatar, 'm');
+          /* v139: the marker's box + anchor-centring margins
+             follow the chosen kind (AVATAR_BOX) — set as plain
+             styles on the tap, never per tick, never a
+             transform. */
+          var b = AVATAR_BOX[S.settings.avatar] || AVATAR_BOX.dump;
+          youEl.style.width = b[0] + 'px';
+          youEl.style.height = b[1] + 'px';
+          youEl.style.marginLeft = (-b[0] / 2) + 'px';
+          youEl.style.marginTop = (-b[1] / 2) + 'px';
+        }
+        if (avPicker) avPicker.querySelectorAll('[data-avatar]').forEach(function (b2) {
+          b2.classList.toggle('on', b2.getAttribute('data-avatar') === S.settings.avatar);
         });
       }
       if (youEl) youEl.onclick = function () { if (avPicker) avPicker.classList.toggle('hidden'); };
@@ -1775,14 +1887,48 @@
         S.follow = !S.follow; paintFollow();
         if (S.follow && S.pos && S.map) S.map.setView(S.pos, S.map.getZoom());
       };
+      /* v139 (owner, Oct 17 12:42 MDT): the drive bar's sound
+         control is a MUTE BUTTON, not a "Sound: on/off" text
+         toggle — a speaker glyph; muted adds the × and a bold
+         orange slash, and the button takes the .muted tint (see
+         style.css), so the state reads at a glance. Voice
+         guidance speaks unless the driver mutes it; the state is
+         the same settings.muted as ever — it persisted across
+         drives before and persists now; only the control's form
+         changed. The planning card keeps its text toggle (a
+         settings row, read parked) on the same setting. */
+      function muteIcon(muted) {
+        var spk = '<path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none"/>';
+        if (muted) {
+          return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + spk +
+            '<line x1="16" y1="9.5" x2="20.5" y2="14.5"/><line x1="20.5" y1="9.5" x2="16" y2="14.5"/>' +
+            '<line x1="4" y1="4" x2="20" y2="20" stroke="#f26522" stroke-width="2.4"/></svg>';
+        }
+        return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + spk +
+          '<path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.2 6a8.8 8.8 0 0 1 0 12"/></svg>';
+      }
       /* v101: ONE sound toggle, two faces (planning card + drive
          bar) — same settings.muted, same speak() gate. */
       function paintMute() {
         var label = S.settings.muted ? '🔇 Sound: off' : '🔊 Sound: on';
-        /* v133: the bar's mute label is chrome text too — through
+        /* v133: the planning label is chrome text too — through
            the cached writer like everything else on the face. */
         driveText(body.querySelector('#nv_mute'), 'mutePlan', label);
-        driveText(body.querySelector('#nvd_mute'), 'muteDrive', label);
+        /* v139: the DRIVE face is the icon button — innerHTML by
+           design (it is markup, not text), written only when the
+           painted state actually changes (S.mutePainted), the
+           same write-on-change discipline as driveText. It is
+           never called per tick: paintMute runs at startDrive
+           and on the toggle itself. */
+        var dBtn = body.querySelector('#nvd_mute');
+        if (dBtn && S.mutePainted !== S.settings.muted) {
+          S.mutePainted = S.settings.muted;
+          dBtn.innerHTML = muteIcon(S.settings.muted);
+          dBtn.classList.toggle('muted', S.settings.muted);
+          dBtn.setAttribute('aria-pressed', S.settings.muted ? 'true' : 'false');
+          dBtn.setAttribute('aria-label', S.settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance');
+          dBtn.setAttribute('title', S.settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance');
+        }
       }
       function toggleMute() {
         S.settings.muted = !S.settings.muted;

@@ -76,12 +76,20 @@ const nav = fs.readFileSync(path.join(ROOT, 'modules', 'navigator.js'), 'utf8');
 const navi = fs.readFileSync(path.join(ROOT, 'modules', 'navigation.js'), 'utf8');
 
 console.log('\n— (a) the map fills its area —');
-ok('mapbox is 340% (v125: was 300% at v107-v124; in landscape the 300% plane corners fell short under the tilt, leaving the dark wedge of the owner\'s Oct 17 landscape shot)',
-  /\.nv-drive-mapbox\{[^}]*width:340%;height:340%/.test(css));
-ok('perspective deepened to 1000px', /\.nv-drive-viewport\{[^}]*perspective:1000px/.test(css));
+/* v139 PIN MOVES (see BUGS.md v139): the 340% mapbox, the
+   viewport's perspective property and the CSS 52° tilt layer
+   are GONE — replaced by ONE bounded plane carrying a composed
+   transform. The sky-gradient backstop keeps its job. */
+ok('v139: the map rides ONE bounded plane — 190% × 190%, centred on the anchor by its offsets (was: the 340% mapbox of v125)',
+  /\.nv-drive-plane\{[^}]*width:190%;height:190%;left:-45%;top:-31%/.test(css) &&
+  !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
+ok('v139: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform',
+  !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&
+  nav.indexOf('perspective(1100px) rotateX(45deg) rotate(') >= 0);
 ok('the viewport backstop is a sky gradient, not flat gray',
   /\.nv-drive-viewport\{[^}]*linear-gradient\(180deg,#0b1424/.test(css));
-ok('the 52° standard tilt is unchanged', css.indexOf('rotateX(52deg)') >= 0);
+ok('v139: the tilt is 45° in the composed plane transform (was 52° in a CSS layer — stability won the last 7°, BUGS.md v139)',
+  nav.indexOf('rotateX(45deg)') >= 0 && css.indexOf('rotateX(52deg)') < 0);
 ok('a second settle invalidateSize pass exists (+650ms)',
   nav.indexOf('}, 650);') >= 0 && (nav.match(/invalidateSize\(\)/g) || []).length >= 3);
 
