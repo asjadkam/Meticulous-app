@@ -215,12 +215,22 @@
     return !!fields.rawText;
   };
 
-  /* ---------- prompts: JSON-only, shaped like the local parsers ---------- */
+  /* ---------- prompts: shaped like the local parsers ----------
+     v115: the odometer prompt now demands a BARE NUMBER (mirrors
+     the server's readPrompt in deploy/ai/server.js — the two are
+     kept in step). The JSON demand was honoured only sometimes:
+     the model answered in prose, or with a comma inside an
+     unquoted number, and the strict parser below threw a perfectly
+     good reading away (Oct 16 live acceptance: 3/3 dash reads
+     failed while a direct probe returning clean JSON succeeded).
+     A bare number is the simplest contract to keep, and the
+     tolerant extractor (extractOdometerFromText) now forgives the
+     shapes that still slip through. */
   function promptFor(reader) {
     if (reader === 'odometer') {
       return 'You are reading a photo of a truck dashboard odometer. The display is often a dot-matrix or segmented digital readout and may be dim, pixelated or partly washed out. ' +
         'Find the TOTAL odometer reading in kilometres — not the trip meter (the trip meter is smaller and often has a decimal point). ' +
-        'Reply with ONLY this JSON and nothing else: {"value": 168518} where the number is the integer total kilometres with no commas or spaces. If you truly cannot read it, reply {"value": null}.';
+        'Reply with only the odometer number, no other text: the integer total kilometres with no commas, spaces or labels (for example: 168518). If you truly cannot read it, reply with only: 0';
     }
     if (reader === 'sticker') {
       return 'You are reading a vehicle "NEXT SERVICE DUE" windshield sticker. The values are often HANDWRITTEN in marker or pen. ' +
@@ -239,13 +249,93 @@
     if (!(n >= min && n <= max)) return null;
     return String(n);
   }
-  function mapFields(reader, j) {
+  /* ---------- v115: tolerant odometer extraction ----------
+     The strict door above (JSON {"value": N}) stays first choice,
+     but a vision model answers in the wild shapes too: prose
+     ("The odometer reads 169,166 km"), a comma inside an unquoted
+     JSON number ({"value": 169,166} — invalid JSON), or a bare
+     number. Every one of those carried a perfectly good reading
+     that the v114 parser discarded (Oct 16 live acceptance drive:
+     the merged odometer card failed 3/3 on the owner's real dash
+     photo, true reading 169166, while the fuel receipt read —
+     whose parser tolerates prose — worked in-app minutes later).
+     extractOdometerFromText recovers the reading from any reply
+     text: thousands separators are stripped, every number becomes
+     a candidate, and the winner is picked by the same sanity
+     thinking the local dash parser (js/app.js parseOdometerReading)
+     uses — trip-meter numbers lose (labelled trip, or carrying a
+     decimal), labelled/total figures win, and against a stored
+     master the candidate nearest it wins; otherwise the largest
+     dash-like figure. Range: 4–7 digit values in the plausible
+     truck span 1,000–2,000,000 km. NO candidate → null, and the
+     caller fails honestly, exactly as before. The result is still
+     only a CANDIDATE: escalate()'s two-sided plausibility gate and
+     the confirm-first UI judge it downstream, unchanged. */
+  function extractOdometerFromText(text) {
+    var t = String(text || '');
+    if (!t) return null;
+    var flat = t.replace(/(\d)[ \t]+(?=\d)/g, '$1');   // glue "169 166"
+    var lower = flat.toLowerCase();
+    var re = /(\d[\d,]*\.?\d*)/g, m, cands = [];
+    while ((m = re.exec(flat)) !== null) {
+      var tok = m[1];
+      var v = parseFloat(tok.replace(/,/g, ''));
+      if (!isFinite(v)) continue;
+      var iv = Math.floor(v);
+      if (iv < 1000 || iv > 2000000) continue;
+      var intDigits = tok.replace(/,/g, '').split('.')[0].length;
+      if (intDigits < 4 || intDigits > 7) continue;
+      var before = lower.slice(Math.max(0, m.index - 48), m.index);
+      var after = lower.slice(m.index + tok.length, m.index + tok.length + 12);
+      var labelled = /\b(odometer|total)\b/.test(before);
+      cands.push({
+        v: iv,
+        dec: /\.\d/.test(tok),
+        /* a number introduced as the trip meter loses — unless the
+           same breath also calls it the odometer/total */
+        trip: /\btrip\b/.test(before) && !labelled,
+        label: labelled || /\bkm\b/.test(after)
+      });
+    }
+    if (!cands.length) return null;
+    var pool = cands;
+    var nonTrip = pool.filter(function (c) { return !c.trip; });
+    if (nonTrip.length) pool = nonTrip;
+    var ints = pool.filter(function (c) { return !c.dec; });
+    if (ints.length) pool = ints;
+    var labelledPool = pool.filter(function (c) { return c.label; });
+    if (labelledPool.length) pool = labelledPool;
+    var master = null;
+    try { master = PowerRead.masterOdo(); } catch (e) {}
+    if (master) {
+      var near = pool.filter(function (c) { return c.v >= master && c.v <= master + PowerRead.ODO_MAX_JUMP_KM; });
+      if (near.length) {
+        near.sort(function (a, b) { return a.v - b.v; });
+        return String(near[0].v);   // nearest the master (all are at/above it)
+      }
+    }
+    var best = null;
+    pool.forEach(function (c) { if (!best || c.v > best.v) best = c; });
+    return best ? String(best.v) : null;
+  }
+  PowerRead._extractOdometer = extractOdometerFromText;
+
+  function mapFields(reader, j, rawText) {
     var f = {};
-    if (!j || typeof j !== 'object') return f;
     if (reader === 'odometer') {
-      var v = cleanInt(j.value, 1000, 9999999);
+      var v = null;
+      /* v115: a bare-number reply parses to a JSON number, not an
+         object — that IS the value (integer only; a fractional
+         number falls through to the text extractor, which weighs
+         its decimal the way it weighs a trip meter's). */
+      if (typeof j === 'number' && isFinite(j) && Math.floor(j) === j) v = cleanInt(j, 1000, 9999999);
+      if (!v && j && typeof j === 'object') v = cleanInt(j.value, 1000, 9999999);
+      if (!v && rawText) v = extractOdometerFromText(rawText);
       if (v) f.value = v;
-    } else if (reader === 'sticker') {
+      return f;
+    }
+    if (!j || typeof j !== 'object') return f;
+    if (reader === 'sticker') {
       var miles = cleanInt(j.miles, 1000, 1999999);
       if (miles) f.odo = miles;
       if (typeof j.date === 'string') {
@@ -312,8 +402,16 @@
         if (!parts) return { ok: false, kind: 'http', message: '⚡ Power read got an empty answer — your photo and entries are unchanged.' };
         var text = parts.map(function (p) { return p.text || ''; }).join('');
         var parsed = parseModelJson(text);
-        if (!parsed) return { ok: false, kind: 'http', message: '⚡ Power read could not understand the answer — your photo and entries are unchanged.' };
-        return { ok: true, fields: mapFields(reader, parsed), model: model };
+        var fields = mapFields(reader, parsed, text);
+        /* v115: an unparseable reply is only a failure when the
+           tolerant pass recovered NOTHING from it either (the
+           odometer extractor forgives prose / bare numbers / a
+           comma inside an unquoted JSON number). A parsed-but-empty
+           answer ({"value": null}, or the bare-number prompt's 0
+           sentinel) stays a successful read with no fields, as
+           before — the caller words it as "couldn't read it". */
+        if ((parsed === null || parsed === undefined) && !Object.keys(fields).length) return { ok: false, kind: 'http', message: '⚡ Power read could not understand the answer — your photo and entries are unchanged.' };
+        return { ok: true, fields: fields, model: model };
       }
       var emsg = '';
       try { emsg = String((r.json && r.json.error && r.json.error.message) || ''); } catch (e) {}
@@ -346,10 +444,14 @@
       return resp.json().then(function (j) { return { status: resp.status, json: j }; }, function () { return { status: resp.status, json: null }; });
     }).then(function (r) {
       if (r.status !== 200 || !r.json) return { ok: false, kind: 'http', message: '⚡ Power read failed — your photo and entries are unchanged.' };
-      var parsed = (typeof r.json.text === 'string') ? parseModelJson(r.json.text) : r.json;
-      if (!parsed) return { ok: false, kind: 'http', message: '⚡ Power read could not understand the answer — your photo and entries are unchanged.' };
+      var rawText = (typeof r.json.text === 'string') ? r.json.text : null;
+      var parsed = (rawText !== null) ? parseModelJson(rawText) : r.json;
+      var fields = mapFields(reader, parsed, rawText);
+      /* v115: same forgiveness as the direct route — an unparseable
+         reply fails only when nothing could be recovered from it. */
+      if ((parsed === null || parsed === undefined) && !Object.keys(fields).length) return { ok: false, kind: 'http', message: '⚡ Power read could not understand the answer — your photo and entries are unchanged.' };
       bumpCount();
-      return { ok: true, fields: mapFields(reader, parsed), model: 'proxy' };
+      return { ok: true, fields: fields, model: 'proxy' };
     }, function () {
       return { ok: false, kind: 'network', message: '⚡ Power read could not reach the cloud reader.' };
     });
