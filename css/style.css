@@ -7,6 +7,20 @@
 }
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{margin:0;padding:0;}
+/* v121 (owner, Oct 17 2026 — his Fuel-screen recording: "Why is
+   this acting like a website? Why is the entire panel not
+   straight?"): THE SIDEWAYS PAN, KILLED AT THE ROOT. The page
+   carried no horizontal lock anywhere, so any element that sized
+   even a few px past the phone viewport made the WHOLE panel
+   draggable sideways, website-style, and it would sit crooked
+   (same family as the v116 Revenue chips, which was fixed row by
+   row but never locked globally). overflow-x:clip is the lock
+   where supported — unlike hidden it creates no scroll
+   container, so the sticky topbar / module heads keep sticking;
+   hidden is the fallback line for older WebViews. Vertical
+   scroll is untouched. Pinned by tools/overflow-lock-test.js. */
+html,body{overflow-x:hidden;overflow-x:clip;}
+#app{overflow-x:clip;}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
   background:var(--bg); color:var(--ink); min-height:100vh;
@@ -86,6 +100,21 @@ body{
 .card h3{margin:0 0 12px;font-size:15px;color:var(--navy);}
 .row{display:flex;gap:12px;align-items:center;}
 .row>*{flex:1;}
+/* v121: flex/grid children may shrink BELOW their content's
+   min-content size. Without this, a child's floor is its longest
+   unbreakable content — when the floors in a row summed past the
+   screen, the row sized the PAGE wide and the whole panel panned
+   sideways (the mechanism behind the owner's Oct 17 recording,
+   worst on big-text handsets). Measured on the v120 tree at
+   360px: the dashboard module grid had a ~449px hard minimum
+   (nowrap card subtitles), P&L's three stat cards summed to
+   422px, Dispatch's start-time input forced 376px, Invoice's
+   period-to date input 408px, a Revenue stat card crossed at
+   370px. Visually identical whenever the content fits; when it
+   doesn't, the child wraps/shrinks inside its own box instead
+   of dragging the page. */
+.row>*,.kv>*,.modgrid>*,.optgrid>*,.hero-btns>*{min-width:0;}
+input,select,textarea{min-width:0;}
 /* v116 (owner, Oct 16 2026): wrapping chip rows — the Revenue
    pay-period chips (six across) used to sit in a plain no-wrap
    .row and push "Custom" half off the right edge of a phone
@@ -108,6 +137,14 @@ textarea{min-height:90px;resize:vertical;}
 .listitem{background:#fff;border:1px solid #e8ecf6;border-radius:12px;padding:16px;margin:12px 0;}
 .listitem .a{font-weight:700;font-size:14px;}
 .listitem .b{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.5;}
+/* v121: long unbroken strings (station names, addresses, pins)
+   in list rows and key/value values wrap inside their own box —
+   anywhere-wrapping only bites on a token that could otherwise
+   force the row wide; normal spaced text wraps as it always did.
+   Images can never exceed their container. */
+.listitem .a,.listitem .b{overflow-wrap:anywhere;}
+.kv b{overflow-wrap:anywhere;}
+img{max-width:100%;}
 .pill{display:inline-block;background:var(--pale);color:var(--navy);border-radius:20px;
   padding:4px 12px;font-size:12px;font-weight:600;}
 .toggle{display:flex;justify-content:space-between;align-items:center;padding:14px 0;
