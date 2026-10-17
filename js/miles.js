@@ -37,6 +37,28 @@
  *    fragments the old derivation orphaned under drifted keys —
  *    same day, activity window belonging to this session — folding
  *    them under the live key exactly once (see adoptableFragments).
+ *  - v126: THE WAKE REBUILD. The v63 dedupe watermark was the live
+ *    anchor's TIMESTAMP: any crumb at or before it counted as
+ *    "already observed". But the first live fix after a relaunch
+ *    takes the join path — it re-anchors WITHOUT counting — so the
+ *    anchor TELEPORTS past every stretch the web stream never
+ *    counted, and the native run that genuinely observed those
+ *    stretches was then skipped wholesale (and acked away by the
+ *    drain). That is the owner's Oct 14–17 pattern exactly: app
+ *    opened in bursts at stops, dead while driving; dashboard
+ *    showed a foreground fragment (Oct 17: 13.3 km against 45
+ *    odometer km). The engine now tracks WHAT WAS ACTUALLY
+ *    COUNTED — `segs`, the merged time-intervals folded into the
+ *    total — and dedupes merges against them, never against the
+ *    anchor. A join re-anchor preserves its origin point
+ *    (`joinFrom`) so a later crumb run can connect through it
+ *    under the same OBS_GAP honesty gate as before. Unobserved
+ *    stretches are still never counted: the gate, the filters and
+ *    the gap finder are unchanged. Pre-v126 records carry no
+ *    `segs`; begin() seeds coverage from the record's own crumb
+ *    span (its counted trail) so pre-upgrade ground cannot be
+ *    counted twice — that span can over-claim at most the one
+ *    join segment the old join path once skipped inside it.
  */
 (function () {
   'use strict';
@@ -74,6 +96,43 @@
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
   }
 
+  /* v126: counted-coverage intervals. `segs` is the merged, sorted
+     list of [t0, t1] time spans already folded into totalM. It —
+     never the anchor's timestamp — is the dedupe truth: the anchor
+     can teleport across uncounted ground on a join re-anchor, but
+     a span is in this list only if a real segment was counted over
+     it. Counting is chronological, so inserts almost always land
+     at the end; merges that fill an older hole insert mid-list. */
+  function segAdd(segs, t0, t1) {
+    if (!(t1 > t0)) return;
+    var out = [], placed = false;
+    for (var i = 0; i < segs.length; i++) {
+      var a = segs[i][0], b = segs[i][1];
+      if (b < t0) { out.push(segs[i]); continue; }          // entirely before, no touch
+      if (a > t1) {                                          // entirely after
+        if (!placed) { out.push([t0, t1]); placed = true; }
+        out.push(segs[i]); continue;
+      }
+      if (a < t0) t0 = a;                                    // overlap/touch: absorb
+      if (b > t1) t1 = b;
+    }
+    if (!placed) out.push([t0, t1]);
+    segs.length = 0;
+    for (var j = 0; j < out.length; j++) segs.push(out[j]);
+  }
+  function segOverlaps(segs, t0, t1) {
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i][0] < t1 && t0 < segs[i][1]) return true;
+    }
+    return false;
+  }
+  function segCoversPoint(segs, t) {
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i][0] <= t && t <= segs[i][1]) return true;
+    }
+    return false;
+  }
+
   /* The accumulator. One instance lives in the glue; the harness makes
      its own. State survives via snapshot()/begin(key, saved). */
   function createMilesTracker() {
@@ -102,12 +161,28 @@
       begin: function (key, saved) {
         S = {
           key: key, active: true, totalM: 0, anchor: null,
-          crumbs: [], hasFix: false, joinZero: false
+          crumbs: [], hasFix: false, joinZero: false,
+          segs: [], joinFrom: null
         };
         if (saved) {
           S.totalM = (typeof saved.totalM === 'number' && saved.totalM > 0) ? saved.totalM : 0;
           if (saved.crumbs && saved.crumbs.length) S.crumbs = saved.crumbs.slice();
           S.hasFix = !!saved.hasFix;
+          if (saved.segs && saved.segs.length) {
+            for (var si = 0; si < saved.segs.length; si++) {
+              var sp = saved.segs[si];
+              if (sp && isFinite(+sp[0]) && isFinite(+sp[1]) && +sp[1] > +sp[0]) {
+                S.segs.push([+sp[0], +sp[1]]);
+              }
+            }
+          }
+          if (saved.joinFrom && isFinite(saved.joinFrom.latitude) && isFinite(saved.joinFrom.longitude)) {
+            S.joinFrom = {
+              time: saved.joinFrom.time,
+              latitude: saved.joinFrom.latitude,
+              longitude: saved.joinFrom.longitude
+            };
+          }
           if (saved.anchor && isFinite(saved.anchor.latitude) && isFinite(saved.anchor.longitude)) {
             S.anchor = {
               time: saved.anchor.time,
@@ -115,6 +190,29 @@
               longitude: saved.anchor.longitude
             };
             S.joinZero = true;
+            // v126: the restored anchor IS a join origin until a
+            // crumb run proves (or disproves) coverage across it —
+            // remember it as such even after the first live fix
+            // re-anchors past it.
+            if (!S.joinFrom) {
+              S.joinFrom = {
+                time: S.anchor.time,
+                latitude: S.anchor.latitude,
+                longitude: S.anchor.longitude
+              };
+            }
+            if (!S.segs.length && S.totalM > 0) {
+              // Pre-v126 record (no coverage list): seed coverage
+              // with the record's own crumb span — the trail its
+              // total was counted over — so a post-upgrade drain
+              // cannot count that ground a second time.
+              var firstT = S.anchor.time;
+              for (var ci = 0; ci < S.crumbs.length; ci++) {
+                var ct = S.crumbs[ci] && S.crumbs[ci].t;
+                if (typeof ct === 'number' && ct > 0 && ct < firstT) firstT = ct;
+              }
+              if (S.anchor.time > firstT) S.segs.push([firstT, S.anchor.time]);
+            }
           }
         }
         return S.key;
@@ -142,6 +240,19 @@
         if (S.joinZero) {
           // First fix after a relaunch: re-anchor WITHOUT counting the
           // unobserved join segment (no double-count, no invented miles).
+          // v126: the origin point is PRESERVED as joinFrom — the
+          // anchor teleports, but a native crumb run drained later
+          // can still connect through the origin and count the
+          // stretch the service genuinely observed (mergeCrumbs).
+          // The earliest unconsumed origin wins: a second relaunch
+          // must not orphan an older unfilled join.
+          if (!S.joinFrom) {
+            S.joinFrom = {
+              time: S.anchor.time,
+              latitude: S.anchor.latitude,
+              longitude: S.anchor.longitude
+            };
+          }
           S.anchor = f;
           S.joinZero = false;
           S.hasFix = true;
@@ -152,6 +263,7 @@
         var dtH = (f.time - S.anchor.time) / 3600000;
         if ((d / 1000) / dtH > MAX_SPEED_KMH) return { accepted: false, why: 'teleport' };
         S.totalM += d;
+        segAdd(S.segs, S.anchor.time, f.time);
         S.anchor = f;
         S.hasFix = true;
         maybeCrumb(f);
@@ -163,21 +275,29 @@
          runs — including while the WebView is dead. On resume the glue
          hands the unprocessed run here.
          Merge rules (idempotent — safe to re-feed the same run):
-          - crumbs are normalized to fixes and sorted by time;
-          - a crumb at or before the current anchor's time was already
-            observed (by the live stream or an earlier merge): skipped.
-            Segments are always counted anchor -> next point in time
-            order, so two streams can never double-count a stretch;
-          - the relaunch JOIN (joinZero, set by begin() on a saved
-            record) is counted ONLY when the run proves the service
-            observed it: the first newer crumb lands within
-            OBS_GAP_MAX_MS of the anchor. Otherwise ingest's own join
-            rule applies — re-anchor, count nothing for the join;
+          - crumbs are normalized to fixes and sorted by time, then
+            walked as one chain in time order;
+          - v126: a candidate segment counts only when its time span
+            is NOT already covered by `segs` (the intervals actually
+            folded into the total). The old rule — "at or before the
+            anchor = already observed" — was the Oct 14–17 hole: a
+            post-relaunch live fix teleports the anchor past ground
+            nobody counted, and the whole observed run behind it was
+            skipped. Coverage, not the anchor, is the watermark now;
+          - the chain seeds from the join origin (joinFrom) when a
+            relaunch join is unconsumed, else from the live anchor.
+            The seed segment is the JOIN: it counts only when the
+            run proves the service observed across the kill — the
+            first crumb lands within OBS_GAP_MAX_MS of the seed.
+            Otherwise the join is reported (gapJoins), the first
+            crumb becomes the chain start, and only the observed
+            run behind it counts — the stretch itself stays
+            uncounted, never bridged, never invented;
           - every later segment goes through the SAME filters as a
             live fix (accuracy, jitter, teleport), so a hole inside
             the service's own run is treated exactly like a hole in
-            the live stream (counted only if speed-plausible; the gap
-            finder still reports it).
+            the live stream (counted only if speed-plausible; the
+            gap finder still reports it).
          Returns { accepted, addedM, skipped, gapJoins }. */
       mergeCrumbs: function (crumbsIn) {
         var res = { accepted: 0, addedM: 0, skipped: 0, gapJoins: 0 };
@@ -193,27 +313,85 @@
           list.push({ time: +c.t, latitude: +c.a, longitude: +c.o, accuracy: acc });
         }
         list.sort(function (x, y) { return x.time - y.time; });
-        var joinPending = !!S.joinZero;
+        var joinOutstanding = !!S.joinZero || !!S.joinFrom;
+        var seed = null;
+        if (S.joinFrom) {
+          seed = { time: S.joinFrom.time, latitude: S.joinFrom.latitude, longitude: S.joinFrom.longitude };
+        } else if (S.anchor) {
+          seed = { time: S.anchor.time, latitude: S.anchor.latitude, longitude: S.anchor.longitude };
+        }
+        var chain = null;          // the point the next segment counts FROM
+        var seedPair = false;      // the next pair is the seed (join) pair
+        if (seed && list.length && list[0].time > seed.time) {
+          chain = seed;
+          seedPair = true;
+        }
         for (var j = 0; j < list.length; j++) {
           var f = list[j];
-          if (S.anchor && isFinite(f.time) && f.time <= S.anchor.time) {
-            res.skipped++; // already observed — dedupe by timestamp
+          if (f.accuracy !== null && f.accuracy !== undefined && f.accuracy > ACC_MAX_M) {
+            res.skipped++; // bad fix: never a chain point (mirrors ingest)
             continue;
           }
-          if (joinPending) {
-            joinPending = false;
-            if (S.anchor && f.time - S.anchor.time <= OBS_GAP_MAX_MS) {
-              // The service was recording across the kill: the join
-              // segment was genuinely observed. Clear the join flag so
-              // ingest counts it like any other observed segment.
-              S.joinZero = false;
-            } else {
-              res.gapJoins++; // unobserved stretch: ingest re-anchors free
-            }
+          if (!chain) {
+            // First usable point of the walk: it becomes the chain
+            // start without counting anything into it. Adopted as
+            // "accepted" only when it advances the live anchor
+            // (a first-ever point, or the far side of a refused
+            // join handled below); a point at/behind the anchor is
+            // simply where the walk starts measuring from.
+            chain = f;
+            if (!S.anchor || f.time > S.anchor.time) res.accepted++;
+            else res.skipped++;
+            continue;
           }
-          var r = this.ingest(f);
-          if (r.accepted) { res.accepted++; res.addedM += r.addedM || 0; }
-          else res.skipped++;
+          if (f.time <= chain.time) { res.skipped++; continue; } // stale / duplicate stamp
+          if (segOverlaps(S.segs, chain.time, f.time)) {
+            // Already folded into the total by whichever stream
+            // observed it first — advance the chain, count nothing.
+            res.skipped++;
+            chain = f;
+            seedPair = false;
+            continue;
+          }
+          if (seedPair && joinOutstanding && f.time - chain.time > OBS_GAP_MAX_MS) {
+            // The join stretch was observed by NOBODY: report it,
+            // start the chain at this crumb, count nothing for it.
+            res.gapJoins++;
+            seedPair = false;
+            chain = f;
+            res.accepted++; // adopted as the chain start (like ingest's join)
+            continue;
+          }
+          seedPair = false;
+          var d = haversineM(chain.latitude, chain.longitude, f.latitude, f.longitude);
+          if (d < MIN_STEP_M) { res.skipped++; continue; } // jitter: chain stays (accumulates)
+          var dtH = (f.time - chain.time) / 3600000;
+          if ((d / 1000) / dtH > MAX_SPEED_KMH) { res.skipped++; continue; } // teleport: point dropped
+          S.totalM += d;
+          segAdd(S.segs, chain.time, f.time);
+          res.accepted++;
+          res.addedM += d;
+          chain = f;
+          // A counted segment also lands the point in the day's
+          // breadcrumb record when the live stream never saw it,
+          // so the gap finder works from one complete trail.
+          maybeCrumb({ time: f.time, latitude: f.latitude, longitude: f.longitude });
+        }
+        // The walk may have counted past the live anchor (the
+        // common wake case: the fold reconstructs ground the live
+        // stream teleported over). Adopt its end as the anchor so
+        // the next live fix continues the same chain.
+        if (chain && (!S.anchor || chain.time > S.anchor.time)) {
+          S.anchor = { time: chain.time, latitude: chain.latitude, longitude: chain.longitude };
+          S.hasFix = true;
+          S.joinZero = false;
+        }
+        // A join origin the counted coverage now spans is consumed:
+        // the chain is whole again and the origin must not seed a
+        // second, stale connection later.
+        if (S.joinFrom && segCoversPoint(S.segs, S.joinFrom.time) &&
+            S.anchor && segCoversPoint(S.segs, S.anchor.time)) {
+          S.joinFrom = null;
         }
         return res;
       },
@@ -234,7 +412,12 @@
           totalM: S.totalM,
           anchor: S.anchor ? { time: S.anchor.time, latitude: S.anchor.latitude, longitude: S.anchor.longitude } : null,
           crumbs: S.crumbs.slice(),
-          hasFix: S.hasFix
+          hasFix: S.hasFix,
+          // v126: the counted-coverage intervals + the unconsumed
+          // join origin — the rebuild state must survive the same
+          // kills the total does, or the next wake dedupes blind.
+          segs: S.segs.map(function (p) { return [p[0], p[1]]; }),
+          joinFrom: S.joinFrom ? { time: S.joinFrom.time, latitude: S.joinFrom.latitude, longitude: S.joinFrom.longitude } : null
         };
       },
       totalM: function () { return S ? S.totalM : 0; },
