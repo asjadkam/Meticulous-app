@@ -433,12 +433,12 @@ body.mt-driving #fbFab{display:none!important;}
    tiles themselves (the lever the OSM tile source leaves us).
    v124: the DRIVE map got a stronger lift of its own.
    v125: that lift is GONE from the drive map, and the drive
-   basemap changed with it (CARTO Voyager, see driveTileSpec in
-   navigator.js). OSM Carto colours motorways salmon pink; at
+   basemap changed with it (Esri World Street Map, see
+   driveTileSpec in navigator.js). OSM Carto colours motorways salmon pink; at
    saturate(1.42) they rendered as the garish HOT PINK of the
    owner's Oct 17 recording, and the filter additionally forced
    a full tile repaint on every composite — half the flicker.
-   Voyager ships calm and is drawn exactly as served: NO filter
-   on drive tiles. The planning map is unchanged (OSM source +
-   the gentler shared lift). */
+   The Esri basemap ships calm and is drawn exactly as served:
+   NO filter on drive tiles. The planning map is unchanged (OSM
+   source + the gentler shared lift). */
 .nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}

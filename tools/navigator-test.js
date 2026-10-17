@@ -126,10 +126,10 @@ console.log('— pure: request building —');
 
   console.log('— pure: v125 drive spec (calm basemap + retracting line) —');
   const spec = sb.driveTileSpec();
-  check('v125: drive basemap is CARTO Voyager (calm raster, no hot-pink source)',
-    spec.url.indexOf('basemaps.cartocdn.com/rastertiles/voyager') >= 0 && spec.subdomains === 'abcd');
+  check('v125: drive basemap is Esri World Street Map (calm keyless raster, no hot-pink source; CARTO Voyager was first pick but its public CDN now serves API-KEY-REQUIRED placeholder tiles)',
+    spec.url.indexOf('server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map') >= 0);
   check('v125: drive basemap is NOT the OSM Carto source (whose salmon motorways went hot pink under the old lift)',
-    spec.url.indexOf('tile.openstreetmap.org') === -1);
+    spec.url.indexOf('tile.openstreetmap.org') === -1 && spec.url.indexOf('cartocdn') === -1);
   /* A straight east-west line [lat, lng]: segments of ~1 degree lng. */
   const rLine = [[50, -114], [50, -113], [50, -112]];
   const rem0 = sb.routeRemainder(rLine, [50, -114]);

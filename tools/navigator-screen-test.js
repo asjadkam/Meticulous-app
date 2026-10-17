@@ -32,8 +32,10 @@
  *      v125 MOVED THE (b)/(c) PINS DELIBERATELY (owner recording
  *      + landscape shot, Oct 17 08:56-09:04 MDT): the drive lift
  *      is REMOVED (OSM Carto's salmon motorways at saturate(1.42)
- *      rendered HOT PINK) and the drive basemap is CARTO Voyager
- *      drawn unfiltered; the ETA column takes all leftover space
+ *      rendered HOT PINK) and the drive basemap is Esri World
+ *      Street Map drawn unfiltered (CARTO Voyager was first
+ *      pick; its public CDN now serves API-key placeholder
+ *      tiles, verified live during the build); the ETA column takes all leftover space
  *      with a WRAPPING sub (measured 105px + truncated on v124);
  *      the route core is deep blue #1a56db and RETRACTS as
  *      travelled; tile fade-in is disabled (the flicker fix);
@@ -93,8 +95,8 @@ ok('tiles: the planning map keeps the shared lift',
   /\.nv-mapzone \.leaflet-tile\{filter:contrast\(1\.08\) saturate\(1\.18\);\}/.test(css));
 ok('v125: NO filter on drive tiles (the 1.16/1.42 lift made OSM Carto\'s salmon motorways HOT PINK — owner recording, Oct 17) and no leftover drive-tile filter rule',
   !/\.nv-drive-map \.leaflet-tile\{filter:/.test(css) && !/filter:contrast\(1\.16\) saturate\(1\.42\)/.test(css));
-ok('v125: the drive basemap is CARTO Voyager via driveTileSpec; the drive map no longer loads OSM tiles',
-  nav.indexOf('basemaps.cartocdn.com/rastertiles/voyager') >= 0 &&
+ok('v125: the drive basemap is Esri World Street Map via driveTileSpec; the drive map no longer loads OSM tiles',
+  nav.indexOf('server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map') >= 0 &&
   nav.indexOf('L.tileLayer(tspec.url') >= 0 &&
   nav.indexOf("L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(S.driveMap)") === -1);
 ok('v125 flicker fix: the drive map disables Leaflet tile fade-in and keeps a deeper tile buffer',

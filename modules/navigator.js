@@ -164,18 +164,23 @@
      saturate(1.42) CSS lift; OSM Carto colours motorways salmon
      pink natively, and the lift pushed them to the garish HOT
      PINK of the owner's Oct 17 recording (parallel carriageways
-     rendered as wide pink dashed bands). CARTO Voyager is a
-     calm, muted navigation-style raster — roads read as roads
-     (white/grey with a soft amber motorway tint), nothing on it
-     can saturate into pink, and the drive map ships it with NO
-     CSS filter at all. The planning map keeps the OSM source +
-     its gentler lift. {r} resolves to @2x tiles on retina
-     displays. */
+     rendered as wide pink dashed bands). The drive map now uses
+     the Esri World Street Map raster — a calm, muted
+     navigation-style basemap (cream land, white/grey-cased
+     roads, soft park green; arterials a pale tan, never pink) —
+     drawn with NO CSS filter at all. First pick was CARTO
+     Voyager, but CARTO's public basemap CDN now answers every
+     tile with an "API KEY REQUIRED" placeholder (verified
+     against the live CDN while building this — the Fastly
+     mirror serves the same placeholder), and this app ships
+     keyless. Esri's tile service is keyless with attribution.
+     NOTE the Esri template order: {z}/{y}/{x}. The planning
+     map keeps the OSM source + its gentler lift. */
   function driveTileSpec() {
     return {
-      url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      subdomains: 'abcd',
-      attribution: '© OpenStreetMap contributors © CARTO'
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      subdomains: '',
+      attribution: 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN, Esri Japan, METI, TomTom'
     };
   }
 
@@ -1198,7 +1203,7 @@
               fadeAnimation: false
             }).setView(S.pos || S.line[0], 17);
             var tspec = driveTileSpec();
-            L.tileLayer(tspec.url, { maxZoom: 19, subdomains: tspec.subdomains, keepBuffer: 4 }).addTo(S.driveMap);
+            L.tileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
             S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v104: the position marker joins the settle pass
                below, not this first paint — the same un-settled-
