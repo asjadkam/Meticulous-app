@@ -55,6 +55,60 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Connect shared days (v132): shareddays/{driverUid}_{date} —
+    // ONE record per driver per day holding FACTS ONLY (dispatches
+    // with their ticket close facts, session hours, loads). No
+    // rates or money ever enter the record; each side prices it
+    // with its own rates on its own side. Readable ONLY by the
+    // driver and the peers named in the record's viewers list
+    // (his accepted connections at publish time); writable ONLY
+    // by the driver it describes — a peer can never write another
+    // account's day. The driver field is immutable after create.
+    match /shareddays/{dayId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.driver
+          || request.auth.uid in resource.data.viewers);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.driver
+        && request.resource.data.viewers is list;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.driver
+        && request.resource.data.driver == resource.data.driver
+        && request.resource.data.viewers is list;
+      allow delete: if false;
+    }
+
+    // Connect pipe dispatches (v132): pipedispatches/{id} — a
+    // dispatch one account sends to a CONNECTED peer. Fields
+    // {from, to, fromName, fromBusiness, jobSite, date,
+    // scheduledAt, equipment, material, notes, status, sentAt,
+    // deliveredAt, seenAt}. Readable by the two parties only.
+    // Created by the sender, only as 'sent'. A sent dispatch is
+    // SEALED: the sender can never edit it after sending; only
+    // the RECIPIENT may advance the receipt marks (sent ->
+    // delivered -> seen, timestamps included), and from/to are
+    // immutable after create. Nobody else can touch one.
+    match /pipedispatches/{pipeId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.from
+        && request.resource.data.status == 'sent';
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.to
+        && request.resource.data.from == resource.data.from
+        && request.resource.data.to == resource.data.to
+        && request.resource.data.jobSite == resource.data.jobSite
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.scheduledAt == resource.data.scheduledAt
+        && request.resource.data.equipment == resource.data.equipment
+        && request.resource.data.material == resource.data.material
+        && request.resource.data.notes == resource.data.notes
+        && ((resource.data.status == 'sent' && request.resource.data.status in ['delivered', 'seen'])
+          || (resource.data.status == 'delivered' && request.resource.data.status == 'seen'));
+      allow delete: if false;
+    }
+
     // No other paths are used by the app; everything else stays denied.
   }
 }

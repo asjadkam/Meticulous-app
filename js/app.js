@@ -216,6 +216,7 @@
     buildDashboard();
     try { if (window.CloudSync) CloudSync.onAuth(user); } catch (e) {} // v27: cloud sync
     try { if (window.ConnectLive) ConnectLive.onAuth(user); } catch (e) {} // v131: live Connect (directory self-heal + connection reconcile)
+    try { if (window.ConnectPipe) ConnectPipe.onAuth(user); } catch (e) {} // v132: the pipe (shared days publish + inbox lands + crew cache)
   };
 
   /* ---------------- trial & tiers ---------------- */

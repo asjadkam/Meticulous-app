@@ -969,6 +969,150 @@
   var viewCompletedId = null;
   var dspBody = null; // v116: last render target, for api.back's re-render
 
+  /* ================= DSP-PIPE-BEGIN =================
+     v132: THE PIPE on this screen (engine: js/connectpipe.js).
+     BOSS faces (office + owner-operator) gain the board — every
+     connected driver's day for today, aggregated by itself from
+     the shared day records and priced HERE with this account's
+     own rates (the ticket's double duty: revenue at his client
+     rate, wages at his pay rate for that driver) — plus the
+     compose card that sends a dispatch DOWN into a connected
+     driver's app. A pure DRIVER gains no surface at all: his day
+     publishes by itself, and what his boss sends lands in his own
+     list below like any dispatch (with a one-line arrival note).
+     State here is session-only paint state; the records are the
+     engine's. */
+  var pipeDays = null;    // last fetchCrew(today) — null = loading
+  var pipeSent = null;    // last listSent()
+  var pipeFlash = '';     // one-shot arrival note (driver side)
+  var pipeSendMsg = '';   // one-shot line inside the send card
+
+  function pipeMoney(v) { return (v === null || v === undefined) ? '—' : '$' + Number(v).toFixed(2); }
+  function pipeTicks(s) {
+    if (!s) return '';
+    if (s.status === 'seen') return '<span style="color:#1a73e8">✓✓ Seen</span>';
+    if (s.status === 'delivered') return '✓✓ Delivered';
+    return '✓ Sent';
+  }
+  function crewDayHtml(day) {
+    var pricing = ConnectPipe.pricingFor(day.driver);
+    var priced = ConnectPipe.priceDay(day, pricing);
+    var ses = day.session || {};
+    var state = ses.active ? '<b style="color:var(--orange)">● Working now</b>'
+      : (ses.hours > 0 ? '<b>Day done</b>' : '<b>Not started</b>');
+    var h = '<div class="listitem"><div class="a">' + esc(day.driverName || 'Driver') + ' — ' + state + '</div>' +
+      '<div class="b">' +
+      (ses.hours > 0 ? dspFmtH(ses.hours) + ' h on the clock' : 'no hours yet') +
+      (day.loads > 0 ? ' · ' + day.loads + ' loads' : '') +
+      (day.ticketsClosed > 0 ? ' · ' + day.ticketsClosed + ' ticket' + (day.ticketsClosed === 1 ? '' : 's') + ' closed' : ' · no tickets closed yet') +
+      '</div>';
+    priced.rows.forEach(function (r) {
+      var sd = r.dispatch, pr = r.price;
+      h += '<div class="kv"><span>' + esc(sd.jobSite || 'Dispatch') +
+        (sd.ticketNo ? ' · #' + esc(sd.ticketNo) : '') +
+        (sd.origin === 'driver'
+          ? ' · declared by the driver' + (sd.sourceLabel ? ' (' + esc(sd.sourceLabel) + ')' : '')
+          : ' · sent by you') +
+        '</span><b>' + (sd.status === 'completed' ? 'Closed' : esc(sd.status || '')) + '</b></div>';
+      if (sd.status === 'completed') {
+        /* the ticket's double duty, priced on THIS side only */
+        h += '<div class="kv"><span style="padding-left:14px">Hours — ' + dspFmtH(sd.foremanHours) + ' foreman' +
+          (sd.travelHours > 0 ? ' + ' + dspFmtH(sd.travelHours) + ' travel' : '') + '</span><b></b></div>' +
+          '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
+          '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel, your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+      }
+    });
+    h += '<div class="kv"><span><b>Day revenue</b></span><b>' + pipeMoney(priced.revenue) + '</b></div>' +
+      '<div class="kv"><span><b>Day wages</b></span><b>' + pipeMoney(priced.wage) + '</b></div>' +
+      (priced.margin !== null ? '<div class="kv"><span><b>Margin</b></span><b>' + pipeMoney(priced.margin) + '</b></div>' : '') +
+      (!pricing.wage
+        ? '<div style="margin-top:6px"><button class="btn small navy" data-pipesetpay="' + esc(day.driver) + '" data-pipename="' + esc(day.driverName || '') + '">Set his pay rate</button></div>'
+        : '') +
+      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences.</div>') +
+      '</div>';
+    return h;
+  }
+  function crewHtml() {
+    if (!window.ConnectPipe) return '';
+    if (!ConnectPipe.connectedPeers().length) {
+      return '<div class="empty">No connected drivers yet. Connect in the Connect screen — when a driver accepts, his day shows up here by itself.</div>';
+    }
+    if (pipeDays === null) return '<p class="note">Loading your crew…</p>';
+    if (!pipeDays.length) return '<div class="empty">Nothing from your crew yet today. When a connected driver works, his day appears here on its own.</div>';
+    return pipeDays.map(crewDayHtml).join('');
+  }
+  function sentHtml() {
+    if (!pipeSent || !pipeSent.length) return '';
+    var h = '<div style="margin-top:10px;font-weight:700">Sent by you</div>';
+    pipeSent.slice(0, 10).forEach(function (s) {
+      h += '<div class="kv"><span>' + esc(s.jobSite || 'Dispatch') + ' · ' + esc(s.date || '') + '</span><b>' + pipeTicks(s) + '</b></div>';
+    });
+    return h;
+  }
+  function sendHtml() {
+    var peers = ConnectPipe.connectedPeers();
+    if (!peers.length) {
+      return '<p class="note">Connect a driver first (Connect screen) — then a dispatch you send lands straight in his app, as his scheduled job for that day.</p>';
+    }
+    var today = ''; try { today = App._today(); } catch (e) {}
+    var tom = today; try { tom = ConnectPipe.dateShift(today, 1); } catch (e) {}
+    return '<label class="f">Driver</label><select id="dp_send_to">' +
+      peers.map(function (c) { return '<option value="' + esc(c.uid) + '">' + esc(c.name) + '</option>'; }).join('') + '</select>' +
+      '<div class="row"><div><label class="f">Date</label><input type="date" id="dp_send_date" value="' + esc(tom) + '"></div>' +
+      '<div><label class="f">Start time</label><input type="time" id="dp_send_time" value="08:00"></div></div>' +
+      '<label class="f">Job site</label><input id="dp_send_site" placeholder="e.g. Maple Ridge">' +
+      '<div class="row"><div><label class="f">Material</label><input id="dp_send_mat" placeholder="Optional"></div>' +
+      '<div><label class="f">Truck / equipment</label><input id="dp_send_eq" placeholder="Optional"></div></div>' +
+      '<label class="f">Notes</label><input id="dp_send_notes" placeholder="Optional">' +
+      (pipeSendMsg ? '<p class="note" style="color:#2e7d32;font-weight:600;margin-top:6px">' + esc(pipeSendMsg) + '</p>' : '') +
+      '<button class="btn primary" id="dp_send_btn" style="margin-top:8px">📤 Send dispatch</button>' +
+      '<div id="dp_sentlist">' + sentHtml() + '</div>';
+  }
+  function wirePipe(body) {
+    body.querySelectorAll('[data-pipesetpay]').forEach(function (b) {
+      b.onclick = function () {
+        try {
+          window.__mtPnlPrefillDriver = {
+            uid: b.getAttribute('data-pipesetpay'),
+            name: b.getAttribute('data-pipename') || ''
+          };
+        } catch (e) {}
+        if (window.App && App.openModule) App.openModule('pnl');
+      };
+    });
+    var sendBtn = body.querySelector('#dp_send_btn');
+    if (sendBtn) sendBtn.onclick = function () {
+      var to = body.querySelector('#dp_send_to');
+      var date = (body.querySelector('#dp_send_date') || {}).value || '';
+      var time = (body.querySelector('#dp_send_time') || {}).value || '';
+      var site = (body.querySelector('#dp_send_site') || {}).value || '';
+      site = String(site).trim();
+      if (!to || !to.value || !date || !site) {
+        pipeSendMsg = 'Pick the driver, the date, and the job site first — nothing was sent.';
+        var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
+        return;
+      }
+      sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+      ConnectPipe.sendDispatch(to.value, {
+        date: date, scheduledAt: dspComposeSched(date, time, date),
+        jobSite: site,
+        material: (body.querySelector('#dp_send_mat') || {}).value || '',
+        equipment: (body.querySelector('#dp_send_eq') || {}).value || '',
+        notes: (body.querySelector('#dp_send_notes') || {}).value || ''
+      }).then(function (r) {
+        pipeSendMsg = r === 'sent'
+          ? 'Sent ✓ — it lands in his Dispatch as his scheduled job for that day.'
+          : 'Could not send — check your connection and try again.';
+        var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
+        ConnectPipe.listSent().then(function (sent) {
+          pipeSent = sent;
+          var w2 = body.querySelector('#dp_sentlist'); if (w2) w2.innerHTML = sentHtml();
+        });
+      });
+    };
+  }
+  /* ================= DSP-PIPE-END ================= */
+
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
   function fileToThumb(file, cb) {
     var r = new FileReader();
@@ -1119,6 +1263,21 @@
         }
         if (next) return dspCardLabel(next) + ' · ' + dspDayShort(nextDate);
       }
+      /* v132: a boss's home card leads with his crew (the pipe's
+         last fetch for today), not his own empty dispatch list. */
+      try {
+        if (today && window.ConnectPipe && ConnectPipe._crewCache &&
+            ConnectPipe._crewCache.date === today && ConnectPipe._crewCache.days.length &&
+            (App.userRole ? App.userRole() : 'driver') !== 'driver') {
+          var cw = 0, ch = 0, cl = 0;
+          ConnectPipe._crewCache.days.forEach(function (dy) {
+            if (dy.session && dy.session.active) cw++;
+            ch += (dy.session && dy.session.hours) || 0;
+            cl += dy.loads || 0;
+          });
+          return 'Crew today: ' + cw + ' working · ' + (Math.round(ch * 10) / 10) + ' h · ' + cl + ' loads';
+        }
+      } catch (e) {}
       var done = l.filter(function (x) { return x.status === 'completed'; }).length;
       return done ? done + ' completed' : (l.length ? l.length + ' saved' : 'No dispatch today');
     },
@@ -1156,7 +1315,7 @@
          engine already hard-returns 'office'; this is the wording
          catching up with the fact). His Save is a plain Save, his
          records read as saved-on-this-device, and one honest line
-         says delivery arrives with Connect Phase 2. */
+         points at the pipe card that does the sending (v132). */
       var isOffice = (App.userRole ? App.userRole() : 'driver') === 'office';
       /* v56: the form's draft is resolved BEFORE the HTML is built —
          a draft carrying editId means the form opens in EDIT mode for
@@ -1194,6 +1353,14 @@
           drvList.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join('') + '</select>';
       }
       var h = '';
+
+      /* v132: a dispatch that arrived down the pipe gets ONE line
+         at the top of the driver's own screen — then it is simply
+         his dispatch, in his list, like any other. */
+      if (pipeFlash) {
+        h += '<div class="card" style="border:2px solid var(--green)"><b>' + esc(pipeFlash) + '</b></div>';
+        pipeFlash = '';
+      }
 
       /* ---- Active dispatch card ---- */
       if (a) {
@@ -1271,6 +1438,16 @@
            box; suggestions never touch the form until "Use". */
       h += '<div id="dp_ingest"></div>';
 
+      /* ---- v132: THE PIPE — crew board + send (boss faces) ----
+         Office + owner-operator only. The board aggregates each
+         connected driver's TODAY from the shared day records; the
+         send card delivers a dispatch down the pipe. Both paint
+         async into their containers (wiring at render end). */
+      if ((App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
+        h += '<div class="card"><h3>👥 Crew today</h3><div id="dp_crew">' + crewHtml() + '</div></div>';
+        h += '<div class="card"><h3>📤 Send a dispatch</h3><div id="dp_send">' + sendHtml() + '</div></div>';
+      }
+
       /* ---- New dispatch form (v56: the same form is the EDIT form
            when editingId is set — one form, prefilled either way) ---- */
       h += '<div class="card" id="dp_form_card"><h3>' + (editingId ? '✏️ Edit dispatch' : '＋ New dispatch') + '</h3>' +
@@ -1325,10 +1502,13 @@
           '<button class="btn ghost" id="dp_canceledit">Cancel edit</button></div>' :
           isOffice ?
             /* v76 (F3): office Save is a PLAIN Save — no "& start",
-               no started semantics; the honest local-only line sits
-               with it (a line in the view, never a banner card). */
+               no started semantics; the honest line sits with it
+               (a line in the view, never a banner card).
+               v132: the line now points at the real door — saving
+               here is still this device's own record; SENDING to a
+               connected driver happens in the pipe card above. */
             '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save</button></div>' +
-            '<p class="note" style="margin-top:8px">Dispatches are saved on this device — sending them to your drivers arrives with Connect Phase 2.</p></div>' :
+            '<p class="note" style="margin-top:8px">Saving here keeps the dispatch on this device. To send one to a connected driver, use “📤 Send a dispatch” above — it lands in his app.</p></div>' :
             '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
             '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>');
 
@@ -2282,6 +2462,13 @@
           doneMsg = 'Dispatch completed' + (revEntry ? ' — $' + revEntry.amount + ' logged to Revenue' : '') + '. ' + plan.disclosure;
         }
         if (shiftClosed) doneMsg += ' Your shift was closed with it — the tracker is stopped.';
+        /* v132: the closed day flows UP the pipe to his connected
+           peers by itself — facts only (ConnectPipe.buildDay holds
+           no rates and no money; the boss prices the same record
+           on his side with his own rates). Guarded like every
+           other pipe call: a pipe failure can never touch the
+           close itself. */
+        try { if (window.ConnectPipe) ConnectPipe.publishDay(dspRecordDate(cur)); } catch (e) {}
         alert(doneMsg);
       }
 
@@ -2674,6 +2861,38 @@
           }
         };
       });
+
+      /* v132: the pipe wiring. EVERY role: land my inbox (a
+         boss-sent dispatch becomes my scheduled record — never
+         active, never disturbing my active day) and mark what I
+         was shown as seen. BOSS faces: fetch today's crew into
+         the board + my sent box, and wire the send card. All
+         guarded: the pipe can never break this screen. */
+      try {
+        if (window.ConnectPipe) {
+          ConnectPipe.pullInbox().then(function (n) {
+            if (n > 0) {
+              pipeFlash = '📩 ' + n + ' dispatch' + (n === 1 ? '' : 'es') +
+                ' arrived from your connection — in your list below.';
+              api.render(body);
+            }
+          });
+          ConnectPipe.markSeen(list());
+          if ((App.userRole ? App.userRole() : 'driver') !== 'driver') {
+            ConnectPipe.fetchCrew(App._today()).then(function (days) {
+              pipeDays = days;
+              var w = body.querySelector('#dp_crew');
+              if (w) { w.innerHTML = crewHtml(); wirePipe(body); }
+            });
+            ConnectPipe.listSent().then(function (sent) {
+              pipeSent = sent;
+              var w2 = body.querySelector('#dp_sentlist');
+              if (w2) w2.innerHTML = sentHtml();
+            });
+            wirePipe(body);
+          }
+        }
+      } catch (e) {}
 
       paintIngest(); // v65: suggestions + paste box (see above)
     }

@@ -339,7 +339,10 @@ function makeBody() {
   await flush();
   check('g: signed-in face has the search box', body.innerHTML.indexOf('id="cn_q"') !== -1 && body.innerHTML.indexOf('id="cn_search"') !== -1);
   check('g: signed-in face has the Requests card', body.innerHTML.indexOf('🤝 Requests') !== -1);
-  check('g: the sharing honesty is the live wording', body.innerHTML.indexOf('Dispatch &amp; document sharing arrives next') !== -1);
+  /* v132 deliberate pin move: dispatch sharing went LIVE with the
+     pipe — the honesty line now scopes "arrives next" to invoice &
+     manifest sharing, the part that is genuinely not built. */
+  check('g: the sharing honesty is the live wording', body.innerHTML.indexOf('Invoice &amp; manifest sharing arrives next') !== -1);
   eq('g: status counts connections without a live cache', sb.Meticulous.modules.connect.status().indexOf('connection') !== -1, true);
 
   /* ---------------- (h) statics ---------------- */
@@ -363,8 +366,14 @@ function makeBody() {
   check('h: index loads the engine at the shipped version', idxSrc.indexOf('js/connectlive.js?v=' + ver.webVersion) !== -1);
   check('h: NO Phase-1 handshake disclaimer left in Connect copy',
     conSrc.indexOf('arrives in a later update') === -1 && conSrc.indexOf('until delivery is enabled') === -1 && conSrc.indexOf('Phase 1 (Meticulous') === -1);
-  check('h: sharing is framed as "comes next", never as live',
-    conSrc.indexOf('sharing arrives next') !== -1 && conSrc.indexOf('sharing comes next') !== -1);
+  /* v132 deliberate pin move: the v131 check asserted ALL sharing
+     was framed as future. Dispatch sharing is live now (the pipe);
+     what must stay framed as future is invoice & manifest sharing
+     ONLY, and dispatch sharing must NOT be framed as future. */
+  check('h: invoice & manifest sharing framed as "arrives next"; dispatch sharing never framed as future',
+    conSrc.indexOf('Invoice &amp; manifest sharing arrives next') !== -1 &&
+    conSrc.indexOf('Dispatch &amp; document sharing arrives next') === -1 &&
+    conSrc.indexOf('Dispatch & document sharing comes next') === -1);
   check('h: P&L no longer claims invites go live later', pnlSrc.indexOf('Invites go live with Connect') === -1);
   check('h: P&L door routes to the live search; the dead form is gone',
     pnlSrc.indexOf("App.openModule('connect')") !== -1 && pnlSrc.indexOf('pnl_ccontact') === -1 && pnlSrc.indexOf('pnl_csend') === -1);

@@ -450,8 +450,12 @@ console.log('(d3) Dispatch — the office face (F3)');
   has('office: the save button is a plain Save', w.body.innerHTML, 'id="dp_add">Save</button>');
   lacks('office: no "Save & start" anywhere', w.body.innerHTML, 'Save & start');
   lacks('office: no dp_addstart button', w.body.innerHTML, 'dp_addstart');
+  /* v132 deliberate pin move: the v76 F3 line said sending
+     "arrives with Connect Phase 2" — the pipe IS Phase 2 and it
+     is live in this build, so the line now points at the real
+     door on the same screen (the 📤 Send a dispatch card). */
   has('office: the honest local line is in the view', w.body.innerHTML,
-    'Dispatches are saved on this device — sending them to your drivers arrives with Connect Phase 2.');
+    'Saving here keeps the dispatch on this device. To send one to a connected driver, use “📤 Send a dispatch” above — it lands in his app.');
 
   const w2 = makeDspWorld('office');
   const saved = Object.assign(activeToday(), { id: 'dsaved', status: 'saved', startedAt: null });
@@ -534,8 +538,11 @@ console.log('(e) Connect — two cards, content-carrying shares (F7 + owner dire
   lacks('rendered: no Share-something card', body.innerHTML, 'Share something');
   /* v131 deliberate pin move: the v76 line ('Shares are packaged on this device…')
      was the Phase-1 disclaimer; finding/connecting people is LIVE now, and the one
-     quiet line now scopes the honesty to sharing only. */
-  has('the honest line is ONE quiet line in the module', body.innerHTML, 'Dispatch &amp; document sharing arrives next');
+     quiet line now scopes the honesty to sharing only.
+     v132 deliberate pin move: dispatch sharing is LIVE too (the pipe,
+     js/connectpipe.js) — the line now scopes "arrives next" to invoice &
+     manifest sharing only, the part that is genuinely not built. */
+  has('the honest line is ONE quiet line in the module', body.innerHTML, 'Invoice &amp; manifest sharing arrives next');
   has('connection listed', body.innerHTML, 'Boss Man');
   has('legacy stub still renders in History', body.innerHTML, 'Queued — on this device');
   has('status counts the connection', sb.Meticulous.modules.connect.status(), '1 connection');

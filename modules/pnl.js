@@ -214,6 +214,52 @@
     if (!d || !d.viaConnect || d.inviteStatus !== 'pending') return '';
     return '<div class="b" style="color:var(--navy);font-weight:600">🤝 Invite saved — waiting for them to accept. ' + PNL_INVITE_NOTE + '</div>';
   }
+  /* v132: the "Set his pay rate" prefill — {uid, name} of the
+     connected driver whose pay entry is being created, set by the
+     Dispatch crew board, the crew card below, or the door in
+     window.__mtPnlPrefillDriver. Consumed by the next render; the
+     uid stamps the saved entry, and that stamp is what lets
+     ConnectPipe.pricingFor price his shared days on these books.
+     Session-only — never persisted as its own key. */
+  var pnlPrefill = null;
+  /* The connected-crew books view (v132): a month of shared day
+     records grouped per driver, priced with THIS side's rates by
+     the pipe's pure pricer (revenue at the client rate; wages at
+     (foreman + travel) x the pay rate set for that driver — the
+     ticket's double duty). Read-only: it posts nothing anywhere. */
+  function pnlCrewHtml(days) {
+    if (!days.length) return '<div class="empty">No shared days yet this month. When a connected driver works, his day lands here by itself.</div>';
+    var byDriver = {}, order = [];
+    days.forEach(function (day) {
+      if (!byDriver[day.driver]) { byDriver[day.driver] = { name: day.driverName || 'Driver', days: [] }; order.push(day.driver); }
+      byDriver[day.driver].days.push(day);
+    });
+    var h = '', tRev = 0, tWage = 0, anyRev = false, anyWage = false;
+    order.forEach(function (uid) {
+      var g = byDriver[uid];
+      var pricing = ConnectPipe.pricingFor(uid);
+      var rev = 0, wage = 0, hrs = 0, loads = 0, nRev = false, nWage = false;
+      g.days.forEach(function (day) {
+        var p = ConnectPipe.priceDay(day, pricing);
+        if (p.revenue !== null) { rev += p.revenue; nRev = true; }
+        if (p.wage !== null) { wage += p.wage; nWage = true; }
+        hrs += (day.session && day.session.hours) || 0;
+        loads += day.loads || 0;
+      });
+      if (nRev) { tRev += rev; anyRev = true; }
+      if (nWage) { tWage += wage; anyWage = true; }
+      h += '<div class="kv"><span>' + esc(g.name) + ' — ' + g.days.length + ' day' + (g.days.length === 1 ? '' : 's') +
+        ' · ' + (Math.round(hrs * 10) / 10) + ' h' + (loads > 0 ? ' · ' + loads + ' loads' : '') + '</span><b></b></div>' +
+        '<div class="kv"><span style="padding-left:14px">Revenue (your client rate)</span><b>' + (nRev ? money(rev) : '—') + '</b></div>' +
+        '<div class="kv"><span style="padding-left:14px">Wages (foreman + travel, your rate for him)</span><b>' + (nWage ? money(wage) : '—') + '</b></div>' +
+        (nRev && nWage ? '<div class="kv"><span style="padding-left:14px">Margin</span><b>' + money(rev - wage) + '</b></div>' : '') +
+        (!pricing.wage ? '<div style="margin:4px 0 8px"><button class="btn small navy" data-pnlsetpay="' + esc(uid) + '" data-pipename="' + esc(g.name) + '">Set his pay rate</button></div>' : '');
+    });
+    h += '<div class="kv"><span><b>Crew revenue</b></span><b>' + (anyRev ? money(tRev) : '—') + '</b></div>' +
+      '<div class="kv"><span><b>Crew wages</b></span><b>' + (anyWage ? money(tWage) : '—') + '</b></div>' +
+      (anyRev && anyWage ? '<div class="kv"><span><b>Crew margin</b></span><b>' + money(tRev - tWage) + '</b></div>' : '');
+    return h;
+  }
   var UNIT = { hourly: 'hrs', permile: 'mi', perload: 'loads' };
   var QTY_LABEL = { hourly: 'Hours', permile: 'Miles', perload: 'Loads' };
 
@@ -446,6 +492,17 @@
     render: function (body) {
       var m = curMonth();
       var c = calc(m);
+      /* v132: consume a "Set his pay rate" prefill (the Dispatch
+         crew board sets window.__mtPnlPrefillDriver) — the manual
+         form opens with the driver's name in it, and his uid rides
+         pnlPrefill to the save below. */
+      try {
+        if (window.__mtPnlPrefillDriver) {
+          pnlPrefill = window.__mtPnlPrefillDriver;
+          window.__mtPnlPrefillDriver = null;
+          pnlManualOpen = true;
+        }
+      } catch (e) {}
       var netColor = c.net < 0 ? '#c0392b' : '#1e8e3e';
 
       var h = '<div class="card"><h3>📈 Profit & Loss</h3>' +
@@ -583,6 +640,19 @@
       }
       h += '<p class="note">Driver wages are deducted from revenue as a business expense.</p></div>';
 
+      /* v132: CONNECTED CREW — the pipe's books (office/both faces
+         only; a pure driver's P&L never grows an owner surface).
+         Live from the shared day records connected drivers publish
+         to this account, priced with THIS side's rates by the
+         pipe's pricer. Read-only aggregation: it posts nothing
+         into the wage log, so pipe work can never double-count
+         against hand-logged work. Painted async into #pnl_crew. */
+      if ((App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
+        h += '<div class="card"><h3>🤝 Connected crew — ' + esc(monthLabel(m)) + '</h3>' +
+          '<div id="pnl_crew"><p class="note">Loading your crew\u2019s shared days…</p></div>' +
+          '<p class="note">From your drivers\u2019 own day records, priced with your rates only — their rates never cross to you, and yours never cross to them.</p></div>';
+      }
+
       /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
          drivers should have an option of connecting via
          'connect'."), v131: TWO doors. PRIMARY: Connect a driver —
@@ -600,7 +670,8 @@
         '<p class="note">For a driver who uses Meticulous — Connect finds them by name, and their identity comes from their own account, not from typing. When they accept, you are connected; what you pay them is set below and never crosses to their side.</p>' +
         '<button class="btn ghost" id="pnl_manual_open" style="margin-top:10px">Add manually instead</button>' +
         '<div id="pnl_manual_wrap" style="display:' + (pnlManualOpen ? 'block' : 'none') + ';margin-top:8px">' +
-        '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1"></div>' +
+        (pnlPrefill ? '<p class="note" style="color:var(--navy);font-weight:600">Setting the pay rate for ' + esc(pnlPrefill.name || 'your driver') + ' — it prices his shared days on your books, and it never crosses to him.</p>' : '') +
+        '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1" value="' + esc(pnlPrefill ? (pnlPrefill.name || '') : '') + '"></div>' +
         '<div><label class="f">Pay type</label><select id="pnl_dtype">' +
         PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
         '</select></div></div>' +
@@ -613,6 +684,7 @@
           return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
             '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
             pnlInviteLine(d) +
+            (d.uid ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected — his shared days price from this rate</div>' : '') +
             '<div class="row" style="margin-top:6px;align-items:flex-end"><div style="flex:1"><label class="f">Travel hrs/day owed</label><input type="number" inputmode="decimal" min="0" step="0.25" data-pnltravel="' + esc(d.id) + '" value="' + (parseFloat(d.travelHours) || 0) + '"></div>' +
             '<button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
         }).join('') + '</div></div>';
@@ -794,6 +866,22 @@
          it no longer opens a form. The v120 email/phone invite
          handler is removed with its form — it saved a local-only
          pending driver + connection and delivered nothing. */
+      /* v132: connected-crew books — fetch the month's shared days
+         and paint them priced; the card's own Set-pay door reopens
+         the manual form prefilled for that driver. */
+      var crewEl = body.querySelector('#pnl_crew');
+      if (crewEl && window.ConnectPipe) {
+        ConnectPipe.fetchCrewRange(m + '-01', m + '-31').then(function (days) {
+          crewEl.innerHTML = pnlCrewHtml(days);
+          crewEl.querySelectorAll('[data-pnlsetpay]').forEach(function (b) {
+            b.onclick = function () {
+              pnlPrefill = { uid: b.getAttribute('data-pnlsetpay'), name: b.getAttribute('data-pipename') || '' };
+              pnlManualOpen = true;
+              api.render(body);
+            };
+          });
+        });
+      }
       var cOpen = body.querySelector('#pnl_connect_open');
       if (cOpen) cOpen.onclick = function () {
         try { window.__mtConnectSearch = true; } catch (e) {}
@@ -815,6 +903,12 @@
           travelHours: parseFloat(body.querySelector('#pnl_dtravel').value) || 0, // v52
           start: body.querySelector('#pnl_dstart').value || App._today().slice(0, 7)
         };
+        /* v132: a prefilled save is FOR a connected driver — his
+           account uid stamps the entry, and that stamp is what
+           prices his shared days on these books from now on. */
+        if (pnlPrefill && pnlPrefill.uid) {
+          rec.uid = pnlPrefill.uid; rec.viaConnect = true; pnlPrefill = null;
+        }
         var l = drivers(); l.push(rec); W('drivers', l);
         if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
         api.render(body);

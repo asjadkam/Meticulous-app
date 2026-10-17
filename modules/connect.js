@@ -21,7 +21,17 @@
    shares still package locally into History as preparation. What
    IS live: search, requests, accept/decline, and the connection
    itself (con_list entries extended with {uid, status,
-   viaConnect} by ConnectLive; manual entries untouched). */
+   viaConnect} by ConnectLive; manual entries untouched).
+
+   v132: THE PIPE is live (js/connectpipe.js). A dispatch picked
+   for a CONNECTED connection is really sent — it lands in their
+   Dispatch as their scheduled job, and the History entry is
+   marked Sent. A connected driver's DAY also flows up by itself
+   (his Dispatch board aggregates it; nothing to send by hand).
+   What still prepares locally: documents (damage / manifest /
+   location) and anything aimed at a manual connection. Invoice
+   & manifest SHARING is not built — the copy says "arrives next"
+   for exactly that, nowhere else. */
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('con_' + k, d); };
@@ -204,7 +214,7 @@
     status: function () {
       var pin = 0;
       try { pin = (window.ConnectLive && window.ConnectLive.pendingIn) || 0; } catch (e) {}
-      var q = outbox().length, n = conns().length;
+      var q = outbox().filter(function (o) { return !o.sent; }).length, n = conns().length;
       var cs = n + ' connection' + (n === 1 ? '' : 's');
       if (pin) return pin + ' request' + (pin === 1 ? '' : 's') + ' waiting' + (n ? ' · ' + cs : '');
       if (q) return q + ' waiting to send' + (n ? ' · ' + cs : '');
@@ -232,9 +242,11 @@
       /* ============ CARD 1: Current connections ============ */
       h += '<div class="card"><h3>👥 Current connections (' + list.length + ')</h3>' +
         /* the sharing honesty: ONE quiet line, not a banner card.
-           v131: finding/connecting people is live; only dispatch &
-           document sharing is still to come, and it says so. */
-        '<p class="note" style="margin-top:0">Dispatch &amp; document sharing arrives next — shares you prepare wait in History below.</p>';
+           v132: dispatches flow both ways across a live connection
+           (the pipe) and a connected driver's day lands on the
+           boss's Dispatch board by itself; invoice & manifest
+           sharing is the part that still arrives next. */
+        '<p class="note" style="margin-top:0">Dispatches flow both ways with connected drivers — a driver\u2019s day lands on your Dispatch board by itself. Invoice &amp; manifest sharing arrives next; documents you prepare still wait in History below.</p>';
       if (uiFlash) h += '<p class="note" style="color:#2e7d32;font-weight:600">' + esc(uiFlash) + '</p>';
       if (!list.length) {
         h += '<div class="empty">No connections yet.<br>Add your dispatcher, manager, or family below.</div>';
@@ -305,13 +317,15 @@
       /* ============ CARD 2: History ============ */
       h += '<div class="card"><h3>🕘 History (' + ob.length + ')</h3>';
       if (!ob.length) {
-        h += '<div class="empty">Nothing shared yet. Dispatch &amp; document sharing comes next — what you prepare waits here.</div>';
+        h += '<div class="empty">Nothing shared yet. Send a dispatch or a document from a connection above.</div>';
       } else {
         ob.slice().reverse().forEach(function (o, ri) {
           var i = ob.length - 1 - ri;
           var sum = contentSummary(o);
           h += '<div class="listitem"><div class="a">' + (TYPE_ICON[o.type] || '📦') + ' ' + esc(o.label || TYPE_LABEL[o.type] || o.kind || 'Share') +
-            ' <span class="pill">Queued — on this device</span></div>' +
+            (o.sent
+              ? ' <span class="pill" style="background:#e6f4ea;color:#1e7d32">Sent ✓</span></div>'
+              : ' <span class="pill">Queued — on this device</span></div>') +
             '<div class="b">To: ' + esc(o.to || '') + ' · ' + esc(fmtTs(o.ts)) +
             (sum ? '<br>' + esc(sum) : '') +
             (o.note ? '<br>“' + esc(o.note) + '”' : '') + '</div>' +
@@ -392,6 +406,40 @@
           var items = contentItems(uiPicker.type);
           var item = items[+b.getAttribute('data-pick')];
           var c = conns()[uiPicker.conn];
+          /* v132: a DISPATCH picked for a CONNECTED connection is
+             really sent down the pipe — it lands in their Dispatch
+             as their scheduled job for that day, and the History
+             entry is marked Sent. Documents, and anything aimed
+             at a manual (unlinked) connection, still prepare
+             locally in History, exactly as before. */
+          if (item && c && uiPicker.type === 'dispatch' && c.uid && c.status === 'connected' &&
+              window.ConnectPipe) {
+            var content = item.content || {};
+            var connName = c.name, connId = c.id || '';
+            uiPicker = null;
+            ConnectPipe.sendDispatch(c.uid, {
+              date: String(content.scheduledAt || content.date || '').slice(0, 10),
+              scheduledAt: content.scheduledAt || '',
+              jobSite: content.jobSite || '',
+              material: content.material || '', equipment: content.equipment || '',
+              notes: content.notes || ''
+            }).then(function (r) {
+              if (r === 'sent') {
+                var o = outbox();
+                o.push({
+                  type: 'dispatch', label: 'Dispatch — ' + item.label,
+                  to: connName, connId: connId, refId: item.id,
+                  content: item.content || null, ts: Date.now(), note: '', sent: true
+                });
+                W('outbox', o);
+                uiFlash = 'Dispatch sent to ' + connName + ' ✓ — it lands in their Dispatch.';
+              } else {
+                uiFlash = 'Could not send that dispatch — check your connection and try again. Nothing was sent.';
+              }
+              rerender();
+            });
+            return;
+          }
           if (item && c && queueShare(uiPicker.conn, uiPicker.type, item)) {
             uiFlash = (TYPE_LABEL[uiPicker.type] || 'Share') + ' queued for ' + c.name + ' — it waits in History below.';
           }
@@ -483,6 +531,10 @@
           if (uiResults !== null) paintResults();
           return CL.reconcile();
         }).then(function (changed) {
+          /* v132: a fresh link changes who my days publish to —
+             republish right away so the pipe starts flowing from
+             this moment, not the next app start. */
+          try { if (window.ConnectPipe) ConnectPipe.publishRecent(); } catch (e) {}
           if (changed && rerenderAfter) rerender();
         }).catch(function () {});
       }
