@@ -333,6 +333,11 @@ label.chk input{width:18px;height:18px;}
 .nv-sheet{flex:0 1 auto;max-height:47vh;overflow-y:auto;padding:10px;background:#eef1f6;}
 .nv-banner-main{font-size:19px;font-weight:700;line-height:1.25;}
 .nv-banner-sub{font-size:14px;color:#D9E1F3;margin-top:3px;min-height:18px;}
+/* v128: when the places detail expands inside the results list
+   (directly under the tapped row) it reads as an expansion of
+   that row — indented, accent edge — not as another list item.
+   The home slot keeps the element's inline margin. */
+#nv_results #nv_detail{margin:2px 0 10px 10px;border-left:3px solid #f26522;padding-left:10px;}
 
 /* ---------- v101 Navigator drive screen (3D heading-up) ----------
    Full-screen fixed overlay. The 3D effect is pure CSS wrapped

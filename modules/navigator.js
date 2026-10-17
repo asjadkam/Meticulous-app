@@ -306,6 +306,16 @@
     return (Math.atan2(y, x) / rad + 360) % 360;
   }
 
+  /* v128: the smallest absolute difference between two headings,
+     in degrees (0–180). The drive screen's spin deadband reads
+     it: GPS heading at speed jitters degree-by-degree between
+     fixes, and every transform write on the tilted plane restarts
+     its rasterization — below 2° of real turn, nothing may move. */
+  function angDeltaDeg(a, b) {
+    var d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
   /* Spoken advance prompts for drive mode: each upcoming maneuver
      is announced ONCE far out (its verbal pre-transition line) and
      ONCE close in (its crisp instruction). `said` is a caller-owned
@@ -1181,7 +1191,7 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
-        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0 };
+        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null };
         /* v125: while Drive is open the shell's chat FAB is
            hidden — measured on the live v124 build it sat ON the
            bar (over End drive in portrait, over Sound in
@@ -1267,6 +1277,7 @@
         S.drive.said = {};
         S.drive.headingApplied = null;
         S.drive.remSeg = -1; S.drive.remAlong = 0;
+        S.drive.rrShown = null;
         if (S.driveMap && S.line) {
           try {
             if (S.driveLine) S.driveMap.removeLayer(S.driveLine);
@@ -1301,14 +1312,39 @@
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
           var showRr = S.rerouting || pr.dist > 60;
-          rrEl.classList.toggle('hidden', !showRr);
-          rrEl.textContent = S.rerouting ? 'Rerouting…' : 'Off route';
+          /* v128: the pill is STATE, not a per-tick write — its
+             class and text are touched only when the shown state
+             actually flips (hidden / off-route / rerouting). */
+          var rrKey = showRr ? (S.rerouting ? 'rerouting' : 'offroute') : 'hidden';
+          if (S.drive.rrShown !== rrKey) {
+            S.drive.rrShown = rrKey;
+            rrEl.classList.toggle('hidden', !showRr);
+            rrEl.textContent = S.rerouting ? 'Rerouting…' : 'Off route';
+          }
         }
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);
         if (S.driveMap) {
           try {
-            S.driveMap.setView(S.pos, 17);
+            /* v128: MUTATE, never rebuild — the recenter is a
+               deadbanded instant panTo, never the per-tick
+               setView this replaces. The old line restarted
+               Leaflet's animated pan on EVERY GPS fix (~1 Hz):
+               each restart re-projects the SVG overlay (route
+               line + puck) inside the 340% 3D-transformed plane,
+               and frames caught mid-repaint are exactly the
+               owner's Oct 17 10:25 recording — line, puck dot
+               and bar text gone for a frame, the banner clipped.
+               panTo with animate:false moves the layers that
+               already exist, once, in place; the 3 m deadband
+               means standstill jitter recenters nothing at all.
+               The marker and the line below likewise only ever
+               mutate (setLatLng / setLatLngs) — nothing is added
+               to or removed from the drive map per tick. */
+            var ctr = S.driveMap.getCenter ? S.driveMap.getCenter() : null;
+            if (!ctr || haversineM(S.pos, [ctr.lat, ctr.lng]) > 3) {
+              S.driveMap.panTo(S.pos, { animate: false });
+            }
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
           } catch (e) {}
         }
@@ -1329,9 +1365,17 @@
         }
         /* Heading-up: the spin wrapper rotates by −heading around
            the driver anchor; stationary fixes carry no heading and
-           S.heading keeps the last real one. */
+           S.heading keeps the last real one.
+           v128: a ≥2° deadband gates the write — GPS heading at
+           speed jitters degree-by-degree, and every transform
+           assignment restarts the .45s transition on the giant
+           tilted plane (constant re-rasterization = torn frames).
+           A real turn clears 2° in a single fix; jitter never
+           reaches it. */
         var spin = body.querySelector('#nvd_spin');
-        if (spin && S.heading !== null && S.heading !== undefined && S.drive.headingApplied !== S.heading) {
+        if (spin && S.heading !== null && S.heading !== undefined &&
+            (S.drive.headingApplied === null || S.drive.headingApplied === undefined ||
+             angDeltaDeg(S.heading, S.drive.headingApplied) >= 2)) {
           S.drive.headingApplied = S.heading;
           spin.style.transform = 'rotate(' + (-S.heading) + 'deg)';
         }

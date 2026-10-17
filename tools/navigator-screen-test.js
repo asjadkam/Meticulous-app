@@ -45,6 +45,19 @@
  *  (d) BOTH pickers obey the tap rule (the tap writes the place
  *      into the search box), and the Places card moves its ✓ in
  *      place instead of repainting/re-sorting the list.
+ *  (e) v128 (owner recordings, Oct 17 10:25 + 10:27 MDT): the
+ *      Drive overlays blinked ~1×/sec (the per-tick setView
+ *      restarted the animated pan, re-projecting the SVG overlay
+ *      inside the tilted plane) and the tapped place's detail
+ *      rendered at the BOTTOM of the list, Navigate a scroll
+ *      away. Pins: the tick recenters by deadbanded instant
+ *      panTo (setView gone), the spin is gated by a ≥2°
+ *      deadband, the reroute pill writes only on state flips,
+ *      the places detail MOVES under the tapped row, repaints
+ *      bring it home first, and row subtitles never carry a raw
+ *      coordinate pair. The behavioral proofs live in
+ *      navigator-test (instrumented drive ticks) and
+ *      navigator-v128-test (ordered-DOM accordion).
  * Run: node tools/navigator-screen-test.js
  */
 'use strict';
@@ -147,6 +160,31 @@ console.log('\n— (d) the tap rule, both pickers —');
   ok('a recent with no saved place still gets its detail (selRecent)',
     navi.indexOf('selRecent = { id: r.id') >= 0 && navi.indexOf("src: 'recent'") >= 0);
 }
+
+console.log('\n— (e) v128: the drive tick mutates, never rebuilds —');
+ok('v128: driveTick recenters with a deadbanded instant panTo — the per-tick setView is GONE',
+  nav.indexOf('S.driveMap.panTo(S.pos, { animate: false })') >= 0 &&
+  nav.indexOf('haversineM(S.pos, [ctr.lat, ctr.lng]) > 3') >= 0 &&
+  nav.indexOf('S.driveMap.setView(S.pos, 17)') === -1);
+ok('v128: the spin write is gated by the ≥2° deadband (angDeltaDeg), so heading jitter never repaints the tilted plane',
+  nav.indexOf('angDeltaDeg(S.heading, S.drive.headingApplied) >= 2') >= 0 &&
+  nav.indexOf('function angDeltaDeg') >= 0);
+ok('v128: the reroute pill writes only when its shown state flips (the rrShown cache)',
+  nav.indexOf('S.drive.rrShown !== rrKey') >= 0 && nav.indexOf('rrShown: null') >= 0);
+ok('v128: per-tick layer traffic stays the v125 mutations only (marker setLatLng, line setLatLngs)',
+  nav.indexOf('S.driveMarker.setLatLng(S.pos)') >= 0 &&
+  nav.indexOf('layers[li].setLatLngs(rem.points)') >= 0);
+
+console.log('\n— (f) v128: the places detail expands AT THE TAP —');
+ok('v128: the detail panel MOVES under the tapped row (placeDetail + insertBefore) instead of rendering at the bottom of the list',
+  navi.indexOf('function placeDetail()') >= 0 &&
+  navi.indexOf('resEl.insertBefore(detailEl, rowEl.nextSibling)') >= 0);
+ok('v128: every list repaint first brings the detail home, so a repaint can never strand it inside the list it replaces',
+  navi.indexOf('function detailToHome()') >= 0 && navi.indexOf('detailToHome();') >= 0);
+ok('v128: rows never print a raw coordinate pair as the address (the nameIsCoords gate on the row subtitle)',
+  navi.indexOf("!nameIsCoords(p.address)") >= 0);
+ok('v128: the in-list expansion is styled as an expansion (indented, accent edge)',
+  /#nv_results #nv_detail\{[^}]*border-left:3px solid/.test(css));
 
 console.log('\nnavigator-screen: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

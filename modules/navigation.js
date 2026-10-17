@@ -404,9 +404,17 @@
   }
   function pickerRowInner(e, pickedId) {
     var p = e.place, picked = !!pickedId && p.id === pickedId;
+    /* v128: the subtitle never carries a raw coordinate pair —
+       a favorite can hold its own pin AS its address text (the
+       owner's Butterfly: address "50.9519460, -114.0273550"),
+       and the row then read "dump site · Yours · 50.9519460,
+       -114.0273550" — machinery, not a place (the v118 hygiene,
+       applied to the row itself). The coordinates live only in
+       the expanded detail. A real address still shows. */
+    var addr = (p.address && !nameIsCoords(p.address)) ? ' · ' + p.address : '';
     return '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
       '<span class="b" style="display:block">' +
-      esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + (p.address ? ' · ' + p.address : '')) +
+      esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + addr) +
       '</span>';
   }
   function pickerRowHTML(e, pickedId) {
@@ -478,7 +486,7 @@
         h += d.recent.slice(0, 10).map(function (r) {
           return '<div class="listitem"><div class="a">' + esc(r.name) +
             ' <span class="pill">' + (r.kind === 'work' ? 'work' : 'personal') + '</span></div>' +
-            (r.address ? '<div class="b">' + esc(r.address) + '</div>' : '') +
+            (r.address && !nameIsCoords(r.address) ? '<div class="b">' + esc(r.address) + '</div>' : '') +
             '<div class="b">' + fmtWhen(r.ts) + '</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small navy" data-rgo="' + esc(r.id) + '">Go again</button></div></div>';
         }).join('');
@@ -502,13 +510,52 @@
          a saved place still gets a detail — built from the recent
          itself — so its Navigate continues the same flow. */
       var selRecent = null;
+      /* v128 — THE DETAIL LIVES AT THE TAP (owner recording,
+         Oct 17 10:27): the detail panel used to render at the
+         BOTTOM of the whole list — he tapped a place and had to
+         scroll down to find Navigate. Now the ONE panel MOVES
+         directly under the tapped row (accordion-style), so
+         Navigate is on screen at the tap itself. Its home slot
+         (right under the results list) is remembered here:
+         every list repaint first brings the panel home, so a
+         repaint can never strand or destroy it inside the list
+         it is about to replace. Moving the existing node — never
+         re-rendering it elsewhere — keeps the v113 tap rule's
+         no-flicker promise. */
+      var detailHomeParent = detailEl ? (detailEl.parentNode || null) : null;
+      var detailHomeNext = detailEl ? (detailEl.nextSibling || null) : null;
+      function detailToHome() {
+        if (!detailEl || !detailHomeParent) return;
+        if (detailEl.parentNode === detailHomeParent && detailEl.nextSibling === detailHomeNext) return;
+        if (typeof detailHomeParent.insertBefore === 'function') detailHomeParent.insertBefore(detailEl, detailHomeNext);
+      }
+      function placeDetail() {
+        if (!detailEl) return;
+        var rowEl = null;
+        if (resEl && !selRecent && selId[kind] && typeof resEl.querySelectorAll === 'function') {
+          var rows = resEl.querySelectorAll('[data-pid]');
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute && rows[i].getAttribute('data-pid') === selId[kind]) { rowEl = rows[i]; break; }
+          }
+        }
+        if (rowEl && typeof resEl.insertBefore === 'function') {
+          if (rowEl.nextSibling !== detailEl) resEl.insertBefore(detailEl, rowEl.nextSibling);
+        } else {
+          /* no row to sit under (a Recent-destinations pick, or
+             the selected place is filtered out of this paint):
+             the panel waits at its home slot under the list */
+          detailToHome();
+        }
+      }
       function paintResults() {
+        detailToHome();
         var res = pickerEntries(kind, pickQ);
         var list = res.rows;
         if (!list.length) {
           resEl.innerHTML = '<div class="empty">' +
             (pickQ.trim() ? 'No place matches that.'
               : (placesFor(kind).length ? 'Places you go to will show here — type above to find any place.' : 'No places yet.')) + '</div>';
+          placeDetail();
           return list;
         }
         resEl.innerHTML = (res.recents ? '<p class="note" style="margin:2px 0 0">🕘 Recent places</p>' : '') +
@@ -536,6 +583,7 @@
             paintDetail();
           };
         });
+        placeDetail();
         return list;
       }
       function paintDetail() {
@@ -543,6 +591,7 @@
         if (!e && selRecent) e = { place: selRecent, src: 'recent' };
         if (!e) {
           detailEl.innerHTML = '<div class="empty">Pick a place above.</div>';
+          placeDetail();
           return;
         }
         var p = e.place;
@@ -566,6 +615,9 @@
           selId[kind] = '';
           api.render(body);
         };
+        /* v128: the panel takes its place AT THE TAP — directly
+           under the tapped row, Navigate in reach, no scrolling */
+        placeDetail();
       }
       paintResults();
       paintDetail();

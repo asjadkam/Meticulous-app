@@ -194,6 +194,9 @@ console.log('— pure: request building —');
     sb.bearingDeg([51.05, -114.06], [51.04, -114.06]) === 180 &&
     sb.bearingDeg([51.05, -114.06], [51.05, -114.05]) > 85 && sb.bearingDeg([51.05, -114.06], [51.05, -114.05]) < 95 &&
     sb.bearingDeg([51.05, -114.06], [51.05, -114.07]) > 265 && sb.bearingDeg([51.05, -114.06], [51.05, -114.07]) < 275);
+  check('v128 angDeltaDeg: jitter is 1°, wrap-around is small, opposites are 180',
+    sb.angDeltaDeg(90, 91) === 1 && sb.angDeltaDeg(359, 1) === 2 &&
+    sb.angDeltaDeg(0, 180) === 180 && sb.angDeltaDeg(45, 45) === 0);
   const saidBag = {};
   check('drivePrompt: 700 m out says nothing', sb.drivePrompt(plan, 0, 700, saidBag) === null);
   check('drivePrompt: 550 m out speaks the far (pre-transition) line once',
@@ -227,7 +230,7 @@ console.log('— pure: request building —');
 /* ================= 2. render + flow (stubbed DOM) ================= */
 function el() {
   const e = {
-    children: {}, style: {}, _html: '', textContent: '', value: '', onclick: null,
+    children: {}, style: {}, _html: '', _htmlSets: 0, textContent: '', value: '', onclick: null,
     _listeners: {},
     addEventListener: function (ev, fn) { (e._listeners[ev] = e._listeners[ev] || []).push(fn); },
     fire: function (ev) { (e._listeners[ev] || []).slice().forEach(function (f) { f(); }); },
@@ -243,7 +246,7 @@ function el() {
     setAttribute: function () {}
   };
   Object.defineProperty(e, 'innerHTML', {
-    get: function () { return e._html; }, set: function (v) { e._html = String(v); }
+    get: function () { return e._html; }, set: function (v) { e._htmlSets++; e._html = String(v); }
   });
   return e;
 }
@@ -305,20 +308,48 @@ function makeWorld(storeData, withNavModule, fetchMode) {
   body.querySelector = function (sel) { return reg[sel.slice(1)] || null; };
   body.querySelectorAll = function () { return []; };
 
-  const calls = { fetch: [], polylines: [], spoken: [], views: [], opened: [], anchors: [], markers: [] };
+  const calls = { fetch: [], polylines: [], spoken: [], views: [], opened: [], anchors: [], markers: [], maps: [], groups: [] };
   const mapHandlers = {};
-  const mapStub = {
-    setView: function (c, z) { calls.views.push([c, z]); return mapStub; },
-    on: function (ev, fn) { mapHandlers[ev] = fn; },
-    remove: function () {}, fitBounds: function () {}, getZoom: function () { return 15; },
-    invalidateSize: function () {}, removeLayer: function () {}
-  };
+  /* v128: every L.map() returns its OWN instrumented stub — the
+     suite counts layer adds/removes, setView calls and panTos
+     PER MAP, because the drive overlay blink lived in the drive
+     map's per-tick recentering and nowhere else. Layers record
+     their own mutations (setLatLng / setLatLngs counts). */
+  function makeMapStub() {
+    const m = {
+      _adds: 0, _removes: 0, _views: [], _panTos: [], _center: null, _zoom: 15,
+      setView: function (c, z) { m._views.push([c, z]); calls.views.push([c, z]); m._center = c; if (z) m._zoom = z; return m; },
+      panTo: function (c, o) { m._panTos.push([c, o]); m._center = c; return m; },
+      getCenter: function () { return m._center ? { lat: m._center[0], lng: m._center[1] } : null; },
+      getZoom: function () { return m._zoom; },
+      on: function (ev, fn) { mapHandlers[ev] = fn; },
+      addLayer: function () { m._adds++; return m; },
+      removeLayer: function () { m._removes++; return m; },
+      remove: function () {}, fitBounds: function () {}, invalidateSize: function () {}
+    };
+    return m;
+  }
   const L = {
-    map: function () { return mapStub; },
-    tileLayer: function () { return { addTo: function () {} }; },
-    marker: function (ll) { calls.markers.push(ll); return { addTo: function () { return this; }, setLatLng: function () {} }; },
-    circleMarker: function () { return { addTo: function () { return this; }, setLatLng: function () {} }; },
-    polyline: function (pts) { calls.polylines.push(pts); return { addTo: function () { return this; }, getBounds: function () { return {}; } }; }
+    map: function () { const m = makeMapStub(); calls.maps.push(m); return m; },
+    tileLayer: function () { return { addTo: function (m) { if (m && m.addLayer) m.addLayer(this); return this; } }; },
+    marker: function (ll) { calls.markers.push(ll); return { addTo: function (m) { if (m && m.addLayer) m.addLayer(this); return this; }, setLatLng: function () {} }; },
+    circleMarker: function () {
+      const cm = { _latlngSets: 0, addTo: function (m) { if (m && m.addLayer) m.addLayer(this); return cm; },
+        setLatLng: function () { cm._latlngSets++; } };
+      return cm;
+    },
+    polyline: function (pts) {
+      calls.polylines.push(pts);
+      const pl = { _latlngSets: 0, addTo: function (m) { if (m && m.addLayer) m.addLayer(this); return pl; },
+        setLatLngs: function () { pl._latlngSets++; }, getBounds: function () { return {}; } };
+      return pl;
+    },
+    layerGroup: function (kids) {
+      const g = { _kids: kids, getLayers: function () { return g._kids.slice(); },
+        addTo: function (m) { if (m && m.addLayer) m.addLayer(this); return g; } };
+      calls.groups.push(g);
+      return g;
+    }
   };
   let geoCb = null;
   const world = {
@@ -587,6 +618,52 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   const spinDeg = parseFloat((/rotate\((-?\d+(?:\.\d+)?)deg\)/.exec(String(wD.reg.nvd_spin.style.transform)) || [])[1]);
   check('v124: no GPS heading → the spin follows the movement bearing',
     isFinite(spinDeg) && spinDeg < -20 && spinDeg > -45, String(wD.reg.nvd_spin.style.transform));
+
+  /* v128 — THE BLINK PINS, on the real driveTick, instrumented.
+     Owner recording Oct 17 10:25: ~once a second the route line,
+     the puck's dot and the bar's arrival text vanished for a
+     frame, the banner caught clipped. The mechanism was the
+     per-tick setView: every GPS fix restarted Leaflet's animated
+     pan, re-projecting the SVG overlay inside the 340% tilted
+     plane. A drive tick may now only MUTATE what exists: zero
+     layer adds/removes on the drive map, zero setView calls,
+     zero banner/bar innerHTML assignments — recentering by
+     instant panTo, the line by setLatLngs, the spin gated by a
+     2° deadband so heading jitter never repaints the plane. */
+  await new Promise(function (r) { setTimeout(r, 200); }); /* the 120 ms settle pass lands — the puck joins inside the baseline */
+  const dMap = wD.calls.maps[1];
+  check('v128: the drive map is its own instrumented map (planning + drive)', !!dMap && wD.calls.maps.length === 2);
+  const dLineGroup = wD.calls.groups[wD.calls.groups.length - 1];
+  const htmlOf = function () {
+    return [wD.reg.nvd_dist._htmlSets, wD.reg.nvd_inst._htmlSets, wD.reg.nvd_road._htmlSets,
+      wD.reg.nvd_eta_main._htmlSets, wD.reg.nvd_eta_sub._htmlSets, wD.reg.nvd_reroute._htmlSets].join(',');
+  };
+  const base128 = { adds: dMap._adds, removes: dMap._removes, views: dMap._views.length, pans: dMap._panTos.length, html: htmlOf() };
+  const ptAt = function (f) { return dLine[Math.floor(dLine.length * f)]; };
+  const pA = ptAt(0.18); wD.firePos(pA[0], pA[1], 90);
+  check('v128: a real heading change still spins the map',
+    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  const pB = ptAt(0.22); wD.firePos(pB[0], pB[1], 91);
+  check('v128: 1° of heading jitter does NOT touch the spin (the 2° deadband)',
+    wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  const pC = ptAt(0.26); wD.firePos(pC[0], pC[1], 96);
+  check('v128: a 6° turn clears the deadband and spins',
+    wD.reg.nvd_spin.style.transform === 'rotate(-96deg)', String(wD.reg.nvd_spin.style.transform));
+  [0.30, 0.34, 0.38].forEach(function (f) { const p = ptAt(f); wD.firePos(p[0], p[1], 96); });
+  check('v128: six drive ticks added ZERO layers to the drive map', dMap._adds === base128.adds,
+    dMap._adds + ' vs baseline ' + base128.adds);
+  check('v128: six drive ticks removed ZERO layers from the drive map', dMap._removes === base128.removes,
+    dMap._removes + ' vs baseline ' + base128.removes);
+  check('v128: six drive ticks called setView ZERO times on the drive map (no per-tick recenter restart)',
+    dMap._views.length === base128.views, dMap._views.length + ' vs baseline ' + base128.views);
+  check('v128: the ticks DID recenter — by instant panTo (≥5 pans for six moving fixes)',
+    dMap._panTos.length - base128.pans >= 5, String(dMap._panTos.length - base128.pans));
+  check('v128: six drive ticks assigned banner/bar innerHTML ZERO times', htmlOf() === base128.html,
+    htmlOf() + ' vs baseline ' + base128.html);
+  check('v128: the route line still RETRACTS — by setLatLngs mutation on both layers, never a rebuild',
+    !!dLineGroup && dLineGroup._kids.length === 2 && dLineGroup._kids.every(function (l) { return l._latlngSets >= 1; }));
+  check('v128: the bar still updates every tick — by text mutation (the arrival clock is live)',
+    /^\d{1,2}:\d{2} [AP]M$/.test(wD.reg.nvd_eta_main.textContent), wD.reg.nvd_eta_main.textContent);
   /* off-route while driving: hysteresis, then a re-route request
      and the rerouting pill on the drive screen */
   const realNowD = Date.now;
