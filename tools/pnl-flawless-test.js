@@ -296,5 +296,50 @@ const OCT_FUEL = [
   delete mem['pnl_miles_2026-10'];
 }
 
+/* ---------- v120: Connect a driver (owner, Oct 16 22:00) ----------
+   The Add-driver flow gains two doors: Connect (primary) and
+   manual (quiet secondary, unchanged). The Connect pipe today
+   is Phase-1/local ONLY (connect.js's own header), so the
+   pending state must say so in plain words — never a fake
+   "invite sent / connected". What ships: the pending driver in
+   the wages list immediately, a connection in Connect's own
+   store, wage math untouched. */
+{
+  console.log('\n— v120: Connect a driver —');
+  ok('v120: the Connect door is the one big primary action', pnlSrc.indexOf('id="pnl_connect_open"') !== -1 && pnlSrc.indexOf('🤝 Connect a driver') !== -1 && pnlSrc.indexOf('btn primary big') !== -1);
+  ok('v120: the manual door is the quiet secondary', pnlSrc.indexOf('id="pnl_manual_open"') !== -1 && pnlSrc.indexOf('Add manually instead') !== -1);
+  ok('v120: the manual form is unchanged (same ids, same fields)', ['id="pnl_dname"', 'id="pnl_drate"', 'id="pnl_dtype"', 'id="pnl_dstart"', 'id="pnl_dtravel"', 'id="pnl_dadd"'].every(function (s) { return pnlSrc.indexOf(s) !== -1; }));
+  ok('v120: the honest status line ships verbatim', pnlSrc.indexOf('Invites go live with Connect — this driver is saved and will link when they join.') !== -1);
+  ok('v120: no fake delivery claim anywhere in the pnl copy', !/Invite sent|invitation (was )?sent|✓ Connected/.test(pnlSrc));
+  ok('v120: the invite also lands a connection in Connect\u2019s own store (con_list, its record shape)',
+    pnlSrc.indexOf("App._store.get('con_list', [])") !== -1 && pnlSrc.indexOf("role: 'Driver', contact: contact") !== -1);
+  /* The pending line itself, extracted and driven: */
+  const seg = (() => {
+    const a = pnlSrc.indexOf('var PNL_INVITE_NOTE');
+    const b = pnlSrc.indexOf('function pnlInviteLine', a);
+    const c2 = pnlSrc.indexOf('\n  }', pnlSrc.indexOf('return ', b)) + 4;
+    if (a === -1 || b === -1) throw new Error('invite line not found');
+    return pnlSrc.slice(a, c2);
+  })();
+  const inviteLine = new Function('esc', seg + '\nreturn pnlInviteLine;')(function (s) { return String(s == null ? '' : s); });
+  const pend = inviteLine({ viaConnect: true, inviteStatus: 'pending', contact: 'driver@example.com', name: 'driver@example.com' });
+  ok('v120: a pending driver renders the honest status line', pend.indexOf('Invite saved — waiting for them to accept.') !== -1 && pend.indexOf('Invites go live with Connect') !== -1, pend);
+  eq('v120: a manual driver renders NO invite line', inviteLine({ name: 'Bob' }), '');
+  eq('v120: a linked driver renders NO pending line', inviteLine({ viaConnect: true, inviteStatus: 'linked' }), '');
+  /* Wage math on a pending driver: identical rules. */
+  const w = makePnl({
+    onboarding: { payStandard: 'Hourly', payRate: 29 },
+    rev_entries: [], rev_extras: [], fuel_fills: [], fuel_expenses: [],
+    pnl_drivers: [{ id: 'dConn', name: 'driver@example.com', contact: 'driver@example.com', viaConnect: true, inviteStatus: 'pending', payType: 'hourly', rate: 25, travelHours: 1, start: '2026-10' }],
+    pnl_wage_entries: [{ id: 'w1', date: '2026-10-10', driverId: 'dConn', qty: 10, unit: 'hrs', rate: 25, wage: 250 }],
+    pnl_travel_claims: [], pnl_card_wages: [], pnl_expenses: []
+  });
+  const cc = w.pnl._calc('2026-10');
+  const per = cc.wagesByDriver && cc.wagesByDriver.dConn;
+  ok('v120: the pending driver appears in the wages breakdown immediately', !!per);
+  eq('v120: wage math unchanged (10h × $25 logged + travel 1h × 1 day × $25)', per && round2(per.wage), 275);
+  ok('v120: the breakdown carries the pending flag for its status line', !!per && per.viaConnect === true && per.inviteStatus === 'pending');
+}
+
 console.log('\npnl-flawless: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

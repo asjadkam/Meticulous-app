@@ -197,6 +197,21 @@
   /* --- Driver wages ----------------------------------------------------- */
   var PAY_TYPES = [['hourly', 'Hourly ($/hour)'], ['permile', 'Per mile ($/mile)'], ['perload', 'Per load ($/load)'], ['salary', 'Salary ($/month)']];
   var PAY_LABEL = { hourly: 'Hourly', permile: 'Per mile', perload: 'Per load', salary: 'Salary' };
+  /* v120: the Add-driver doors (this session only, never
+     persisted) + the Connect invite's ONE honest status line.
+     Connect today is Phase-1/local (modules/connect.js's own
+     header: shares package into a local outbox; delivery is not
+     enabled) — so a "Connect a driver" invite SAVES the driver +
+     a Connect connection on this device and says exactly that.
+     It must never claim an invite was delivered or a link is
+     live. When Connect delivery lands, this is the sentence
+     that changes. */
+  var pnlConnectOpen = false, pnlManualOpen = false;
+  var PNL_INVITE_NOTE = 'Invites go live with Connect — this driver is saved and will link when they join.';
+  function pnlInviteLine(d) {
+    if (!d || !d.viaConnect || d.inviteStatus !== 'pending') return '';
+    return '<div class="b" style="color:var(--navy);font-weight:600">🤝 Invite saved — waiting for them to accept. ' + PNL_INVITE_NOTE + '</div>';
+  }
   var UNIT = { hourly: 'hrs', permile: 'mi', perload: 'loads' };
   var QTY_LABEL = { hourly: 'Hours', permile: 'Miles', perload: 'Loads' };
 
@@ -279,7 +294,7 @@
         travelDetail = parts.join(' · ');
       }
       w = Math.round((w + travelWage) * 100) / 100;
-      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail, travelWage: travelWage, travelDetail: travelDetail, cardWage: 0, cardDetail: '' };
+      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail, travelWage: travelWage, travelDetail: travelDetail, cardWage: 0, cardDetail: '', viaConnect: !!d.viaConnect, inviteStatus: d.inviteStatus || '', contact: d.contact || '' };
       total += w;
     });
     /* v105: the card postings join the month's wages — attributed
@@ -548,6 +563,12 @@
           if (d.travelWage > 0) {
             h += '<div class="kv"><span style="padding-left:14px">↳ Travel pay <span class="note">(' + esc(d.travelDetail) + ')</span></span><b>' + money(d.travelWage) + '</b></div>';
           }
+          /* v120: a Connect-invited driver shows the pending
+             state right in the wages list — never a fake
+             "connected". */
+          if (d.viaConnect && d.inviteStatus === 'pending') {
+            h += '<div class="kv"><span style="padding-left:14px">↳ 🤝 Invite pending <span class="note">(' + esc(PNL_INVITE_NOTE) + ')</span></span><span></span></div>';
+          }
           /* v105: pay posted by closed haul cards is its own line —
              the expense half of "one ticket, two books", visible
              right under the driver's wage. */
@@ -560,8 +581,37 @@
       }
       h += '<p class="note">Driver wages are deducted from revenue as a business expense.</p></div>';
 
-      /* Add driver */
+      /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
+         drivers should have an option of connecting via
+         'connect'."): TWO doors. PRIMARY: Connect a driver — a
+         real Meticulous user, invited by email or phone; the
+         driver appears in these wages immediately as a pending
+         entry, and when Connect delivery is live their own
+         completed dispatches post here automatically (one
+         record, two books — the owner sets only what HE pays).
+         SECONDARY (quiet): the manual form, unchanged, for
+         drivers not on the app. HONESTY GATE: Connect delivery
+         is Phase-1/local today, so the pending state says so in
+         plain words (PNL_INVITE_NOTE) — never a fake "sent" or
+         "connected". What the invite DOES do today: saves the
+         pending driver here + a connection in the Connect
+         module (con_list, its own store and record shape). */
       h += '<div class="card"><h3>＋ Add driver</h3>' +
+        '<button class="btn primary big" id="pnl_connect_open" style="width:100%">🤝 Connect a driver</button>' +
+        '<p class="note">For a driver who uses Meticulous — invite them by email or phone and they appear below right away. When they join, their identity comes from their own account, not from typing.</p>' +
+        '<div id="pnl_connect_wrap" style="display:' + (pnlConnectOpen ? 'block' : 'none') + ';margin-top:8px">' +
+        '<label class="f">Driver\u2019s email or phone</label><input id="pnl_ccontact" placeholder="e.g. driver@example.com or 403-555-0100">' +
+        '<div class="row"><div><label class="f">Pay type (what YOU pay)</label><select id="pnl_ctype">' +
+        PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
+        '</select></div>' +
+        '<div><label class="f">Rate $</label><input id="pnl_crate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
+        '<div class="row"><div><label class="f">Start month</label><input id="pnl_cstart" type="month" value="' + esc(m) + '"></div>' +
+        '<div><label class="f">Travel time (hours/day)</label><input id="pnl_ctravel" type="number" inputmode="decimal" min="0" step="0.25" placeholder="0"></div></div>' +
+        '<button class="btn primary" id="pnl_csend">Save driver &amp; invite</button>' +
+        '<p class="note" style="margin-top:6px">🤝 ' + esc(PNL_INVITE_NOTE) + '</p>' +
+        '</div>' +
+        '<button class="btn ghost" id="pnl_manual_open" style="margin-top:10px">Add manually instead</button>' +
+        '<div id="pnl_manual_wrap" style="display:' + (pnlManualOpen ? 'block' : 'none') + ';margin-top:8px">' +
         '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1"></div>' +
         '<div><label class="f">Pay type</label><select id="pnl_dtype">' +
         PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
@@ -570,9 +620,11 @@
         '<div><label class="f">Start month</label><input id="pnl_dstart" type="month" value="' + esc(m) + '"><div class="note">Salary drivers earn their rate every month from this month on.</div></div></div>' +
         '<div class="row"><div><label class="f">Travel time (hours/day)</label><input id="pnl_dtravel" type="number" inputmode="decimal" min="0" step="0.25" placeholder="0"><div class="note">Travel pay you owe this driver for each day they work — on top of their ticket/logged hours (e.g. 1, some drivers 1.5).</div></div></div>' +
         '<button class="btn primary" id="pnl_dadd">Add driver</button>' +
+        '</div>' +
         '<div id="pnl_dlist">' + drivers().map(function (d) {
           return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
             '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
+            pnlInviteLine(d) +
             '<div class="row" style="margin-top:6px;align-items:flex-end"><div style="flex:1"><label class="f">Travel hrs/day owed</label><input type="number" inputmode="decimal" min="0" step="0.25" data-pnltravel="' + esc(d.id) + '" value="' + (parseFloat(d.travelHours) || 0) + '"></div>' +
             '<button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
         }).join('') + '</div></div>';
@@ -748,7 +800,45 @@
         };
       });
 
-      /* Driver wages: add driver */
+      /* Driver wages: add driver — v120: the two doors */
+      var cOpen = body.querySelector('#pnl_connect_open');
+      if (cOpen) cOpen.onclick = function () { pnlConnectOpen = true; pnlManualOpen = false; api.render(body); };
+      var mOpen = body.querySelector('#pnl_manual_open');
+      if (mOpen) mOpen.onclick = function () { pnlManualOpen = true; pnlConnectOpen = false; api.render(body); };
+      var cSend = body.querySelector('#pnl_csend');
+      if (cSend) cSend.onclick = function () {
+        var contact = body.querySelector('#pnl_ccontact').value.trim();
+        if (!contact) { alert('Enter the driver\u2019s email or phone number.'); return; }
+        var rec = {
+          id: 'd' + Date.now(),
+          name: contact, // until they join: the invite label; their account supplies the real name on link
+          contact: contact,
+          viaConnect: true,
+          inviteStatus: 'pending',
+          payType: body.querySelector('#pnl_ctype').value,
+          rate: parseFloat(body.querySelector('#pnl_crate').value) || 0,
+          travelHours: parseFloat(body.querySelector('#pnl_ctravel').value) || 0,
+          start: body.querySelector('#pnl_cstart').value || App._today().slice(0, 7)
+        };
+        var l = drivers(); l.push(rec); W('drivers', l);
+        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
+        /* The Connect side of the invite, as far as the existing
+           pipe genuinely goes (Phase 1, local): a connection in
+           the Connect module's own store + record shape, so the
+           driver exists there for shares today — delivery/linking
+           itself is Phase 2 and the UI says so (PNL_INVITE_NOTE). */
+        try {
+          var cl = App._store.get('con_list', []) || [];
+          var already = cl.some(function (c) { return c && String(c.contact || '').trim().toLowerCase() === contact.toLowerCase(); });
+          if (!already) {
+            cl.push({ id: 'c' + Date.now(), name: contact, role: 'Driver', contact: contact });
+            App._store.set('con_list', cl);
+          }
+        } catch (e) {}
+        pnlConnectOpen = false;
+        api.render(body);
+      };
+      /* Driver wages: add driver (manual door — unchanged) */
       var dadd = body.querySelector('#pnl_dadd');
       if (dadd) dadd.onclick = function () {
         var name = body.querySelector('#pnl_dname').value.trim();
