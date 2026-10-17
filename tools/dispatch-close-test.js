@@ -335,7 +335,14 @@ async function driveToConfirm(w) {
     eq('a: entry hours (foreman + travel)', w.revLog[0].hours, '10.50');
     eq('a: entry foremanHours split', w.revLog[0].foremanHours, 9.5);
     eq('a: entry travelHours split', w.revLog[0].travelHours, 1);
-    check('a: completion announced like plain Complete', w.alerts.some(function (a) { return a.indexOf('Dispatch completed.') === 0; }));
+    /* v129: the close STAMPS the plan amount onto the record
+       before applyCompletion reads it, so the announcement is
+       the amount-carrying one the module has always used for a
+       record holding an amount — it names the exact dollars
+       logged, like the manifest feed line beside it. */
+    check('a: completion announced with the logged amount (v129 stamp)',
+      w.alerts.some(function (a) { return a.indexOf('Dispatch completed — $304.50 logged to Revenue.') === 0; }),
+      JSON.stringify(w.alerts));
   }
 
   /* ---------------- (b) weak read: engine fails ---------------- */

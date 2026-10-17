@@ -141,7 +141,62 @@
     d.tickets = tickets ? tickets.slice() : [];
     /* photo stored once — same rule as dspBuildRecord */
     d.photo = d.tickets.length ? null : (legacyPhoto || null);
+    /* v129: EDIT SAFETY on a completed dispatch — its ticket #,
+       material and amount are CLOSE FACTS (see dspCloseFactsFor):
+       an edit whose form leaves one blank keeps the value the
+       close recorded, so a save can never stomp a closed day's
+       truth with blanks. A value the form DID carry still wins —
+       correcting a close fact stays possible; erasing one by
+       omission does not. */
+    if (orig.status === 'completed') {
+      var cf = dspCloseFactsFor(orig);
+      if (!String(d.ticketNo || '').trim() && cf.ticketNo) d.ticketNo = cf.ticketNo;
+      if (!String(d.material || '').trim() && cf.material) d.material = cf.material;
+      if (!(parseFloat(d.amount) > 0) && cf.amount) d.amount = cf.amount;
+    }
     return d;
+  }
+  /* v129: the ticket facts a read produced, mined from wherever
+     the read left them: the tickets' parsed fields first
+     (cardNumber / ticketNo / material), then the tickets' stored
+     read reports (docRead.found — "ticket #22729", "material
+     Gravel"), cleaned through the v117 gibberish gate so a dirty
+     entry can never pose as a fact. Pure; never writes. */
+  function dspTicketFacts(tickets) {
+    var no = '', mat = '';
+    (tickets || []).forEach(function (t) {
+      if (!t) return;
+      if (!no && (t.cardNumber || t.ticketNo)) no = String(t.cardNumber || t.ticketNo);
+      if (!mat && t.material) mat = String(t.material);
+    });
+    if (!no || !mat) {
+      (tickets || []).forEach(function (t) {
+        if (!t || !t.docRead) return;
+        var clean = dspCleanDocRead(t.docRead);
+        (clean.found || []).forEach(function (entry) {
+          var s = String(entry);
+          if (!no) { var m1 = /^ticket\s*#\s*(.+)$/i.exec(s); if (m1) no = m1[1].trim(); }
+          if (!mat) { var m2 = /^material\s+(.+)$/i.exec(s); if (m2) mat = m2[1].trim(); }
+        });
+      });
+    }
+    return { ticketNo: no, material: mat };
+  }
+  /* v129: a record's CLOSE FACTS — the values its completion
+     established — read with healing: a stored top-level field
+     wins; a blank one is derived from the tickets (display and
+     comparison only — reading never rewrites the stored record).
+     amount is the record's own stamped close amount ('' when the
+     close logged none). */
+  function dspCloseFactsFor(d) {
+    if (!d) return { ticketNo: '', material: '', amount: '' };
+    var mined = dspTicketFacts(d.tickets);
+    var amt = parseFloat(d.amount);
+    return {
+      ticketNo: d.ticketNo || mined.ticketNo || '',
+      material: d.material || mined.material || '',
+      amount: (isNaN(amt) || !(amt > 0)) ? '' : String(d.amount)
+    };
   }
   /* v117 (owner, Oct 16 2026, over the Oct 16 Aecon edit form):
      the edit form's pre-fill, from the record AND its tickets.
@@ -158,11 +213,10 @@
      from the tickets they are recorded loads, so loadsSet rides
      true — the same trust dspBuildClosed gives a ticket sum. */
   function dspEditFieldsFor(d) {
-    var tkNo = '', tkMat = '', tkLoads = 0;
+    var mined = dspTicketFacts(d.tickets);
+    var tkNo = mined.ticketNo, tkMat = mined.material, tkLoads = 0;
     (d.tickets || []).forEach(function (t) {
       if (!t) return;
-      if (!tkNo && (t.cardNumber || t.ticketNo)) tkNo = t.cardNumber || t.ticketNo;
-      if (!tkMat && t.material) tkMat = t.material;
       var tl = parseInt(t.loads, 10);
       if (tl > 0) tkLoads += tl;
     });
@@ -655,6 +709,174 @@
   }
   /* ================= DSP-CLOSE-END ================= */
 
+  /* ================= DSP-COMPLETED-BEGIN =================
+     v129 (owner, Oct 17, 2026 — his Oct 16 Aecon dispatch, ticket
+     #22729): opening a COMPLETED dispatch dropped him into the
+     Edit form with Material blank, Ticket # blank, Amount 0.00.
+     The day's close had written the hours (foreman 10.0 + 1
+     travel = 11.0 h) and the pay ($319.00) into Revenue and the
+     manifest, but never onto the dispatch record itself — the
+     ticket lived on the record as the haul-card PHOTO and its
+     number was never parsed into the record — so every later
+     view honestly showed blanks, and the user read a closed day
+     as un-closed. His words: "Can you close that dispatch with
+     that picture? I sent you yesterday?" Three rules land here:
+       - THE CLOSE WRITES THE RECORD (dspApplyCloseFacts): every
+         close path stamps the close facts — ticket # / material
+         the ticket read found, the day amount from the ONE
+         completion plan — onto the record and its ticket(s), so
+         the record carries its own closed truth.
+       - THE FACE HEALS AT READ (dspCompletedFace): a completed
+         record that predates the stamping still opens complete —
+         facts derived from the tickets, the day's amount from
+         the SAME shared per-day builder the manifest/invoice
+         print from. Display-only: reading never rewrites stored
+         data.
+       - A CLOSED THING LOOKS CLOSED: the render opens completed
+         records on this face (status, hours, amount, photos),
+         with Edit a secondary action below it — never the form
+         first (see the render + history wiring). */
+  /* Stamp the close facts onto a closed record (returns a copy;
+     the input is not mutated). plan is the dspCompletionPlan the
+     close logged with — its entry amount is the day's money, the
+     same number Revenue received. Fill-only for ticket # /
+     material: a value already on the record (typed by the
+     driver) always wins over a mined one. The day amount is the
+     plan's, because the plan is what the close actually logged;
+     with no entry (nothing earned) the record's amount stands. */
+  function dspApplyCloseFacts(d, plan) {
+    if (!d) return d;
+    var out = {};
+    for (var k in d) { if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k]; }
+    var mined = dspTicketFacts(out.tickets);
+    var planNo = '';
+    if (plan && plan.entry && plan.entry.ticketNos && plan.entry.ticketNos.length) {
+      planNo = String(plan.entry.ticketNos[0]);
+    }
+    var no = planNo || mined.ticketNo;
+    if (no && !String(out.ticketNo || '').trim()) out.ticketNo = no;
+    if (mined.material && !String(out.material || '').trim()) out.material = mined.material;
+    if (plan && plan.entry && parseFloat(plan.entry.amount) > 0) {
+      out.amount = String(plan.entry.amount);
+    }
+    /* the same facts land on each ticket that lacks its own —
+       a ticket is the record's evidence; it carries its number. */
+    if (out.tickets && out.tickets.length) {
+      var tk = out.tickets.slice(), tkChanged = false;
+      for (var i = 0; i < tk.length; i++) {
+        var t = tk[i];
+        if (!t) continue;
+        var tf = dspTicketFacts([t]);
+        if (!tf.ticketNo && !tf.material) continue;
+        var tc = null;
+        if (tf.ticketNo && !t.cardNumber && !t.ticketNo) { tc = tc || {}; tc.ticketNo = tf.ticketNo; }
+        if (tf.material && !t.material) { tc = tc || {}; tc.material = tf.material; }
+        if (tc) {
+          for (var q in t) { if (Object.prototype.hasOwnProperty.call(t, q) && !(q in tc)) tc[q] = t[q]; }
+          tk[i] = tc; tkChanged = true;
+        }
+      }
+      if (tkChanged) out.tickets = tk;
+    }
+    return out;
+  }
+  /* The day's earned, for the completed face — priced by the
+     SAME shared per-day builder the manifest and the invoice
+     print from (Meticulous.shared.buildRevenueLines over the
+     day's Revenue entries + extras at the account rate /
+     standard). Never a second math path: without the builder,
+     the fallback is the manifest's own legacy fallback (qty ×
+     rate, extras added). 0 when the day logged nothing. */
+  function dspDayEarned(dateStr) {
+    if (!dateStr) return 0;
+    /* NB: rev_entries / rev_extras / onboarding are TOP-LEVEL
+       store keys (not dsp_ keys) — read them the way
+       completionSettings and the manifest do. */
+    var entries = App._store.get('rev_entries', []).filter(function (e) { return e && e.date === dateStr; });
+    var extras = App._store.get('rev_extras', []).filter(function (e) { return e && e.date === dateStr; });
+    var o = App._store.get('onboarding', {});
+    var rate = parseFloat(o.payRate) || 0;
+    var std = String(o.payStandard || '').toLowerCase();
+    var built = null;
+    try {
+      if (typeof window !== 'undefined' && window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
+        built = Meticulous.shared.buildRevenueLines(entries, extras, rate, std);
+      }
+    } catch (e) { built = null; }
+    var earned = 0;
+    if (built) {
+      built.lines.forEach(function (l) { earned += Number(l.amt) || 0; });
+      return Math.round(earned * 100) / 100;
+    }
+    entries.forEach(function (e) {
+      if (std === 'hourly') earned += (parseFloat(e.hours) || 0) * rate;
+      else if (std === 'miles') earned += (parseFloat(e.miles) || 0) * rate;
+      else if (std === 'trip') earned += (parseFloat(e.trips) || 0) * rate;
+      else if (std === 'weight') earned += (parseFloat(e.tons) || 0) * rate;
+    });
+    extras.forEach(function (x) { earned += parseFloat(x.amount) || 0; });
+    return Math.round(earned * 100) / 100;
+  }
+  /* The day's loads for the completed face, from the ONE shared
+     loads truth (Meticulous.shared.dayLoads) over the day's
+     dispatch records — the same assembly the manifest makes.
+     Without the shared helper, only the record-local rungs of
+     that ladder (ticket counts, then deliberately recorded
+     loads) are honestly available, and they are what shows. */
+  function dspDayLoadsFor(dateStr) {
+    if (!dateStr) return 0;
+    var day = dspGet('list', []).filter(function (x) {
+      return x && dspRecordDate(x) === dateStr;
+    });
+    try {
+      if (typeof window !== 'undefined' && window.Meticulous && Meticulous.shared && Meticulous.shared.dayLoads) {
+        return Meticulous.shared.dayLoads(dateStr, { dispatches: day }).loads || 0;
+      }
+    } catch (e) {}
+    var tk = 0;
+    day.forEach(function (x) {
+      (x.tickets || []).forEach(function (t) { var v = parseFloat(t && t.loads); if (v > 0) tk += v; });
+    });
+    if (tk > 0) return Math.round(tk);
+    var rec = 0;
+    day.forEach(function (x) { if (x && x.loadsSet) { var v = parseFloat(x.loads); if (v > 0) rec += v; } });
+    return rec > 0 ? Math.round(rec) : 0;
+  }
+  /* Everything the completed face shows, assembled in one place
+     — the render paints it, the suites pin it. Every value is a
+     READ-TIME derivation (close facts healed from the tickets,
+     the day's money from the shared builder, hours from the
+     ticket summary): opening the face writes nothing. */
+  function dspCompletedFace(d) {
+    var facts = dspCloseFactsFor(d);
+    var dateStr = dspRecordDate(d) || d.date || '';
+    var earned = dspDayEarned(dateStr);
+    var sum = null;
+    try {
+      if (typeof window !== 'undefined' && window.TicketOCR && TicketOCR.summarizeTickets) {
+        var o = App._store.get('onboarding', {});
+        sum = TicketOCR.summarizeTickets(d.tickets || [], parseFloat(o.travelBonus) || 0);
+      }
+    } catch (e) { sum = null; }
+    var photos = [];
+    (d.tickets || []).forEach(function (t) { if (t && t.photo) photos.push(t.photo); });
+    if (!photos.length && d.photo) photos.push(d.photo);
+    return {
+      id: d.id, status: d.status, endedAt: d.endedAt || null,
+      jobSite: d.jobSite || d.pickup || '', date: dateStr,
+      scheduledAt: d.scheduledAt || '', equipment: d.equipment || '',
+      material: facts.material, ticketNo: facts.ticketNo,
+      amount: earned > 0 ? earned : (parseFloat(facts.amount) || 0),
+      loads: dspDayLoadsFor(dateStr),
+      foremanHours: sum ? sum.totalForemanHours : 0,
+      travelHours: sum ? sum.travelBonus : 0,
+      totalHours: sum ? sum.totalPaidHours : 0,
+      netWeight: sum ? sum.totalNetWeight : 0,
+      notes: d.notes || '', photos: photos
+    };
+  }
+  /* ================= DSP-COMPLETED-END ================= */
+
   function fbSave(doc) {
     if (window.FB && FB.saveDoc) { try { FB.saveDoc('dispatches', doc.id, doc); } catch (e) {} }
   }
@@ -741,6 +963,10 @@
      open. Matched by id, not row index, so a list change between
      arm and confirm can never delete the wrong record. */
   var pendingDelId = null;
+  /* v129: the COMPLETED FACE's open record (see DSP-COMPLETED).
+     Opening a completed dispatch lands on its read-complete
+     summary — this id is that view's only state; null = closed. */
+  var viewCompletedId = null;
   var dspBody = null; // v116: last render target, for api.back's re-render
 
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
@@ -815,6 +1041,22 @@
   }
   /* DSP-SCROLL-END */
 
+  /* v129: the completed face gets the same come-to-the-user
+     treatment as the form (v75) — a View tap that renders the
+     summary at the top of the module but never scrolls to it
+     would read as "nothing happens". */
+  function dspScrollToCompleted(body) {
+    function go() {
+      try {
+        var el = body.querySelector('#dp_completed_card');
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+      } catch (e) {}
+    }
+    go();
+    try { if (window.requestAnimationFrame) window.requestAnimationFrame(go); } catch (e) {}
+    setTimeout(go, 350);
+  }
+
   /* ================= DSP-ACTIVATE-BEGIN =================
      v91: THE one activation path. Flipping a saved dispatch to
      active is exactly these writes — status + startedAt on the
@@ -885,15 +1127,21 @@
        manual Start below routes through the same path. */
     activateById: function (id) { return dspActivateById(id); },
     /* v116: shell back contract. This module's one screen IS its
-       main view (form + active card + history together); its only
-       transient sub-state is the armed delete confirm, and Back
-       disarms it instead of leaving the module. The form DRAFT —
+       main view (form + active card + history together); its
+       transient sub-states are the armed delete confirm and
+       (v129) the open completed face, and Back closes either
+       instead of leaving the module. The form DRAFT —
        including an in-progress edit (draft.editId) — is NOT a
        sub-view: it is saved user work (v48: never lose a dispatch
        form; v56: an edit stays an edit across reloads), so fresh
        entry restores it by design and there is deliberately no
        resetView here. */
     back: function () {
+      if (viewCompletedId !== null && viewCompletedId !== undefined) {
+        viewCompletedId = null;
+        if (dspBody) api.render(dspBody);
+        return true;
+      }
       if (pendingDelId === null || pendingDelId === undefined) return false;
       pendingDelId = null;
       if (dspBody) api.render(dspBody);
@@ -981,6 +1229,42 @@
           '<div id="dp_closeflow"></div></div>';
       }
 
+      /* ---- v129: the COMPLETED FACE ----
+         Opening a completed dispatch lands HERE — a read-complete
+         summary (status + when, site, date, truck, the healed
+         close facts, the day's hours, the amount the shared
+         builder prices the day at, the ticket photos, the notes),
+         never the edit form. Edit is a secondary action at the
+         bottom of the face ("✏️ Edit this record"). The values
+         come from dspCompletedFace — read-time derivations, so a
+         record closed before the close wrote its facts still
+         opens complete, and opening this face writes nothing. */
+      var viewRec = viewCompletedId ? dspFindRecord(viewCompletedId) : null;
+      if (viewRec && viewRec.status !== 'completed') { viewRec = null; viewCompletedId = null; }
+      if (viewRec && editingId === viewRec.id) { viewRec = null; viewCompletedId = null; } // the open edit form is its one presence (v117)
+      if (viewRec) {
+        var face = dspCompletedFace(viewRec);
+        h += '<div class="card" id="dp_completed_card" style="border:2px solid var(--green)"><h3>✅ Completed dispatch</h3>' +
+          '<div class="kv"><span>Status</span><b>Completed' + (face.endedAt ? ' · ' + esc(fmtTime(face.endedAt)) : '') + '</b></div>' +
+          '<div class="kv"><span>Job site</span><b>' + esc(face.jobSite || '—') + '</b></div>' +
+          (face.date ? '<div class="kv"><span>Date</span><b>' + esc(fmtDay(face.date)) + '</b></div>' : '') +
+          (face.equipment ? '<div class="kv"><span>Truck</span><b>' + esc(face.equipment) + '</b></div>' : '') +
+          (face.material ? '<div class="kv"><span>Material</span><b>' + esc(face.material) + '</b></div>' : '') +
+          (face.ticketNo ? '<div class="kv"><span>Ticket #</span><b>' + esc(face.ticketNo) + '</b></div>' : '') +
+          (face.foremanHours > 0 ?
+            '<div class="kv"><span>Foreman hours</span><b>' + dspFmtH(face.foremanHours) + ' h</b></div>' +
+            '<div class="kv"><span>Travel</span><b>' + dspFmtH(face.travelHours) + ' h</b></div>' +
+            '<div class="kv"><span>Total hours</span><b>' + dspFmtH(face.totalHours) + ' h</b></div>' : '') +
+          (face.netWeight > 0 ? '<div class="kv"><span>Net weight</span><b>' + esc(String(face.netWeight)) + ' t</b></div>' : '') +
+          (face.loads > 0 ? '<div class="kv"><span>Loads</span><b>' + face.loads + '</b></div>' : '') +
+          '<div class="kv"><span>Amount earned</span><b>$' + face.amount.toFixed(2) + '</b></div>' +
+          (face.notes ? '<div class="kv"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
+          face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">'; }).join('') +
+          '<div class="row" style="margin-top:10px">' +
+          '<button class="btn ghost small" id="dp_view_edit">✏️ Edit this record</button>' +
+          '<button class="btn ghost small" id="dp_view_done">Done</button></div></div>';
+      }
+
       /* ---- v65: 📩 Suggested dispatches + "Add from a message" ----
            Filled and wired by paintIngest() at the end of render. When
            there are no suggestions the card is just the quiet paste
@@ -993,6 +1277,12 @@
         '<div id="dp_draft_note"></div>' +
         '<div id="dp_draft_warn"></div>' +
         '<div id="dp_save_err"></div>' +
+        /* v129: the form SAYS the edit-safety rule out loud when
+           the record being edited is completed — its close facts
+           are protected (see dspApplyEdit), and the driver should
+           not have to guess what a cleared field would do. */
+        (editRec && editRec.status === 'completed' ?
+          '<div class="note" style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin:6px 0 10px;">This dispatch is <b>completed</b>. Its ticket #, material and amount are the day\'s close facts — leave a field as it is to keep it; clearing one will not erase what the close recorded.</div>' : '') +
         '<label class="f">Job site</label><input id="dp_site" placeholder="e.g. Aecon — Deerfoot site">' +
         '<div class="row"><div><label class="f">Scheduled date</label><input id="dp_date" type="date"></div>' +
         '<div><label class="f">Start time</label><input id="dp_time" type="time"></div></div>' +
@@ -1083,7 +1373,13 @@
               '<button class="btn small ghost" data-delcancel="1" style="flex:1">Cancel</button></div></div>' :
               '<div class="row" style="margin-top:8px">' +
               (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
-              '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>' +
+              /* v129: a completed dispatch opens on its FACE
+                 (data-view), never straight into the edit form —
+                 Edit lives inside the face as "Edit this record".
+                 Open records keep their row Edit as before. */
+              (d.status === 'completed' ?
+                '<button class="btn small primary" data-view="' + i + '">👁 View</button>' :
+                '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>') +
               '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
         }).join('') : '<div class="empty">' + (hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : 'No dispatches yet. Create one above.') + '</div>') + '</div>';
 
@@ -1835,6 +2131,7 @@
          that opened Material/Ticket # blank and Loads at default. */
       function startEdit(d) {
         if (!d) return;
+        viewCompletedId = null; // v129: the edit form becomes the record's one presence
         var fields = dspEditFieldsFor(d);
         var tk = (d.tickets || []).map(function (t) {
           var c = {};
@@ -1860,6 +2157,15 @@
       if (cancelEditBtn) cancelEditBtn.onclick = function () { dspClearDraft(); api.render(body); };
       var editActiveBtn = body.querySelector('#dp_edit_active');
       if (editActiveBtn) editActiveBtn.onclick = function () { startEdit(active()); };
+      /* v129: the completed face's own actions — Edit (secondary,
+         into the one form) and Done (close the face). */
+      var viewEditBtn = body.querySelector('#dp_view_edit');
+      if (viewEditBtn) viewEditBtn.onclick = function () {
+        var d = dspFindRecord(viewCompletedId);
+        if (d) startEdit(d);
+      };
+      var viewDoneBtn = body.querySelector('#dp_view_done');
+      if (viewDoneBtn) viewDoneBtn.onclick = function () { viewCompletedId = null; api.render(body); };
 
       /* ---- completion glue (v73): ONE application path ----
          completionSettings assembles the account inputs (pay
@@ -1893,7 +2199,7 @@
           role: role, driver: matchedDriver, today: App._today()
         };
       }
-      function applyCompletion(cur) {
+      function applyCompletion(cur, prePlan) {
         /* One confirmation updates Revenue: log the dispatch earnings.
            v26: Multi-ticket — sum foreman hours from all tickets + travel bonus.
            Pay by Weight: sum net weights × rate/tonne.
@@ -1901,8 +2207,11 @@
            harness-tested). Driver/both completers get the pre-v52 entry
            unchanged; an office completer's entry excludes the travel
            hours, which are routed to the identified driver's P&L wages
-           as a claim — or disclosed as held out when no driver matches. */
-        var planRes = dspCompletionFor(cur, completionSettings(cur));
+           as a claim — or disclosed as held out when no driver matches.
+           v129: a close path that already assembled the plan (to
+           stamp the close facts from it) hands it in — the plan is
+           assembled exactly once per close either way. */
+        var planRes = prePlan || dspCompletionFor(cur, completionSettings(cur));
         var plan = planRes.plan;
         var tickets = planRes.tickets;
         var revEntry = plan.entry;
@@ -1979,11 +2288,19 @@
       var doneBtn = body.querySelector('#dp_complete');
       if (doneBtn) doneBtn.onclick = function () {
         var cur = active(); if (!cur) return;
-        cur.status = 'completed'; cur.endedAt = Date.now();
+        /* v129: the closed record is built the same way the
+           ticket-photo close builds it (identity pinned by
+           dspBuildClosed, ticket loads totalled) and the close
+           facts are stamped from the ONE plan assembly BEFORE
+           the write — the record itself carries its closed
+           truth, and applyCompletion logs that same plan. */
+        var doneRec = dspBuildClosed(cur, null, Date.now());
+        var planRes = dspCompletionFor(doneRec, completionSettings(doneRec));
+        doneRec = dspApplyCloseFacts(doneRec, planRes.plan);
         var l = list();
-        for (var i = 0; i < l.length; i++) if (l[i].id === cur.id) { l[i] = cur; break; }
-        W('list', l); W('active', null); fbSave(cur);
-        applyCompletion(cur);
+        for (var i = 0; i < l.length; i++) if (l[i].id === doneRec.id) { l[i] = doneRec; break; }
+        W('list', l); W('active', null); fbSave(doneRec);
+        applyCompletion(doneRec, planRes);
         api.render(body);
       };
 
@@ -2199,13 +2516,20 @@
         var t = currentCloseTicket();
         closeState.ticket = t;
         var doneRec = dspBuildClosed(cur, t, Date.now());
+        /* v129: stamp the close facts onto the record from the
+           SAME plan assembly Confirm is about to log with (the
+           preview already promised these numbers) — the record
+           leaves this close carrying its ticket #, material and
+           day amount, and applyCompletion reuses the plan. */
+        var planRes = dspCompletionFor(doneRec, completionSettings(doneRec));
+        doneRec = dspApplyCloseFacts(doneRec, planRes.plan);
         var res = dspCloseRecord(doneRec);
         if (!res.ok) {
           showCloseError('⚠️ That close did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was closed and nothing was logged. Your dispatch is still active and this ticket is still here. Free up some phone space, then tap Confirm again.');
           return;
         }
         fbSave(doneRec);
-        applyCompletion(doneRec);
+        applyCompletion(doneRec, planRes);
         closeState = null;
         api.render(body);
       }
@@ -2338,6 +2662,17 @@
       });
       body.querySelectorAll('[data-edit]').forEach(function (b) {
         b.onclick = function () { startEdit(list()[+b.getAttribute('data-edit')]); };
+      });
+      /* v129: a completed record's row View opens its face. */
+      body.querySelectorAll('[data-view]').forEach(function (b) {
+        b.onclick = function () {
+          var d = list()[+b.getAttribute('data-view')];
+          if (d && d.status === 'completed') {
+            viewCompletedId = d.id;
+            api.render(body);
+            dspScrollToCompleted(body);
+          }
+        };
       });
 
       paintIngest(); // v65: suggestions + paste box (see above)

@@ -178,8 +178,13 @@ console.log('\n— (k) v117: the gibberish gate covers the READ SUMMARY, compose
   const cleanIn = { found: ['job site Aecon — A2-L20', 'material Clay'], missing: ['notes'] };
   eq('stored summary: a clean report passes through untouched',
     JSON.stringify(sb.__cleanRead(cleanIn)), JSON.stringify(cleanIn));
-  ok('both render sites clean the summary (form list + close confirm)',
-    (dspSrc.match(/dspCleanDocRead\(t\.docRead\)/g) || []).length === 2);
+  /* v129: the count is 3, not 2 — dspTicketFacts cleans through
+     the same gate before mining a stored report for close facts,
+     so a mined "fact" can never be gibberish either. The two
+     render sites are unchanged; the pin stays exact so losing
+     any call site still fails here. */
+  ok('render sites + the v129 facts miner clean the summary through the gate',
+    (dspSrc.match(/dspCleanDocRead\(t\.docRead\)/g) || []).length === 3);
 }
 
 console.log('\ndispatch-intake: ' + pass + ' passed, ' + fail + ' failed');
