@@ -634,6 +634,28 @@
     setTimeout(function () { w.print(); }, 400);
   }
 
+  /* v118 (extracted from renderInvoice; the v105 heal grew the
+     case-variant rule): an UNTOUCHED draft Bill-to — the saved
+     contracting company exactly, or the same words in any casing,
+     with or without the saved address after them — is replaced
+     by the saved name + address VERBATIM ("AI Trucking", never
+     "Ai trucking"). A genuinely different hand-typed Bill-to is
+     never rewritten. */
+  function invBillToHeal(draft, o) {
+    if (!draft || !o || !o.contractingCo || !draft.billTo) return draft;
+    if (draft.billTo === o.contractingCo) {
+      if (o.contractingAddr) draft.billTo = o.contractingCo + ', ' + o.contractingAddr;
+      return draft;
+    }
+    var coLow = String(o.contractingCo).trim().toLowerCase();
+    var btLow = String(draft.billTo).trim().toLowerCase();
+    var coAddrLow = coLow + ', ' + String(o.contractingAddr || '').trim().toLowerCase();
+    if (btLow === coLow || (o.contractingAddr && btLow === coAddrLow)) {
+      draft.billTo = o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '');
+    }
+    return draft;
+  }
+
   /* ---------------- contractor invoice ---------------- */
   function renderInvoice(body) {
     var o = onb();
@@ -646,10 +668,13 @@
        (just the contracting company's name) picks up the company's
        address from Preferences, so the printed invoice bills the
        full name + address the way the owner sends it. A Bill-to he
-       edited himself is never rewritten. */
-    if (o.contractingCo && o.contractingAddr && draft.billTo === o.contractingCo) {
-      draft.billTo = o.contractingCo + ', ' + o.contractingAddr;
-    }
+       edited himself is never rewritten. v118: the heal lives in
+       invBillToHeal (below) — "untouched" also covers a
+       CASE-VARIANT of the saved company ("Ai trucking" frozen in
+       a draft by an early keyboard), which the exact-equality
+       rule never healed, so the printed invoice billed the wrong
+       casing forever while Preferences holds "AI Trucking". */
+    invBillToHeal(draft, o);
     /* Legacy drafts (pre-v55) could hold the placeholder text as the
        # value — it is not a number; treat it as empty. */
     if (draft.no === '(auto on save)') draft.no = null;

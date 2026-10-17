@@ -121,17 +121,34 @@
     W('detail', all);
   }
 
-  /* Total miles for a month — from fuel fill odometer readings (max-min),
-     with manual override. Falls back to revenue miles if no odometer data. */
+  /* Total miles for a month — the SUM of the month's odometer
+     LEGS between consecutive fill readings (which telescopes to
+     last − first when every leg is honest), with manual override.
+     v118: the old max − min trusted EVERY stamp, so the poisoned
+     Oct 15 stamp (519,326 — a receipt invoice number the v109
+     fill gate now refuses) still set the max from beyond the
+     grave and P&L printed "Total miles 350,816" against a
+     169,166 master (519,326 − 168,510). A leg counts only when
+     it is plausible (forward, ≤ 50,000 km — the v109 leg rule):
+     the legs into and out of a poisoned stamp both fail it, so
+     the stamp contributes nothing and the honest legs remain.
+     Falls back to revenue miles if no odometer data. */
   function totalMiles(m) {
     var manual = S('miles_' + m, null);
     if (manual != null && manual !== '') return parseFloat(manual) || 0;
     var odos = [];
     (App._store.get('fuel_fills', []) || []).forEach(function (f) {
       if (!inMonth(f.date, m) || !f.odo) return;
-      odos.push(parseFloat(f.odo));
+      var v = parseFloat(f.odo);
+      if (isFinite(v) && v > 0) odos.push({ d: String(f.date || ''), v: v });
     });
-    if (odos.length >= 2) return Math.max.apply(null, odos) - Math.min.apply(null, odos);
+    odos.sort(function (a, b) { return a.d < b.d ? -1 : (a.d > b.d ? 1 : a.v - b.v); });
+    var miles = 0, legs = 0;
+    for (var i = 1; i < odos.length; i++) {
+      var leg = odos[i].v - odos[i - 1].v;
+      if (leg > 0 && leg <= 50000) { miles += leg; legs++; }
+    }
+    if (legs > 0) return miles;
     var revMiles = 0;
     (App._store.get('rev_entries', []) || []).forEach(function (e) {
       if (!inMonth(e.date, m)) return;

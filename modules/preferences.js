@@ -13,6 +13,24 @@
      at the owner's order). */
   var _parkListenerOn = false;
   var pfBackHook = null; // v116: installed by each render's tab wiring; api.back delegates to it
+  /* v118: the safety-sticker expiry lives in TWO stores —
+     onboarding.safetyExpiry (the form's field) and mt_annualDate
+     (Maintenance / reminders / the manifest read it there). The
+     old one-way mirror (form → mt_annualDate on every Preferences
+     save) let a STALE form value stomp a newer date set anywhere
+     else: the owner's 2027-05-31, set and verified Oct 16 19:44,
+     reverted to 2027-05-01 when a later Preferences save copied
+     the form's older value over it. The rule now: a form value
+     the user did not touch in this visit NEVER overwrites a
+     different stored annualDate — the stored one is adopted
+     into the form's record instead. A value actually edited
+     here still wins, always. */
+  var pfSafetyRendered = null;
+  function pfSafetyWinner(formVal, renderedVal, annualNow) {
+    formVal = String(formVal || '');
+    if (annualNow && formVal === String(renderedVal || '') && String(annualNow) !== formVal) return String(annualNow);
+    return formVal;
+  }
   function paintParkCard() {
     var doc = (typeof document !== 'undefined') ? document : null;
     if (!doc || !doc.getElementById) return;
@@ -64,6 +82,7 @@
     },
     render: function (body) {
       var o = App._store.get('onboarding', {});
+      pfSafetyRendered = o.safetyExpiry || ''; // v118: what the safety field opened with (see pfSafetyWinner)
       /* v52: person-level role (onboarding.userRole) — computed here
          because the control sits in the Account card next to Account
          type. The note states the CURRENT effective value plainly:
@@ -358,7 +377,9 @@
         /* v76 (F6): office renders have no odometer field/toggle —
            keep whatever is stored, never reach for missing inputs. */
         if (body.querySelector('#pf_odo')) o.odometerBaseline = g('pf_odo');
-        o.safetyExpiry = g('pf_safety');
+        /* v118: an untouched safety field never stomps a newer
+           stored annualDate (see pfSafetyWinner above). */
+        o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));
         var odoTglSave = body.querySelector('#pf_odo_photos');
         o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
         /* v80: the master odometer moves through the SUPERVISED

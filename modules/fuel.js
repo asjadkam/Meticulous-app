@@ -55,6 +55,21 @@
   var editFillIdx = null;
   var fuelBody = null; // v116: last render target, for api.back's re-render
   var editErr = '';
+  /* v118: the fill-up DETAILS view (owner spec, Oct 16 21:56) —
+     which fill the read-only details page shows, or null. A row
+     tap opens THIS, not the edit form; Edit lives on the page as
+     a quiet secondary action. */
+  var detailFillIdx = null;
+  var detailDelArm = false;
+  /* v118: receipt precision — litres carry 3 decimals, money 2.
+     A receipt read derives litres as cost ÷ price when the litres
+     line itself is unread, which produces raw float junk
+     (88.10600280761719) in the form fields while the read line
+     prints the clean 88.106. Prefills are rounded to exactly
+     what the read line says, so the fields (and therefore the
+     saved record) hold receipt numbers, never binary residue. */
+  function fuRoundL(v) { var n = parseFloat(v); return isFinite(n) ? String(Math.round(n * 1000) / 1000) : v; }
+  function fuRoundC(v) { var n = parseFloat(v); return isFinite(n) ? String(Math.round(n * 100) / 100) : v; }
 
   /* v39: note from the most recent save (e.g. the master-odometer
      outcome), shown at the top of the Fuel-up card after re-render. */
@@ -140,14 +155,23 @@
     /* v116: shell back contract — an in-progress fill-up EDIT is
        Fuel's sub-state: Back cancels the edit (exactly what the
        form's own Cancel edit button does) instead of leaving the
-       module, and a fresh entry never opens mid-edit. */
+       module, and a fresh entry never opens mid-edit.
+       v118: the DETAILS view is the layer under the edit — Back
+       from details returns to the Fill-ups list. */
     back: function () {
-      if (editFillIdx === null) return false;
-      editFillIdx = null; editErr = '';
-      if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
-      return true;
+      if (editFillIdx !== null) {
+        editFillIdx = null; editErr = '';
+        if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
+        return true;
+      }
+      if (detailFillIdx !== null) {
+        detailFillIdx = null; detailDelArm = false;
+        if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
+        return true;
+      }
+      return false;
     },
-    resetView: function () { editFillIdx = null; editErr = ''; },
+    resetView: function () { editFillIdx = null; editErr = ''; detailFillIdx = null; detailDelArm = false; },
     /* v78: the card preview — the most recent fill-up (litres · $
        · when), the fact a driver glances for; the MPG trend stays
        inside the module where it always lived. */
@@ -175,6 +199,60 @@
       if (editFillIdx !== null) {
         editRec = fills()[editFillIdx] || null;
         if (!editRec) editFillIdx = null;
+      }
+      /* v118: THE DETAILS VIEW (owner spec, Oct 16 21:56) — a row
+         tap lands here, NOT in the edit form: every stored field
+         read-only at receipt precision, the entry's receipt photo
+         (or a clean no-photo state), and Edit / Delete as quiet
+         secondary actions. Back returns to the Fill-ups list
+         (api.back above + the page's own ‹ button). */
+      if (detailFillIdx !== null && editFillIdx === null) {
+        var dRec = fills()[detailFillIdx] || null;
+        if (!dRec) { detailFillIdx = null; detailDelArm = false; }
+        else {
+          var dL = parseFloat(dRec.litres), dC = parseFloat(dRec.cost);
+          var dPrice = (isFinite(dL) && dL > 0 && isFinite(dC) && dC > 0) ? (dC / dL) : null;
+          var kv = function (k, v) { return '<div class="kv"><span>' + k + '</span><b>' + esc(v) + '</b></div>'; };
+          var dh = '<div class="card"><h3>🧾 Fill-up details</h3>' +
+            kv('Date', String(dRec.date || '—') + (dRec.time ? ' · ' + dRec.time : '')) +
+            (dRec.station ? kv('Station', dRec.station) : '') +
+            (isFinite(dL) ? kv('Litres', String(+dL.toFixed(3)) + ' L') : '') +
+            (isFinite(dC) ? kv('Total cost', '$' + dC.toFixed(2)) : '') +
+            (dPrice !== null ? kv('Price per litre', '$' + dPrice.toFixed(3) + '/L') : '') +
+            (dRec.odo ? kv('Odometer', fmtKm(dRec.odo) + ' km') : '') +
+            (dRec.type ? kv('Fuel type', dRec.type) : '') +
+            (dRec.fuelType ? kv('Fuel type', dRec.fuelType) : '') +
+            (dRec.note ? kv('Note', dRec.note) : '') +
+            (dRec.photo
+              ? '<img id="fu_det_photo" src="' + dRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">'
+              : '<div class="empty" style="margin-top:10px">No photo for this entry</div>') +
+            '<div class="row" style="margin-top:12px">' +
+            '<button class="btn ghost" id="fu_det_edit" style="flex:1">✏️ Edit</button>' +
+            '<button class="btn ghost" id="fu_det_del" style="flex:1;color:#c2410c">' + (detailDelArm ? 'Tap again to delete' : '🗑 Delete') + '</button></div>' +
+            '<button class="btn ghost" id="fu_det_back" style="margin-top:8px">‹ Back to fill-ups</button></div>';
+          body.innerHTML = dh;
+          body.querySelector('#fu_det_back').onclick = function () {
+            detailFillIdx = null; detailDelArm = false;
+            Meticulous.modules.fuel.render(body);
+          };
+          body.querySelector('#fu_det_edit').onclick = function () {
+            editFillIdx = detailFillIdx; detailFillIdx = null; detailDelArm = false;
+            editErr = ''; saveNote = '';
+            Meticulous.modules.fuel.render(body);
+            var card = body.querySelector('#fu_form_card');
+            if (card && card.scrollIntoView) { try { card.scrollIntoView({ block: 'start' }); } catch (e) {} }
+          };
+          body.querySelector('#fu_det_del').onclick = function () {
+            if (!detailDelArm) { detailDelArm = true; Meticulous.modules.fuel.render(body); return; }
+            var f2 = fills();
+            f2.splice(detailFillIdx, 1);
+            if (!saveFillsVerified(f2)) { detailDelArm = false; Meticulous.modules.fuel.render(body); return; }
+            detailFillIdx = null; detailDelArm = false;
+            saveNote = 'Fill-up deleted.';
+            Meticulous.modules.fuel.render(body);
+          };
+          return;
+        }
       }
       var h = '<div class="card"><h3>⛽ Fuel trend</h3>' +
         (trend.length ? '<div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + trend[trend.length - 1].mpg + ' <small style="font-size:13px">km/L</small></div>' +
@@ -255,7 +333,9 @@
          OCR read can never silently rewrite them (v39 rule). The
          receipt photo shows when the record carries one. */
       if (editRec) {
-        var pre = { '#fu_date': editRec.date, '#fu_odo': editRec.odo, '#fu_l': editRec.litres, '#fu_cost': editRec.cost, '#fu_stn': editRec.station };
+        /* v118: even a stored record carrying old float residue
+           opens at receipt precision (fuRoundL / fuRoundC). */
+        var pre = { '#fu_date': editRec.date, '#fu_odo': editRec.odo, '#fu_l': fuRoundL(editRec.litres), '#fu_cost': fuRoundC(editRec.cost), '#fu_stn': editRec.station };
         Object.keys(pre).forEach(function (id) {
           var e = body.querySelector(id);
           if (e && pre[id] !== undefined && pre[id] !== null && pre[id] !== '') {
@@ -268,15 +348,15 @@
           if (pv) pv.innerHTML = '<img src="' + editRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">';
         }
       }
+      /* v118: a row tap opens the DETAILS view for the entry
+         (read-only first) — Edit lives there now, not as the
+         tap's direct destination. */
       body.querySelectorAll('[data-fuedit]').forEach(function (el) {
         el.onclick = function () {
-          editFillIdx = +el.getAttribute('data-fuedit');
-          editErr = ''; saveNote = '';
+          detailFillIdx = +el.getAttribute('data-fuedit');
+          detailDelArm = false; editErr = ''; saveNote = '';
           Meticulous.modules.fuel.render(body);
-          var card = body.querySelector('#fu_form_card');
-          function go() { if (card && card.scrollIntoView) { try { card.scrollIntoView({ block: 'start' }); } catch (e) {} } }
-          go();
-          try { if (window.requestAnimationFrame) window.requestAnimationFrame(go); } catch (e) {}
+          try { if (body.scrollIntoView) body.scrollIntoView({ block: 'start' }); } catch (e) {}
         };
       });
       var cancelEditBtn = body.querySelector('#fu_cancel_edit');
@@ -341,8 +421,8 @@
             if (token !== fuOcrToken) return;
             var parsed = TicketOCR.parseFuelReceipt(text);
             var rep = TicketOCR.describeFuelRead(parsed);
-            fillField('#fu_l', parsed.litres);
-            fillField('#fu_cost', parsed.cost);
+            fillField('#fu_l', fuRoundL(parsed.litres));
+            fillField('#fu_cost', fuRoundC(parsed.cost));
             fillField('#fu_stn', parsed.station);
             fillField('#fu_date', parsed.date);
             if (parsed.time) fuReadTime = parsed.time;
@@ -377,8 +457,8 @@
          through the existing receipt parser. Fill-only; the form's
          own Save is the confirm. */
       function fuFillFromParsed(parsed, rep, label) {
-        fillField('#fu_l', parsed.litres);
-        fillField('#fu_cost', parsed.cost);
+        fillField('#fu_l', fuRoundL(parsed.litres));
+        fillField('#fu_cost', fuRoundC(parsed.cost));
         fillField('#fu_stn', parsed.station);
         fillField('#fu_date', parsed.date);
         if (parsed.time) fuReadTime = parsed.time;

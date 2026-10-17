@@ -343,19 +343,24 @@
      worked day). */
   function monthSummary(ym) {
     var map = dayAgg();
-    var hours = 0, total = 0, worked = 0, list = [];
+    var hours = 0, total = 0, worked = 0, list = [], loads = 0;
     Object.keys(map).forEach(function (ds) {
       if (ds.slice(0, 7) !== ym) return;
       var s = map[ds];
       total += s.amount;
       hours += s.hours;
+      /* v118: the month's loads ride the same shared dayLoads
+         ladder as the period view — the Month view's Loads metric
+         rendered NOTHING at all in the soak (the card did not
+         exist and the summary never computed the number). */
+      try { loads += dayLoadsFor(ds) || 0; } catch (e) {}
       if (s.hasEntry) {
         worked++;
         list.push({ date: ds, hours: s.hours, amount: s.amount, live: s.live, unconfirmed: !!s.unconfirmed, duplicate: !!s.duplicate });
       }
     });
     list.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
-    return { ym: ym, hours: hours, total: total, daysWorked: worked, avg: worked ? total / worked : 0, days: list };
+    return { ym: ym, hours: hours, total: total, daysWorked: worked, avg: worked ? total / worked : 0, days: list, loads: loads };
   }
 
   /* ---- v38 (B2): paste-import of hours-sheet days ----
@@ -1021,9 +1026,25 @@
   var lastBody = null;
 
   var api = {
+    /* v118: the dashboard preview is a FIXED "Last 30d" glance —
+       it used to mirror whatever window was last selected inside
+       Revenue (the soak caught "Last 16d: $319" after pay-period
+       use and "Last 30d: $7308" after 30d use on the same day),
+       which reads as the number changing its mind. The module's
+       selected window is the module's own business; the card
+       always quotes the same trailing 30 days. */
     status: function () {
-      var s = summary();
-      return s.total > 0 ? 'Last ' + s.days + 'd: $' + s.total.toFixed(0) : 'No entries yet';
+      var map = dayAgg();
+      var today = App._today();
+      var lo = today, probe = new Date(today + 'T12:00:00');
+      probe.setDate(probe.getDate() - 29);
+      lo = probe.getFullYear() + '-' + ('0' + (probe.getMonth() + 1)).slice(-2) + '-' + ('0' + probe.getDate()).slice(-2);
+      var total = 0, any = false;
+      Object.keys(map).forEach(function (ds) {
+        if (ds < lo || ds > today) return;
+        if (map[ds].hasEntry) { any = true; total += map[ds].amount; }
+      });
+      return any ? 'Last 30d: $' + total.toFixed(0) : 'No entries yet';
     },
     /* Tracker hook — called by app.js when a work session stops.
        v41: the session entry carries the dynamic tracker's tracked
@@ -1191,6 +1212,7 @@
           '<div class="card" style="flex:1"><div class="note">Days worked</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + ms.daysWorked + '</div></div>' +
           '</div><div class="row">' +
           '<div class="card" style="flex:1"><div class="note">Per worked day</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">$' + ms.avg.toFixed(2) + '</div></div>' +
+          '<div class="card" style="flex:1"><div class="note">Loads</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + ms.loads + '</div></div>' +
           '</div>';
       } else {
         h += '<div class="row">' +

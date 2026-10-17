@@ -193,5 +193,40 @@ eq('month row Oct 11 carries the duplicate flag', row11.duplicate, true);
   eq('day detail Oct 11 flagged duplicate, $0 counted', d11.duplicate + '/' + money(d11.amount), 'true/0');
 }
 
+console.log('\n— v118: the Month view’s Loads metric actually shows the number —');
+{
+  /* Item 9: monthSummary never computed loads and the Month view
+     had no Loads card at all — the metric rendered NOTHING in
+     every window the soak tried. The month's loads now ride the
+     shared dayLoads ladder (the Oct 16 day: ticket loads 6). */
+  const w2 = makeWorld();
+  /* dayLoadsFor lives past the helper slice's end marker in the
+     shipped file (it belongs to the graph-preview section); the
+     real module is one IIFE, so eval the function in directly. */
+  const dlSrc = (() => {
+    const i = revSrc.indexOf('function dayLoadsFor');
+    let depth = 0, j = revSrc.indexOf('{', i);
+    for (; j < revSrc.length; j++) {
+      if (revSrc[j] === '{') depth++;
+      else if (revSrc[j] === '}') { depth--; if (depth === 0) return revSrc.slice(i, j + 1); }
+    }
+    throw new Error('dayLoadsFor unbalanced');
+  })();
+  vm.runInContext(dlSrc, w2.sb);
+  w2.sb.App._store.set('dsp_list', [{
+    date: '2026-10-16', scheduledAt: '2026-10-16T08:00', status: 'completed',
+    tickets: [{ ocrType: 'haul_card', cardNumber: '22729', foremanHours: '10', loads: '6' }]
+  }]);
+  w2.sb.App._store.set('rev_entries', [
+    { date: '2026-10-16', type: 'hourly', hours: '11.00', amount: '319.00', note: 'Dispatch: Aecon Inf · foreman 10h + travel 1h = 11h' }
+  ]);
+  const ms = w2.x.monthSummary('2026-10');
+  eq('v118 loads: monthSummary sums the recorded loads through the shared ladder', ms.loads, 6);
+  ok('v118 loads: the Month view renders a Loads card with the number',
+    revSrc.indexOf('class="note">Loads</div>') !== -1 && revSrc.indexOf('ms.loads') !== -1);
+  const msEmpty = w2.x.monthSummary('2026-09');
+  eq('v118 loads: a month with no recorded loads shows 0, not a blank', msEmpty.loads, 0);
+}
+
 console.log('\nrevenue-grouped test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

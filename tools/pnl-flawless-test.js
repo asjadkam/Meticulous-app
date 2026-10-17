@@ -244,5 +244,57 @@ const OCT_FUEL = [
   eq('case 2 plan: wage posting = 11h × $27 = $297.00', po.wagePosting.wage, 297);
 })();
 
+/* ---------- v118: P&L total miles — never a poisoned max−min ----------
+   The soak's October P&L showed "Total miles 350,816" against a
+   169,166 master: the old max−min over the month's fill stamps
+   still trusted the poisoned Oct 15 stamp (519,326 — a receipt
+   invoice number) as the max: 519,326 − 168,510 = 350,816.
+   Total miles is now the SUM of the month's plausible odometer
+   legs between consecutive readings (forward, ≤ 50,000 km —
+   the v109 leg rule); the legs into and out of a poisoned stamp
+   both fail it, so the stamp contributes nothing. */
+{
+  const pnlSrc = fs.readFileSync(path.join(ROOT, 'modules', 'pnl.js'), 'utf8');
+  function xFn(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    if (i === -1) throw new Error('fn not found: ' + name);
+    let depth = 0, j = src.indexOf('{', i);
+    for (; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i, j + 1); }
+    }
+    throw new Error('fn unbalanced: ' + name);
+  }
+  const mem = { fuel_fills: [], rev_entries: [] };
+  const sb = {
+    console: console,
+    App: { _store: { get: (k, d) => (k in mem ? mem[k] : d), set: (k, v) => { mem[k] = v; } } }
+  };
+  sb.window = sb;
+  const vm2 = require('vm');
+  vm2.createContext(sb);
+  vm2.runInContext(
+    'var S = function (k, d) { return App._store.get(\'pnl_\' + k, d); };\n' +
+    xFn(pnlSrc, 'inMonth') + '\n' + xFn(pnlSrc, 'totalMiles') + '\n__tm = totalMiles;', sb);
+  const tm = sb.__tm;
+  mem.fuel_fills = [
+    { date: '2026-10-03', odo: '168510' },
+    { date: '2026-10-14', odo: '168759' },
+    { date: '2026-10-15', odo: '519326' },
+    { date: '2026-10-16', odo: '169166' }
+  ];
+  eq('v118 miles: the poisoned stamp contributes nothing — October total is the honest legs only', tm('2026-10'), 249);
+  ok('v118 miles: the total is a plausible four-figure-class number, not 350,816', tm('2026-10') < 10000 && tm('2026-10') !== 350816);
+  mem.fuel_fills = [
+    { date: '2026-10-03', odo: '168510' },
+    { date: '2026-10-14', odo: '168759' },
+    { date: '2026-10-16', odo: '169166' }
+  ];
+  eq('v118 miles: clean data still telescopes to last − first (656 km)', tm('2026-10'), 656);
+  mem['pnl_miles_2026-10'] = '1234';
+  eq('v118 miles: a manual override still wins outright', tm('2026-10'), 1234);
+  delete mem['pnl_miles_2026-10'];
+}
+
 console.log('\npnl-flawless: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

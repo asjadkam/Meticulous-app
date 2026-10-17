@@ -63,16 +63,16 @@ console.log('\n— (d) the tap rule, both pickers —');
   ok("the Navigator's picker states the tap rule", tapAt >= 0);
   const tapBody = nav.slice(tapAt, tapAt + 1200);
   ok('a pinned tap writes the place NAME into the search box',
-    tapBody.indexOf('if (q) q.value = p.name;') >= 0);
+    tapBody.indexOf('if (q) q.value = pName;') >= 0); // v118: the resolved name (displayPlaceName), never a coordinates-name
   ok('…and still sets the destination from the pin',
-    tapBody.indexOf('setDest([p.lat, p.lng], p.name);') >= 0);
+    tapBody.indexOf('setDest([p.lat, p.lng], pName);') >= 0);
   ok('an address-only tap still hands the address to the search',
     tapBody.indexOf('q.value = p.address; searchBtn.onclick();') >= 0);
 }
 {
   ok('the Places picker states the tap rule', navi.indexOf('THE TAP RULE') >= 0);
   ok('a place tap writes the name into the ONE field',
-    navi.indexOf('if (picked && qEl) qEl.value = picked.place.name;') >= 0);
+    navi.indexOf('if (picked && qEl) qEl.value = displayPlaceName(picked.place);') >= 0); // v118: resolved name
   ok('the ✓ moves IN PLACE (row innerHTML), no list repaint on tap',
     navi.indexOf('rb.innerHTML = pickerRowInner(re, selId[kind]);') >= 0);
   const tapFn = navi.slice(navi.indexOf('if (picked && qEl)'), navi.indexOf('if (picked && qEl)') + 700);
@@ -82,7 +82,7 @@ console.log('\n— (d) the tap rule, both pickers —');
     navi.indexOf('function pickerRowInner(e, pickedId)') >= 0 &&
     navi.indexOf('pickerRowInner(e, pickedId) + \'</button>\'') >= 0);
   ok('Go again populates the field instead of jumping straight to the Navigator',
-    navi.indexOf('if (qEl) qEl.value = r.name;') >= 0);
+    navi.indexOf('if (qEl) qEl.value = rName;') >= 0); // v118: the resolved recent name (displayPlaceName(r))
   ok('a recent with no saved place still gets its detail (selRecent)',
     navi.indexOf('selRecent = { id: r.id') >= 0 && navi.indexOf("src: 'recent'") >= 0);
 }

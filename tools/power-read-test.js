@@ -306,6 +306,50 @@ async function main() {
   check('v102: chatbot default proxy URL is our own server', chatSrc2.indexOf('https://2.31.47.19/ai/chat') >= 0 && !/45\.31\.47\.19|185\.31\.47\.19/.test(chatSrc2));
   mockStore.set('powerReadProxyUrl', '');
 
+  /* ---------- v118: ONE automatic retry on transient failure ----------
+     The soak's circuit 1 failed the owner's dash photo outright
+     ("⚡ Power read failed") and circuits 2–3 read the SAME photo
+     fine — a single 5xx/network blip was surfacing as a verdict.
+     A transient failure (network class, or HTTP 5xx) is retried
+     exactly once; quota and other verdicts are never retried;
+     when both attempts fail transiently the copy says so. */
+  PowerRead.setKey('TESTKEY-123');
+  PowerRead.RETRY_DELAY_MS = 0;
+  mockStore.set('powerReadProxyUrl', '');
+  {
+    let n = 0;
+    fetchCalls = [];
+    fetchHandler = () => { n++; return n === 1 ? geminiErr(500, 'boom') : geminiOk({ value: 169166 }); };
+    const r1 = await PowerRead.read('odometer', IMG);
+    check('v118 retry: a 500 then success → the read succeeds, exactly 2 fetches', r1.ok === true && r1.fields && r1.fields.value === '169166' && fetchCalls.length === 2, JSON.stringify(r1) + ' calls=' + fetchCalls.length);
+  }
+  {
+    let n = 0;
+    fetchCalls = [];
+    fetchHandler = () => { n++; return n === 1 ? Promise.reject(new Error('socket reset')) : geminiOk({ value: 169166 }); };
+    const r2 = await PowerRead.read('odometer', IMG);
+    check('v118 retry: a network rejection then success → succeeds, 2 fetches', r2.ok === true && fetchCalls.length === 2, 'calls=' + fetchCalls.length);
+  }
+  {
+    fetchCalls = [];
+    fetchHandler = () => geminiErr(503, 'down');
+    const r3 = await PowerRead.read('odometer', IMG);
+    check('v118 retry: two transient failures → honest "failed twice" copy, exactly 2 fetches', r3.ok === false && r3.retried === true && /failed twice/.test(r3.message || '') && fetchCalls.length === 2, JSON.stringify(r3) + ' calls=' + fetchCalls.length);
+  }
+  {
+    fetchCalls = [];
+    fetchHandler = () => geminiErr(429, 'quota');
+    const r4 = await PowerRead.read('odometer', IMG);
+    check('v118 retry: quota (429) is NEVER retried — 1 fetch', r4.ok === false && r4.kind === 'quota' && fetchCalls.length === 1, 'calls=' + fetchCalls.length);
+  }
+  {
+    fetchCalls = [];
+    fetchHandler = () => geminiErr(400, 'bad request');
+    const r5 = await PowerRead.read('odometer', IMG);
+    check('v118 retry: a 400 verdict is not retried — 1 fetch', r5.ok === false && fetchCalls.length === 1, 'calls=' + fetchCalls.length);
+  }
+  PowerRead.setKey('');
+
   console.log('\npower-read: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }

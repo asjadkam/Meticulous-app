@@ -104,9 +104,9 @@ ok('the saved record gains the time', fuelSrc.includes('if (fuReadTime) rec.time
 ok('an edited record gains the time on a fresh read', fuelSrc.includes('if (fuReadTime) updated.time = fuReadTime;'));
 ok('a hand-changed date detaches the time', fuelSrc.includes("if (id === '#fu_date') fuReadTime = '';"));
 ok('the form fills all four fields from a read (one pass)',
-  ["fillField('#fu_l', parsed.litres)", "fillField('#fu_cost', parsed.cost)",
+  ["fillField('#fu_l', fuRoundL(parsed.litres))", "fillField('#fu_cost', fuRoundC(parsed.cost))",
    "fillField('#fu_stn', parsed.station)", "fillField('#fu_date', parsed.date)"]
-    .every(s => fuelSrc.includes(s)));
+    .every(s => fuelSrc.includes(s))); // v118: litres/cost fill at receipt precision
 ok('nothing auto-saves (the form Save is the only write)', !/fuHandlePhoto[\s\S]{0,400}saveFillsVerified/.test(fuelSrc));
 
 console.log('\nfuel-fill test: ' + pass + ' passed, ' + fail + ' failed');

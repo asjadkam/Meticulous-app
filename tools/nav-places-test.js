@@ -179,13 +179,53 @@ ok('v87: Navigator consumes the pending destination through setDest', torSrc.inc
 ok('v103: Navigator offers the shared search-first picker (the built-ins <select> is gone)',
   torSrc.includes('id="nv_pq"') && torSrc.includes('id="nv_presults"') && torSrc.includes('pickerEntries(') &&
   !torSrc.includes('id="nv_places"') && !torSrc.includes('builtinPlaces()'));
-ok('Navigator picker sets the destination on the pin', torSrc.includes('setDest([p.lat, p.lng], p.name)'));
+ok('Navigator picker sets the destination on the pin', torSrc.includes('setDest([p.lat, p.lng], pName)')); // v118: label is the RESOLVED name (displayPlaceName), never a stored coordinates-name
 ok('v103: the picker is ONE shared component (Navigation exports it; recents-only default, cap 6)',
   navSrc.includes('pickerEntries: pickerEntries') && navSrc.includes('pickerRowHTML: pickerRowHTML') &&
   navSrc.includes('pickerFind: pickerFind') && navSrc.includes('PICKER_RECENTS_MAX = 6'));
 ok('v103: NO external navigation handoff in the Navigator (owner: never leave the app)',
   !torSrc.includes('ttnLinks') && !torSrc.includes('waze.com') && !torSrc.includes('nv_ttn'));
 ok('no routing-server config touched (no serverUrl writes in either module)', !/serverUrl\s*[:=]/.test(navSrc));
+
+/* ---------- v118: a recent tap never pastes raw coordinates ----------
+   The soak tapped the recent for the Butterfly dump site and the
+   search box filled with "50.9519460, -114.0273550" — a place
+   saved from a pin can carry its own coordinates AS its name.
+   displayPlaceName resolves it: a real name wins; a coordinates-
+   name borrows the name of the saved place at the same pin; a
+   pin nobody named reads "Dropped pin". */
+{
+  const vm = require('vm');
+  const a = navSrc.indexOf('var COORDS_NAME_RE');
+  const b = navSrc.indexOf('function pickerEntries', a);
+  ok('v118: the name resolver exists in the picker region', a !== -1 && b !== -1 && b > a);
+  const sb = {
+    console: console,
+    BUILTINS: [],
+    data: () => ({
+      work: [{ id: 'bfly', name: 'Butterfly dump site', type: 'dump', lat: 50.951946, lng: -114.027355 }],
+      personal: [{ id: 'home1', name: 'Home', lat: 51.15709, lng: -113.93862 }],
+      recent: []
+    })
+  };
+  vm.createContext(sb);
+  vm.runInContext(navSrc.slice(a, b) + '\n__dpn = displayPlaceName;', sb);
+  const dpn = sb.__dpn;
+  ok('v118: a coordinates-name at the Butterfly pin resolves to the saved place’s name',
+    dpn({ name: '50.9519460, -114.0273550', lat: 50.9519460, lng: -114.0273550 }) === 'Butterfly dump site',
+    dpn({ name: '50.9519460, -114.0273550', lat: 50.9519460, lng: -114.0273550 }));
+  ok('v118: an unnamed pin reads "Dropped pin", never the coordinates',
+    dpn({ name: '51.0000000, -114.0000000', lat: 51.0, lng: -114.0 }) === 'Dropped pin');
+  ok('v118: the favorite whose own name IS its coordinates still resolves (a twin at the same pin is itself)',
+    dpn({ name: '50.9519460, -114.0273550', lat: 50.951946, lng: -114.027355 }) === 'Butterfly dump site');
+  ok('v118: a real name always passes through untouched',
+    dpn({ name: '12th Street', lat: 51.0, lng: -114.0 }) === '12th Street');
+  ok('v118: Navigation exports the resolver for its hosts', navSrc.includes('displayPlaceName: displayPlaceName'));
+  ok('v118: picker rows resolve names at build time', navSrc.includes('p.name = displayPlaceName(p);'));
+  ok('v118: recordNav logs the resolved name into recents', navSrc.includes('name: displayPlaceName(fav)'));
+  ok('v118: "Go again" fills the box with the resolved name', navSrc.includes('var rName = displayPlaceName(r);') && navSrc.includes('if (qEl) qEl.value = rName;'));
+  ok('v118: the Navigator picker tap resolves through the shared resolver', torSrc.includes('navPicker.displayPlaceName(p)'));
+}
 
 console.log('\nnav-places test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -421,7 +421,7 @@
         return { ok: false, kind: 'badkey', message: '⚡ Power read couldn\'t complete that read — your photo and entries are unchanged.' };
       }
       if (r.status === 429) return { ok: false, kind: 'quota', message: '⚡ Power read hit the cloud reader\'s limit for now — try again later. Your photo and entries are unchanged.' };
-      return { ok: false, kind: 'http', message: '⚡ Power read failed (HTTP ' + r.status + ') — your photo and entries are unchanged.' };
+      return { ok: false, kind: 'http', status: r.status, message: '⚡ Power read failed (HTTP ' + r.status + ') — your photo and entries are unchanged.' };
     }, function () {
       if (timer) clearTimeout(timer);
       return { ok: false, kind: 'network', message: '⚡ Power read could not reach the cloud reader.' };
@@ -443,7 +443,7 @@
     }).then(function (resp) {
       return resp.json().then(function (j) { return { status: resp.status, json: j }; }, function () { return { status: resp.status, json: null }; });
     }).then(function (r) {
-      if (r.status !== 200 || !r.json) return { ok: false, kind: 'http', message: '⚡ Power read failed — your photo and entries are unchanged.' };
+      if (r.status !== 200 || !r.json) return { ok: false, kind: 'http', status: r.status, message: '⚡ Power read failed — your photo and entries are unchanged.' };
       var rawText = (typeof r.json.text === 'string') ? r.json.text : null;
       var parsed = (rawText !== null) ? parseModelJson(rawText) : r.json;
       var fields = mapFields(reader, parsed, rawText);
@@ -460,7 +460,7 @@
   /* One read: the server proxy when one is set; otherwise the
      device-saved key walks the model chain on 404s only, remembers
      the model that worked. Counts exactly one read per success. */
-  PowerRead.read = function (reader, dataUrl) {
+  function readOnce(reader, dataUrl) {
     var proxy = PowerRead.proxyUrl();
     if (proxy) return callProxy(proxy, reader, dataUrl);
     var key = PowerRead.getKey();
@@ -481,6 +481,37 @@
       });
     }
     return Promise.resolve().then(function () { return attempt(0); });
+  }
+
+  /* v118: ONE automatic retry on a TRANSIENT failure — the soak's
+     circuit 1 failed the owner's dash photo ("⚡ Power read
+     failed") and circuits 2–3 read the SAME photo fine: a single
+     5xx/network blip was being surfaced as a verdict. Transient =
+     network-class, or HTTP 5xx from either route. Never retried:
+     quota (429 — the reader's limit is real), a bad key, a model
+     that doesn't exist, an empty/unparseable 200 answer (not a
+     transport failure), or no-key. If the retry also fails
+     transiently, the copy says so honestly — it was tried twice. */
+  PowerRead.RETRY_DELAY_MS = 1200;
+  function prTransient(res) {
+    if (!res || res.ok) return false;
+    if (res.kind === 'network') return true;
+    if (res.kind === 'http' && typeof res.status === 'number' && res.status >= 500) return true;
+    return false;
+  }
+  PowerRead.read = function (reader, dataUrl) {
+    return readOnce(reader, dataUrl).then(function (res) {
+      if (!prTransient(res)) return res;
+      return new Promise(function (resolve) {
+        setTimeout(resolve, PowerRead.RETRY_DELAY_MS || 0);
+      }).then(function () { return readOnce(reader, dataUrl); }).then(function (res2) {
+        if (!res2.ok && prTransient(res2)) {
+          res2.retried = true;
+          res2.message = '⚡ Power read failed twice — the cloud reader may be having a moment. Your photo and entries are unchanged; you can type the number instead.';
+        }
+        return res2;
+      });
+    });
   };
 
   /* ---------- offline queue (synced store key) ---------- */

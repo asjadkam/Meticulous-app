@@ -819,7 +819,18 @@
           nv[inp.getAttribute('data-mtint')] = parseInt(inp.value, 10) || 0;
         });
         W('intervals', nv);
-        W('annualDate', body.querySelector('#mt_annual').value || '');
+        var annualV = body.querySelector('#mt_annual').value || '';
+        W('annualDate', annualV);
+        /* v118: keep the two stores of this one fact in step at
+           the write point — a Maintenance save also lands in
+           onboarding.safetyExpiry, so a later Preferences save
+           has nothing stale left to resurrect (the mirror that
+           reverted the owner's sticker to May 1 ran the other
+           way, from the form; see preferences.js pfSafetyWinner). */
+        try {
+          var ob = App._store.get('onboarding', {}) || {};
+          if (String(ob.safetyExpiry || '') !== annualV) { ob.safetyExpiry = annualV; App._store.set('onboarding', ob); }
+        } catch (e) {}
         api.render(body);
       };
     }

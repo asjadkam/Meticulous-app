@@ -397,5 +397,52 @@ console.log('D. dispatch edit scroll');
 }
 
 console.log('');
+console.log('J. v118 fuel: receipt-precision prefills + the DETAILS view');
+{
+  /* Item 7: a receipt read that derives litres (cost ÷ price)
+     must not leave raw float junk in the form fields — prefills
+     are rounded to receipt precision (3dp litres, 2dp money) at
+     BOTH fill sites and in the edit prefill. */
+  function xFn118(src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    let depth = 0, j = src.indexOf('{', i);
+    for (; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i, j + 1); }
+    }
+    throw new Error('fn unbalanced: ' + name);
+  }
+  const rl = new Function(xFn118(fuelSrc, 'fuRoundL') + '\nreturn fuRoundL;')();
+  const rc = new Function(xFn118(fuelSrc, 'fuRoundC') + '\nreturn fuRoundC;')();
+  eq('j: litres prefill rounds the derived float to receipt precision', rl(88.10600280761719), '88.106');
+  eq('j: cost prefill rounds the derived float to receipt precision', rc(199.91000366210935), '199.91');
+  eq('j: an already-clean value passes through', rl('88.106'), '88.106');
+  ok('j: the direct receipt fill rounds before filling',
+    fuelSrc.indexOf("fillField('#fu_l', fuRoundL(parsed.litres))") !== -1 &&
+    fuelSrc.indexOf("fillField('#fu_cost', fuRoundC(parsed.cost))") !== -1);
+  ok('j: the power-read fill (fuFillFromParsed) rounds too',
+    (fuelSrc.match(/fillField\('#fu_l', fuRoundL\(parsed\.litres\)\)/g) || []).length === 2);
+  ok('j: the edit prefill rounds a stored record’s residue',
+    fuelSrc.indexOf("'#fu_l': fuRoundL(editRec.litres)") !== -1 &&
+    fuelSrc.indexOf("'#fu_cost': fuRoundC(editRec.cost)") !== -1);
+  /* Item 10: the details view — a row tap opens IT, not the
+     edit form; Edit/Delete live on it as quiet secondaries. */
+  ok('j: a row tap opens the DETAILS view (detailFillIdx), not the edit form',
+    fuelSrc.indexOf('detailFillIdx = +el.getAttribute(\'data-fuedit\');') !== -1);
+  ok('j: the details view renders the entry’s fields + photo element',
+    fuelSrc.indexOf("id=\"fu_det_photo\"") !== -1 && fuelSrc.indexOf('Fill-up details') !== -1 &&
+    fuelSrc.indexOf('Price per litre') !== -1);
+  ok('j: a photo-less entry gets the clean empty state, never a broken image',
+    fuelSrc.indexOf('No photo for this entry') !== -1);
+  ok('j: Edit from details reuses the existing edit flow',
+    fuelSrc.indexOf("body.querySelector('#fu_det_edit').onclick") !== -1 &&
+    fuelSrc.indexOf('editFillIdx = detailFillIdx;') !== -1);
+  ok('j: Delete on details is a two-tap arm, then the verified save',
+    fuelSrc.indexOf('detailDelArm') !== -1 && fuelSrc.indexOf('Tap again to delete') !== -1);
+  ok('j: the details numbers print at receipt precision',
+    fuelSrc.indexOf("String(+dL.toFixed(3))") !== -1 && fuelSrc.indexOf("'$' + dC.toFixed(2)") !== -1);
+}
+
+console.log('');
 console.log('records-open test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

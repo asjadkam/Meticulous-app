@@ -91,6 +91,45 @@ console.log('\n— statics: escalation + steppers wired into the shared pipeline
     appSrc.indexOf('App._stickerExpiryISO = stickerExpiryISO;') >= 0);
   ok('no failure path clears the photo preview',
     !/prevEl\.innerHTML = ''/.test(appSrc.slice(appSrc.indexOf("} else {"), appSrc.indexOf('function collectOnbInputs'))));
+
+  /* ---------- v118: the sticker date must SURVIVE a Preferences save ----------
+     The owner's expiry was set to 2027-05-31 and verified due in
+     227 days (Oct 16, 19:44) — then a later Preferences save
+     copied the form's stale onboarding.safetyExpiry (2027-05-01)
+     over mt_annualDate through the one-way mirror, and
+     Maintenance showed May 1 again. The winner rule now: an
+     untouched form value never overwrites a different stored
+     annualDate; an actually-edited value still wins. The
+     Maintenance save mirrors INTO onboarding too, so neither
+     store can resurrect a stale date. Composing from the
+     month/year steppers still yields the LAST day (v107 rule). */
+  const prefSrc118 = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
+  const maintSrc118 = fs.readFileSync(path.join(ROOT, 'modules', 'maintenance.js'), 'utf8');
+  const winSrc = (() => {
+    const a = prefSrc118.indexOf('function pfSafetyWinner');
+    const b = prefSrc118.indexOf('function paintParkCard', a);
+    if (a === -1 || b === -1 || b <= a) throw new Error('pfSafetyWinner not found');
+    return prefSrc118.slice(a, b);
+  })();
+  const pfSafetyWinner = new Function(winSrc + '\nreturn pfSafetyWinner;')();
+  eq('v118 sticker: untouched form (May 1) + newer stored date (May 31) → the stored date wins',
+    pfSafetyWinner('2027-05-01', '2027-05-01', '2027-05-31'), '2027-05-31');
+  eq('v118 sticker: a value actually edited in the form still wins',
+    pfSafetyWinner('2028-01-15', '2027-05-01', '2027-05-31'), '2028-01-15');
+  eq('v118 sticker: form and store in agreement → unchanged',
+    pfSafetyWinner('2027-05-31', '2027-05-31', '2027-05-31'), '2027-05-31');
+  eq('v118 sticker: no stored annualDate yet → the form value stands',
+    pfSafetyWinner('2027-05-01', '2027-05-01', ''), '2027-05-01');
+  eq('v118 sticker: clearing the field in the form is an edit — it wins (no resurrection)',
+    pfSafetyWinner('', '2027-05-01', '2027-05-31'), '');
+  ok('v118 sticker: the Preferences save decides through pfSafetyWinner',
+    prefSrc118.indexOf("o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));") >= 0);
+  ok('v118 sticker: render captures what the safety field opened with',
+    prefSrc118.indexOf("pfSafetyRendered = o.safetyExpiry || '';") >= 0);
+  ok('v118 sticker: the Maintenance save mirrors into onboarding.safetyExpiry',
+    maintSrc118.indexOf("ob.safetyExpiry = annualV; App._store.set('onboarding', ob);") >= 0);
+  eq('v118 sticker: month/year steppers still compose the LAST day (May 2027 → 2027-05-31)',
+    sb.__iso(4, 2027), '2027-05-31');
 }
 
 console.log('\npower-read-safety: ' + pass + ' passed, ' + fail + ' failed');

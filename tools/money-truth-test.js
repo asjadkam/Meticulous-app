@@ -356,5 +356,117 @@ console.log('\n— v116: the day detail + flat list tell the header\u2019s truth
     revSrc.indexOf('Also recorded') >= 0 && revSrc.indexOf('rv_ev_toggle') >= 0);
 }
 
+console.log('\n— v118: manifest END on the REAL record shapes (a READ ticket finish) —');
+{
+  /* The v107 fixture's tickets carried no finishTime, so the
+     derived finish competed with the session and won/lost
+     correctly. His REAL Oct 16 ticket carries a READ finish
+     ("6:00 PM" — the card's own 8:00 + 10h), and the read finish
+     short-circuited the competition entirely: 6:00 PM printed
+     while he drove until 7:00 PM. The card's finish (read or
+     derived, the later of the two) now competes with the
+     session's end exactly like v107's derived finish did. */
+  const mem = oct16Mem();
+  mem.dsp_list[0].tickets[0].startTime = '8:00 AM';
+  mem.dsp_list[0].tickets[0].finishTime = '6:00 PM';
+  const w = world(mem);
+  const c = w.__collectRef('2026-10-16');
+  eq('v118 end: Oct 16 real shape — the session’s 7:00 PM beats the card’s read 6:00 PM finish', c.endT, '7:00 PM');
+  eq('v118 end: Oct 16 real shape — the winning end is the tracker’s', c.endSrc, 'tracker');
+}
+{
+  /* Oct 15 with a READ finish: card 6:30 PM, session 6:02 PM,
+     close stamp 7:04 PM — the card still wins; the close stamp
+     never competes. */
+  const mem15 = {
+    onboarding: { payStandard: 'Hourly', payRate: '29', userRole: 'driver' },
+    rev_entries: [{ date: '2026-10-15', type: 'hourly', hours: '11.5', amount: '333.50', note: 'Hours sheet import' }],
+    rev_extras: [], rev_period: '30',
+    sessions: [{ date: '2026-10-15', seconds: 39720, endedAt: localISO(2026, 10, 15, 18, 2, 0) }],
+    dsp_list: [{
+      date: '2026-10-14', scheduledAt: '2026-10-15T08:00', status: 'completed',
+      endedAt: localMs(2026, 10, 15, 19, 4, 0),
+      tickets: [{ ocrType: 'haul_card', cardNumber: '21314', foremanHours: '10.5', loads: '5', startTime: '8:00 AM', finishTime: '6:30 PM' }]
+    }]
+  };
+  const w15 = world(mem15);
+  const c15 = w15.__collectRef('2026-10-15');
+  eq('v118 end: Oct 15 real shape — the card’s read 6:30 PM finish stands', c15.endT, '6:30 PM');
+  eq('v118 end: Oct 15 real shape — the winning end is the card’s', c15.endSrc, 'card');
+}
+
+console.log('\n— v118: the dashboard Manifest preview quotes the BUILDER’s day —');
+{
+  /* Item 11: status() summed the raw session seconds — "9 h 45 m
+     worked" for Oct 16 — while the day's worked truth (and the
+     Manifest's own header) is the closed dispatch's 11 h. With
+     a priced record speaking for today, the preview quotes the
+     builder's dayHours; a tracker-only day keeps the session
+     span, which there IS the day's truth. */
+  const manSrcFull = fs.readFileSync(path.join(ROOT, 'modules', 'manifest.js'), 'utf8');
+  function extractStatus(src) {
+    const i = src.indexOf('status: function');
+    if (i === -1) throw new Error('status fn not found');
+    let depth = 0, j = src.indexOf('{', i);
+    for (; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i + 'status: '.length, j + 1); }
+    }
+    throw new Error('status fn unbalanced');
+  }
+  const mem = oct16Mem();
+  const w = world(mem);
+  w.App._today = () => '2026-10-16';
+  w.App.userRole = () => 'driver';
+  /* in the shipped module, status() reads the module-scope G —
+     the same App._store.get the world's collect closure uses;
+     the extracted function gets it as a context global here. */
+  w.G = function (k, d) { return w.App._store.get(k, d); };
+  vm.runInContext('__manStatus = (' + extractStatus(manSrcFull) + ');', w);
+  eq('v118 preview: Oct 16 shape (tracker 9.75h + closed dispatch 11h) → "11 h 0 m worked", the builder’s day',
+    w.__manStatus(), 'Today: 11 h 0 m worked');
+  const memT = oct16Mem();
+  memT.dsp_list = [];
+  memT.rev_entries = [memT.rev_entries[1]]; // tracker entry only
+  memT.sessions[0].seconds = 35100; // the session's own span: 9.75 h, matching its entry
+  const wT = world(memT);
+  wT.App._today = () => '2026-10-16';
+  wT.App.userRole = () => 'driver';
+  wT.G = function (k, d) { return wT.App._store.get(k, d); };
+  vm.runInContext('__manStatus = (' + extractStatus(manSrcFull) + ');', wT);
+  eq('v118 preview: a tracker-only day keeps the session span (9 h 45 m)',
+    wT.__manStatus(), 'Today: 9 h 45 m worked');
+}
+
+console.log('\n— v118: the dashboard Revenue preview is a FIXED Last 30d —');
+{
+  /* Item 8: status() used to mirror the module's selected
+     window ("Last 16d: $319" after pay-period use). It now sums
+     dayAgg over the trailing 30 days whatever rev_period says. */
+  const revSrcFull = fs.readFileSync(path.join(ROOT, 'modules', 'revenue.js'), 'utf8');
+  function extractRevStatus(src) {
+    const i = src.indexOf('status: function');
+    if (i === -1) throw new Error('rev status not found');
+    let depth = 0, j = src.indexOf('{', i);
+    for (; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i + 'status: '.length, j + 1); }
+    }
+    throw new Error('rev status unbalanced');
+  }
+  const mem = oct16Mem();
+  mem.rev_period = '7'; // a 7-day window selected inside the module…
+  const w = world(mem);
+  w.App._today = () => '2026-10-16';
+  vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w);
+  eq('v118 preview: rev_period=7 selected, the card still quotes the fixed Last 30d figure',
+    w.__revStatus(), 'Last 30d: $319');
+  mem.rev_period = 'custom';
+  const w2 = world(mem);
+  w2.App._today = () => '2026-10-16';
+  vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w2);
+  eq('v118 preview: rev_period=custom selected, same fixed figure', w2.__revStatus(), 'Last 30d: $319');
+}
+
 console.log('\nmoney-truth: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

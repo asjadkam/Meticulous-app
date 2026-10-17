@@ -237,7 +237,11 @@
   /* Record a navigation. Work visits are logged to Manifest; personal never. */
   function recordNav(fav, kind) {
     var d = data();
-    var rec = { id: uid(), name: fav.name, address: fav.address || '', kind: kind, ts: Date.now() };
+    /* v118: a pin-sourced favorite can carry coordinates for a
+       name — the recent logs the RESOLVED name (see
+       displayPlaceName), so "Go again" never pastes coordinates
+       into the search box. */
+    var rec = { id: uid(), name: displayPlaceName(fav), address: fav.address || '', kind: kind, ts: Date.now() };
     /* v84: a place's pin rides the recent entry, so "Go again"
        navigates to the same pin, not a name search. */
     if (fav.lat && fav.lng) { rec.lat = fav.lat; rec.lng = fav.lng; }
@@ -251,7 +255,7 @@
           break;
         }
       }
-      manifestFeedPush('navigation', 'Navigated to work site: ' + fav.name + (fav.address ? ' — ' + fav.address : ''));
+      manifestFeedPush('navigation', 'Navigated to work site: ' + displayPlaceName(fav) + (fav.address ? ' — ' + fav.address : ''));
     }
     saveData(d);
   }
@@ -266,7 +270,7 @@
      its address as the search text. */
   function goNavigate(fav, kind) {
     recordNav(fav, kind);
-    var pend = { name: fav.name, ts: Date.now() };
+    var pend = { name: displayPlaceName(fav), ts: Date.now() };
     if (fav.lat && fav.lng) { pend.lat = fav.lat; pend.lng = fav.lng; }
     else pend.query = fav.address ? (fav.name + ', ' + fav.address) : fav.name;
     App._store.set('nav_pending', pend);
@@ -334,16 +338,58 @@
      paint (full-width button, FULL name, source tag); a host
      wires [data-pid] taps itself. */
   var PICKER_RECENTS_MAX = 6;
+  /* v118: the name a place ANSWERS TO. A place saved from a pin
+     can carry its own coordinates AS its name ("50.9519460,
+     -114.0273550") — the soak tapped the recent for the Butterfly
+     dump site and the search box filled with raw coordinates
+     instead of the name, breaking the v113/v107 tap rule. The
+     resolver: a real name wins; a coordinates-name resolves to
+     the saved place at the same pin (favorites + built-ins, both
+     tabs) and borrows ITS name; a pin nobody named reads
+     "Dropped pin". Raw coordinates never become the visible
+     query anywhere a name is shown or filled. */
+  var COORDS_NAME_RE = /^-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+$/;
+  function nameIsCoords(nm) { return COORDS_NAME_RE.test(String(nm || '').trim()); }
+  function placeByCoords(lat, lng) {
+    var d = data(), all = [];
+    BUILTINS.forEach(function (p) { all.push(p); });
+    (d.work || []).forEach(function (p) { all.push(p); });
+    (d.personal || []).forEach(function (p) { all.push(p); });
+    for (var i = 0; i < all.length; i++) {
+      var p = all[i];
+      if (p && p.lat && p.lng &&
+          Math.abs(parseFloat(p.lat) - lat) < 0.0006 &&
+          Math.abs(parseFloat(p.lng) - lng) < 0.0006) return p;
+    }
+    return null;
+  }
+  function displayPlaceName(p) {
+    if (!p) return '';
+    var nm = String(p.name || '').trim();
+    if (nm && !nameIsCoords(nm)) return nm;
+    if (p.lat && p.lng) {
+      var hit = placeByCoords(parseFloat(p.lat), parseFloat(p.lng));
+      if (hit && String(hit.name || '').trim() && !nameIsCoords(hit.name)) return String(hit.name).trim();
+      return 'Dropped pin';
+    }
+    return nm;
+  }
   function pickerEntries(kind, q) {
     var d = data();
     var rmap = {};
     (d.recent || []).forEach(function (r) {
+      /* v118: recents key by their RESOLVED name too — a recent
+         logged under raw coordinates still counts as a visit to
+         the place that lives at that pin. */
       var k = String((r && r.name) || '').trim().toLowerCase();
       if (k && !rmap[k]) rmap[k] = r.ts || 0; /* recent is newest-first */
+      var rk = String(displayPlaceName(r) || '').trim().toLowerCase();
+      if (rk && !rmap[rk]) rmap[rk] = r.ts || 0;
     });
     var all = placesFor(kind).map(function (e) {
       var p = {}, k;
       for (k in e.place) p[k] = e.place[k];
+      p.name = displayPlaceName(p); /* v118: rows never show a coordinates-name */
       var rt = rmap[String(p.name || '').trim().toLowerCase()] || 0;
       if (rt > (p.lastVisit || 0)) p.lastVisit = rt;
       return { place: p, src: e.src };
@@ -380,6 +426,7 @@
     pickerEntries: pickerEntries,
     pickerRowHTML: pickerRowHTML,
     pickerFind: pickerFind,
+    displayPlaceName: displayPlaceName, /* v118: hosts resolve a place's answerable name through here */
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';
@@ -479,7 +526,7 @@
                (his Oct 16 recording). */
             var pid = b.getAttribute('data-pid');
             var picked = findEntry(kind, pid);
-            if (picked && qEl) qEl.value = picked.place.name;
+            if (picked && qEl) qEl.value = displayPlaceName(picked.place);
             selId[kind] = pid;
             selRecent = null;
             resEl.querySelectorAll('[data-pid]').forEach(function (rb) {
@@ -500,7 +547,7 @@
         }
         var p = e.place;
         detailEl.innerHTML =
-          '<div class="a">' + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b>' +
+          '<div class="a">' + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(displayPlaceName(p)) + '</b>' +
           (p.type ? ' <span class="pill">' + esc(p.type) + '</span>' : '') +
           ' <span class="pill">' + (e.src === 'builtin' ? 'Built-in' : 'Yours') + '</span></div>' +
           (p.note ? '<div class="b">' + esc(p.note) + '</div>' : '') +
@@ -600,19 +647,26 @@
           var dd = data(), id = b.getAttribute('data-rgo'), r = null;
           for (var i = 0; i < dd.recent.length; i++) if (dd.recent[i].id === id) { r = dd.recent[i]; break; }
           if (!r) return;
-          if (qEl) qEl.value = r.name;
+          /* v118: the box gets the RESOLVED name, never a stored
+             coordinates-name (see displayPlaceName). */
+          var rName = displayPlaceName(r);
+          if (qEl) qEl.value = rName;
           var match = null;
           placesFor(kind).forEach(function (e) {
-            if (!match && String(e.place.name || '').trim().toLowerCase() === String(r.name || '').trim().toLowerCase()) match = e;
+            if (match) return;
+            if (r.lat && r.lng && e.place.lat && e.place.lng &&
+                Math.abs(parseFloat(e.place.lat) - parseFloat(r.lat)) < 0.0006 &&
+                Math.abs(parseFloat(e.place.lng) - parseFloat(r.lng)) < 0.0006) { match = e; return; }
+            if (String(displayPlaceName(e.place) || '').trim().toLowerCase() === rName.toLowerCase()) match = e;
           });
           if (match) {
             selId[kind] = match.place.id;
             selRecent = null;
-            pickQ = r.name;
+            pickQ = rName;
             paintResults();
           } else {
             selId[kind] = '';
-            selRecent = { id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng, kind: r.kind };
+            selRecent = { id: r.id, name: rName, address: r.address, lat: r.lat, lng: r.lng, kind: r.kind };
             resEl.querySelectorAll('[data-pid]').forEach(function (rb) {
               var re = findEntry(kind, rb.getAttribute('data-pid'));
               if (re) rb.innerHTML = pickerRowInner(re, '');

@@ -246,6 +246,9 @@ check('revenue exposes back() + resetView()', /back: function/.test(revSrcB) && 
 check('revenue back() clears the day detail', revSrcB.indexOf('dayDetailDate = null') >= 0);
 const fuelSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'fuel.js'), 'utf8');
 check('fuel exposes back() + resetView() (edit is its sub-state)', /back: function/.test(fuelSrcB) && /resetView: function/.test(fuelSrcB));
+check('v118: fuel back() unwinds the DETAILS layer too (details → list) and resetView clears it',
+  fuelSrcB.indexOf('if (detailFillIdx !== null)') !== -1 &&
+  fuelSrcB.indexOf('detailFillIdx = null; detailDelArm = false;') !== -1);
 const invSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'invoice.js'), 'utf8');
 check('invoice exposes back() + resetView() (mode is its sub-view)', /back: function/.test(invSrcB) && /resetView: function/.test(invSrcB));
 const navSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'navigator.js'), 'utf8');

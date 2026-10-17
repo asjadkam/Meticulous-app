@@ -205,6 +205,34 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   ok('rates: billing + wage rate fields exist and save',
     prefSrc.indexOf('id="pf_billrate"') !== -1 && prefSrc.indexOf('id="pf_wagerate"') !== -1 &&
     prefSrc.indexOf("o.billingRate = g('pf_billrate'); o.ownWageRate = g('pf_wagerate');") !== -1);
+
+  /* ---------- v118: Bill-to prints the SAVED value verbatim ----------
+     The soak's invoice billed "Ai trucking" while Preferences
+     holds "AI Trucking": a draft frozen with the case-variant
+     never matched the v105 exact-equality heal, so the wrong
+     casing printed forever. invBillToHeal treats any casing of
+     the saved company (with or without the saved address) as
+     untouched and replaces it with the saved value verbatim; a
+     genuinely different hand-typed Bill-to is never rewritten. */
+  const healSrc = (() => {
+    const a = invSrc.indexOf('function invBillToHeal');
+    const b = invSrc.indexOf('/* ---------------- contractor invoice', a);
+    if (a === -1 || b === -1 || b <= a) throw new Error('invBillToHeal not found');
+    return invSrc.slice(a, b);
+  })();
+  const invBillToHeal = new Function(healSrc + '\nreturn invBillToHeal;')();
+  const CO = { contractingCo: 'AI Trucking', contractingAddr: '1506 16 St NE, Calgary, AB T2E 4T2' };
+  ok('v118 bill-to: renderInvoice heals through invBillToHeal', invSrc.indexOf('invBillToHeal(draft, o);') !== -1);
+  eq('v118 bill-to: case-variant name heals to the saved value + address, verbatim',
+    invBillToHeal({ billTo: 'Ai trucking' }, CO).billTo, 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2');
+  eq('v118 bill-to: case-variant name+address heals to the saved value verbatim',
+    invBillToHeal({ billTo: 'Ai trucking, 1506 16 st ne, calgary, ab t2e 4t2' }, CO).billTo, 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2');
+  eq('v118 bill-to: the exact saved name still heals (v105 rule intact)',
+    invBillToHeal({ billTo: 'AI Trucking' }, CO).billTo, 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2');
+  eq('v118 bill-to: an already-verbatim name+address is left exactly as saved',
+    invBillToHeal({ billTo: 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2' }, CO).billTo, 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2');
+  eq('v118 bill-to: a genuinely different hand-typed Bill-to is never rewritten',
+    invBillToHeal({ billTo: 'Some Other Co' }, CO).billTo, 'Some Other Co');
 })();
 
 console.log('\ninvoice-format: ' + pass + ' passed, ' + fail + ' failed');

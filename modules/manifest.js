@@ -227,49 +227,49 @@
     /* a live session means the day has not ended — the live block's
        "Still working" stands; confirmed ends apply to closed days */
     if (!live) {
-      if (tkEndMs !== null) { endT = fmtClock(tkEndMs); endSrc = 'card'; }
-      else {
-        /* v107: the card finish DERIVED from start + foreman hours
-           and the SESSION's real end now compete — the LATER one
-           is the day's end. Oct 15 pins the card side: derived
-           6:30 PM beat the session's 6:02 PM. Oct 16 pins the
-           session side: he closed the dispatch at ~5:47 PM and
-           derived finish said 6:00 PM, but he kept driving and
-           stopped the tracker at 7:00 PM at home — "My end time
-           was 7 pm." The dispatch record's endedAt (the close tap
-           itself) remains only the fallback for a completed day
-           with neither a derivable card end nor a session end. */
-        var sessEndMs = null;
-        sessions.forEach(function (s) {
-          var m2 = stampMs(s.endedAt);
-          if (m2 !== null && (sessEndMs === null || m2 > sessEndMs)) sessEndMs = m2;
+      /* v118: the CARD's finish — a ticket's read finish clock OR
+         the finish derived from start + foreman hours, whichever
+         the card itself supports (the later of the two; they are
+         the same fact stated two ways) — competes with the
+         SESSION's real end, and the LATER one is the day's end.
+         v107 ran that competition only for the DERIVED finish;
+         a ticket carrying a READ finishTime short-circuited it,
+         which is why the owner's real Oct 16 still printed the
+         card's 6:00 PM while his fixture (no finishTime on its
+         tickets) passed: his real card's finish WAS read, and his
+         session ran to 7:00 PM at home. Oct 15 stays the card's
+         6:30 PM — its session ended 6:02 PM, earlier. The dispatch
+         record's endedAt (the close tap) remains only the fallback
+         for a completed day with neither a card end nor a session
+         end (Oct 15's 7:04 PM close stamp must never compete). */
+      var sessEndMs = null;
+      sessions.forEach(function (s) {
+        var m2 = stampMs(s.endedAt);
+        if (m2 !== null && (sessEndMs === null || m2 > sessEndMs)) sessEndMs = m2;
+      });
+      var derivedEndMs = null;
+      if (anyCompleted && dspStartMs !== null && window.TicketOCR && TicketOCR.summarizeTickets) {
+        var fh = 0;
+        dayDsp.forEach(function (x) {
+          if (x.status === 'completed') fh += TicketOCR.summarizeTickets(x.tickets || [], 0).totalForemanHours || 0;
         });
-        var derivedEndMs = null;
-        if (anyCompleted && dspStartMs !== null && window.TicketOCR && TicketOCR.summarizeTickets) {
-          var fh = 0;
-          dayDsp.forEach(function (x) {
-            if (x.status === 'completed') fh += TicketOCR.summarizeTickets(x.tickets || [], 0).totalForemanHours || 0;
-          });
-          if (fh > 0) derivedEndMs = dspStartMs + fh * 3600000;
-        }
-        if (derivedEndMs !== null) {
-          /* a card end exists: it and the session's end compete,
-             later wins (the two pinned days above) — the close
-             tap's stamp does not compete here (Oct 15's record
-             carried a 7:04 PM endedAt beside the card's 6:30 PM
-             finish, and 6:30 PM is what he demanded). */
-          if (sessEndMs !== null && sessEndMs > derivedEndMs) {
-            endT = fmtClock(sessEndMs); endSrc = 'tracker';
-          } else {
-            cardEndMs = derivedEndMs; endT = fmtClock(cardEndMs); endSrc = 'card';
-          }
-        } else if (dspEndMs !== null) {
-          /* no card end to derive: his own close tap is the most
-             deliberate end stamp the day has (v83 priority). */
-          endT = fmtClock(dspEndMs); endSrc = 'dispatch';
-        }
-        /* else: the session end already sits in endT/endSrc. */
+        if (fh > 0) derivedEndMs = dspStartMs + fh * 3600000;
       }
+      var cardEndMs2 = tkEndMs;
+      if (derivedEndMs !== null && (cardEndMs2 === null || derivedEndMs > cardEndMs2)) cardEndMs2 = derivedEndMs;
+      if (cardEndMs2 !== null) {
+        if (sessEndMs !== null && sessEndMs > cardEndMs2) {
+          endT = fmtClock(sessEndMs); endSrc = 'tracker';
+        } else {
+          cardEndMs = cardEndMs2; endT = fmtClock(cardEndMs); endSrc = 'card';
+        }
+      } else if (dspEndMs !== null) {
+        /* no card end to compete: his own close tap is the most
+           deliberate end stamp the day has, ahead of a bare
+           session end (v83 priority, pinned by manifest-times). */
+        endT = fmtClock(dspEndMs); endSrc = 'dispatch';
+      }
+      /* else: the session end already sits in endT/endSrc. */
     }
 
     /* v107: earned, from the shared builder (see the note at the
@@ -540,6 +540,34 @@
             live = parseFloat(trk.elapsed) || 0;
             if (trk.status === 'running') live += Math.floor((Date.now() - (trk.startTs || Date.now())) / 1000);
             liveState = trk.status;
+          }
+          /* v118: the preview quotes the BUILDER's day, never the
+             raw session span, when a priced record speaks for
+             today — Oct 16's card read "9 h 45 m worked" (the
+             tracker session's own span, the same session behind
+             its $282.85 tracker math) while the day's worked
+             truth was the closed dispatch's 11 h (foreman 10 +
+             travel 1), which is what the Manifest itself shows.
+             A tracker-only day keeps the session span: there the
+             session IS the day's truth. */
+          var pricedH = null;
+          try {
+            var sh = (window.Meticulous && Meticulous.shared) || {};
+            if (typeof sh.buildRevenueLines === 'function') {
+              var built = sh.buildRevenueLines(G('rev_entries', []) || [], G('rev_extras', []) || [], G('dsp_list', []) || [], G('sessions', []) || [], G('onboarding', {}) || {});
+              (built.lines || []).forEach(function (l) {
+                if (l && l.date === today && (l.src === 'dispatch' || l.src === 'entry')) {
+                  var bh = parseFloat((built.dayHours || {})[today]);
+                  if (isFinite(bh) && bh > 0) pricedH = bh;
+                }
+              });
+            }
+          } catch (e) { pricedH = null; }
+          if (pricedH !== null) {
+            var ph = Math.floor(pricedH), pm = Math.round((pricedH - ph) * 60);
+            if (pm === 60) { ph += 1; pm = 0; }
+            return 'Today: ' + (ph ? ph + ' h ' : '') + pm + ' m worked' +
+              (liveState === 'running' ? ' · still working' : '');
           }
           var total = secs + live;
           if (total > 60) {

@@ -707,9 +707,14 @@
                also sets the destination from its pin (as before),
                an address-only place runs the search (as before). */
             var q = body.querySelector('#nv_q');
+            /* v118: the box + the destination label get the
+               RESOLVED name — a pin-saved place whose stored name
+               is its own coordinates shows its real name here
+               (navPicker.displayPlaceName), never the raw pair. */
+            var pName = (navPicker.displayPlaceName ? navPicker.displayPlaceName(p) : p.name);
             if (p.lat && p.lng) {
-              if (q) q.value = p.name;
-              setDest([p.lat, p.lng], p.name);
+              if (q) q.value = pName;
+              setDest([p.lat, p.lng], pName);
               if (S.map) S.map.setView(S.dest, 14);
             } else if (p.address) {
               if (q && searchBtn) { q.value = p.address; searchBtn.onclick(); }
