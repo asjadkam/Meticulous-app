@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 145,
-  "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
+  "webVersion": 146,
+  "notes": "v144: Connect first-request fix — the requests read rule now survives the not-yet-existing pair doc, so a first connection request between two accounts can be created.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,7 +17,7 @@
     "css/style.css": "ad9e8d9210a74c3d06f904254370b71f13038a22281ab5ab986e4030554ddea5",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "833ad6388fb7ab5bf3a8baa71f8e60ae4b01119d2e82afe1083d4962e8b39e9b",
+    "index.html": "a71028c251319062e89db5e961d29c08807adcccb4e3153d50a08a13d21ecabb",
     "js/app.js": "9248219f9af94368c54faffba26ee1c7c36c41175fa10e5a1946d586aa8fc5f7",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",

@@ -35,9 +35,19 @@ service cloud.firestore {
     // accepted/declined); the sender may re-open a declined request
     // (-> pending). Neither side can rewrite the pair (from/to are
     // immutable after create). Nobody else can touch a request.
+    // v144: the read also passes when the doc does NOT exist yet
+    // (resource == null). sendRequest probes the pair doc before
+    // creating it; without the guard, evaluating resource.data.*
+    // on a missing doc errors, Firestore treats an errored rule
+    // as DENY, and the probe rejects — no FIRST request between
+    // two accounts could ever be created. The probe of a missing
+    // doc reveals nothing but its own absence; an existing doc
+    // still reads for its two parties only.
     match /requests/{requestId} {
       allow read: if request.auth != null
-        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+        && (resource == null
+          || request.auth.uid == resource.data.from
+          || request.auth.uid == resource.data.to);
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.from
         && request.resource.data.status == 'pending';

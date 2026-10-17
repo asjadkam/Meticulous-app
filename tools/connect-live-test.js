@@ -354,6 +354,17 @@ function makeBody() {
   check('h: directory writes must carry the identity strings', dirBlock.indexOf('request.resource.data.name is string') !== -1 && dirBlock.indexOf('request.resource.data.role is string') !== -1);
   check('h: requests are readable by the two parties only',
     reqBlock.indexOf('request.auth.uid == resource.data.from') !== -1 && reqBlock.indexOf('request.auth.uid == resource.data.to') !== -1);
+  /* v144: the existence probe. sendRequest get()s the pair doc
+     BEFORE creating it; for a pair that has never connected the
+     doc does not exist, resource is null, and an unguarded
+     resource.data.* read ERRORS in rules evaluation — Firestore
+     treats an errored rule as DENY, so the get would reject and
+     NO first request could ever be created. The read rule must
+     let a signed-in user probe a not-yet-existing pair doc (the
+     answer reveals only that it does not exist); existing docs
+     stay parties-only, pinned by the check above. */
+  check('h: requests read survives the not-yet-existing pair doc (resource == null guard)',
+    reqBlock.indexOf('resource == null') !== -1);
   check('h: requests are creatable only by the sender, only as pending',
     reqBlock.indexOf('request.auth.uid == request.resource.data.from') !== -1 && reqBlock.indexOf("request.resource.data.status == 'pending'") !== -1);
   check('h: only the recipient can accept/decline a pending request',
