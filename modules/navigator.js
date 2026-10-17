@@ -47,7 +47,7 @@
    Persists via App._store (localStorage, mt_ prefix), key 'navigator':
    { profile: {height,width,length,weight,axleLoad,axles,hazmat},
      serverUrl: <absent until the user sets or clears it>, muted: false,
-     mode: 'truck' }.
+     mode: 'truck', avatar: 'dump' }.
 */
 (function () {
   'use strict';
@@ -231,6 +231,90 @@
     return { maneuvers: out, totalKm: totalKm, totalMin: totalMin };
   }
 
+  /* v135: TRUCK TRUTH — a U-turn is not a truck maneuver (owner,
+     Oct 17, 2026 12:05 MDT, from his recorded Ivor East Pond
+     trip: "This gps is for trucks! This [GPS] should be smart
+     enough to know that big trucks like ours can not make a
+     uturn on a dime like that! It suggested me to make a uturn
+     perhaps 5 times.. I knew what I was doing! Or else this
+     could be troublesome!"). Valhalla maneuver types 12/13 are
+     uturn_right / uturn_left; the text check is belt-and-braces
+     for engines/fixtures that phrase it instead of typing it.
+     Truck COSTING alone does not suppress these — Valhalla
+     happily issues U-turns to trucks — so the app treats them
+     in two layers (see doRoute + sanitizeTruckPlan below):
+     re-request around them, and never PRESENT one. */
+  var UTURN_RE = /u[\s\-]?turn/i;
+  function isUturnManeuver(m) {
+    if (!m) return false;
+    if (m.type === 12 || m.type === 13) return true;
+    return UTURN_RE.test(m.instruction || '') ||
+      UTURN_RE.test(m.verbalPre || '') || UTURN_RE.test(m.verbalPost || '');
+  }
+  function planUturns(plan) {
+    var out = [];
+    if (!plan || !plan.maneuvers) return out;
+    plan.maneuvers.forEach(function (m, i) { if (isUturnManeuver(m)) out.push(i); });
+    return out;
+  }
+
+  /* The point on a route line `m` metres from its start
+     (interpolated on the segment that crosses the mark). The
+     U-turn re-request excludes exactly these points — the spots
+     where the engine wanted the truck to turn around — so the
+     next answer has to loop the block instead. */
+  function pointAlongLine(line, m) {
+    if (!line || !line.length) return null;
+    if (!(m > 0)) return line[0].slice();
+    var cum = 0, i, seg;
+    for (i = 0; i + 1 < line.length; i++) {
+      seg = haversineM(line[i], line[i + 1]);
+      if (cum + seg >= m) {
+        var t = seg ? (m - cum) / seg : 0;
+        return [line[i][0] + (line[i + 1][0] - line[i][0]) * t,
+                line[i][1] + (line[i + 1][1] - line[i][1]) * t];
+      }
+      cum += seg;
+    }
+    return line[line.length - 1].slice();
+  }
+
+  /* v135 layer 2 — the presentation guarantee. If every
+     U-turn-free re-request failed and a plan STILL carries a
+     U-turn, the maneuver is rewritten before anything can show
+     or speak it: its instruction becomes the plain continuation
+     onto the road it was turning onto, its spoken lines lose
+     every U-turn phrase, and its type becomes "continue" (8).
+     Distances are untouched — the plan's geometry stays the
+     engine's; only the words change. The banner, the steps list
+     and every spoken line read the plan, so this one pass
+     covers all three. Car mode never comes through here:
+     a car CAN turn around, and its plan stays the engine's own. */
+  function sanitizeTruckPlan(plan) {
+    if (!plan || !plan.maneuvers) return plan;
+    var removed = 0;
+    var mans = plan.maneuvers.map(function (m) {
+      var c = {
+        instruction: m.instruction, verbalPre: m.verbalPre, verbalPost: m.verbalPost,
+        streets: (m.streets || []).slice(), lengthKm: m.lengthKm,
+        cumStartKm: m.cumStartKm, cumEndKm: m.cumEndKm, type: m.type
+      };
+      if (isUturnManeuver(m)) {
+        removed++;
+        var st = (m.streets && m.streets[0]) || '';
+        c.instruction = st ? 'Continue on ' + st : 'Continue ahead';
+        if (UTURN_RE.test(c.verbalPre || '')) c.verbalPre = '';
+        if (UTURN_RE.test(c.verbalPost || '')) c.verbalPost = '';
+        c.type = 8;
+      } else {
+        if (UTURN_RE.test(c.verbalPre || '')) c.verbalPre = '';
+        if (UTURN_RE.test(c.verbalPost || '')) c.verbalPost = '';
+      }
+      return c;
+    });
+    return { maneuvers: mans, totalKm: plan.totalKm, totalMin: plan.totalMin, uturnsRemoved: removed };
+  }
+
   /* Which maneuver the driver is in, given metres travelled along
      the route line: the first whose end is still ahead. */
   function currentManeuverIndex(plan, alongM) {
@@ -374,6 +458,49 @@
      NO external-link builder in this region any more. */
   /* ================= NAVPURE-END ================= */
 
+  /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
+     2026 12:05 MDT: "this is a truck gps! An arrow as you! That's
+     more like something puny! The moving avatar should be
+     something bigger, a truck which you should be able to click
+     and change!"). Top-down vehicle glyphs, drawn pointing UP —
+     the drive plane spins heading-up under the fixed anchor, so
+     up on the glass is always the direction of travel. The glyph
+     is painted once per render and swapped only on the driver's
+     own tap in the chooser — the drive tick never touches it
+     (the v133 mutate-only guarantee is untouched). 'arrow' keeps
+     the classic chevron for drivers who prefer it. */
+  var AVATAR_KINDS = ['dump', 'semi', 'pickup', 'arrow'];
+  var AVATAR_LABELS = { dump: 'Dump truck', semi: 'Semi', pickup: 'Pickup', arrow: 'Arrow' };
+  function avatarGlyph(kind) {
+    var wheels = '<rect x="1.5" y="16" width="6" height="13" rx="2" fill="#10151f"/>' +
+      '<rect x="40.5" y="16" width="6" height="13" rx="2" fill="#10151f"/>' +
+      '<rect x="1.5" y="50" width="6" height="13" rx="2" fill="#10151f"/>' +
+      '<rect x="40.5" y="50" width="6" height="13" rx="2" fill="#10151f"/>';
+    if (kind === 'semi') {
+      return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
+        '<rect x="9" y="27" width="30" height="45" rx="3" fill="#e8edf5" stroke="#1F3764" stroke-width="2.5"/>' +
+        '<rect x="11" y="5" width="26" height="20" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
+        '<rect x="15" y="9" width="18" height="6" rx="2" fill="#bcd6ff"/></svg>';
+    }
+    if (kind === 'pickup') {
+      return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
+        '<rect x="9" y="32" width="30" height="38" rx="3" fill="#33507f" stroke="#ffffff" stroke-width="2"/>' +
+        '<rect x="14" y="37" width="20" height="28" rx="2" fill="#22355a"/>' +
+        '<rect x="10" y="7" width="28" height="23" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
+        '<rect x="14" y="11" width="20" height="7" rx="2" fill="#bcd6ff"/></svg>';
+    }
+    if (kind === 'arrow') {
+      return '<svg viewBox="0 0 48 76" aria-hidden="true">' +
+        '<polygon points="24,3 43,68 24,53 5,68" fill="#1F3764" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/></svg>';
+    }
+    /* dump — the default: cab over a steel dump box. */
+    return '<svg viewBox="0 0 48 76" aria-hidden="true">' + wheels +
+      '<rect x="8" y="30" width="32" height="42" rx="3" fill="#33507f" stroke="#ffffff" stroke-width="2"/>' +
+      '<rect x="13" y="35" width="22" height="32" rx="2" fill="none" stroke="#9db8d9" stroke-width="2"/>' +
+      '<rect x="10" y="6" width="28" height="22" rx="5" fill="#1F3764" stroke="#ffffff" stroke-width="2"/>' +
+      '<rect x="14" y="10" width="20" height="7" rx="2" fill="#bcd6ff"/></svg>';
+  }
+
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
   /* v98: the routing server the app ships with. It applies ONLY when
      the user has never saved an address (no serverUrl key in the
@@ -391,7 +518,10 @@
       serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
         ? NAV_DEFAULT_SERVER_URL : String(s.serverUrl),
       muted: !!s.muted,
-      mode: s.mode === 'car' ? 'car' : 'truck'
+      mode: s.mode === 'car' ? 'car' : 'truck',
+      /* v135: the drive avatar (see avatarGlyph) — the stored
+         choice, defaulting to the dump truck. */
+      avatar: AVATAR_KINDS.indexOf(s.avatar) >= 0 ? s.avatar : 'dump'
     };
   }
   function saveSettings(patch) {
@@ -441,6 +571,14 @@
        so leaving the module mid-drive cleans them up as well. */
     try { if (S.driveTimer) clearTimeout(S.driveTimer); } catch (e) {}
     try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
+    /* v135: leaving the module mid-drive also ends the drive
+       state honestly — release the wake lock + its listener and
+       the mt-driving body class (the FAB dock keys off it). */
+    try {
+      if (S.wakeSentinel && typeof S.wakeSentinel.release === 'function') S.wakeSentinel.release().catch(function () {});
+      if (S.wakeVis) document.removeEventListener('visibilitychange', S.wakeVis);
+      if (S.drive) document.body.classList.remove('mt-driving');
+    } catch (e) {}
     S = null;
   }
 
@@ -528,7 +666,10 @@
         /* v101 drive mode: state bag + its own Leaflet instance and
            arrival timer (kept on S so teardown reaches them). */
         drive: null, driveMap: null, driveLine: null, driveMarker: null,
-        driveTimer: null, heading: null
+        driveTimer: null, heading: null,
+        /* v135: the drive wake lock's sentinel + visibility
+           handler (see driveWake in the drive section). */
+        wakeSentinel: null, wakeVis: null
       };
 
       /* v101: the Navigator is a FULL-SCREEN view (owner, Oct 16:
@@ -625,7 +766,18 @@
         '<div class="nv-drive-tilt"><div class="nv-drive-spin" id="nvd_spin">' +
         '<div class="nv-drive-mapbox"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
         '</div></div>' +
-        '<div class="nv-drive-you">▲</div>' +
+        /* v135: the avatar is a TRUCK now (see avatarGlyph), and
+           it is TAPPABLE — a tap opens the chooser docked above
+           the bar; the choice persists in the navigator settings
+           and applies at the tap. The chooser lists the kinds in
+           AVATAR_KINDS order with the current one marked. */
+        '<div class="nv-drive-you" id="nvd_you" title="Your truck — tap to change">' + avatarGlyph(settings.avatar) + '</div>' +
+        '<div class="nv-avatar-picker hidden" id="nvd_avatar_picker">' +
+        AVATAR_KINDS.map(function (k) {
+          return '<button class="nv-avatar-opt' + (k === settings.avatar ? ' on' : '') + '" data-avatar="' + k + '">' +
+            avatarGlyph(k) + '<span>' + AVATAR_LABELS[k] + '</span></button>';
+        }).join('') +
+        '</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div></div>' +
         '<div class="nv-drive-bar">' +
         /* v125: the ETA stack is NEVER blank — it renders with a
@@ -1028,6 +1180,20 @@
         startDrive();
       }
 
+      /* v135: TRUCK TRUTH, layer 1 — if the engine hands a TRUCK
+         a U-turn anyway (truck costing does NOT suppress them),
+         the route is re-requested with the turn-around points
+         EXCLUDED (Valhalla exclude_locations), so the new answer
+         has to loop the block like a truck actually drives.
+         Bounded at two exclusion rounds; a failed round falls
+         back to the route already in hand. Layer 2
+         (sanitizeTruckPlan, NAVPURE) then guarantees that what
+         reaches the banner, the steps and the voice contains no
+         U-turn even if every round failed. The reroute path
+         (trackProgress → doRoute) rides this same function, so
+         a missed turn re-plans around the block too, never
+         "turn around". Car mode is untouched throughout: a car
+         can make a U-turn, and its plan stays the engine's own. */
       function doRoute() {
         if (!S.settings.serverUrl) {
           banner('Navigator server not set — routing unavailable.', 'Set the Navigator server URL in Preferences → Advanced.');
@@ -1040,76 +1206,119 @@
         S.rerouting = true;
         banner('Routing…', '');
         var url = S.settings.serverUrl.replace(/\/+$/, '') + '/route';
-        var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode);
-        /* v104: the HTTP status rides along so the failure line
-           below can name what ACTUALLY happened (see the catch). */
-        var httpStatus = 0;
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody) })
-          .then(function (r) { httpStatus = r.status || 0; if (!r.ok) throw new Error('http'); return r.json(); })
-          .then(function (data) {
-            S.rerouting = false;
-            if (!data || !data.trip || !data.trip.legs || !data.trip.legs.length) throw new Error('empty');
-            var line = [];
-            data.trip.legs.forEach(function (leg) { line = line.concat(decodeShape(leg.shape)); });
-            S.line = line;
-            S.plan = maneuverPlan(data.trip);
-            S.manIdx = 0; S.offSince = 0; S.arrived = false;
-            /* v78: remember the destination for the dashboard card
-               (search name when there is one, else the pin coords —
-               the same words the destination note shows). */
-            lastNavDest = S.destLabel || (S.dest ? S.dest[0].toFixed(5) + ', ' + S.dest[1].toFixed(5) : '');
-            if (S.map) {
-              if (S.routeLine) S.map.removeLayer(S.routeLine);
-              S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 5, opacity: 0.9 }).addTo(S.map);
-              S.map.fitBounds(S.routeLine.getBounds(), { padding: [30, 30] });
-            }
-            var st = body.querySelector('#nv_steps');
-            if (st) {
-              st.innerHTML = '<p class="note" style="margin-top:0">' + fmtDist(S.plan.totalKm * 1000) + ' · ' + fmtMin(S.plan.totalMin) +
-                ' · ' + (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network') + '</p>' +
-                S.plan.maneuvers.map(function (m, i) {
-                  return '<div class="listitem" data-nvstep="' + i + '"><div class="a">' + esc(m.instruction) + '</div>' +
-                    '<div class="b">' + fmtDist(m.lengthKm * 1000) + '</div></div>';
-                }).join('');
-            }
-            var end = body.querySelector('#nv_end'); if (end) end.classList.remove('hidden');
-            /* v101: a route is ACTIVE — Drive appears and takes
-               the one primary slot; Route demotes to a quiet
-               re-route. A re-route landing mid-drive re-arms the
-               drive screen on the new plan.
-               v104: Drive now sits at the TOP of the sheet (see
-               the sheet markup) — revealing it there puts the one
-               next action in the driver's first glance. */
-            var db = body.querySelector('#nv_drive'); if (db) db.classList.remove('hidden');
-            var rb = body.querySelector('#nv_route'); if (rb) rb.className = 'btn ghost big';
-            if (S.drive) driveOnRoute();
-            /* v104: …and on a go-now arm (or already rolling)
-               nobody has to tap it at all — Drive opens itself. */
-            else maybeAutoEnterDrive();
-            paintStep();
-            /* mid-drive, the drive screen's own prompts own the
-               speech; the planning screen keeps its first-line
-               announcement exactly as before. */
-            if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
-            note('');
-          })
-          .catch(function (err) {
-            S.rerouting = false;
-            /* v104: the failure line says what ACTUALLY happened,
-               in one short line — never the old guess ("Check the
-               Navigator server URL…"), which blamed the settings
-               for what was really a dead address, a CORS wall, or
-               a silent server (the Oct 16 field hunt). Three
-               classes: no answer at all (the fetch itself threw),
-               an answer with an error status, and an answer with
-               no buildable route in it. */
-            var msg;
-            if (err && err.message === 'empty') msg = 'No route could be built between here and there.';
-            else if (httpStatus) msg = 'The route server answered with an error (HTTP ' + httpStatus + ').';
-            else msg = "The route server didn't answer — check your connection and try again.";
-            banner('Could not get a route.', '');
-            note(msg);
-          });
+        var truckMode = S.settings.mode !== 'car';
+        var attempt = 0;
+        var lastGood = null;
+
+        function finalizeRoute(line, plan) {
+          S.rerouting = false;
+          S.line = line;
+          S.plan = plan;
+          S.manIdx = 0; S.offSince = 0; S.arrived = false;
+          /* v78: remember the destination for the dashboard card
+             (search name when there is one, else the pin coords —
+             the same words the destination note shows). */
+          lastNavDest = S.destLabel || (S.dest ? S.dest[0].toFixed(5) + ', ' + S.dest[1].toFixed(5) : '');
+          if (S.map) {
+            if (S.routeLine) S.map.removeLayer(S.routeLine);
+            S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 5, opacity: 0.9 }).addTo(S.map);
+            S.map.fitBounds(S.routeLine.getBounds(), { padding: [30, 30] });
+          }
+          var st = body.querySelector('#nv_steps');
+          if (st) {
+            st.innerHTML = '<p class="note" style="margin-top:0">' + fmtDist(S.plan.totalKm * 1000) + ' · ' + fmtMin(S.plan.totalMin) +
+              ' · ' + (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network') + '</p>' +
+              S.plan.maneuvers.map(function (m, i) {
+                return '<div class="listitem" data-nvstep="' + i + '"><div class="a">' + esc(m.instruction) + '</div>' +
+                  '<div class="b">' + fmtDist(m.lengthKm * 1000) + '</div></div>';
+              }).join('');
+          }
+          var end = body.querySelector('#nv_end'); if (end) end.classList.remove('hidden');
+          /* v101: a route is ACTIVE — Drive appears and takes
+             the one primary slot; Route demotes to a quiet
+             re-route. A re-route landing mid-drive re-arms the
+             drive screen on the new plan.
+             v104: Drive now sits at the TOP of the sheet (see
+             the sheet markup) — revealing it there puts the one
+             next action in the driver's first glance. */
+          var db = body.querySelector('#nv_drive'); if (db) db.classList.remove('hidden');
+          var rb = body.querySelector('#nv_route'); if (rb) rb.className = 'btn ghost big';
+          if (S.drive) driveOnRoute();
+          /* v104: …and on a go-now arm (or already rolling)
+             nobody has to tap it at all — Drive opens itself. */
+          else maybeAutoEnterDrive();
+          paintStep();
+          /* mid-drive, the drive screen's own prompts own the
+             speech; the planning screen keeps its first-line
+             announcement exactly as before. */
+          if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
+          note('');
+        }
+
+        function requestRoute(excludePts) {
+          var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode);
+          if (excludePts && excludePts.length) {
+            reqBody.exclude_locations = excludePts.map(function (p) { return { lat: p[0], lon: p[1] }; });
+          }
+          /* v104: the HTTP status rides along so the failure line
+             below can name what ACTUALLY happened (see the catch). */
+          var httpStatus = 0;
+          fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody) })
+            .then(function (r) { httpStatus = r.status || 0; if (!r.ok) throw new Error('http'); return r.json(); })
+            .then(function (data) {
+              if (!data || !data.trip || !data.trip.legs || !data.trip.legs.length) throw new Error('empty');
+              var line = [];
+              data.trip.legs.forEach(function (leg) { line = line.concat(decodeShape(leg.shape)); });
+              var plan = maneuverPlan(data.trip);
+              if (truckMode) {
+                var uts = planUturns(plan);
+                if (uts.length && attempt < 2) {
+                  var pts = [];
+                  uts.forEach(function (i) {
+                    var p = pointAlongLine(line, plan.maneuvers[i].cumStartKm * 1000);
+                    if (p) pts.push(p);
+                  });
+                  if (pts.length) {
+                    attempt++;
+                    lastGood = { line: line, plan: plan };
+                    requestRoute(pts);
+                    return;
+                  }
+                }
+                plan = sanitizeTruckPlan(plan);
+              }
+              finalizeRoute(line, plan);
+            })
+            .catch(function (err) {
+              /* v135: an exclusion round failed AFTER a route was
+                 already in hand — the driver keeps guidance: the
+                 in-hand route, sanitized, is worth more than an
+                 error banner. A first-request failure keeps the
+                 v104 honest-error behaviour below. */
+              if (lastGood) {
+                var lg = lastGood;
+                lastGood = null;
+                finalizeRoute(lg.line, sanitizeTruckPlan(lg.plan));
+                return;
+              }
+              S.rerouting = false;
+              /* v104: the failure line says what ACTUALLY happened,
+                 in one short line — never the old guess ("Check the
+                 Navigator server URL…"), which blamed the settings
+                 for what was really a dead address, a CORS wall, or
+                 a silent server (the Oct 16 field hunt). Three
+                 classes: no answer at all (the fetch itself threw),
+                 an answer with an error status, and an answer with
+                 no buildable route in it. */
+              var msg;
+              if (err && err.message === 'empty') msg = 'No route could be built between here and there.';
+              else if (httpStatus) msg = 'The route server answered with an error (HTTP ' + httpStatus + ').';
+              else msg = "The route server didn't answer — check your connection and try again.";
+              banner('Could not get a route.', '');
+              note(msg);
+            });
+        }
+        requestRoute(null);
       }
 
       function paintStep() {
@@ -1162,8 +1371,28 @@
           }
         }
         paintStep();
+        /* v135: ARRIVAL IS AN ALONG-ROUTE FACT, never a
+           straight-line one. The shipped trigger fired on
+           haversine-to-pin < 40 m ALONE — and on the owner's
+           Oct 17 Ivor East Pond drive that fired ~2.4 km early:
+           the pond pin sits just off Deerfoot Trail, so passing
+           it on the highway put the puck inside 40 m of the pin
+           as the crow flies while 2.4 km of route remained (the
+           recording's bar read "2.4 km left" seconds before
+           "You have arrived"). Arrival now requires the
+           along-route remaining to be at the door, judged two
+           ways: ON the line and at its end (≤60 m off the line,
+           ≤30 m of route left), or AT the pin (<40 m) while in
+           the route's final stretch (≤250 m of route left — the
+           yard-at-the-end-of-the-road case, where the pin sits
+           off the drawn line's end but the drive is genuinely
+           done). Straight-line proximity by itself can no longer
+           end a drive. */
         var dDest = haversineM(S.pos, S.dest);
-        if (dDest < 40 || pr.along >= S.plan.totalKm * 1000 - 30) {
+        var leftAlongM = S.plan.totalKm * 1000 - pr.along;
+        var atDoor = pr.dist <= 60 && leftAlongM <= 30;
+        var atPin = dDest < 40 && leftAlongM <= 250;
+        if (atDoor || atPin) {
           S.arrived = true;
           var last = S.plan.maneuvers[S.plan.maneuvers.length - 1];
           banner('You have arrived', S.destLabel || '');
@@ -1187,15 +1416,59 @@
         ]);
       }
 
+      /* v135: FADING — the drive wake lock. The audit (see
+         BUGS.md) found NO app-controlled opacity fade anywhere in
+         the Drive face: the chrome has no opacity transition or
+         animation, the spin transitions transform only, and the
+         drive tile layer has run fadeAnimation:false since v125.
+         What DOES fade a navigation screen mid-drive is the OS
+         display timeout dimming the whole glass — and the app
+         held no wake lock for the Drive screen (the tracker's
+         lock in js/miles.js belongs to the shift, not to Drive).
+         While Drive is open the screen now holds a wake lock,
+         re-requested when the app returns to the foreground
+         (sentinels auto-release on hide), released on exit.
+         Every step is guarded — no wakeLock API, no lock, and
+         Drive behaves exactly as before. */
+      function driveWake(on) {
+        try {
+          if (on) {
+            if (!navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') return;
+            var p = navigator.wakeLock.request('screen');
+            if (p && typeof p.then === 'function') {
+              p.then(function (s) { if (S) S.wakeSentinel = s; }).catch(function () {});
+            }
+          } else if (S && S.wakeSentinel) {
+            var s = S.wakeSentinel; S.wakeSentinel = null;
+            if (s && typeof s.release === 'function') s.release().catch(function () {});
+          }
+        } catch (e) {}
+      }
+      function onDriveVis() {
+        try { if (S && S.drive && !document.hidden) driveWake(true); } catch (e) {}
+      }
+
       /* ---------- v101 drive screen ---------- */
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
         S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null };
-        /* v125: while Drive is open the shell's chat FAB is
-           hidden — measured on the live v124 build it sat ON the
-           bar (over End drive in portrait, over Sound in
-           landscape). Nothing may cover the bar. */
+        /* v135: hold the screen awake for the drive (see
+           driveWake) and re-hold it after any foreground return.
+           The handler rides on S so teardown can remove it too. */
+        driveWake(true);
+        S.wakeVis = onDriveVis;
+        try { document.addEventListener('visibilitychange', onDriveVis); } catch (e) {}
+        /* v125 claimed this class hid the shell's chat FAB while
+           Drive is open; v135 (owner, Oct 17 12:05: "that mic…
+           should be on the side!") corrects the record: the only
+           mt-driving CSS rule ever written targeted #fbFab — the
+           FEEDBACK button — so the chat FAB (#chatFab, the 🎤)
+           was never governed by it and floated mid-map in his
+           recordings. The class now drives the chat FAB's SIDE
+           DOCK (css/style.css + js/chatbot.js): while Drive is
+           open the road hand sits docked at the screen's side
+           edge, reachable and off the map's middle. */
         try { document.body.classList.add('mt-driving'); } catch (e) {}
         var scr = body.querySelector('#nv_drive_screen');
         if (scr) scr.classList.remove('hidden');
@@ -1254,6 +1527,10 @@
            this destination will auto-enter again. */
         S.driveAutoSpent = true;
         S.drive = null;
+        /* v135: the drive wake lock ends with the drive. */
+        driveWake(false);
+        S.wakeVis = null;
+        try { document.removeEventListener('visibilitychange', onDriveVis); } catch (e) {}
         try { document.body.classList.remove('mt-driving'); } catch (e) {}
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
         try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
@@ -1460,6 +1737,32 @@
       if (driveBtn) driveBtn.onclick = startDrive;
       var dExit = body.querySelector('#nvd_exit');
       if (dExit) dExit.onclick = function () { exitDrive(); };
+
+      /* v135: the avatar tap — opens/closes the chooser; a choice
+         applies AT THE TAP (glyph swapped, 'on' marker moved) and
+         persists through the same settings store as mode/muted.
+         Nothing here runs per tick: the drive tick never touches
+         #nvd_you, so the v133 guarantees stand. */
+      var youEl = body.querySelector('#nvd_you');
+      var avPicker = body.querySelector('#nvd_avatar_picker');
+      function paintYou() {
+        if (youEl) youEl.innerHTML = avatarGlyph(S.settings.avatar);
+        if (avPicker) avPicker.querySelectorAll('[data-avatar]').forEach(function (b) {
+          b.classList.toggle('on', b.getAttribute('data-avatar') === S.settings.avatar);
+        });
+      }
+      if (youEl) youEl.onclick = function () { if (avPicker) avPicker.classList.toggle('hidden'); };
+      if (avPicker) avPicker.querySelectorAll('[data-avatar]').forEach(function (b) {
+        b.onclick = function () {
+          var k = b.getAttribute('data-avatar');
+          if (k && AVATAR_KINDS.indexOf(k) >= 0 && k !== S.settings.avatar) {
+            S.settings.avatar = k;
+            saveSettings({ avatar: k });
+            paintYou();
+          }
+          avPicker.classList.add('hidden');
+        };
+      });
 
       /* v103: the v93 turn-by-turn handoff handler is DELETED
          with the rest of the handoff — there is no button, no

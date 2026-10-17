@@ -1292,14 +1292,35 @@
     });
 
     /* The FAB lives on the main app only — same visibility rule
-       as the feedback FAB beside it. */
+       as the feedback FAB beside it.
+       v135: DRIVE DOCK (owner, Oct 17, 2026 12:05 MDT — the 🎤
+       was "sitting right in the middle of the screen… That
+       should be on the side!"). Why the v125 rule never worked:
+       its CSS hid #fbFab (the feedback button), a different
+       element, and this sync only ever watched #main — nothing
+       in the FAB's own logic knew Drive was open, so the button
+       kept its ordinary bottom-right-of-the-column spot, which
+       in landscape lands mid-map (his 11:39 recording, every
+       frame). Now the Drive-open state governs the FAB here
+       too: while body carries mt-driving (the Navigator adds
+       it in startDrive, removes it in exitDrive — the exact
+       sequence his phone produces), the FAB is FORCED visible
+       and tagged 'drive-dock'; the dock's placement itself is
+       CSS (body.mt-driving #chatFab — the side edge, above the
+       drive screen). Leaving Drive restores the ordinary rule. */
     var main = document.getElementById('main');
     function syncFab() {
+      var driving = !!(document.body && document.body.classList &&
+        document.body.classList.contains('mt-driving'));
       var onMain = main && main.classList.contains('active');
-      fab.classList.toggle('hidden', !onMain);
+      fab.classList.toggle('drive-dock', driving);
+      fab.classList.toggle('hidden', !driving && !onMain);
     }
     if (main && window.MutationObserver) {
       new MutationObserver(syncFab).observe(main, { attributes: true, attributeFilter: ['class', 'style'] });
+    }
+    if (document.body && window.MutationObserver) {
+      new MutationObserver(syncFab).observe(document.body, { attributes: true, attributeFilter: ['class'] });
     }
     syncFab();
   }

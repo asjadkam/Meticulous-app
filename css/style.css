@@ -368,7 +368,7 @@ label.chk input{width:18px;height:18px;}
    layer, so their raster is never shared with / starved by the
    340% transformed plane beneath them (see the v133 note at
    .nv-drive-tilt and in modules/navigator.js at driveText). */
-.nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;}
+.nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;opacity:1;}
 .nv-drive-dist{font-size:44px;font-weight:800;line-height:1;}
 .nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 .nv-drive-road{font-size:15px;color:#D9E1F3;margin-top:4px;min-height:20px;}
@@ -398,9 +398,31 @@ label.chk input{width:18px;height:18px;}
    covers the screen. */
 .nv-drive-mapbox{position:absolute;width:340%;height:340%;left:50%;top:64%;transform:translate(-50%,-50%);}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
-.nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-100%);font-size:30px;color:#1F3764;text-shadow:0 0 6px #fff,0 0 3px #fff;z-index:5;pointer-events:none;}
+/* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
+   30px ▲ "arrow as you" was "something puny" — "the moving
+   avatar should be something bigger, a truck which you should
+   be able to click and change"). The anchor keeps the v101
+   numbers (the spin origin projects the truck's position at
+   50%/64% of the viewport) but the marker is now a ~52×82px
+   top-down truck glyph CENTRED on that point, with a white-halo
+   drop shadow for contrast on any tile. It is TAPPABLE
+   (pointer-events:auto) — the tap opens the chooser below; the
+   drive tick never writes this node (v133 stands: the glyph is
+   swapped on the tap, not the tick). No transition, no
+   animation, no opacity rule — the marker holds steady-state
+   visibility exactly as painted (v135 fading audit). */
+.nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-50%);width:52px;z-index:5;pointer-events:auto;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.nv-drive-you svg{width:100%;height:auto;display:block;filter:drop-shadow(0 0 5px rgba(255,255,255,.95)) drop-shadow(0 2px 4px rgba(0,0,0,.45));}
+/* v135: the avatar chooser — a compact navy dock floating just
+   above the drive bar, centred; a tap on an option applies and
+   persists the choice and closes it (wiring in navigator.js).
+   Hidden by the shared .hidden class until the avatar is tapped. */
+.nv-avatar-picker{position:absolute;left:50%;bottom:calc(106px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1F3764;border-radius:16px;padding:10px;display:flex;gap:8px;z-index:6;box-shadow:0 6px 20px rgba(0,0,0,.45);}
+.nv-avatar-opt{background:rgba(255,255,255,.08);border:2px solid transparent;border-radius:12px;color:#fff;padding:6px 8px 5px;font:inherit;font-size:11px;line-height:1.2;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;}
+.nv-avatar-opt svg{width:26px;height:41px;}
+.nv-avatar-opt.on{border-color:#f5a623;background:rgba(255,255,255,.16);}
 .nv-drive-reroute{position:absolute;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
-.nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;}
+.nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;opacity:1;}
 /* v124 (owner, Oct 17 07:17 — "What's the arrival time?", asked
    over a Drive screen showing NO arrival info at all): the v107
    row below claimed the buttons "keep their natural width", but
@@ -430,6 +452,37 @@ label.chk input{width:18px;height:18px;}
 .nv-drive-bar .btn{flex:none;width:auto;margin:0;min-height:48px;padding:10px 12px;font-size:15px;}
 .nv-drive-bar #nvd_mute{font-size:13px;padding:10px;}
 body.mt-driving #fbFab{display:none!important;}
+/* v135 CORRECTION OF THE RECORD (owner, Oct 17 12:05 MDT):
+   the v125 rule above targeted #fbFab — the FEEDBACK button —
+   and it works on that button. But the button in the owner's
+   recordings, floating mid-map in landscape at ~69% across /
+   ~68% down in EVERY frame (and sitting on the ▶ Drive button
+   on the post-arrival page of the 11:44–11:56 recording), is
+   the CHAT FAB, #chatFab — a different element no mt-driving
+   rule had ever governed. Its ordinary spot (right:16px;
+   bottom:88px, pulled to the centred app column's right edge
+   at ≥520px widths) IS that mid-map spot in landscape. The
+   #fbFab hide stays; the chat FAB is handled by the dock below. */
+/* v135: THE MIC DOCKS TO THE SIDE (owner verbatim: "That
+   should be on the side!"). While Drive is open, the chat FAB
+   pins to the screen's RIGHT EDGE, vertically centred — a
+   compact 52px button hard against the edge (plus the
+   safe-area inset), never floating over the map's middle, in
+   portrait and landscape alike. The ≥520px column rule
+   (right:calc(50% - 224px)) is overridden by specificity here
+   (body.mt-driving #chatFab beats #chatFab), so the dock hugs
+   the GLASS edge, not the app column's edge. z-index 2100
+   puts it above the drive screen (.nv-drive is 2000) —
+   reachable — and the sheet/scrim rise with it, so tapping
+   the docked mic actually opens the road hand over the drive
+   face instead of underneath it. Outside Drive none of this
+   applies: the class leaves with exitDrive and the FAB is
+   back at its ordinary spot, governed by syncFab in
+   js/chatbot.js. NO transition is declared: the dock snaps,
+   it does not glide or fade (v135 fading audit). */
+body.mt-driving #chatFab{top:50%;bottom:auto;right:calc(6px + env(safe-area-inset-right,0px));transform:translateY(-50%);width:52px;height:52px;font-size:22px;z-index:2100;}
+body.mt-driving #chatScrim{z-index:2110;}
+body.mt-driving #chatSheet{z-index:2120;}
 /* v125 landscape: on a short wide screen the portrait banner
    ate ~a third of the display (measured 124 of 390 px) and the
    map shrank to a strip. In landscape the banner goes compact
@@ -444,6 +497,7 @@ body.mt-driving #fbFab{display:none!important;}
 .nv-drive-road{font-size:12.5px;min-height:0;margin-top:2px;}
 .nv-drive-bar{left:8px;right:8px;bottom:calc(6px + env(safe-area-inset-bottom));padding:8px 12px;}
 .nv-drive-reroute{bottom:calc(78px + env(safe-area-inset-bottom));}
+.nv-avatar-picker{bottom:calc(84px + env(safe-area-inset-bottom));}
 }
 /* v107: tile readability — a contrast/saturation lift on the map
    tiles themselves (the lever the OSM tile source leaves us).
