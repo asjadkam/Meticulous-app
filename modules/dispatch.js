@@ -505,13 +505,18 @@
     /* v82 (item 3b): loads hauled, when the tickets carry counts,
        total onto the record — the manifest reads the day's loads
        from the tickets/the record. Tickets without counts leave
-       the record's own loads exactly as it was. */
+       the record's own loads exactly as it was.
+       v107: a ticket-summed count is a RECORDED count (it was
+       confirmed in the close view) — loadsSet marks it so the
+       shared dayLoads truth (invoice.js) may trust the record's
+       loads, while an untouched form default '1' never carries
+       the mark and never masquerades as data. */
     var loadSum = 0, anyLoads = false;
     tk.forEach(function (t) {
       var v = parseFloat(t && t.loads);
       if (v > 0) { loadSum += v; anyLoads = true; }
     });
-    if (anyLoads) d.loads = String(loadSum);
+    if (anyLoads) { d.loads = String(loadSum); d.loadsSet = true; }
     d.status = 'completed';
     d.endedAt = endedAt;
     return d;
@@ -898,6 +903,13 @@
         '<div><label class="f">Ticket #</label><input id="dp_ticket" placeholder="e.g. 48213"></div></div>' +
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Loads</label><input id="dp_loads" type="number" min="1" step="1" value="1"></div></div>' +
+        /* v107: whether the Loads value was DELIBERATELY set (typed
+           by the driver, restored from a draft that recorded it, or
+           carried from the record being edited) — the marker the
+           shared dayLoads truth checks before trusting the record.
+           Set by the field's own input listener and by the fill
+           paths; a programmatic fill never fires it. */
+        '<input type="hidden" id="dp_loadsset" value="">' +
         '<label class="f">Notes</label><input id="dp_notes" placeholder="Gate code, contact…">' +
         drvField +
         '<label class="f">🎫 Tickets <span style="font-weight:normal;color:var(--muted)">(add one per haul card / scale ticket)</span></label>' +
@@ -1159,7 +1171,8 @@
             jobSite: q('#dp_site'), scheduledAt: dspComposeSched(q('#dp_date'), q('#dp_time'), App._today()), equipment: q('#dp_equip'),
             lat: q('#dp_lat'), lng: q('#dp_lng'),
             material: q('#dp_mat'), ticketNo: q('#dp_ticket'),
-            amount: q('#dp_amt'), loads: q('#dp_loads'), notes: q('#dp_notes'),
+            amount: q('#dp_amt'), loads: q('#dp_loads'), loadsSet: q('#dp_loadsset') === '1',
+            notes: q('#dp_notes'),
             driverId: q('#dp_driver')
           },
           tickets: pendingTickets.slice(),
@@ -1216,6 +1229,7 @@
         set('#dp_lat', f.lat); set('#dp_lng', f.lng);
         set('#dp_mat', f.material); set('#dp_ticket', f.ticketNo);
         set('#dp_amt', f.amount); if (f.loads) set('#dp_loads', f.loads); set('#dp_notes', f.notes);
+        set('#dp_loadsset', f.loadsSet ? '1' : '');
         set('#dp_driver', f.driverId);
         if (f.lat !== '' && f.lat !== undefined && f.lat !== null && f.lng !== '' && f.lng !== undefined && f.lng !== null) {
           body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
@@ -1245,6 +1259,18 @@
         var n = body.querySelector(id);
         if (n) { n.addEventListener('input', persistDraft); n.addEventListener('change', persistDraft); }
       });
+      /* v107: a genuine edit of the Loads field marks the count as
+         deliberately recorded (see dp_loadsset) — draft fills and
+         edit fills set the marker directly, never through here. */
+      (function () {
+        var lEl = body.querySelector('#dp_loads');
+        var sEl = body.querySelector('#dp_loadsset');
+        if (lEl && sEl) {
+          var mark = function () { sEl.value = '1'; };
+          lEl.addEventListener('input', mark);
+          lEl.addEventListener('change', mark);
+        }
+      })();
 
       var imgInput = body.querySelector('#dp_img');
       var imgCamInput = body.querySelector('#dp_img_cam');
@@ -1403,6 +1429,90 @@
           '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 10px;margin-bottom:10px">✏️ The dispatch you were editing is no longer there, so that unfinished edit was discarded. Nothing was changed.</div>';
       }
 
+      /* v107: does this ticket read still owe the driver facts?
+         Escalation is for reads that came back thin: a haul card
+         (its material, times and hours are handwritten — the local
+         reader structurally cannot finish it), or any read whose
+         report still lists a key field missing. Gibberish never
+         reaches this check as a value — the OCR layer refuses it
+         (looksGibberish) and the field reads as missing instead. */
+      function readNeedsEscalation(parsed, docRead) {
+        if (!parsed) return false;
+        if (parsed._type === 'haul_card') return true;
+        if (!docRead || !docRead.missing) return false;
+        return docRead.missing.indexOf('material') >= 0 ||
+          docRead.missing.indexOf('ticket #') >= 0 ||
+          docRead.missing.indexOf('job site') >= 0;
+      }
+      /* v107: offer a read's facts to the form. Fill-only-empty is
+         absolute — a read never overwrites what the driver typed —
+         but EVERY read now gets the offer. Before v107 only the
+         FIRST ticket of a form session filled anything, so a haul
+         card attached to an existing dispatch (his Oct 16 close)
+         never landed its ticket #, material or time in the form
+         at all: the fields sat empty under a "Couldn't find"
+         banner while the ticket chip itself showed card #22729. */
+      function fillFormFromRead(parsed, form) {
+        if (!form) return;
+        if (form.jobSite && !body.querySelector('#dp_site').value) body.querySelector('#dp_site').value = form.jobSite;
+        /* v35: rate/amount from a rate confirmation */
+        if (form.amount && !body.querySelector('#dp_amt').value) body.querySelector('#dp_amt').value = form.amount;
+        /* v31: scheduled datetime + truck type + map pin from OCR */
+        if (form.scheduledAt) {
+          var sp86 = dspSplitSched(form.scheduledAt);
+          var dEl86 = body.querySelector('#dp_date'), tEl86 = body.querySelector('#dp_time');
+          if (dEl86 && sp86.date && !dEl86.value) dEl86.value = sp86.date;
+          if (tEl86 && sp86.time && !tEl86.value) tEl86.value = sp86.time;
+        }
+        if (form.equipment && !body.querySelector('#dp_equip').value) body.querySelector('#dp_equip').value = form.equipment;
+        if (form.lat !== undefined && form.lat !== null && form.lng !== undefined && form.lng !== null) {
+          body.querySelector('#dp_lat').value = form.lat;
+          body.querySelector('#dp_lng').value = form.lng;
+          body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
+            (form.coordinates ? ' (' + esc(form.coordinates) + ')' : '') +
+            ' — <a href="https://www.google.com/maps?q=' + form.lat + ',' + form.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
+        }
+        if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
+        /* v107: the ticket # comes from the form mapping OR the
+           haul card's own cardNumber — one source or the other,
+           the field fills whenever the read carries the number. */
+        var ticketVal = form.ticketNo || (parsed && parsed.cardNumber) || null;
+        if (ticketVal && !body.querySelector('#dp_ticket').value) body.querySelector('#dp_ticket').value = ticketVal;
+        /* v107: a start clock the read carried (a haul card's
+           handwritten start, recovered by the labeled attempts or
+           the power read) fills the form's Start time. */
+        var startVal = form.startTime || (parsed && parsed.startTime) || null;
+        if (startVal) {
+          var tmEl = body.querySelector('#dp_time');
+          if (tmEl && !tmEl.value) tmEl.value = startVal;
+        }
+        if (form.notes && !body.querySelector('#dp_notes').value) body.querySelector('#dp_notes').value = form.notes;
+      }
+      /* v107: the Power Read escalation shared by both ticket
+         funnels (form attach + close-with-ticket). The cloud
+         transcription is parsed by the SAME local pipeline and
+         merged fill-only: form fields that are still empty, and
+         ticket facts the local read missed. Nothing is saved by
+         the escalation itself — the normal Save / Confirm stays
+         the confirm. Resolves with the merged {parsed, docRead}
+         or null when no better read arrived. */
+      function escalateTicketRead(ocrUrl, onMerged) {
+        if (!window.PowerRead || !PowerRead.escalate || !window.TicketOCR) { onMerged(null); return; }
+        var got = null;
+        PowerRead.escalate({
+          reader: 'text', image: ocrUrl, origin: { module: 'dispatch', label: 'Dispatch' },
+          onStatus: function () {},
+          onResult: function (res) {
+            var txt = res && res.fields && res.fields.rawText;
+            if (!txt) return;
+            var p2 = TicketOCR.parse(txt);
+            var f2 = TicketOCR.toDispatchForm(p2);
+            var dr2 = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(p2, f2) : null;
+            got = { parsed: p2, form: f2, docRead: dr2 };
+          }
+        }).then(function () { onMerged(got); }, function () { onMerged(got); });
+      }
+
       /* v26: OCR — after photo selected, run Tesseract, then append ticket.
          v35: OCR runs on the larger rendition (ocrUrl); the ticket keeps
          the small thumb (photoUrl). Documents (rate confirmations / BOLs)
@@ -1419,30 +1529,7 @@
           var form = TicketOCR.toDispatchForm(parsed);
           var docRead = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(parsed, form) : null;
           var isDoc = parsed._type === 'rate_confirmation' || parsed._type === 'bill_of_lading' || parsed._type === 'document';
-          // Auto-fill dispatch form from first ticket (if empty)
-          if (pendingTickets.length === 0) {
-            if (form.jobSite && !body.querySelector('#dp_site').value) body.querySelector('#dp_site').value = form.jobSite;
-            /* v35: rate/amount from a rate confirmation */
-            if (form.amount && !body.querySelector('#dp_amt').value) body.querySelector('#dp_amt').value = form.amount;
-            /* v31: scheduled datetime + truck type + map pin from OCR */
-            if (form.scheduledAt) {
-              var sp86 = dspSplitSched(form.scheduledAt);
-              var dEl86 = body.querySelector('#dp_date'), tEl86 = body.querySelector('#dp_time');
-              if (dEl86 && sp86.date && !dEl86.value) dEl86.value = sp86.date;
-              if (tEl86 && sp86.time && !tEl86.value) tEl86.value = sp86.time;
-            }
-            if (form.equipment && !body.querySelector('#dp_equip').value) body.querySelector('#dp_equip').value = form.equipment;
-            if (form.lat !== undefined && form.lat !== null && form.lng !== undefined && form.lng !== null) {
-              body.querySelector('#dp_lat').value = form.lat;
-              body.querySelector('#dp_lng').value = form.lng;
-              body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
-                (form.coordinates ? ' (' + esc(form.coordinates) + ')' : '') +
-                ' — <a href="https://www.google.com/maps?q=' + form.lat + ',' + form.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
-            }
-            if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
-            if (form.ticketNo && !body.querySelector('#dp_ticket').value) body.querySelector('#dp_ticket').value = form.ticketNo;
-            if (form.notes && !body.querySelector('#dp_notes').value) body.querySelector('#dp_notes').value = form.notes;
-          }
+          fillFormFromRead(parsed, form);
           // Build ticket object
           var t = {
             id: ticketId(),
@@ -1452,8 +1539,15 @@
             orderNo: parsed.orderNo || null,
             docRead: docRead,
             cardNumber: parsed.cardNumber || null,
-            foremanHours: null, // manual — haul cards need user confirmation
+            /* v107: hours/clocks the read itself carried (the
+               labeled attempts, or a document's times) ride on the
+               ticket as candidates — haul-card hours still land in
+               the confirm fields for the driver's check before
+               anything is saved. */
+            foremanHours: parsed.totalHours || null,
             paymentUnit: null,  // manual — checkbox state needs user confirmation
+            startTime: parsed.startTime || null,
+            finishTime: parsed.finishTime || null,
             netWeight: form.netWeight || null,
             grossWeight: form.grossWeight || null,
             tareWeight: form.tareWeight || null,
@@ -1463,6 +1557,23 @@
           pendingPhoto = photoUrl; // legacy compat
           renderTicketList();
           updateNameEl();
+          /* v107: a thin local read escalates to Power Read; the
+             better read merges fill-only into the form and this
+             ticket (see escalateTicketRead). */
+          if (readNeedsEscalation(parsed, docRead)) {
+            escalateTicketRead(ocrUrl || photoUrl, function (merged) {
+              if (!merged) return;
+              fillFormFromRead(merged.parsed, merged.form);
+              if (!t.cardNumber && merged.parsed.cardNumber) t.cardNumber = merged.parsed.cardNumber;
+              if (!t.ticketNo && (merged.parsed.ticketNo || merged.form.ticketNo)) t.ticketNo = merged.parsed.ticketNo || merged.form.ticketNo;
+              if (!t.foremanHours && merged.parsed.totalHours) t.foremanHours = merged.parsed.totalHours;
+              if (!t.startTime && merged.parsed.startTime) t.startTime = merged.parsed.startTime;
+              if (!t.finishTime && merged.parsed.finishTime) t.finishTime = merged.parsed.finishTime;
+              if (merged.docRead && (!t.docRead || (merged.docRead.found || []).length > ((t.docRead && t.docRead.found) || []).length)) t.docRead = merged.docRead;
+              renderTicketList();
+              persistDraft();
+            });
+          }
           // If haul card, immediately prompt for hours/payment unit
           if (parsed._type === 'haul_card') {
             body.querySelector('#dp_img_name').textContent =
@@ -1524,6 +1635,7 @@
           ticketNo: body.querySelector('#dp_ticket').value.trim(),
           amount: body.querySelector('#dp_amt').value.trim(),
           loads: body.querySelector('#dp_loads').value.trim() || '1',
+          loadsSet: !!(body.querySelector('#dp_loadsset') && body.querySelector('#dp_loadsset').value === '1'),
           notes: body.querySelector('#dp_notes').value.trim(),
           driverId: drvEl ? drvEl.value : '',                        // v52
           driverName: (drvEl && drvEl.value) ? drvEl.options[drvEl.selectedIndex].text : '', // v52
@@ -1610,6 +1722,7 @@
           material: d.material || '', ticketNo: d.ticketNo || '',
           amount: (d.amount !== null && d.amount !== undefined) ? String(d.amount) : '',
           loads: (d.loads !== null && d.loads !== undefined) ? String(d.loads) : '1',
+          loadsSet: !!d.loadsSet,
           notes: d.notes || '', driverId: d.driverId || ''
         };
         var tk = (d.tickets || []).map(function (t) {
@@ -1869,13 +1982,29 @@
              itself carries no count, so the count is confirmed
              here, in the same one pass as the hours. Pre-filled
              from the day's +1 load taps when he used them; blank
-             stays unrecorded rather than inventing a number. */
+             stays unrecorded rather than inventing a number.
+             v107: the learned-site count (the truck's own pit↔dump
+             visits, js/geoloads.js) pre-fills when there are no
+             taps — the count is never the driver's job (owner,
+             Oct 16: "I don't even know and remember how many loads
+             I did"), and this field is exactly where he can
+             override the machine's count before it records. */
           var tapsNow = 0;
           try { if (window.App && App.trackerLoadTaps) tapsNow = App.trackerLoadTaps() || 0; } catch (e) {}
-          var loadsVal = (t.loads !== null && t.loads !== undefined && t.loads !== '') ? t.loads : (tapsNow > 0 ? String(tapsNow) : '');
+          var geoNow = 0;
+          try {
+            if (window.GeoLoads && GeoLoads.forDate) geoNow = (GeoLoads.forDate(App._today()) || {}).count || 0;
+            if (!geoNow) {
+              var gd107 = (App._store.get('geoloads', { days: {} }).days || {})[App._today()];
+              if (gd107) geoNow = gd107.count || 0;
+            }
+          } catch (e) { geoNow = 0; }
+          var loadsVal = (t.loads !== null && t.loads !== undefined && t.loads !== '') ? t.loads
+            : (tapsNow > 0 ? String(tapsNow) : (geoNow > 0 ? String(geoNow) : ''));
           inputs += '<label class="f">Loads hauled today</label>' +
             '<input id="dp_cf_loads" type="number" inputmode="numeric" min="0" step="1" value="' + esc(loadsVal) + '" placeholder="e.g. 6">' +
-            (tapsNow > 0 && String(loadsVal) === String(tapsNow) ? '<div class="b">Counted from your +1 load taps today — change it if it\'s off.</div>' : '');
+            (tapsNow > 0 && String(loadsVal) === String(tapsNow) ? '<div class="b">Counted from your +1 load taps today — change it if it\'s off.</div>'
+              : (geoNow > 0 && String(loadsVal) === String(geoNow) ? '<div class="b">Counted from your truck\'s pit &amp; dump visits today — change it if it\'s off.</div>' : ''));
         }
         wrap.innerHTML =
           '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
@@ -1988,7 +2117,7 @@
           var parsed = TicketOCR.parse(text);
           var form = TicketOCR.toDispatchForm(parsed);
           var docRead = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(parsed, form) : null;
-          closeToConfirm({
+          var ticket = {
             id: ticketId(),
             photo: photoUrl,
             ocrType: parsed._type,
@@ -1996,13 +2125,38 @@
             orderNo: parsed.orderNo || null,
             docRead: docRead,
             cardNumber: parsed.cardNumber || null,
-            foremanHours: null, // handwritten on haul cards — confirmed in the view
+            /* v107: hours/clocks the read carried prefill the
+               confirm fields — still confirmed in the view before
+               anything saves, exactly as a typed value is. */
+            foremanHours: parsed.totalHours || null,
             paymentUnit: null,  // checkbox state — confirmed in the view
+            startTime: parsed.startTime || null,
+            finishTime: parsed.finishTime || null,
             netWeight: form.netWeight || null,
             grossWeight: form.grossWeight || null,
             tareWeight: form.tareWeight || null,
             date: App._today()
-          }, false);
+          };
+          /* v107: a thin local read (every haul card — its facts
+             are handwritten) escalates to Power Read BEFORE the
+             confirm opens, so the confirm shows the best read the
+             app could get, not the first one that failed. */
+          if (readNeedsEscalation(parsed, docRead)) {
+            if (statusEl) statusEl.textContent = '⚡ Asking the power read…';
+            escalateTicketRead(ocrUrl || photoUrl, function (merged) {
+              if (merged) {
+                if (!ticket.cardNumber && merged.parsed.cardNumber) ticket.cardNumber = merged.parsed.cardNumber;
+                if (!ticket.ticketNo && (merged.parsed.ticketNo || merged.form.ticketNo)) ticket.ticketNo = merged.parsed.ticketNo || merged.form.ticketNo;
+                if (!ticket.foremanHours && merged.parsed.totalHours) ticket.foremanHours = merged.parsed.totalHours;
+                if (!ticket.startTime && merged.parsed.startTime) ticket.startTime = merged.parsed.startTime;
+                if (!ticket.finishTime && merged.parsed.finishTime) ticket.finishTime = merged.parsed.finishTime;
+                if (merged.docRead && (!ticket.docRead || (merged.docRead.found || []).length > ((ticket.docRead && ticket.docRead.found) || []).length)) ticket.docRead = merged.docRead;
+              }
+              closeToConfirm(ticket, false);
+            });
+          } else {
+            closeToConfirm(ticket, false);
+          }
         }).catch(function () {
           closeToConfirm({ id: ticketId(), photo: photoUrl, ocrType: 'unknown', date: App._today() }, true);
         });

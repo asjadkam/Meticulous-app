@@ -147,6 +147,27 @@
     return s.replace(/\s{2,}/g, ' ').trim();
   }
 
+  /* v107: the gibberish gate. OCR of a printed form can hallucinate
+     letter-salad — Oct 16 the template reader rendered the job site
+     as "ONBNERREEEEARAL HH HHE". A free-text value is gibberish
+     when it carries a run of 4+ identical letters, or when it is a
+     longer letters-only string almost devoid of vowels (real
+     place and material names have vowels; codes carry digits and
+     pass). Gibberish is NEVER rendered as a value: the field stays
+     blank, the read report lists it as not found, and the caller
+     escalates the photo to Power Read instead. */
+  TicketOCR.looksGibberish = function (s) {
+    if (!s) return false;
+    var t = String(s);
+    if (/([A-Za-z])\1{3,}/.test(t)) return true;
+    var letters = t.replace(/[^A-Za-z]/g, '');
+    if (letters.length >= 8 && !/\d/.test(t)) {
+      var vowels = (letters.match(/[AEIOUaeiou]/g) || []).length;
+      if (vowels / letters.length < 0.15) return true;
+    }
+    return false;
+  };
+
   /* ---------- SCALE TICKET parser (BURNCO format) ---------- */
   TicketOCR.parseScaleTicket = function (text) {
     var f = { _type: 'scale_ticket' };
@@ -545,6 +566,21 @@
       'totalNetWeight' // handwritten table total — for Pay by Weight
     ];
 
+    /* v107: labeled start/finish/total-hours attempts. On-device
+       handwriting rarely yields these cleanly, but the Power Read
+       transcription of the same card is clean text ("Start Time:
+       8:00 AM", "Total Hours: 10.0") and this parser is what reads
+       transcriptions too — the labels are the anchors either way.
+       Values land as CANDIDATES: the close confirm view shows them
+       in its fields for the driver's check, exactly like every
+       other read. */
+    var stM = text.match(/START(?:\s*TIME)?\s*[:.]?\s*(\d{1,2}[:.]\d{2}\s*[AP]M)/i);
+    if (stM) { var stV = normTime(stM[1].replace('.', ':')); if (stV) f.startTime = stV; }
+    var fnM = text.match(/FINISH(?:\s*TIME)?\s*[:.]?\s*(\d{1,2}[:.]\d{2}\s*[AP]M)/i);
+    if (fnM) { var fnV = normTime(fnM[1].replace('.', ':')); if (fnV) f.finishTime = fnV; }
+    var thM = text.match(/TOTAL\s*HOURS?\s*[:.]?\s*(\d{1,2}(?:\.\d{1,2})?)/i);
+    if (thM) { var thV = parseFloat(thM[1]); if (thV > 0 && thV <= 24) f.totalHours = String(thV); }
+
     // Attempt handwritten field extraction (best-effort, LOW confidence)
     // These are returned but flagged — the app MUST ask user to confirm.
     f._handwritingAttempts = {};
@@ -928,7 +964,17 @@
     var doc = TicketOCR.parseDocument(text);
     if (doc && doc._strong) return doc;
 
-    var isHaulCard = /DAILY\s+TRUCK\s+HAUL\s+CARD/i.test(text);
+    /* v107: the haul-card gate uses the SAME tolerant detection
+       parseHaulCard itself accepts — the strict single regex here
+       let a garbled-header card ("BAILY TRUCK HAUL CARD") fall
+       through to the confidence contest, where the dispatch parser
+       won and hallucinated a job site out of the card's printed
+       labels (Oct 16's "ONBNERREEEEARAL HH HHE"). A detected haul
+       card goes to the haul-card parser, full stop. */
+    var isHaulCard = /DAILY\s+TRUCK\s+HAUL\s+CARD/i.test(text) ||
+      /(DAILY|BAILY|DAIL)\s+TRUCK\s+HAUL/i.test(text) ||
+      (/\bTRUCK\s+HAUL\b/i.test(text) && /\bCARD\b/i.test(text)) ||
+      (/\bHAUL\s+CARD\b/i.test(text) && /(AECON|ACLU|ABCON)/i.test(text));
     var isScale = /SCALE\s+TICKET/i.test(text) ||
                   (/Gross:/i.test(text) && /Tare:/i.test(text));
     var isDispatch = /([A-Z]\d+-[A-Z]\d+)/.test(text) &&
@@ -1005,6 +1051,17 @@
       if (parsed.qty) dn.push('Qty ' + parsed.qty);
       if (parsed.weight) dn.push('Weight ' + parsed.weight);
       if (dn.length) form.notes = dn.join(' · ');
+    } else if (parsed._type === 'haul_card') {
+      /* v107: the card's own facts map to the form like every other
+         document's — the card number IS the ticket # (before v107
+         it lived only on parsed.cardNumber, so the form's Ticket #
+         sat empty beside a ticket chip that showed the number),
+         and any start/finish/total-hours the read carried ride
+         along for the form and the close confirm. */
+      if (parsed.cardNumber) form.ticketNo = parsed.cardNumber;
+      if (parsed.startTime) form.startTime = parsed.startTime;
+      if (parsed.finishTime) form.finishTime = parsed.finishTime;
+      if (parsed.totalHours) form.totalHours = parsed.totalHours;
     } else {
       // Dispatch screenshot — v31 fix: map each extracted field to its own
       // form field (previously time/equipment/coords were ALL dumped into
@@ -1027,6 +1084,13 @@
       }
       if (n.length) form.notes = n.join(' · ');
     }
+    /* v107 gibberish gate (see TicketOCR.looksGibberish): a
+       hallucinated free-text value never reaches the form — the
+       field stays blank, describeRead lists it as not found, and
+       the read escalates to Power Read. One choke point here
+       covers every parser and every caller. */
+    if (form.jobSite && TicketOCR.looksGibberish(form.jobSite)) delete form.jobSite;
+    if (form.material && TicketOCR.looksGibberish(form.material)) delete form.material;
     return form;
   };
   /* ---------- Multi-ticket aggregation (v26) ----------
