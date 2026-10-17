@@ -690,11 +690,19 @@
             var e = navPicker.pickerFind('work', b.getAttribute('data-pid'));
             if (!e) return;
             var p = e.place;
+            /* v107 — THE TAP RULE (owner, Oct 16 20:13): "When I
+               touch any of the saved addresses it should populate
+               in the search bar itself!" EVERY tap writes the place
+               into the destination search box first; the route flow
+               continues from the populated box — a pinned place
+               also sets the destination from its pin (as before),
+               an address-only place runs the search (as before). */
+            var q = body.querySelector('#nv_q');
             if (p.lat && p.lng) {
+              if (q) q.value = p.name;
               setDest([p.lat, p.lng], p.name);
               if (S.map) S.map.setView(S.dest, 14);
             } else if (p.address) {
-              var q = body.querySelector('#nv_q');
               if (q && searchBtn) { q.value = p.address; searchBtn.onclick(); }
             }
           };
@@ -1033,6 +1041,14 @@
                 }
               } catch (e) {}
             }, 120);
+            /* v107: a SECOND settle pass — on slower phones the
+               first pass can still race the layout, and a map sized
+               before the drive screen finished opening leaves the
+               far edge short of the viewport (the dead band). One
+               more invalidateSize once everything has settled. */
+            setTimeout(function () {
+              try { if (S && S.driveMap) S.driveMap.invalidateSize(); } catch (e) {}
+            }, 650);
           } catch (e) { S.driveMap = null; }
         }
         paintMute();
@@ -1090,7 +1106,11 @@
         if (roadEl) roadEl.textContent = dp.road ? 'On ' + dp.road : '';
         var etaEl = body.querySelector('#nvd_eta');
         if (etaEl) etaEl.textContent = fmtDist(dp.leftM) + ' · ' + fmtMin(dp.etaMin) + ' left' +
-          (S.destLabel ? ' · to ' + S.destLabel : '');
+          /* v107: the bar shows the destination's first segment
+             only — a full address wrapped the ETA into a column
+             and crushed the buttons (the CSS now also enforces
+             the single line; this keeps the text itself short). */
+          (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : '');
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
           var showRr = S.rerouting || pr.dist > 60;

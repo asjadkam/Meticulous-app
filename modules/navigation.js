@@ -356,14 +356,18 @@
       recents: true
     };
   }
-  function pickerRowHTML(e, pickedId) {
+  function pickerRowInner(e, pickedId) {
     var p = e.place, picked = !!pickedId && p.id === pickedId;
-    return '<button class="btn ghost" data-pid="' + esc(p.id) + '" ' +
-      'style="width:100%;text-align:left;margin-top:6px;white-space:normal;height:auto">' +
-      '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
+    return '<span style="display:block">' + (picked ? '✓ ' : '') + (TYPE_ICON[p.type] || '📍') + ' <b>' + esc(p.name) + '</b></span>' +
       '<span class="b" style="display:block">' +
       esc((p.type ? p.type : '') + (e.src === 'builtin' ? ' · Built-in' : ' · Yours') + (p.address ? ' · ' + p.address : '')) +
-      '</span></button>';
+      '</span>';
+  }
+  function pickerRowHTML(e, pickedId) {
+    var p = e.place;
+    return '<button class="btn ghost" data-pid="' + esc(p.id) + '" ' +
+      'style="width:100%;text-align:left;margin-top:6px;white-space:normal;height:auto">' +
+      pickerRowInner(e, pickedId) + '</button>';
   }
   function pickerFind(kind, id) { return findEntry(kind, id); }
   /* ================= PICKER-END ================= */
@@ -446,6 +450,11 @@
          while typing. ---- */
       var resEl = body.querySelector('#nv_results');
       var detailEl = body.querySelector('#nv_detail');
+      var qEl = body.querySelector('#nv_q');
+      /* v107: a Recent-destinations pick that is not (or no longer)
+         a saved place still gets a detail — built from the recent
+         itself — so its Navigate continues the same flow. */
+      var selRecent = null;
       function paintResults() {
         var res = pickerEntries(kind, pickQ);
         var list = res.rows;
@@ -459,8 +468,24 @@
           list.map(function (e) { return pickerRowHTML(e, selId[kind]); }).join('');
         resEl.querySelectorAll('[data-pid]').forEach(function (b) {
           b.onclick = function () {
-            selId[kind] = b.getAttribute('data-pid');
-            paintResults();
+            /* v107 — THE TAP RULE (owner, Oct 16 20:13): "When I
+               touch any of the saved addresses it should populate
+               in the search bar itself!" The tap writes the place
+               into the ONE field; the detail below (Navigate)
+               continues from there. And the list is NOT repainted:
+               the only change is the ✓ moving, done in place on
+               the affected rows — repainting re-sorted the
+               recents under his finger and garbled the list
+               (his Oct 16 recording). */
+            var pid = b.getAttribute('data-pid');
+            var picked = findEntry(kind, pid);
+            if (picked && qEl) qEl.value = picked.place.name;
+            selId[kind] = pid;
+            selRecent = null;
+            resEl.querySelectorAll('[data-pid]').forEach(function (rb) {
+              var re = findEntry(kind, rb.getAttribute('data-pid'));
+              if (re) rb.innerHTML = pickerRowInner(re, selId[kind]);
+            });
             paintDetail();
           };
         });
@@ -468,6 +493,7 @@
       }
       function paintDetail() {
         var e = selId[kind] ? findEntry(kind, selId[kind]) : null;
+        if (!e && selRecent) e = { place: selRecent, src: 'recent' };
         if (!e) {
           detailEl.innerHTML = '<div class="empty">Pick a place above.</div>';
           return;
@@ -482,7 +508,7 @@
           (kind === 'work' && e.src === 'fav' && p.visits ? '<div class="b">' + p.visits + ' visits' + (p.lastVisit ? ' · last ' + fmtWhen(p.lastVisit) : '') + '</div>' : '') +
           '<button class="btn primary big" id="nv_go" style="margin-top:8px">🧭 Navigate</button>' +
           (e.src === 'fav' ? '<div class="row" style="margin-top:6px"><button class="btn small ghost" id="nv_remove">Remove this place</button></div>' : '');
-        detailEl.querySelector('#nv_go').onclick = function () { goNavigate(p, kind); };
+        detailEl.querySelector('#nv_go').onclick = function () { goNavigate(p, e.src === 'recent' ? (p.kind || kind) : kind); };
         var rm = detailEl.querySelector('#nv_remove');
         if (rm) rm.onclick = function () {
           if (!confirm('Remove this place?')) return;
@@ -496,9 +522,9 @@
       }
       paintResults();
       paintDetail();
-      var qEl = body.querySelector('#nv_q');
       qEl.addEventListener('input', function () {
         pickQ = qEl.value;
+        selRecent = null;
         paintResults();
       });
 
@@ -562,13 +588,38 @@
         api.render(body);
       };
 
-      /* ---- Recent: Go again rides the same hand-off ---- */
+      /* ---- Recent destinations ----
+         v107: Go again obeys the same tap rule as every place —
+         it does NOT jump straight into the Navigator. It puts the
+         destination into the search field and selects it (the
+         matching saved place when there is one, the recent itself
+         otherwise), so the flow continues from the populated box
+         through the detail's Navigate — one pattern everywhere. */
       body.querySelectorAll('[data-rgo]').forEach(function (b) {
         b.onclick = function () {
           var dd = data(), id = b.getAttribute('data-rgo'), r = null;
           for (var i = 0; i < dd.recent.length; i++) if (dd.recent[i].id === id) { r = dd.recent[i]; break; }
           if (!r) return;
-          goNavigate({ id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng }, r.kind);
+          if (qEl) qEl.value = r.name;
+          var match = null;
+          placesFor(kind).forEach(function (e) {
+            if (!match && String(e.place.name || '').trim().toLowerCase() === String(r.name || '').trim().toLowerCase()) match = e;
+          });
+          if (match) {
+            selId[kind] = match.place.id;
+            selRecent = null;
+            pickQ = r.name;
+            paintResults();
+          } else {
+            selId[kind] = '';
+            selRecent = { id: r.id, name: r.name, address: r.address, lat: r.lat, lng: r.lng, kind: r.kind };
+            resEl.querySelectorAll('[data-pid]').forEach(function (rb) {
+              var re = findEntry(kind, rb.getAttribute('data-pid'));
+              if (re) rb.innerHTML = pickerRowInner(re, '');
+            });
+          }
+          paintDetail();
+          try { detailEl.scrollIntoView({ block: 'nearest' }); } catch (e) {}
         };
       });
     }

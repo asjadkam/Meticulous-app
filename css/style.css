@@ -301,12 +301,30 @@ label.chk input{width:18px;height:18px;}
 .nv-drive-dist{font-size:44px;font-weight:800;line-height:1;}
 .nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;}
 .nv-drive-road{font-size:15px;color:#D9E1F3;margin-top:4px;min-height:20px;}
-.nv-drive-viewport{flex:1;position:relative;overflow:hidden;perspective:700px;background:#e8edf5;}
+/* v107 (Stage 7): the dead gray band is dead. At 210% the tilted
+   plane's far edge projected ~a third short of the viewport top
+   on tall phones, exposing the flat viewport background as a gray
+   slab. The plane is now 300% and the perspective deeper
+   (1000px), which pushes the projected far edge past the top;
+   and the viewport background is a SKY gradient (deep navy at
+   the top into horizon blue), so any residual sliver above the
+   horizon reads as sky, not as a broken map. */
+.nv-drive-viewport{flex:1;position:relative;overflow:hidden;perspective:1000px;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
 .nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;}
 .nv-drive-spin{position:absolute;inset:0;transform-origin:50% 64%;transition:transform .45s linear;}
-.nv-drive-mapbox{position:absolute;width:210%;height:210%;left:50%;top:64%;transform:translate(-50%,-50%);}
+.nv-drive-mapbox{position:absolute;width:300%;height:300%;left:50%;top:64%;transform:translate(-50%,-50%);}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 .nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-100%);font-size:30px;color:#1F3764;text-shadow:0 0 6px #fff,0 0 3px #fff;z-index:5;pointer-events:none;}
 .nv-drive-reroute{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);}
 .nv-drive-bar{background:#1F3764;color:#fff;padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:8px;z-index:3;}
-.nv-drive-eta{flex:1;font-size:16px;font-weight:600;}
+/* v107: ONE readable row — the ETA text takes the free space on a
+   single line (ellipsis, never a wrapped column) and the buttons
+   keep their natural width. Before this, a long destination
+   wrapped the ETA into a tall narrow column and crushed the
+   Sound / End drive buttons beside it. */
+.nv-drive-eta{flex:1;min-width:0;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nv-drive-bar .btn{flex:none;}
+/* v107: tile readability — a contrast/saturation lift on the map
+   tiles themselves (the lever the OSM tile source leaves us), on
+   the drive map and the planning map alike. */
+.nv-drive-map .leaflet-tile,.nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
