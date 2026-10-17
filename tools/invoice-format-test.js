@@ -47,6 +47,7 @@ function deepEq(name, got, want) { ok(name, JSON.stringify(got) === JSON.stringi
 const appSrc = read('js/app.js');
 const invSrc = read('modules/invoice.js');
 const prefSrc = read('modules/preferences.js');
+const pdfSrc = read('js/pdfexport.js');
 
 function extractStore(src) {
   const a = src.indexOf('var store = {');
@@ -243,6 +244,125 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
     invBillToHeal({ billTo: 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2' }, CO).billTo, 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2');
   eq('v118 bill-to: a genuinely different hand-typed Bill-to is never rewritten',
     invBillToHeal({ billTo: 'Some Other Co' }, CO).billTo, 'Some Other Co');
+})();
+
+/* ============ v134: the RENDERED structure (the #1153 lesson) ============
+   v122 pinned the print STRUCTURE as source; the owner's phone
+   still rendered invoice-1153.pdf collapsed into running text,
+   because the native pipeline (printDoc -> MetPdf.htmlToLines ->
+   the line layout) had no h3 headings and flattened 4-cell rows
+   into wrapped paragraphs ("Truck #07Hours"). This section runs
+   the REAL printInvoice for the #1151 record, the REAL
+   htmlToLines and the REAL buildPdf, and pins what the page
+   actually carries: separate bill-to lines, h3 sections, a real
+   4-column table with computed geometry, ruled rows, the totals
+   behind their own rule, and the stream-level column positions. */
+(function () {
+  console.log('\n— v134: rendered structure — the real print, line by line —');
+  const w = makeWorld('2026-10-15');
+  /* the real PDF engine in the same world */
+  vm.runInContext(pdfSrc, w);
+  const M = w.window.MetPdf;
+  ok('v134 render: MetPdf loaded beside the module world', !!M && typeof M.htmlToLines === 'function');
+  /* deps printInvoice names directly (module-scope in the app):
+     esc, onb + a capturing printDoc */
+  w.esc = function (s) { return w.App._esc(s); };
+  w.onb = function () { return {}; };
+  let capTitle = null, capHtml = null;
+  w.printDoc = function (title, html) { capTitle = title; capHtml = html; };
+  const piA = invSrc.indexOf('function printInvoice(rec) {');
+  const piB = invSrc.indexOf('\n    draw();', piA);
+  ok('v134 render: printInvoice extracted from the shipped file', piA !== -1 && piB > piA);
+  vm.runInContext(invSrc.slice(piA, piB), w);
+
+  const plan = w.invCycBuildRevenueLines(OCT_1_15, [], 29, 'hourly');
+  const cards = w.invCycCardDays(OCT_1_15, DSP_1_15, plan.dayHours, '2026-10-01', '2026-10-15');
+  const t = w.invCycTotals(3610.50, 5, true);
+  const res = w.invIssue({
+    draft: { items: [], taxRate: 5, billTo: 'AI Trucking, 1506 16 St NE, Calgary, AB T2E 4T2', no: '', date: '2026-10-15', notes: '' },
+    revLines: plan.lines, sub: t.sub, tax: t.tax, total: t.total,
+    pa: '2026-10-01', pb: '2026-10-15', today: '2026-10-15', now: 1151,
+    prefNo: '1151', taxIncluded: true, duplicateDates: [],
+    dayHours: plan.dayHours, cardDays: cards, rate: 29, truckNo: '07',
+    company: { name: 'Asjad Kamal', gst: '765662010 RT0001', addr: '1243 Cornerstone Blvd NE, Calgary, AB T3N 2A6' },
+    province: 'AB', country: 'Canada'
+  });
+  eq('v134 render: the #1151 record issued in-world', res.ok && res.rec.no, '1151');
+  w.printInvoice(res.rec);
+  eq('v134 render: printDoc got the document', capTitle, 'Invoice 1151');
+
+  const L = M.htmlToLines(capHtml);
+  const texts = L.map(function (l) { return l.a || (l.cells ? l.cells.map(function (c) { return c.t; }).join('|') : ''); });
+  eq('v134 render: business name is the title', L[0].k + ':' + L[0].a, 'title:Asjad Kamal');
+  ok('v134 render: "Bill to" is a real section heading', L.some(function (l) { return l.k === 'h' && l.a === 'Bill to'; }));
+  ok('v134 render: "Hours" is a real section heading', L.some(function (l) { return l.k === 'h' && l.a === 'Hours'; }));
+  ok('v134 render: the pay-period line rides the date row',
+    L.some(function (l) { return l.k === 'kv' && l.b.indexOf('Pay period: Oct 1–15, 2026') !== -1; }));
+  /* the bill-to block: three lines of its own — nothing welded */
+  ok('v134 render: Bill-to name stands alone', texts.indexOf('AI Trucking') !== -1);
+  ok('v134 render: Bill-to address stands alone', texts.indexOf('1506 16 St NE, Calgary, AB T2E 4T2') !== -1);
+  ok('v134 render: Truck # stands alone on its own line', texts.indexOf('Truck #07') !== -1);
+  ok('v134 render: NOTHING is welded to its neighbour (no "Truck #07Hours")',
+    !texts.some(function (x) { return /Truck #\S+Hours/.test(x) || /Hours$/.test(x) && /Truck/.test(x); }));
+
+  /* the hours table: one head row + eleven day rows, real cells */
+  const cols = L.filter(function (l) { return l.k === 'cols'; });
+  eq('v134 render: the hours are a table (1 head + 11 day rows)', cols.length, 12);
+  deepEq('v134 render: the header cells are the four columns',
+    cols[0].cells.map(function (c) { return c.t; }), ['Description', 'Rate', 'Hours', 'Amount']);
+  eq('v134 render: the header is flagged as the header', cols[0].head, true);
+  deepEq('v134 render: the first day row, cell by cell',
+    cols[1].cells.map(function (c) { return c.t; }), ['Oct 1', '$29.00 tax incl.', '10.5', '$304.50']);
+  deepEq('v134 render: only the Amount column is right-aligned',
+    cols[1].cells.map(function (c) { return c.r; }), [0, 0, 0, 1]);
+  deepEq('v134 render: the last day row',
+    cols[11].cells.map(function (c) { return c.t; }), ['Oct 15', '$29.00 tax incl.', '11.5', '$333.50']);
+
+  /* the totals stand in their own section, behind a rule */
+  const ruleIdx = L.findIndex(function (l) { return l.k === 'rule'; });
+  const netIdx = L.findIndex(function (l) { return l.k === 'kv' && l.a === 'Net subtotal'; });
+  ok('v134 render: a rule separates the totals block', ruleIdx !== -1 && netIdx !== -1 && ruleIdx < netIdx);
+  const kvOf = function (a) { return L.filter(function (l) { return l.k === 'kv' && l.a === a; })[0]; };
+  eq('v134 render: Net subtotal (GST backed out)', kvOf('Net subtotal') && kvOf('Net subtotal').b, '$3438.57');
+  const gstRow = L.filter(function (l) { return l.k === 'kv' && l.a.indexOf('GST/HST 765662010 RT0001') !== -1; })[0];
+  eq('v134 render: the GST row prints the number + the included GST', gstRow && gstRow.b, '$171.93');
+  eq('v134 render: Total due = hours x rate exactly', kvOf('Total due') && kvOf('Total due').b, '$3610.50');
+  eq('v134 render: Paid amount honest $0.00', kvOf('Paid amount') && kvOf('Paid amount').b, '$0.00');
+  eq('v134 render: Balance owing = Total due', kvOf('Balance owing') && kvOf('Balance owing').b, '$3610.50');
+  ok('v134 render: the byte-for-byte note survives the pipeline',
+    texts.some(function (x) { return x.indexOf('Oct 15: haul card #21314 (foreman 10.5h + 1h travel). Total hours: 124.5.') !== -1; }));
+
+  /* the built PDF: one table, pinned geometry, pinned stream x's */
+  const pdf = M.buildPdf({ title: capTitle, lines: L });
+  eq('v134 pdf: exactly one table in the built PDF', pdf.tables.length, 1);
+  const tb = pdf.tables[0];
+  eq('v134 pdf: the table has 4 columns and 12 rows', tb.cols + '/' + tb.rows, '4/12');
+  eq('v134 pdf: the first column starts at the left margin', tb.xs[0], 46);
+  ok('v134 pdf: columns march strictly right', tb.xs[0] < tb.xs[1] && tb.xs[1] < tb.xs[2] && tb.xs[2] < tb.xs[3],
+    JSON.stringify(tb.xs));
+  ok('v134 pdf: the last column ends at the right margin (549)',
+    Math.abs(tb.xs[3] + tb.widths[3] - 549) < 0.2, (tb.xs[3] + tb.widths[3]).toFixed(1));
+  const stream = Buffer.from(pdf.bytes).toString('latin1');
+  const opX = function (txt) {
+    const m = stream.match(new RegExp('1 0 0 1 ([\\d.]+) [\\d.]+ Tm \\(' + txt.replace(/[.$]/g, '\\$&') + '\\)'));
+    return m ? parseFloat(m[1]) : null;
+  };
+  const descX = opX('Oct 1');
+  ok('v134 pdf: day rows paint at the Description column x', descX !== null && Math.abs(descX - (tb.xs[0] + 6)) < 0.2,
+    'x=' + descX + ' want ' + (tb.xs[0] + 6));
+  const amtX = opX('$304.50');
+  ok('v134 pdf: amounts right-align to the Amount column edge',
+    amtX !== null && Math.abs(amtX + M._textWidth('$304.50', 10) - (tb.xs[3] + tb.widths[3] - 6)) < 0.6,
+    'x=' + amtX);
+  ok('v134 pdf: ruled rows — the stream carries the table rules (navy + row rules)',
+    (stream.match(/ RG /g) || []).length >= 13, 'rules=' + (stream.match(/ RG /g) || []).length);
+  ok('v134 pdf: header text paints bold (F2)', stream.indexOf('/F2 10 Tf') !== -1 && stream.indexOf('(Description)') !== -1);
+
+  /* the 2-cell world is untouched: stub-shaped tables stay kv */
+  const L2 = M.htmlToLines('<table><tr><th>Description</th><th>Amount</th></tr>' +
+    '<tr><td>EI</td><td class="tot">-$32.00</td></tr></table>');
+  ok('v134 render: 2-cell rows still become kv (no cols)', L2.some(function (l) { return l.k === 'kv' && l.a === 'EI'; }) &&
+    !L2.some(function (l) { return l.k === 'cols'; }));
 })();
 
 console.log('\ninvoice-format: ' + pass + ' passed, ' + fail + ' failed');

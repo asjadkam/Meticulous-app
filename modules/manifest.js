@@ -504,6 +504,17 @@
       L.push({ k: 'h', a: 'Incidents' });
       c.incidents.forEach(function (x) { L.push({ k: 'kv', a: x.tab, b: String(x.desc || '').slice(0, 40) }); });
     }
+    /* v134 (owner, Oct 17: "Same clean up on manifest"): the day's
+       figures get their OWN section, the way the invoice's totals
+       stand apart — a "Day summary" heading over the start/end /
+       odometer / loads / earned lines below, printed only when at
+       least one of those lines will print, and the earned figure
+       closes the section behind a rule (its totals row). The lines
+       themselves — words, order, toggles, the v127 live/closed
+       label — are unchanged. */
+    var anyFig = t.start || t.end || t.odo || t.earned ||
+      (t.loads && c.loads > 0) || (t.geoloads && c.geoDay && c.geoDay.sites);
+    if (anyFig) L.push({ k: 'h', a: 'Day summary' });
     if (t.start) L.push({ k: 'kv', a: 'Start Time', b: c.startT });
     if (t.end) L.push({ k: 'kv', a: 'End Time', b: c.endT });
     /* v83: when a shown time is the tracker's (no confirmed
@@ -572,8 +583,13 @@
        OPEN the figure is a running total, and the row must say
        so — "Income earned today so far". "Total Earned Income"
        is earned only once the day is closed. collect() already
-       knows the live session (c.live). */
-    if (t.earned) L.push({ k: 'kv', a: c.live ? 'Income earned today so far' : 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
+       knows the live session (c.live). v134: the figure is the
+       Day summary's totals row — a rule sets it apart, the line
+       itself (kind, label, value) is unchanged. */
+    if (t.earned) {
+      L.push({ k: 'rule' });
+      L.push({ k: 'kv', a: c.live ? 'Income earned today so far' : 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
+    }
     return L;
   }
 

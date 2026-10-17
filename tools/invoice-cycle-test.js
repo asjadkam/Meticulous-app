@@ -378,5 +378,119 @@ function emptyDraft(no) {
   ok('v79 static: Preferences saves the invoice settings', prefSrc.indexOf("o.nextInvoiceNo = g('pf_nextinv')") !== -1 && prefSrc.indexOf("o.rateIncludesTax = body.querySelector('#pf_taxincl').checked") !== -1 && prefSrc.indexOf("o.invoiceTaxRate = g('pf_invtax') || '5'") !== -1);
 })();
 
+/* ---------------- v134: a print is not an issue — the number lifecycle ----------------
+   Owner evidence (Oct 17): he re-prints a period again and again
+   "to see its face" and each look wore a NEW number (#1152, then
+   #1153) because printing and issuing were the same button. Now:
+   the would-be number is computed purely, minting happens ONLY in
+   invIssue, and a reprint carries the archived record's own
+   number. */
+(function () {
+  const b = freshBacking();
+  const w = makeWorld(b, '2026-10-17');
+  const S = function (k, d) { return w.App._store.get('inv_' + k, d); };
+
+  eq('v134 would-be: Preferences sequence shows on a draft print', w.invCycWouldBeNo([], '', '1152'), '1152');
+  eq('v134 would-be: a typed number wins', w.invCycWouldBeNo([], '2001', '1152'), '2001');
+  eq('v134 would-be: the placeholder is not a number', w.invCycWouldBeNo([], '(auto on save)', ''), '1');
+  eq('v134 would-be: no pref, no typed -> max(issued)+1', w.invCycWouldBeNo([{ no: '1151' }], '', ''), '1152');
+
+  /* Three "test prints" of the same draft: nothing archived,
+     nothing advanced, the would-be number unmoved. */
+  for (let i = 0; i < 3; i++) w.invCycWouldBeNo(S('list', []), '', '1152');
+  eq('v134 prints: three draft prints archive nothing', S('list', []).length, 0);
+  eq('v134 prints: the would-be number is unmoved after them', w.invCycWouldBeNo(S('list', []), '', '1152'), '1152');
+
+  /* The one real issue mints exactly once. */
+  let advancedTo = null;
+  const args = issueArgs(emptyDraft(''), '2026-10-16', '2026-10-31', 4242);
+  args.today = '2026-10-17'; args.prefNo = '1152';
+  args.setNextInvoiceNo = function (n) { advancedTo = n; };
+  const r = w.invIssue(args);
+  eq('v134 issue: ok', r.ok, true);
+  eq('v134 issue: the minted number is the one the prints showed', r.rec.no, '1152');
+  eq('v134 issue: exactly one record archived', S('list', []).length, 1);
+  eq('v134 issue: the Preferences sequence advanced once, by the callback', advancedTo, '1153');
+  eq('v134 reprint: the archived record carries its own number (a reprint mints nothing)',
+    S('list', [])[0].no, '1152');
+  eq('v134 reprint: the list is still exactly one record', S('list', []).length, 1);
+})();
+
+/* ---------------- v134: mark settled outside the app ----------------
+   His Oct 1–15, 2026 was settled by hand-built invoice #1151 —
+   sent by him, paid against — while the app still offered the
+   period as open. The door records the fact (period + the number
+   he used), advances the open period, records NO money, leaves
+   the Preferences sequence alone, and removes cleanly. */
+(function () {
+  const b = freshBacking();
+  const w = makeWorld(b, '2026-10-17');
+  const S = function (k, d) { return w.App._store.get('inv_' + k, d); };
+  /* His app state: the last recorded period ended Sep 30, so
+     Oct 1–15 stands open. */
+  w.App._store.set('inv_list', [{ id: 'inv-sep', no: '1150', date: '2026-09-30', pa: '2026-09-16', pb: '2026-09-30', total: 2871 }]);
+  eq('v134 settled: before the door, Oct 1–15 is the open period',
+    JSON.stringify(w.invCycOpenPeriod(S('list', []), '2026-10-17')), JSON.stringify({ a: '2026-10-01', b: '2026-10-15' }));
+
+  const noNum = w.invCycMarkSettled({ pa: '2026-10-01', pb: '2026-10-15', externalNo: '', today: '2026-10-17', now: 900 });
+  eq('v134 settled: no number -> refused', noNum.ok, false);
+  eq('v134 settled: no number -> stage', noNum.stage, 'number');
+  const badPer = w.invCycMarkSettled({ pa: '2026-10-15', pb: '2026-10-01', externalNo: '1151', today: '2026-10-17', now: 901 });
+  eq('v134 settled: backwards period -> refused', badPer.ok, false);
+  eq('v134 settled: backwards period -> stage', badPer.stage, 'period');
+  eq('v134 settled: refusals recorded nothing', S('list', []).length, 1);
+
+  const ms = w.invCycMarkSettled({ pa: '2026-10-01', pb: '2026-10-15', externalNo: '1151', today: '2026-10-17', now: 902 });
+  eq('v134 settled: ok', ms.ok, true);
+  eq('v134 settled: the record is flagged settled-outside', ms.rec.settledOutside, true);
+  eq('v134 settled: NO money is recorded (totals stay null)', ms.rec.total === null && ms.rec.sub === null && ms.rec.tax === null, true);
+  eq('v134 settled: the record carries the period + number he stated',
+    ms.rec.pa + '..' + ms.rec.pb + ' #' + ms.rec.no, '2026-10-01..2026-10-15 #1151');
+  eq('v134 settled: no Preferences advance is reported (his 1152 stays his)', ms.nextPrefNo, undefined);
+  eq('v134 settled: open period advances to Oct 16–31',
+    JSON.stringify(w.invCycOpenPeriod(S('list', []), '2026-10-17')), JSON.stringify({ a: '2026-10-16', b: '2026-10-31' }));
+  eq('v134 settled: the stored period inputs advanced too', S('pa', '') + '..' + S('pb', ''), '2026-10-16..2026-10-31');
+  eq('v134 settled: the next number off the records is 1152 (settled # counts once)',
+    w.invCycWouldBeNo(S('list', []), '', ''), '1152');
+
+  const dup = w.invCycMarkSettled({ pa: '2026-10-01', pb: '2026-10-15', externalNo: '1151', today: '2026-10-17', now: 903 });
+  eq('v134 settled: the same number twice -> refused', dup.ok, false);
+  eq('v134 settled: duplicate stage is collision', dup.stage, 'collision');
+  const clash = w.invIssue(Object.assign({}, issueArgs(emptyDraft(''), '2026-10-16', '2026-10-31', 904), { prefNo: '1151', today: '2026-10-17' }));
+  eq('v134 settled: issuing the settled number is refused as a collision', clash.ok, false);
+  eq('v134 settled: issue collision stage', clash.stage, 'collision');
+
+  const rmReal = w.invCycRemoveSettled('inv-sep', '2026-10-17');
+  eq('v134 unsettle: a REAL issued invoice cannot be removed here', rmReal.ok, false);
+  const rm = w.invCycRemoveSettled(ms.rec.id, '2026-10-17');
+  eq('v134 unsettle: ok', rm.ok, true);
+  eq('v134 unsettle: the period opens again (Oct 1–15)',
+    JSON.stringify(w.invCycOpenPeriod(S('list', []), '2026-10-17')), JSON.stringify({ a: '2026-10-01', b: '2026-10-15' }));
+  eq('v134 unsettle: only the settled record is gone', S('list', []).length, 1);
+  const rmAgain = w.invCycRemoveSettled(ms.rec.id, '2026-10-17');
+  eq('v134 unsettle: removing twice is refused', rmAgain.ok, false);
+})();
+
+/* ---------------- v134 statics: the preview + the door ---------------- */
+(function () {
+  ok('v134 static: the preview button exists and says it does not save',
+    invSrc.indexOf('id="iv_preview"') !== -1 && invSrc.indexOf("Print preview — doesn\\'t save") !== -1);
+  const pvA = invSrc.indexOf('var previewBtn');
+  const pvB = invSrc.indexOf('the settled-outside door — two steps', pvA);
+  const pvSlice = pvA !== -1 && pvB > pvA ? invSrc.slice(pvA, pvB) : '';
+  ok('v134 static: the preview handler never issues, never writes the list, never advances the sequence',
+    pvSlice.length > 0 && pvSlice.indexOf('invIssue(') === -1 && pvSlice.indexOf("W('list'") === -1 &&
+    pvSlice.indexOf('invW(') === -1 && pvSlice.indexOf('setNextInvoiceNo') === -1,
+    pvSlice.slice(0, 120));
+  ok('v134 static: the preview prints through the one printInvoice, with the would-be number',
+    pvSlice.indexOf('printInvoice({') !== -1 && pvSlice.indexOf('invCycWouldBeNo(invoices(), draft.no') !== -1);
+  ok('v134 static: the settled door renders (quiet card + two-step confirm)',
+    invSrc.indexOf('Settled outside the app?') !== -1 && invSrc.indexOf('id="iv_settle_go"') !== -1 &&
+    invSrc.indexOf('id="iv_settle_yes"') !== -1 && invSrc.indexOf('invCycMarkSettled({') !== -1);
+  ok('v134 static: settled records render as facts, not money, with a remove door',
+    invSrc.indexOf('· settled outside the app') !== -1 && invSrc.indexOf('data-unsettle="') !== -1 &&
+    invSrc.indexOf('invCycRemoveSettled(') !== -1);
+})();
+
 console.log('\ninvoice-cycle: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

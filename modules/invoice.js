@@ -486,6 +486,93 @@
       '. Next period: ' + invCycShort(next) + '.');
     return { ok: true, rec: rec, next: next, nextPrefNo: nextPrefNo };
   }
+  /* v134: the number a print of the CURRENT draft would carry —
+     a typed number wins, then the Preferences sequence, then
+     max(issued)+1. PURE: reads nothing, writes nothing. The owner
+     re-prints a draft again and again to judge the document's
+     face (his words, Oct 17: "I am printing that period again
+     and again to see its face!") — a look must cost nothing: the
+     number is only ever MINTED by invIssue above, and a draft
+     print archives nothing, advances nothing, clears nothing. */
+  function invCycWouldBeNo(list, typed, pref) {
+    var t = String(typed || '').trim();
+    if (t === '(auto on save)') t = '';
+    var p = String(pref || '').trim();
+    if (p === '(auto on save)') p = '';
+    return t || p || invCycNextNo(list);
+  }
+  /* v134: MARK SETTLED OUTSIDE THE APP. The owner's Oct 1–15,
+     2026 period was settled OUTSIDE the app — invoice #1151 was
+     built by hand, sent by him, and paid against — so the app
+     still treated the period as open and every test print of it
+     wore a fresh number (#1152, then #1153). This records the
+     fact the owner states — a period plus the invoice number he
+     used — as an archived record in the same list, so the open
+     period advances past it (his becomes Oct 16–31) and the used
+     number can never be issued twice. NO money figures are
+     recorded: sub/tax/total stay null, the record prints
+     nothing, and it invents no amounts. The next Preferences
+     number is NOT touched (his stays 1152). Verified the v48/v55
+     way, like invIssue: write, read back, only then advance.
+     Removal (invCycRemoveSettled) re-opens the period. */
+  function invCycMarkSettled(x) {
+    var pa = x.pa, pb = x.pb;
+    var no = String(x.externalNo || '').trim();
+    if (no === '(auto on save)') no = '';
+    if (!invCycParse(pa) || !invCycParse(pb) || pb < pa) {
+      return { ok: false, stage: 'period', message: 'Pick the settled period first — nothing was recorded.' };
+    }
+    if (!no) {
+      return { ok: false, stage: 'number', message: 'Enter the invoice number you used outside the app — nothing was recorded.' };
+    }
+    var list = invS('list', []);
+    if (invCycCollision(list, no)) {
+      return { ok: false, stage: 'collision', message: 'Invoice #' + no + ' is already on record — nothing was changed.' };
+    }
+    var rec = {
+      id: 'inv' + (x.now || Date.now()), no: no, date: x.today, draftDate: null, billTo: '',
+      pa: pa, pb: pb, settledOutside: true,
+      revLines: [], items: [], taxRate: 0, taxIncluded: false,
+      sub: null, tax: null, total: null,
+      dayHours: null, cardDays: null, rate: 0, truckNo: '',
+      notes: '', company: x.company || null,
+      province: x.province, country: x.country, at: x.today
+    };
+    var newList = list.slice(); newList.push(rec);
+    if (invW('list', newList) === false || !invVerifyIssued(rec.id)) {
+      return {
+        ok: false, stage: 'write',
+        message: 'The settled record could not be saved — nothing was changed. Check storage or connection, then try again.'
+      };
+    }
+    var next = invCycOpenPeriod(newList, x.today);
+    if (next) { invW('pa', next.a); invW('pb', next.b); }
+    invW('cycmsg', 'Recorded: ' + invCycLabel({ a: pa, b: pb }) + ' was settled outside the app (invoice #' + no + ').' +
+      (next ? ' Open period: ' + invCycShort(next) + '.' : ''));
+    return { ok: true, rec: rec, next: next };
+  }
+  /* v134: undo a settled-outside record — the period it covered
+     opens again. Only settledOutside records can be removed this
+     way; a real issued invoice is never deleted here. Verified:
+     the write must read back WITHOUT the record before the open
+     period is re-stamped. */
+  function invCycRemoveSettled(id, today) {
+    var list = invS('list', []);
+    var rec = null;
+    list.forEach(function (r) { if (r && r.id === id) rec = r; });
+    if (!rec || !rec.settledOutside) {
+      return { ok: false, stage: 'notfound', message: 'That is not a settled-outside record — nothing was removed.' };
+    }
+    var newList = list.filter(function (r) { return !r || r.id !== id; });
+    if (invW('list', newList) === false || invVerifyIssued(id)) {
+      return { ok: false, stage: 'write', message: 'The record could not be removed — nothing was changed.' };
+    }
+    var next = invCycOpenPeriod(newList, today);
+    if (next) { invW('pa', next.a); invW('pb', next.b); }
+    invW('cycmsg', 'Settled record for invoice #' + rec.no + ' removed — ' +
+      invCycLabel({ a: rec.pa, b: rec.pb }) + ' is open again.');
+    return { ok: true, rec: rec, next: next };
+  }
   /* ================= v105: THE SENT FORMAT =================
      The printed invoice must read like the owner's own hour sheet —
      the document he actually sent his boss (invoice #1151, Oct 15,
@@ -880,6 +967,11 @@
     if (isFinite(prefTaxRate) && taxIncluded) draft.taxRate = prefTaxRate;
     else if (taxIncluded) draft.taxRate = 5;
     var bizPromptVisible = false;
+    /* v134: the settled-outside door's two-step state (the house
+       two-tap pattern — no native confirm in the WebView) and the
+       issued list's remove-confirm target. Closure state, like
+       bizPromptVisible: it lives for this render of the module. */
+    var settleConfirm = false, settleVals = null, unsettleId = null;
     function saveDraft() { W('draft', draft); }
     /* A stable draft id, so the business-details check (below) nags
        at most once per invoice, never once per render. */
@@ -966,9 +1058,41 @@
       }
 
       h += '<button class="btn primary" id="iv_issue">Save &amp; print invoice</button>';
+      /* v134: a LOOK costs nothing — preview prints the draft
+         with its would-be number and touches no record, no
+         counter, no draft (see invCycWouldBeNo). */
+      h += '<button class="btn ghost" id="iv_preview" style="margin-top:8px">🖨 Print preview — doesn\'t save</button>';
       h += issuedHtml();
+      h += settleHtml();
       body.innerHTML = h;
       wireInvoice(body, draft, revLines, t, saveDraft, draw, revPlan);
+    }
+
+    /* v134: the MARK-SETTLED door — quiet, under the issued list.
+       For a period the owner settled OUTSIDE the app (his Oct
+       1–15, 2026: hand-built invoice #1151, sent by him): record
+       the period + the number he used, and the app stops offering
+       that period as open. Confirm-first (two-step, in-page); the
+       amounts are never asked — the door records no money. */
+    function settleHtml() {
+      var openP = invCycOpenPeriod(invoices(), App._today());
+      var sv = settleVals || { a: openP.a, b: openP.b, no: '' };
+      var h = '<div class="card"><h3>Settled outside the app?</h3>' +
+        '<p class="note">If you already invoiced a period another way — a sheet you made yourself, for example — ' +
+        'record it here so the app stops offering that period. Just the period and the invoice number you used; ' +
+        'no amounts are recorded. You can remove the record later and the period opens again.</p>';
+      if (!settleConfirm) {
+        h += '<div class="row"><div><label class="f">Period from</label><input type="date" id="iv_settle_a" value="' + esc(sv.a || '') + '"></div>' +
+          '<div><label class="f">Period to</label><input type="date" id="iv_settle_b" value="' + esc(sv.b || '') + '"></div></div>' +
+          '<label class="f">Invoice # used outside the app</label><input id="iv_settle_no" value="' + esc(sv.no || '') + '" placeholder="e.g. 1151">' +
+          '<button class="btn navy small" id="iv_settle_go" style="margin-top:8px">Record as settled</button>';
+      } else {
+        h += '<p class="note" style="color:#c0392b">Record <b>' + esc(invCycLabel({ a: sv.a, b: sv.b })) + '</b> as settled with invoice <b>#' +
+          esc(sv.no) + '</b>? The period stops being offered as open. No amounts are recorded, and you can undo this.</p>' +
+          '<div class="row"><button class="btn primary" id="iv_settle_yes" style="margin:0">Yes, record it</button>' +
+          '<button class="btn ghost" id="iv_settle_no_btn" style="margin:0">Cancel</button></div>';
+      }
+      return h + '</div>';
     }
 
     function issuedHtml() {
@@ -976,6 +1100,21 @@
       var h = '<div class="card"><h3>📁 Issued invoices</h3>';
       if (!list.length) return h + '<div class="empty">No invoices yet.</div></div>';
       list.slice().reverse().slice(0, 10).forEach(function (r) {
+        /* v134: a settled-outside record carries NO money (its
+           totals are null by design) — it renders as the fact it
+           is, with a remove door instead of a print door. */
+        if (r.settledOutside) {
+          h += '<div class="kv"><span>#' + esc(r.no) + ' <span class="note">' +
+            esc(invCycLabel({ a: r.pa, b: r.pb })) + ' · settled outside the app</span></span>' +
+            '<span><a href="#" data-unsettle="' + r.id + '" style="color:#d23b3b">remove</a></span></div>';
+          if (unsettleId === r.id) {
+            h += '<div class="note" style="color:#c0392b;margin:2px 0 8px">Remove this record? ' +
+              esc(invCycLabel({ a: r.pa, b: r.pb })) + ' will open again. ' +
+              '<a href="#" data-unsettle-yes="' + r.id + '" style="color:#d23b3b"><b>Yes, remove it</b></a> · ' +
+              '<a href="#" data-unsettle-no="">keep it</a></div>';
+          }
+          return;
+        }
         h += '<div class="kv"><span>#' + esc(r.no) + ' <span class="note">' + esc(r.date) + '</span></span>' +
           '<span><b>$' + r.total.toFixed(2) + '</b> <a href="#" data-reprint="' + r.id + '" style="color:var(--navy)">print</a></span></div>';
       });
@@ -1070,6 +1209,75 @@
         Meticulous.modules.invoice.render(body);
       }
       body.querySelector('#iv_issue').onclick = function () { attemptIssue(false); };
+      /* v134: PREVIEW — print the draft's face without issuing.
+         Builds the same record shape printInvoice consumes from
+         the draft's current facts, carrying the WOULD-BE number
+         only. It never calls invIssue, never writes the list,
+         never advances onboarding.nextInvoiceNo, and leaves the
+         draft exactly as sync() saved it. Re-printing an ISSUED
+         invoice (data-reprint below) already reprints the archived
+         record with its own number — unchanged. */
+      var previewBtn = body.querySelector('#iv_preview');
+      if (previewBtn) previewBtn.onclick = function () {
+        sync();
+        var paV = body.querySelector('#iv_a').value, pbV = body.querySelector('#iv_b').value;
+        printInvoice({
+          id: null,
+          no: invCycWouldBeNo(invoices(), draft.no, o.nextInvoiceNo || ''),
+          date: draft.date, billTo: draft.billTo, pa: paV, pb: pbV,
+          revLines: revLines, items: (draft.items || []).slice(),
+          taxRate: Number(draft.taxRate) || 0, taxIncluded: taxIncluded,
+          sub: t.sub, tax: t.tax, total: t.total,
+          dayHours: (revPlan && revPlan.dayHours) || null,
+          cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
+            (revPlan && revPlan.dayHours) || {}, paV, pbV),
+          rate: parseFloat(o.payRate) || 0,
+          truckNo: o.truckNo || '',
+          notes: draft.notes,
+          company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },
+          province: o.province, country: o.country
+        });
+      };
+      /* v134: the settled-outside door — two steps, in-page. */
+      var settleGo = body.querySelector('#iv_settle_go');
+      if (settleGo) settleGo.onclick = function () {
+        settleVals = {
+          a: body.querySelector('#iv_settle_a').value,
+          b: body.querySelector('#iv_settle_b').value,
+          no: body.querySelector('#iv_settle_no').value.trim()
+        };
+        settleConfirm = true;
+        draw();
+      };
+      var settleYes = body.querySelector('#iv_settle_yes');
+      if (settleYes) settleYes.onclick = function () {
+        var res = invCycMarkSettled({
+          pa: settleVals.a, pb: settleVals.b, externalNo: settleVals.no,
+          today: App._today(),
+          company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },
+          province: o.province, country: o.country
+        });
+        settleConfirm = false; settleVals = null;
+        if (!res.ok) W('err', res.message);
+        Meticulous.modules.invoice.render(body);
+      };
+      var settleNoBtn = body.querySelector('#iv_settle_no_btn');
+      if (settleNoBtn) settleNoBtn.onclick = function () { settleConfirm = false; draw(); };
+      body.querySelectorAll('[data-unsettle]').forEach(function (a) {
+        a.onclick = function (e) { e.preventDefault(); unsettleId = a.getAttribute('data-unsettle'); draw(); };
+      });
+      body.querySelectorAll('[data-unsettle-yes]').forEach(function (a) {
+        a.onclick = function (e) {
+          e.preventDefault();
+          var res = invCycRemoveSettled(a.getAttribute('data-unsettle-yes'), App._today());
+          unsettleId = null;
+          if (!res.ok) W('err', res.message);
+          Meticulous.modules.invoice.render(body);
+        };
+      });
+      body.querySelectorAll('[data-unsettle-no]').forEach(function (a) {
+        a.onclick = function (e) { e.preventDefault(); unsettleId = null; draw(); };
+      });
       var bizPrefsBtn = body.querySelector('#iv_biz_prefs');
       if (bizPrefsBtn) bizPrefsBtn.onclick = function () { App.openModule('preferences'); };
       var bizPrintBtn = body.querySelector('#iv_biz_print');

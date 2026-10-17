@@ -370,6 +370,16 @@ function runManifestWorlds() {
       const data = Buffer.from(w.sandbox.MetPdf._b64decodeBytes(fs1[0].data));
       check('e2: the saved payload is a real PDF of the manifest',
         data.slice(0, 5).toString() === '%PDF-' && data.includes('(MANIFEST') && data.includes('(Aecon Infrastructure)'));
+      /* v134 (owner, Oct 17: "Same clean up on manifest"): the
+         day's figures stand under their OWN section heading,
+         ahead of the figure rows, and the earned total prints as
+         the section's closing line — pinned in the actual PDF
+         byte stream of the native save. */
+      check('e2: v134 — the figures have their own "Day summary" section', data.includes('(Day summary)'));
+      check('e2: v134 — the Day summary heading paints before the figures it heads',
+        data.includes('(Day summary)') && data.includes('(Start Time)') &&
+        data.indexOf('(Day summary)') < data.indexOf('(Start Time)'));
+      check('e2: v134 — the earned total prints as the section totals line', data.includes('(Total Earned Income)'));
       check('e2: shell Print message tells the driver where it landed', /Documents folder/.test(w.body._msg.textContent), w.body._msg.textContent);
       w.body._btns['#mn_dl'].onclick();
       return flush().then(function () {

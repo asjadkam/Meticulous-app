@@ -27,6 +27,13 @@
  * Line model: callers pass typed lines —
  *   { k:'title'|'sub'|'h'|'kv'|'p'|'note'|'gap', a:'text', b:'value' }
  * ('kv' = label a + right-aligned value b; everything else uses a).
+ * v134 adds three kinds:
+ *   { k:'cols', head:bool, cells:[{t, r}] } — one row of a REAL
+ *     multi-column table (emitted by htmlToLines for >=3-cell rows);
+ *     consecutive 'cols' lines render as one table with computed
+ *     column geometry, a ruled header and a rule under every row.
+ *   { k:'rule' } — a full-width navy rule (section separation; the
+ *     invoice's totals block and the manifest's totals row use it).
  */
 (function () {
   'use strict';
@@ -120,24 +127,148 @@
     kv: { font: 'F1', size: 10.5, leading: 14.5, color: INK, before: 0, after: 0 },
     p: { font: 'F1', size: 10.5, leading: 14.5, color: INK, before: 0, after: 0 },
     note: { font: 'F1', size: 9.5, leading: 13, color: GRAY, before: 0, after: 0 },
-    gap: { font: 'F1', size: 10.5, leading: 8, color: INK, before: 0, after: 0 }
+    gap: { font: 'F1', size: 10.5, leading: 8, color: INK, before: 0, after: 0 },
+    cols: { font: 'F1', size: 10, leading: 13, color: INK, before: 0, after: 0 }
   };
+  var RULE_GRAY = '0.87 0.89 0.95';
 
   /* Turn typed lines into pages of draw operations. */
   function layout(doc) {
     var pages = [[]], y = TOP;
+    var tables = [];
     function newPage() { pages.push([]); y = TOP; }
     function need(hgt) { if (y - hgt < BOTTOM) newPage(); }
+    function ruleOp(color, wdt, yy) {
+      pages[pages.length - 1].push(
+        color + ' RG ' + wdt + ' w ' + MARGIN + ' ' + yy.toFixed(1) +
+        ' m ' + RIGHT + ' ' + yy.toFixed(1) + ' l S');
+    }
     function textOp(st, x, yy, txt, font, color) {
       pages[pages.length - 1].push(
         'BT /' + font + ' ' + st.size + ' Tf ' + color + ' rg 1 0 0 1 ' +
         x.toFixed(1) + ' ' + yy.toFixed(1) + ' Tm (' + escPdfText(txt) + ') Tj ET');
+    }
+    /* v134: render one run of consecutive 'cols' lines as a REAL
+       table. Column geometry is computed from the content: each
+       column takes its widest cell (+ padding); when the natural
+       widths fit, the FIRST column absorbs the slack (the long
+       description column stretches, the #1151 shape); when they
+       don't, columns scale down (never below a floor — the widest
+       column yields first) and cell text wraps inside its column.
+       The header row is bold with a navy rule above and below;
+       every data row gets a light rule under it. A table that
+       crosses a page repeats its header at the top of the new
+       page. The geometry is recorded in `tables` so tests can pin
+       the rendered columns, not just the markup. */
+    var COLS_PAD = 6;
+    function renderCols(run) {
+      var st = STYLES.cols;
+      var head = null, dataRows = [];
+      run.forEach(function (r) {
+        if (r.head && !head) head = r; else dataRows.push(r);
+      });
+      var ncols = 0;
+      run.forEach(function (r) { ncols = Math.max(ncols, (r.cells || []).length); });
+      if (!ncols) return;
+      function cellAt(r, c) { return (r.cells && r.cells[c]) || { t: '' }; }
+      var nat = [];
+      for (var c0 = 0; c0 < ncols; c0++) {
+        var wmax = 0;
+        run.forEach(function (r) {
+          var w = textWidth(toWinAnsi(cellAt(r, c0).t || ''), st.size);
+          if (w > wmax) wmax = w;
+        });
+        nat.push(wmax + 2 * COLS_PAD);
+      }
+      var totalNat = nat.reduce(function (s, w) { return s + w; }, 0);
+      var widths = nat.slice();
+      if (totalNat <= CONTENT_W) {
+        widths[0] += CONTENT_W - totalNat;
+      } else {
+        var sc = CONTENT_W / totalNat;
+        widths = nat.map(function (w) { return Math.max(44, w * sc); });
+        var over = widths.reduce(function (s, w) { return s + w; }, 0) - CONTENT_W;
+        while (over > 0.5) {
+          var wi = 0;
+          for (var c1 = 1; c1 < ncols; c1++) if (widths[c1] > widths[wi]) wi = c1;
+          var give = Math.min(over, widths[wi] - 28);
+          if (give <= 0) break;
+          widths[wi] -= give; over -= give;
+        }
+      }
+      var xs = [], xacc = MARGIN;
+      widths.forEach(function (w) { xs.push(xacc); xacc += w; });
+      tables.push({
+        cols: ncols,
+        xs: xs.map(function (v) { return Math.round(v * 10) / 10; }),
+        widths: widths.map(function (v) { return Math.round(v * 10) / 10; }),
+        rows: run.length
+      });
+      function measure(r) {
+        var wrapped = [], nL = 1;
+        for (var c = 0; c < ncols; c++) {
+          var parts = wrapText(toWinAnsi(cellAt(r, c).t || ''), st.size, Math.max(10, widths[c] - 2 * COLS_PAD));
+          wrapped.push(parts);
+          if (parts.length > nL) nL = parts.length;
+        }
+        return { wrapped: wrapped, nL: nL, rowH: nL * st.leading + 5 };
+      }
+      function paint(r, m, isHead) {
+        if (isHead) ruleOp(NAVY, 1, y + 1);
+        var base = y - 11;
+        for (var li = 0; li < m.nL; li++) {
+          for (var c = 0; c < ncols; c++) {
+            var txt = m.wrapped[c][li];
+            if (!txt) continue;
+            var tx = cellAt(r, c).r
+              ? xs[c] + widths[c] - COLS_PAD - textWidth(txt, st.size)
+              : xs[c] + COLS_PAD;
+            textOp(st, tx, base - li * st.leading, txt, isHead ? 'F2' : 'F1', st.color);
+          }
+        }
+        y -= m.rowH;
+        ruleOp(isHead ? NAVY : RULE_GRAY, isHead ? 1 : 0.5, y + 2.5);
+      }
+      if (head) {
+        y -= 4;
+        var hm = measure(head);
+        need(hm.rowH + 4);
+        paint(head, hm, true);
+      }
+      dataRows.forEach(function (r) {
+        var m = measure(r);
+        var before = pages.length;
+        need(m.rowH);
+        if (pages.length > before && head) {
+          var hm2 = measure(head);
+          need(hm2.rowH + 4);
+          paint(head, hm2, true);
+          need(m.rowH);
+        }
+        paint(r, m, false);
+      });
+      y -= 4;
     }
     var lines = (doc && doc.lines) || [];
     for (var i = 0; i < lines.length; i++) {
       var ln = lines[i] || {};
       var st = STYLES[ln.k] || STYLES.p;
       if (ln.k === 'gap') { y -= 8; if (y < BOTTOM) newPage(); continue; }
+      if (ln.k === 'rule') {
+        need(12);
+        y -= 6;
+        ruleOp(NAVY, 1.1, y);
+        y -= 6;
+        continue;
+      }
+      if (ln.k === 'cols') {
+        var run = [];
+        var j = i;
+        while (j < lines.length && lines[j] && lines[j].k === 'cols') { run.push(lines[j]); j++; }
+        renderCols(run);
+        i = j - 1;
+        continue;
+      }
       var a = toWinAnsi(ln.a || '');
       if (ln.k === 'kv') {
         var b = toWinAnsi(ln.b || '');
@@ -184,13 +315,14 @@
       }
       y -= st.after;
     }
-    return pages;
+    return { pages: pages, tables: tables };
   }
 
   function buildPdf(doc) {
     doc = doc || {};
     var title = toWinAnsi(doc.title || 'Document');
-    var pages = layout(doc);
+    var lay = layout(doc);
+    var pages = lay.pages;
     var nPages = pages.length;
 
     // footer pass
@@ -235,7 +367,7 @@
 
     var bytes = new Uint8Array(out.length);
     for (var bi = 0; bi < out.length; bi++) bytes[bi] = out.charCodeAt(bi) & 0xFF;
-    return { base64: b64encode(bytes), bytes: bytes, pages: nPages };
+    return { base64: b64encode(bytes), bytes: bytes, pages: nPages, tables: lay.tables };
   }
 
   /* ---------------- base64 (env-safe, no btoa) ---------------- */
@@ -281,16 +413,27 @@
       .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&');
   }
   function stripTags(html) {
-    return decodeEntities(String(html).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    /* v134: block-level tags become a SPACE before the rest are
+       stripped bare — stripping them to '' welded the text on
+       either side together (the bill-to block's last line and the
+       next section heading printed as one word: "Truck #07Hours").
+       Inline tags (b, span, i) still vanish without a space, so
+       text split by emphasis mid-word stays one word. */
+    return decodeEntities(String(html)
+      .replace(/<\/?(br|div|p|h1|h2|h3|h4|table|thead|tbody|tr|td|th|li|section|ul|ol)[^>]*>/gi, ' ')
+      .replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
   }
 
   /* Understands the shapes modules/invoice.js printDoc receives:
-     h1, h2, p (with <br>), div.row > span + span, table > tr > th/td.
+     h1, h2, h3 (section headings), p (with <br>), div.row > span +
+     span, div.totblock (a rule, then its rows), table > tr > th/td.
+     2-cell rows become kv lines; rows of 3+ cells become 'cols'
+     lines that the layout renders as a real aligned table.
      Anything else degrades to plain text lines, in order. */
   function htmlToLines(html) {
     var lines = [];
     var src = String(html || '');
-    var tokenRe = /<(h1|h2|p|div|table|tr)([^>]*)>|<\/table>|<br\s*\/?>/gi;
+    var tokenRe = /<(h1|h2|h3|p|div|table|tr)([^>]*)>|<\/table>|<br\s*\/?>/gi;
     var pos = 0, m, mode = null, rowCells = null, pendingText = '';
 
     function flushText(endIdx) {
@@ -322,7 +465,7 @@
         continue;
       }
       if (tag === 'h1') { mode = 'h1'; stack.push('h1'); }
-      else if (tag === 'h2') { mode = 'h2'; stack.push('h2'); }
+      else if (tag === 'h2' || tag === 'h3') { mode = 'h2'; stack.push('h2'); }
       else if (tag === 'p') { mode = 'p'; stack.push('p'); }
       else if (tag === 'div') {
         if (/class="row"/.test(m[2] || '')) {
@@ -335,21 +478,50 @@
           else if (texts.length === 1) lines.push({ k: 'p', a: texts[0] });
           if (close >= 0) { pos = close + 6; tokenRe.lastIndex = pos; }
         }
+        else if (/totblock/.test(m[2] || '')) {
+          /* v134: the totals block is its OWN section — the div
+             itself becomes the separating rule; its .row children
+             still arrive as their own tokens and become kv lines. */
+          lines.push({ k: 'rule' });
+        }
       }
       else if (tag === 'table') { mode = 'table'; }
       else if (tag === 'tr') {
         var tClose = src.indexOf('</tr>', pos);
         var tInner = tClose >= 0 ? src.slice(pos, tClose) : '';
-        var cells = [];
-        var cellRe = /<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g, cm;
-        while ((cm = cellRe.exec(tInner)) !== null) cells.push(stripTags(cm[1]));
-        cells = cells.filter(function (c) { return c !== ''; });
-        if (cells.length === 2) lines.push({ k: 'kv', a: cells[0], b: cells[1] });
-        else if (cells.length > 2) lines.push({ k: 'p', a: cells.join('   ') });
-        else if (cells.length === 1) lines.push({ k: 'p', a: cells[0] });
+        /* v134: cells keep their shape — header-ness and
+           right-alignment (class "tot" or text-align:right) ride
+           along, because a 3+ cell row is no longer flattened
+           into one wrapped paragraph: it becomes a 'cols' line
+           and the layout renders a real aligned, ruled table.
+           2-cell rows keep the standing kv shape (stub tables,
+           the manifest-export (b) pins); 1-cell stays a paragraph. */
+        var rawCells = [];
+        var cellRe = /<t([hd])([^>]*)>([\s\S]*?)<\/t[hd]>/g, cm;
+        while ((cm = cellRe.exec(tInner)) !== null) {
+          rawCells.push({
+            t: stripTags(cm[3]),
+            head: cm[1] === 'h',
+            r: (/text-align\s*:\s*right/i.test(cm[2]) || /class="[^"]*\btot\b/.test(cm[2])) ? 1 : 0
+          });
+        }
+        var nonEmpty = rawCells.filter(function (c) { return c.t !== ''; });
+        if (rawCells.length > 2) {
+          if (nonEmpty.length) {
+            lines.push({
+              k: 'cols',
+              head: rawCells.some(function (c) { return c.head; }),
+              cells: rawCells
+            });
+          }
+        } else {
+          var cells = nonEmpty.map(function (c) { return c.t; });
+          if (cells.length === 2) lines.push({ k: 'kv', a: cells[0], b: cells[1] });
+          else if (cells.length === 1) lines.push({ k: 'p', a: cells[0] });
+        }
         if (tClose >= 0) { pos = tClose + 5; tokenRe.lastIndex = pos; }
       }
-      if (tag === 'h1' || tag === 'h2' || tag === 'p') {
+      if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'p') {
         // mode ends at the matching close tag; simplest: let the next
         // block tag (or end) flush it — tracked by close-tag scan below.
         var closeTag = '</' + tag + '>';
@@ -461,6 +633,7 @@
     isNativeShell: isNativeShell,
     deliver: deliver,
     savePdf: savePdf,
-    _b64decodeBytes: b64decodeBytes
+    _b64decodeBytes: b64decodeBytes,
+    _textWidth: textWidth
   };
 })();
