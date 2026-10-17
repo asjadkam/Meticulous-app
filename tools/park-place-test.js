@@ -321,15 +321,24 @@ function flush() { return new Promise(function (r) { setTimeout(r, 10); }); }
   ok(!!pinM, 'C: index.html loads js/parkplace.js with a version pin');
   const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
   ok(!!pinM && +pinM[1] === vj.webVersion, 'C: parkplace pin == version.json webVersion (' + vj.webVersion + ')');
-  /* v107 PIN MOVE (Stage 6): the park-place controls left
-     Preferences — "Set where I park" is a feature, re-homed to the
-     dashboard under the tracker (wireParkHome in js/app.js, card
-     in index.html). The ask-only law's copy moved with it. */
+  /* v116 PIN MOVE (owner, Oct 16, 2026 21:38 MDT): the park-place
+     controls left the DASHBOARD. The v112 re-home (from the v107
+     pins below) put the "Where I park" settings card on the home
+     face under the tracker, error text and all; the owner
+     overruled it over his own screenshot: "Why is this asking me
+     right, right on the face? It's supposed to ask in the
+     preferences." The card now lives in Preferences → Settings
+     (never Advanced, never the home face); the ask-only law's
+     copy moved with it. The #parkCard nudge anchor stays — it is
+     the ask itself, not a settings card. */
   const prefs = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
-  ok(prefs.indexOf('pf_parkset') === -1 && prefs.indexOf('pf_parknote') === -1, 'C: Preferences no longer carries the park-place block');
+  ok(prefs.indexOf('pf_parkset') === -1 && prefs.indexOf('pf_parknote') === -1, 'C: the retired v74 Advanced-era park ids stay gone from Preferences');
+  ok(idx.indexOf('id="parkHome"') === -1 && idx.indexOf('dash_park') === -1, 'C: index.html carries NO park settings card on the home face');
   const appJs6 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
-  ok(appJs6.indexOf('dash_park_note') >= 0 && appJs6.indexOf('function wireParkHome(role)') >= 0 && idx.indexOf('id="dash_park_set"') >= 0 && idx.indexOf('id="parkHome"') >= 0, 'C: the dashboard carries the park-place block (Where I park card)');
-  ok(appJs6.indexOf('never starts or stops anything by itself') >= 0, 'C: home copy states the ask-only law');
+  ok(appJs6.indexOf('wireParkHome') === -1 && appJs6.indexOf('dash_park') === -1, 'C: js/app.js wires no dashboard park card anymore');
+  ok(prefs.indexOf('id="pf_park_note"') >= 0 && prefs.indexOf('id="pf_park_set"') >= 0 && prefs.indexOf('📍 Where I park') >= 0, 'C: Preferences carries the park-place block (Where I park card)');
+  ok(prefs.indexOf('id="pf_park_set"') > prefs.indexOf('id="pf_view_settings"') && prefs.indexOf('id="pf_park_set"') < prefs.indexOf('id="pf_view_advanced"'), 'C: the park card renders in the Settings view (not Advanced)');
+  ok(prefs.indexOf('never starts or stops anything by itself') >= 0, 'C: Preferences copy states the ask-only law');
   const shift = fs.readFileSync(path.join(ROOT, 'js', 'shifttrack.js'), 'utf8');
   ok(shift.indexOf('ParkPlace.ingestCrumbs') >= 0, 'C: the native drain feeds ParkPlace beside GeoLoads');
   const cs = fs.readFileSync(path.join(ROOT, 'js', 'cloudsync.js'), 'utf8');

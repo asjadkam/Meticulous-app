@@ -174,5 +174,84 @@ const ver = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'))
 check('webVersion is a positive integer', Number.isInteger(ver.webVersion) && ver.webVersion > 0, 'got ' + ver.webVersion);
 check('index.html loads js/app.js?v=<webVersion>', idx.indexOf('js/app.js?v=' + ver.webVersion) >= 0);
 
+/* ---------- 6. v116: the module back contract ----------
+ * Owner recording (Oct 16, 2026): Revenue → day detail → Back
+ * kicked him OUT to the dashboard, and re-entering Revenue landed
+ * back on the stale detail. The shell now (a) offers every back
+ * press to the open module first via App.moduleBack() — the
+ * module unwinds its own sub-view and returns true; (b) calls
+ * mod.resetView() on EVERY fresh entry via App.openModule. */
+console.log('\n— v116 module back contract —');
+function extractAssignedFn(src, marker) {
+  const i = src.indexOf(marker);
+  if (i === -1) throw new Error('marker not found: ' + marker);
+  let depth = 0, j = src.indexOf('{', i);
+  const start = j;
+  for (; j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(i, j + 1); }
+  }
+  throw new Error('unbalanced: ' + marker);
+}
+{
+  const sb2 = { App: {}, Meticulous: { modules: {} }, console: console };
+  vm.createContext(sb2);
+  vm.runInContext(extractAssignedFn(appSrc, 'App.moduleBack = function'), sb2);
+  check('App.moduleBack extracted + defined', typeof sb2.App.moduleBack === 'function');
+
+  /* a Revenue-shaped module: a detail sub-view over a main list */
+  let renders = 0, dashExits = 0;
+  const fakeRevenue = {
+    detailOpen: true,
+    back: function () {
+      if (!this.detailOpen) return false;
+      this.detailOpen = false; renders++;
+      return true;
+    },
+    resetView: function () { this.detailOpen = false; this.resetCount = (this.resetCount || 0) + 1; }
+  };
+  sb2.Meticulous.modules.revenue = fakeRevenue;
+  sb2.App._modKey = 'revenue';
+  /* the exact shell expression both back doors now use */
+  function shellBack() { if (!sb2.App.moduleBack()) dashExits++; }
+  shellBack();
+  check('detail open: back is consumed by the module (no dashboard exit)', dashExits === 0 && renders === 1 && fakeRevenue.detailOpen === false);
+  shellBack();
+  check('back on the MAIN view falls through to the dashboard', dashExits === 1);
+  fakeRevenue.detailOpen = true;
+  fakeRevenue.resetView();
+  check('fresh entry reset: the remembered detail is cleared (resetView ran)', fakeRevenue.detailOpen === false && fakeRevenue.resetCount === 1);
+  sb2.App._modKey = 'fuel';
+  sb2.Meticulous.modules.fuel = { render: function () {} }; // a module with no back()
+  check('a module without back() never traps the shell', sb2.App.moduleBack() === false);
+  sb2.App._modKey = null;
+  check('no module open -> moduleBack is false', sb2.App.moduleBack() === false);
+
+  /* Dispatch round-trip, static: its back() disarms the delete
+     confirm, and it deliberately has NO resetView — the dispatch
+     draft is saved user work (v48), not a navigation sub-view. */
+  const dspSrc = fs.readFileSync(path.join(ROOT, 'modules', 'dispatch.js'), 'utf8');
+  const dspBackAt = dspSrc.indexOf('back: function');
+  check('dispatch exposes back()', dspBackAt >= 0);
+  check('dispatch back() disarms the pending delete confirm',
+    dspBackAt >= 0 && dspSrc.slice(dspBackAt, dspBackAt + 400).indexOf('pendingDelId = null') >= 0);
+  check('dispatch has NO resetView (the draft law)', dspSrc.indexOf('resetView') >= 0 && dspSrc.indexOf('deliberately no') >= 0 && !/resetView\s*:\s*function/.test(dspSrc));
+}
+/* statics: the shell wiring + every audited module's contract */
+check('openModule resets the view on fresh entry', appSrc.indexOf('if (mod.resetView) mod.resetView();') >= 0);
+check('both back doors consult the module first (header button + system back)',
+  (appSrc.match(/if \(!App\.moduleBack\(\)\) App\.showDashboard\(\);/g) || []).length === 2);
+const revSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'revenue.js'), 'utf8');
+check('revenue exposes back() + resetView()', /back: function/.test(revSrcB) && /resetView: function/.test(revSrcB));
+check('revenue back() clears the day detail', revSrcB.indexOf('dayDetailDate = null') >= 0);
+const fuelSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'fuel.js'), 'utf8');
+check('fuel exposes back() + resetView() (edit is its sub-state)', /back: function/.test(fuelSrcB) && /resetView: function/.test(fuelSrcB));
+const invSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'invoice.js'), 'utf8');
+check('invoice exposes back() + resetView() (mode is its sub-view)', /back: function/.test(invSrcB) && /resetView: function/.test(invSrcB));
+const navSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'navigator.js'), 'utf8');
+check('navigator exposes back() (Drive is its sub-view)', /back: function/.test(navSrcB) && navSrcB.indexOf('S.backFn') >= 0);
+const prefSrcB = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
+check('preferences exposes back() (Advanced tab is its sub-view)', /back: function/.test(prefSrcB) && prefSrcB.indexOf('pfBackHook') >= 0);
+
 console.log('\nback-button-test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

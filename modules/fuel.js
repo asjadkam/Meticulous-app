@@ -53,6 +53,7 @@
      visible in the form after a blocked save (the form is NOT
      re-rendered on failure, so typed values are never lost). */
   var editFillIdx = null;
+  var fuelBody = null; // v116: last render target, for api.back's re-render
   var editErr = '';
 
   /* v39: note from the most recent save (e.g. the master-odometer
@@ -136,6 +137,17 @@
     _masterOnSave: masterOnSave,
     _mpgTrend: mpgTrend,
     _econLegOk: econLegOk,
+    /* v116: shell back contract — an in-progress fill-up EDIT is
+       Fuel's sub-state: Back cancels the edit (exactly what the
+       form's own Cancel edit button does) instead of leaving the
+       module, and a fresh entry never opens mid-edit. */
+    back: function () {
+      if (editFillIdx === null) return false;
+      editFillIdx = null; editErr = '';
+      if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
+      return true;
+    },
+    resetView: function () { editFillIdx = null; editErr = ''; },
     /* v78: the card preview — the most recent fill-up (litres · $
        · when), the fact a driver glances for; the MPG trend stays
        inside the module where it always lived. */
@@ -155,6 +167,7 @@
       return parts.length ? 'Last fill: ' + parts.join(' · ') : 'No fill-ups yet';
     },
     render: function (body) {
+      fuelBody = body;
       var trend = mpgTrend();
       /* v75: an edit target that vanished (deleted elsewhere) falls
          back to a plain new-fill-up form — never edits a ghost. */

@@ -668,6 +668,7 @@
      open. Matched by id, not row index, so a list change between
      arm and confirm can never delete the wrong record. */
   var pendingDelId = null;
+  var dspBody = null; // v116: last render target, for api.back's re-render
 
   /* Downscale a photo so it fits localStorage: max 640px, JPEG 0.7. */
   function fileToThumb(file, cb) {
@@ -810,7 +811,23 @@
     /* v91: yard-departure activation (js/yardstart.js) — the
        manual Start below routes through the same path. */
     activateById: function (id) { return dspActivateById(id); },
+    /* v116: shell back contract. This module's one screen IS its
+       main view (form + active card + history together); its only
+       transient sub-state is the armed delete confirm, and Back
+       disarms it instead of leaving the module. The form DRAFT —
+       including an in-progress edit (draft.editId) — is NOT a
+       sub-view: it is saved user work (v48: never lose a dispatch
+       form; v56: an edit stays an edit across reloads), so fresh
+       entry restores it by design and there is deliberately no
+       resetView here. */
+    back: function () {
+      if (pendingDelId === null || pendingDelId === undefined) return false;
+      pendingDelId = null;
+      if (dspBody) api.render(dspBody);
+      return true;
+    },
     render: function (body) {
+      dspBody = body;
       var a = active();
       /* v76 (F3, boss QA Oct 14): the OFFICE face. An office-only user
          (the boss) composes dispatches at a desk: nothing he saves

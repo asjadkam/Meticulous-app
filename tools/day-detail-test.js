@@ -132,6 +132,13 @@ const row13 = ms.days.filter(function (r) { return r.date === '2026-10-13'; })[0
 ok('a: month row for the 13th exists', !!row13);
 eq('a: detail hours == Month row hours', d13.hours, row13.hours);
 eq('a: detail earnings == Month row earnings', d13.amount, row13.amount);
+/* v116: dayDetailData also returns the day's EVIDENCE partition.
+   This world has no shared builder loaded, so the documented
+   fallback stands: every entry is a money entry and the evidence
+   list is present but empty (the builder-present partition is
+   pinned in money-truth-test on the owner's Oct 15 shape). */
+ok('a: evidence partition exists and is empty under the no-builder fallback',
+  Array.isArray(d13.evidence) && d13.evidence.length === 0);
 
 /* (b) session on the 13th: km via the real App._odoDailyKm */
 eq('b: one session for the day', d13.sessions.length, 1);

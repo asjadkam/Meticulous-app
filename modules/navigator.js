@@ -357,6 +357,15 @@
 
     teardown: teardown,
 
+    /* v116: shell back contract — the Drive screen is this
+       module's sub-view, reached through the hook render installs
+       on S. Fresh entry needs no resetView: render rebuilds S
+       from scratch, so Drive always starts closed. */
+    back: function () {
+      if (S && S.drive && typeof S.backFn === 'function') return !!S.backFn();
+      return false;
+    },
+
     render: function (body) {
       teardown();
       var settings = loadSettings();
@@ -1073,6 +1082,14 @@
         if (scr) scr.classList.add('hidden');
       }
 
+      /* v116: the shell's back hook for this render — Back while
+         driving exits Drive back to the plan view (api.back calls
+         this); it never leaves the module mid-drive. */
+      S.backFn = function () {
+        if (S && S.drive) { exitDrive(); return true; }
+        return false;
+      };
+
       /* A re-route landed while driving: fresh plan, fresh prompt
          flags, fresh line on the drive map. */
       function driveOnRoute() {
@@ -1153,6 +1170,9 @@
       /* ---------- controls ---------- */
       var backBtn = body.querySelector('#nv_back');
       if (backBtn) backBtn.onclick = function () {
+        /* v116: while driving, the Navigator's own Back exits
+           Drive first — the same rule as the shell back. */
+        try { if (window.App && App.moduleBack && App.moduleBack()) return; } catch (e) {}
         try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
       };
       body.querySelector('#nv_route').onclick = doRoute;

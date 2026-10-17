@@ -178,7 +178,13 @@ eq('month row Oct 11 carries the duplicate flag', row11.duplicate, true);
 {
   const d = X.dayDetailData('2026-10-15');
   eq('day detail Oct 15 amount = $333.50 (not $624.66)', money(d.amount), 333.50);
-  eq('day detail Oct 15 still LISTS both raw entries', d.entries.length, 2);
+  /* v116 supersedes this pin's shape, not its intent: the detail
+     still LISTS both raw records — but only the builder-priced one
+     renders as a money entry; the other is evidence ("Also
+     recorded", no dollar amount), so the list can no longer sum
+     past the header the way the owner's Oct 15 screenshot did. */
+  eq('day detail Oct 15 lists ONE money entry (the priced record)', d.entries.length, 1);
+  eq('day detail Oct 15 still lists the other raw record as evidence', d.evidence.length, 1);
   eq('day detail Oct 15 not flagged', d.unconfirmed + '/' + d.duplicate, 'false/false');
   const d10 = X.dayDetailData('2026-10-10');
   eq('day detail Oct 10 flagged unconfirmed', d10.unconfirmed, true);

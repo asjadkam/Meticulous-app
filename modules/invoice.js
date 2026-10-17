@@ -86,6 +86,7 @@
      several tracker entries and no confirmed source cannot be
      resolved and BLOCKS issuing (stage 'duplicate'). */
   var INV_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var invBody = null; // v116: last render target, for the module's back() re-render
   function invS(k, d) { return App._store.get('inv_' + k, d); }
   function invW(k, v) { return App._store.set('inv_' + k, v); }
 
@@ -1004,6 +1005,19 @@
 
   /* ---------------- main ---------------- */
   Meticulous.modules.invoice = {
+    /* v116: shell back contract — the module's home mode is
+       Invoice (Pay Stub for a payroll employee); the other mode
+       is a sub-view. Fresh entry returns to the home mode, and
+       Back from the non-home mode returns there first instead of
+       leaving the module. */
+    resetView: function () { W('mode', onb().employment === 'Payroll' ? 'paystub' : 'invoice'); },
+    back: function () {
+      var home = onb().employment === 'Payroll' ? 'paystub' : 'invoice';
+      if (S('mode', home) === home) return false;
+      W('mode', home);
+      if (invBody) Meticulous.modules.invoice.render(invBody);
+      return true;
+    },
     /* v78: the card preview — the OPEN period and its running total
        (the period's revenue lines; a draft's manual items join when
        the invoice itself is built). Falls back to the issued count
@@ -1020,6 +1034,7 @@
       return invoices().length + ' issued';
     },
     render: function (body) {
+      invBody = body;
       var o = onb();
       var mode = S('mode', o.employment === 'Payroll' ? 'paystub' : 'invoice');
       var h = '<div class="card"><div class="row">' +

@@ -152,7 +152,9 @@
           } else if (a.act === 'sidebar') {
             closeSidebar();
           } else if (a.act === 'module') {
-            App.showDashboard();
+            /* v116: a module sub-view unwinds first (App.moduleBack);
+               only a module already on its main view exits. */
+            if (!App.moduleBack()) App.showDashboard();
           } else if (a.act === 'onb-prev') {
             collectOnbInputs(); // same as the in-app onboarding Back button
             var pv = onbPrevVisible(App.onbStep, App.onb); // v76 (F2): skip role-hidden steps
@@ -381,80 +383,15 @@
     return '';
   }
 
-  /* v107 (Stage 6): "Where I park" — re-homed from Preferences →
-     Advanced to the dashboard, under the tracker, where the
-     park-place nudges themselves appear. Same ParkPlace engine,
-     same words, same behavior as the v74 Preferences block; this
-     card is its only home now. Painted on every dashboard build;
-     a learned-place change repaints it live (registered once). */
-  var _parkHomeWired = false;
-  function wireParkHome(role) {
-    var card = el('parkHome');
-    if (!card) return;
-    var showCard = roleShowsTracker(role);
-    card.classList.toggle('hidden', !showCard);
-    if (!showCard) return;
-    var note = el('dash_park_note');
-    if (!note) return;
-    var setBtn = el('dash_park_set'), nnBtn = el('dash_park_nn'), forgetBtn = el('dash_park_forget');
-    function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
-    function paint() {
-      var PP = window.ParkPlace;
-      if (!PP) {
-        note.textContent = 'Park-place nudges are not in this build.';
-        show(setBtn, false); show(nnBtn, false); show(forgetBtn, false);
-        return;
-      }
-      var info = PP.info();
-      var lines = [];
-      if (info.place) {
-        lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
-          (info.place.source === 'manual' ? 'you set it.' : 'learned from your shifts.'));
-      } else {
-        lines.push('No park place yet — the app learns it from a few shifts, or set it now while you\'re parked there.');
-      }
-      lines.push('Asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
-      if (!info.notificationsAvailable) {
-        lines.push('Notifications aren\'t in this build — the asks show as a card in the app.');
-        show(nnBtn, false);
-      } else if (info.notificationsGranted) {
-        lines.push('Notifications: allowed ✓.');
-        show(nnBtn, false);
-      } else if (info.notificationsGranted === false) {
-        lines.push('Notifications: not allowed — the asks show as a card in the app instead.');
-        show(nnBtn, true);
-      } else {
-        lines.push('Notifications: checking…');
-        show(nnBtn, false);
-        PP.refreshNotifications().then(function () { paint(); }).catch(function () {});
-      }
-      note.textContent = lines.join(' ');
-      show(forgetBtn, !!info.place);
-    }
-    if (!_parkHomeWired) {
-      _parkHomeWired = true;
-      if (setBtn) setBtn.onclick = function () {
-        var PP = window.ParkPlace;
-        if (!PP) return;
-        note.textContent = 'Getting your location…';
-        PP.setPlaceHere().then(function () { paint(); }).catch(function () {
-          note.textContent = 'Could not get your location. Location may be off for Meticulous, or this build has no location. Nothing was set.';
-        });
-      };
-      if (nnBtn) nnBtn.onclick = function () {
-        var PP = window.ParkPlace;
-        if (!PP) return;
-        PP.requestNotifications().then(function () { setTimeout(paint, 400); });
-      };
-      if (forgetBtn) forgetBtn.onclick = function () {
-        var PP = window.ParkPlace;
-        if (PP) PP.forgetPlace();
-        paint();
-      };
-      try { if (window.ParkPlace) ParkPlace.onPlaceChange(paint); } catch (e) {}
-    }
-    paint();
-  }
+  /* v116 (owner, Oct 16, 2026 21:38 MDT): "Where I park" is NOT
+     wired here anymore. The v107 re-home put the settings card on
+     the dashboard under the tracker; the owner overruled it over
+     his own screenshot ("Why is this asking me right, right on
+     the face? It's supposed to ask in the preferences."). The
+     card + its wiring now live in Preferences → Settings
+     (modules/preferences.js) — same ParkPlace engine, same store
+     keys, same words. The home face carries the tracker and the
+     module cards only. */
 
   function buildDashboard() {
     var g = el('modGrid');
@@ -467,7 +404,6 @@
     var role = App.userRole();
     var tc = el('trkCard');
     if (tc) tc.style.display = roleShowsTracker(role) ? '' : 'none';
-    try { wireParkHome(role); } catch (e) {}
     roleModuleOrder(role).forEach(function (key) {
       if (key === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
       if (key === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
@@ -555,6 +491,27 @@
     buildDashboard();
   };
 
+  /* v116 (owner recording, Oct 16 2026): Back from a module
+     SUB-VIEW kicked him straight out to the dashboard, and
+     re-entering the module landed back on the stale sub-view —
+     the sub-view was acting as the module's root. Two shell rules
+     now: (1) a back press first offers the open module its own
+     sub-view via mod.back() — true means "handled, stay here"
+     (the module returned to its MAIN view); false/absent falls
+     through to the dashboard as before. (2) EVERY fresh entry
+     (dashboard card, drawer, programmatic) calls mod.resetView()
+     before render, so a module always opens on its main view,
+     never a remembered detail page. Internal re-renders call
+     mod.render() directly and never pass through openModule, so
+     a module's own navigation is untouched. */
+  App.moduleBack = function () {
+    try {
+      var m = App._modKey && Meticulous.modules[App._modKey];
+      if (m && typeof m.back === 'function') return !!m.back();
+    } catch (e) {}
+    return false;
+  };
+
   App.openModule = function (key) {
     var meta = MODULE_META[key];
     var special = { reminders: 1, preferences: 1, subscription: 1, account: 1 };
@@ -573,6 +530,8 @@
     el('modTitle').textContent = title;
     var body = el('modBody');
     body.innerHTML = '';
+    /* v116: fresh entry always lands on the module's main view. */
+    try { if (mod.resetView) mod.resetView(); } catch (e) {}
     try { mod.render(body); } catch (e) { body.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
     paintPowerBanner(body);
     window.scrollTo(0, 0);
@@ -2933,7 +2892,10 @@
     el('btnBell').onclick = function () { App.openModule('reminders'); };
     var sdEl = el('syncDot');
     if (sdEl) sdEl.onclick = function () { App.showSyncStatus(); }; // v34: tap dot = sync status
-    el('btnModBack').onclick = App.showDashboard;
+    /* v116: the in-app back arrow follows the same rule as the
+       system back — a module sub-view unwinds to the module's
+       main view first; only a main view exits to the dashboard. */
+    el('btnModBack').onclick = function () { if (!App.moduleBack()) App.showDashboard(); };
     el('trkMain').onclick = App.trackerToggle;
     el('trkStop').onclick = function () { App.trackerStopPrompt(); }; // v34: end-time sheet
     el('trkEditStart').onclick = App.trackerEditStart;

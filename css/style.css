@@ -86,6 +86,15 @@ body{
 .card h3{margin:0 0 12px;font-size:15px;color:var(--navy);}
 .row{display:flex;gap:12px;align-items:center;}
 .row>*{flex:1;}
+/* v116 (owner, Oct 16 2026): wrapping chip rows — the Revenue
+   pay-period chips (six across) used to sit in a plain no-wrap
+   .row and push "Custom" half off the right edge of a phone
+   screen. A .rvchips row wraps instead: children share each row
+   evenly (three per row at phone width), may shrink below their
+   content size, and never cross the edge. The selected state is
+   untouched — it lives in the .btn primary/ghost classes. */
+.rvchips{flex-wrap:wrap;gap:8px;}
+.rvchips>*{flex:1 1 28%;min-width:0;}
 label.f{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px;}
 input,select,textarea{width:100%;padding:14px;border:1px solid #ccd4ea;border-radius:10px;
   font-size:16px;background:#fff;color:var(--ink);}

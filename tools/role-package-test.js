@@ -427,7 +427,14 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
      Advanced holds plumbing only, slimmed: the background-tracking
      block, the power-read counter prose, the standing sync
      readout, and the park-place block are GONE from Preferences
-     (park-place re-homed to the dashboard — park-place-test). */
+     (park-place re-homed to the dashboard — park-place-test).
+     v116 (owner, Oct 16 21:38) SUPERSEDES the park half again:
+     the dashboard card was overruled ("It's supposed to ask in
+     the preferences") and "Where I park" is back as a Settings-
+     view card under NEW ids (pf_park_note / pf_park_set /
+     pf_park_nn / pf_park_forget — pinned in park-place-test);
+     the retired Advanced-era ids in the absence list below stay
+     retired, and the card is NOT Advanced plumbing. */
   ok(pref.indexOf('id="pf_signin"') === -1, 'v106 prefs: the Sign in door moved to Account & login (no door left in Preferences)');
   ok(pref.indexOf('Sign in to change your password.') === -1, 'v95 prefs: the old dead-end note (a sign-in with no door) is gone');
   eq((pref.match(/id="pf_tab_settings"/g) || []).length, 1, 'v107 prefs: exactly one Settings tab');

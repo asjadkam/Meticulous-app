@@ -3,7 +3,65 @@
   'use strict';
   var esc = function (s) { return App._esc(s); };
 
+  /* v116: the "Where I park" card (Settings view, rendered below)
+     paints through here. Preferences rebuilds its DOM on every
+     render, so the paint re-queries the live document and quietly
+     does nothing while Preferences is closed; the place-change
+     listener registers once for the page's lifetime. The words
+     and behavior are the v74/v107 card's, unchanged — only the
+     home moved (dashboard in v112–v115, Preferences again now,
+     at the owner's order). */
+  var _parkListenerOn = false;
+  var pfBackHook = null; // v116: installed by each render's tab wiring; api.back delegates to it
+  function paintParkCard() {
+    var doc = (typeof document !== 'undefined') ? document : null;
+    if (!doc || !doc.getElementById) return;
+    var note = doc.getElementById('pf_park_note');
+    if (!note) return;
+    var setBtn = doc.getElementById('pf_park_set'), nnBtn = doc.getElementById('pf_park_nn'), forgetBtn = doc.getElementById('pf_park_forget');
+    function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
+    var PP = window.ParkPlace;
+    if (!PP) {
+      note.textContent = 'Park-place nudges are not in this build.';
+      show(setBtn, false); show(nnBtn, false); show(forgetBtn, false);
+      return;
+    }
+    var info = PP.info();
+    var lines = [];
+    if (info.place) {
+      lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
+        (info.place.source === 'manual' ? 'you set it.' : 'learned from your shifts.'));
+    } else {
+      lines.push('No park place yet — the app learns it from a few shifts, or set it now while you\'re parked there.');
+    }
+    lines.push('Asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
+    if (!info.notificationsAvailable) {
+      lines.push('Notifications aren\'t in this build — the asks show as a card in the app.');
+      show(nnBtn, false);
+    } else if (info.notificationsGranted) {
+      lines.push('Notifications: allowed ✓.');
+      show(nnBtn, false);
+    } else if (info.notificationsGranted === false) {
+      lines.push('Notifications: not allowed — the asks show as a card in the app instead.');
+      show(nnBtn, true);
+    } else {
+      lines.push('Notifications: checking…');
+      show(nnBtn, false);
+      PP.refreshNotifications().then(function () { paintParkCard(); }).catch(function () {});
+    }
+    note.textContent = lines.join(' ');
+    show(forgetBtn, !!info.place);
+  }
+
   Meticulous.modules.preferences = {
+    /* v116: shell back contract — the Advanced TAB is this
+       screen's sub-view: Back from Advanced returns to Settings
+       (via the hook the tab wiring installs at render) instead of
+       leaving Preferences. Fresh entry needs no resetView: every
+       render starts on Settings. */
+    back: function () {
+      try { return !!(pfBackHook && pfBackHook()); } catch (e) { return false; }
+    },
     render: function (body) {
       var o = App._store.get('onboarding', {});
       /* v52: person-level role (onboarding.userRole) — computed here
@@ -80,6 +138,30 @@
         }).join('') +
         '<option value=""' + (!o.homeProvince ? ' selected' : '') + '>— not set —</option></select>' +
         '<p class="note">Sets the workers\u2019 comp name in P&L (WCB in Alberta, WSIB in Ontario, WorkSafeBC in BC, CNESST in Quebec\u2026) and its default rate.</p></div>';
+
+      /* v116 (owner, Oct 16, 2026 21:38 MDT): "Where I park" is a
+         Preferences card again. The v112 re-home put it on the
+         dashboard face under the tracker; the owner overruled that
+         over his own screenshot ("Why is this asking me right,
+         right on the face? It's supposed to ask in the
+         preferences."). It is a set-once user fact, so it sits in
+         the SETTINGS view beside Base location — not in Advanced
+         (not plumbing) and never on the home face, which stays the
+         tracker + module cards only. Same ParkPlace engine, same
+         store keys, same setter, same words; the wiring is below
+         and the paint is paintParkCard (top of this file). Role
+         gating matches the dashboard card it replaces: hidden for
+         office-only users (roleShowsTracker), like the Truck
+         card's driver tools. */
+      if (effRole !== 'office') {
+        h += '<div class="card"><h3>📍 Where I park</h3>' +
+          '<p class="note" id="pf_park_note">Checking…</p>' +
+          '<div class="row" style="gap:6px;">' +
+          '<button type="button" class="btn ghost" id="pf_park_set" style="flex:1;">📍 Set where I park (use my location now)</button>' +
+          '<button type="button" class="btn ghost hidden" id="pf_park_nn" style="flex:1;">Allow notifications</button>' +
+          '<button type="button" class="btn ghost hidden" id="pf_park_forget" style="flex:1;">Forget this place</button>' +
+          '</div></div>';
+      }
 
       h += '<div class="card"><h3>🏢 Company</h3>' +
         '<label class="f">Company name</label><input id="pf_cname" value="' + esc(o.companyName || '') + '">' +
@@ -458,6 +540,12 @@
           if (sBtn) sBtn.className = 'btn ' + (adv ? 'ghost' : 'navy');
           if (aBtn) aBtn.className = 'btn ' + (adv ? 'navy' : 'ghost');
         }
+        /* v116: the shell's back hook for this render — Back on
+           the Advanced tab returns to Settings. */
+        pfBackHook = function () {
+          if (aView && !aView.classList.contains('hidden')) { showTab(false); return true; }
+          return false;
+        };
         if (sBtn) sBtn.onclick = function () { showTab(false); };
         if (aBtn) aBtn.onclick = function () { showTab(true); };
       })();
@@ -548,9 +636,43 @@
          Preferences (owner, Stage 6: no skeleton prose in Advanced).
          The native ask banner on the tracker (trkBgAsk) still
          carries the one actionable fix, where it happens. */
-      /* v107: the park-place controls MOVED to the dashboard
-         (wireParkHome in js/app.js) — setting where you park is a
-         feature of the workday surface, not Preferences plumbing. */
+      /* v116: the park-place controls live in the Settings-view
+         card above (they sat on the dashboard in v112–v115; the
+         owner ordered them back into Preferences, Oct 16 21:38
+         MDT). Same handlers the dashboard card carried; the
+         location-failure wording can now only ever appear inside
+         this card, never on the home face. Buttons wire per
+         render (fresh DOM each time); the place-change listener
+         registers once — paintParkCard re-queries the document,
+         so a learned-place change repaints the open card live. */
+      (function () {
+        var note = body.querySelector('#pf_park_note');
+        var setBtn = body.querySelector('#pf_park_set'), nnBtn = body.querySelector('#pf_park_nn'), forgetBtn = body.querySelector('#pf_park_forget');
+        if (!note || !setBtn) return; // office renders carry no park card
+        setBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (!PP) return;
+          note.textContent = 'Getting your location…';
+          PP.setPlaceHere().then(function () { paintParkCard(); }).catch(function () {
+            note.textContent = 'Could not get your location. Location may be off for Meticulous, or this build has no location. Nothing was set.';
+          });
+        };
+        if (nnBtn) nnBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (!PP) return;
+          PP.requestNotifications().then(function () { setTimeout(paintParkCard, 400); });
+        };
+        if (forgetBtn) forgetBtn.onclick = function () {
+          var PP = window.ParkPlace;
+          if (PP) PP.forgetPlace();
+          paintParkCard();
+        };
+        if (!_parkListenerOn) {
+          _parkListenerOn = true;
+          try { if (window.ParkPlace) ParkPlace.onPlaceChange(paintParkCard); } catch (e) {}
+        }
+        paintParkCard();
+      })();
       /* v77: Navigator profile + server URL — persist the moment they
          change (the power-read pattern), through the shared
          MeticulousNav store helpers the Navigator module reads. If the

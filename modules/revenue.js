@@ -195,6 +195,59 @@
     return map;
   }
 
+  /* v116 (owner, Oct 16 2026, screenshot of TODAY): the flat
+     📒 Entries list led with "$282.85 · Auto from tracker" — the
+     session's own math — and put the day's real record second
+     ("$319.00 · Dispatch: Aecon Inf … Ticket #22729"). Same
+     disease as the day detail: every raw record dressed as money.
+     entryMoneyFlags applies the builder's ladder to the stored
+     list: per day, only the entries of the source the shared
+     builder priced are money; a tracker entry is money ONLY when
+     it is the day's priced source; a sub-0.1h tracker drip is
+     never money. Non-money records do not render in the flat
+     list at all — they live in the day's detail (Also recorded /
+     Tracker sessions), one tap from the day's money row. With no
+     builder (never in the app) everything stays money — the same
+     fallback dayAgg makes. */
+  function entryMoneyFlags() {
+    var ctx = payCtx();
+    var o = App._store.get('onboarding', {});
+    var list = entries();
+    var winSrc = {}, haveBuilt = false;
+    try {
+      if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
+        var builtF = Meticulous.shared.buildRevenueLines(list, extras(), ctx.rate, ctx.std);
+        haveBuilt = true;
+        (builtF.lines || []).forEach(function (l) {
+          if (l && l.date && l.src !== 'extra') winSrc[l.date] = l.src;
+        });
+      }
+    } catch (e) { haveBuilt = false; winSrc = {}; }
+    var srcFn = null;
+    try {
+      if (window.Meticulous && Meticulous.shared && Meticulous.shared.revenueEntrySource) srcFn = Meticulous.shared.revenueEntrySource;
+    } catch (e2) { srcFn = null; }
+    return list.map(function (e) {
+      var src = null;
+      if (srcFn) { try { src = srcFn(e); } catch (err) { src = null; } }
+      if (!src) {
+        if (!e) src = 'entry';
+        else if (e.auto) src = 'tracker';
+        else if ((e.note || '').indexOf('Dispatch:') === 0) src = 'dispatch';
+        else if (e.note === 'Auto from tracker') src = 'tracker';
+        else src = 'entry';
+      }
+      var q = ctx.std === 'miles' ? (parseFloat(e && e.miles) || 0)
+        : ctx.std === 'trip' ? (parseFloat(e && e.trips) || 0)
+        : ctx.std === 'weight' ? (parseFloat(e && e.tons) || 0)
+        : (parseFloat(e && e.hours) || 0);
+      var drip = (src === 'tracker' && q < 0.1);
+      var money = !haveBuilt ? true
+        : (!drip && !!winSrc[e.date] && src === winSrc[e.date] && payFor(e, ctx.std, o.payRate) > 0);
+      return { src: src, drip: drip, money: money };
+    });
+  }
+
   function summary() {
     var map = dayAgg();
     var total = 0, loads = 0, n = 0, worked = 0;
@@ -372,7 +425,9 @@
     var step = Math.max(1, Math.ceil(days / 8));
     buckets.forEach(function (v, i) {
       var h = (v / max) * (H - 70);
-      ctx.fillStyle = v > 0 ? '#F26522' : '#e8ecf4';
+      /* v116: the two-tap SELECTED day paints navy — the same navy
+         as the preview card under the chart. */
+      ctx.fillStyle = (dates[i] === graphSel) ? '#1F3764' : (v > 0 ? '#F26522' : '#e8ecf4');
       ctx.fillRect(i * bw + bw * 0.2, H - 44 - h, bw * 0.6, Math.max(h, 4));
       if (i % step === 0 || i === days - 1) {
         ctx.fillStyle = '#6b7690'; ctx.font = '20px sans-serif';
@@ -381,6 +436,57 @@
     });
     ctx.fillStyle = '#1F3764'; ctx.font = 'bold 24px sans-serif';
     ctx.fillText('$' + Math.round(max), 8, 28);
+  }
+
+  /* v116 (owner, Oct 16 2026): the graph's TWO-TAP pattern — the
+     one he loved in the old design. First tap on a bar (or a Month
+     day row) SELECTS the day: the bar paints navy and a preview
+     card shows the day's label, hours, earnings and loads, all
+     priced by the same shared builder/dayAgg the lists use, so
+     the preview can never disagree with the detail it leads to.
+     Second tap on the SAME day opens its detail. Tapping a
+     different day just moves the selection. Pure decision: */
+  function graphTap(sel, tapped) {
+    if (tapped && sel === tapped) return { sel: null, open: tapped };
+    return { sel: tapped || null, open: null };
+  }
+  /* One day's loads from the shared ladder — the same per-day
+     call summary() makes, for the preview card. */
+  function dayLoadsFor(ds) {
+    try {
+      var fn = (window.Meticulous && Meticulous.shared && Meticulous.shared.dayLoads) || null;
+      if (!fn) return 0;
+      var dsp = (App._store.get('dsp_list', []) || []).filter(function (x) {
+        if (!x) return false;
+        var sd = '';
+        if (typeof x.scheduledAt === 'string') { var mm = /^(\d{4}-\d{2}-\d{2})/.exec(x.scheduledAt); if (mm) sd = mm[1]; }
+        return (sd || x.date) === ds;
+      });
+      var sess = (App._store.get('sessions', []) || []).filter(function (s2) { return s2 && s2.date === ds; });
+      var geo = 0;
+      try { var gd = (App._store.get('geoloads', { days: {} }).days) || {}; if (gd[ds]) geo = gd[ds].count || 0; } catch (e) {}
+      var taps = 0;
+      try {
+        var trk = (window.App && App.tracker) || App._store.get('tracker', null);
+        if (ds === App._today() && trk && trk.accum && (trk.status === 'running' || trk.status === 'paused')) taps = parseInt(trk.accum.manualLoads, 10) || 0;
+      } catch (e2) {}
+      return fn(ds, { dispatches: dsp, sessions: sess, liveTaps: taps, geoLoads: geo }).loads || 0;
+    } catch (e3) { return 0; }
+  }
+  /* Paint (or clear) the preview card in the #rv_gprev host the
+     render placed under the chart / the Month day list. */
+  function paintGraphPreview(body) {
+    var host = (body && body.querySelector) ? body.querySelector('#rv_gprev') : null;
+    if (!host) return;
+    if (!graphSel) { host.innerHTML = ''; return; }
+    var a = dayAgg()[graphSel] || { hours: 0, amount: 0, duplicate: false };
+    var lbl = new Date(graphSel + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+    host.innerHTML = '<div class="card" style="border:2px solid var(--navy)"><h3>📊 ' + esc(lbl) + '</h3>' +
+      '<div class="kv"><span>Hours</span><b>' + fmtH(a.hours) + '</b></div>' +
+      '<div class="kv"><span>Earnings</span><b>$' + (a.amount || 0).toFixed(2) + '</b></div>' +
+      '<div class="kv"><span>Loads</span><b>' + dayLoadsFor(graphSel) + '</b></div>' +
+      (a.duplicate ? '<div class="note" style="margin-top:6px;color:#c2410c;font-weight:600">⚠️ Recorded more than once — not counted yet. Open the day to fix it.</div>' : '') +
+      '<div class="note" style="margin-top:6px">Tap the same day again to open it.</div></div>';
   }
 
   function manifestFeedPush(kind, summaryText) {
@@ -471,6 +577,52 @@
         note: e.note || '', auto: !!e.auto
       });
     });
+    /* v116 (owner, Oct 16 2026, screenshot of Thu Oct 15): the
+       header above this list prices the day ONCE through the shared
+       per-day builder ($333.50 / 11.5h) while the list showed every
+       raw record as money — the sheet import, the dispatch
+       completion AND two 0.01h tracker drips, $667.47 of rows
+       against a $333.50 header. The list must tell the header's
+       truth: the day's MONEY entries are exactly the records of
+       the source the builder's ladder chose for this date (for
+       Oct 15 the dispatch record); every other record is EVIDENCE
+       and returns separately, to be shown with NO dollar amounts.
+       A tracker drip (an auto entry under 0.1 of the pay unit) is
+       never a money entry. When the builder is somehow absent the
+       legacy all-entries list stands — the same fallback dayAgg
+       itself makes. */
+    var winSrc = null, haveBuilt = false;
+    try {
+      if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
+        var builtD = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std);
+        haveBuilt = true;
+        (builtD.lines || []).forEach(function (l) {
+          if (l && l.date === ds && l.src !== 'extra') winSrc = l.src;
+        });
+      }
+    } catch (e2) { haveBuilt = false; winSrc = null; }
+    var srcFn = null;
+    try {
+      if (window.Meticulous && Meticulous.shared && Meticulous.shared.revenueEntrySource) srcFn = Meticulous.shared.revenueEntrySource;
+    } catch (e3) { srcFn = null; }
+    function srcOf(e) {
+      if (srcFn) { try { return srcFn(e); } catch (err) {} }
+      if (!e) return 'entry';
+      if (e.auto) return 'tracker';
+      var n = e.note || '';
+      if (n.indexOf('Dispatch:') === 0) return 'dispatch';
+      if (n === 'Auto from tracker') return 'tracker';
+      return 'entry';
+    }
+    var moneyEnts = [], evidence = [];
+    ents.forEach(function (r) {
+      r.src = srcOf(entries()[r.index]);
+      var q = ctx.std === 'miles' ? r.miles : ctx.std === 'trip' ? r.trips : ctx.std === 'weight' ? r.tons : r.hours;
+      r.drip = (r.src === 'tracker' && q < 0.1);
+      if (!haveBuilt) { moneyEnts.push(r); return; }
+      if (!r.drip && winSrc && r.src === winSrc && r.amount > 0) moneyEnts.push(r);
+      else evidence.push(r);
+    });
     var xtras = [];
     extras().forEach(function (x, i) {
       if (!x || x.date !== ds) return;
@@ -508,7 +660,7 @@
     return {
       date: ds, hours: agg.hours, amount: agg.amount, extrasAmt: agg.extrasAmt, live: !!agg.live,
       unconfirmed: !!agg.unconfirmed, duplicate: !!agg.duplicate,
-      entries: ents, extras: xtras, sessions: sessions, fuel: fuel, dispatches: dispatches
+      entries: moneyEnts, evidence: evidence, extras: xtras, sessions: sessions, fuel: fuel, dispatches: dispatches
     };
   }
 
@@ -578,6 +730,12 @@
   function renderDayDetail(body) {
     var ds = dayDetailDate;
     var d = dayDetailData(ds);
+    /* v116: the evidence card's open state belongs to ONE day —
+       arriving on a new day starts it collapsed, EXCEPT a
+       duplicate day, which starts it open (the evidence is the
+       fix-it path the header banner points at). After arrival the
+       owner can open/close it freely. */
+    if (dayEvidenceDate !== ds) { dayEvidenceDate = ds; dayEvidenceOpen = !!d.duplicate; }
     /* v75: an edit target that no longer exists (deleted elsewhere)
        closes the edit quietly — never edit a ghost. */
     if (dayEdit) {
@@ -657,6 +815,38 @@
             (dayEdit ? '' : '<button class="btn small ghost" data-rvdel="' + e.index + '">Delete</button>') + '</div>') + '</div>';
       }).join('') + '</div>';
     }
+    /* v116: ALSO RECORDED — the day's other records (a duplicate
+       sheet import, a second recording, tracker drips). They are
+       EVIDENCE, not earnings: no dollar amount is ever shown for
+       them, so this list can never disagree with the header. The
+       card starts collapsed; a duplicate day opens it (the header
+       banner's "fix it below" points here, and the rows keep their
+       Edit/Delete so the fix stays possible). */
+    if (d.evidence && d.evidence.length) {
+      var evOpen = dayEvidenceOpen;
+      h += '<div class="card"><h3>🗂 Also recorded <span style="font-weight:400;color:var(--muted);font-size:13px">— not counted in this day\'s totals</span></h3>' +
+        '<button class="btn small ghost" id="rv_ev_toggle">' + (evOpen ? 'Hide' : 'Show') + ' (' + d.evidence.length + ')</button>';
+      if (evOpen) {
+        h += d.evidence.map(function (e) {
+          var parts = [];
+          if (e.hours > 0) parts.push(fmtH(e.hours) + 'h');
+          if (e.miles > 0) parts.push(e.miles + ' km');
+          if (e.tons > 0) parts.push(e.tons + 't');
+          if (e.trips > 0) parts.push(e.trips + ' trip' + (e.trips === 1 ? '' : 's'));
+          if (e.type === 'load' && e.loads > 0) parts.push(e.loads + ' load' + (e.loads === 1 ? '' : 's'));
+          if (e.note) parts.push(e.note);
+          if (e.auto) parts.push('auto');
+          if (e.drip) parts.push('tracker drip — under 0.1h, never counted');
+          var editingThisE = dayEdit && dayEdit.kind === 'entry' && dayEdit.index === e.index;
+          return '<div class="listitem"><div class="a"><span class="pill">' + esc(e.type) + '</span></div>' +
+            (parts.length ? '<div class="b">' + esc(parts.join(' · ')) + '</div>' : '') +
+            (editingThisE ? '<div class="b" style="color:var(--orange);font-weight:700">✏️ You\'re editing this one — the form is at the top of this page ↑</div>' :
+              '<div class="row" style="margin-top:6px">' + (e.drip ? '' : '<button class="btn small ghost" data-rvedit="' + e.index + '">✏️ Edit</button>') +
+              (dayEdit ? '' : '<button class="btn small ghost" data-rvdel="' + e.index + '">Delete</button>') + '</div>') + '</div>';
+        }).join('');
+      }
+      h += '</div>';
+    }
     if (d.extras.length) {
       h += '<div class="card"><h3>✨ Extras</h3>' + d.extras.map(function (x) {
         var editingThisX = dayEdit && dayEdit.kind === 'extra' && dayEdit.index === x.index;
@@ -701,7 +891,7 @@
           (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') + '</div>';
       }).join('') + '</div>';
     }
-    if (!d.entries.length && !d.extras.length && !d.sessions.length && !d.fuel.length && !d.dispatches.length) {
+    if (!d.entries.length && !(d.evidence && d.evidence.length) && !d.extras.length && !d.sessions.length && !d.fuel.length && !d.dispatches.length) {
       h += '<div class="card"><div class="empty">Nothing recorded for this day.</div></div>';
     }
     body.innerHTML = h;
@@ -709,6 +899,9 @@
       dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
       api.render(body);
     };
+    /* v116: the evidence card's show/hide. */
+    var evTgl = body.querySelector('#rv_ev_toggle');
+    if (evTgl) evTgl.onclick = function () { dayEvidenceOpen = !dayEvidenceOpen; api.render(body); };
     /* v75: deletes from Day Details are verified too — a failed
        write leaves the record in place and says so on the page. */
     bindTwoTapDelete(body, '[data-rvdel]', function (b) {
@@ -813,6 +1006,19 @@
   var dayEditErr = '';
   var dayErr = '';
   var dayEditDraft = null; // v75: form values of a FAILED save, so the reopened editor still holds them
+  /* v116: the graph's two-tap selection (a date string) — first
+     tap selects + previews, second tap on the same day opens its
+     detail. See graphTap / paintGraphPreview below. */
+  var graphSel = null;
+  /* v116: the day detail's "Also recorded" evidence card —
+     collapsed unless the owner opens it (or the day is a duplicate,
+     where the evidence IS the fix-it path, so it starts open).
+     Scoped to a date so switching days re-collapses it. */
+  var dayEvidenceOpen = false;
+  var dayEvidenceDate = '';
+  /* v116: the last body render() painted into — the shell's back
+     contract (api.back) re-renders through it. */
+  var lastBody = null;
 
   var api = {
     status: function () {
@@ -913,7 +1119,28 @@
        Returns { added, rejected: [{line, text, why}] } — bad lines are
        reported, never silently dropped. */
     importDays: function (text) { return importDays(text); },
+    /* v116: the shell's back contract (owner recording, Oct 16
+       2026: Back from a day detail kicked him OUT of Revenue, and
+       re-entering landed back on the stale detail). back() unwinds
+       ONE layer — an open edit first, then the day detail — back
+       to Revenue's main list, and returns true so the shell stays
+       in the module. resetView() is the fresh-entry rule:
+       openModule calls it before every render, so entering
+       Revenue always lands on the main list. (The view mode and
+       period live in the store — those are the main view's own
+       settings, not a sub-view, and stay.) */
+    back: function () {
+      if (!dayDetailDate && !dayEdit) return false;
+      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      dayDetailDate = null;
+      if (lastBody) api.render(lastBody);
+      return true;
+    },
+    resetView: function () {
+      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+    },
     render: function (body) {
+      lastBody = body;
       /* v47: a tapped Month day shows its Day Details instead of the
          normal Revenue view (Back clears dayDetailDate). */
       if (dayDetailDate) { renderDayDetail(body); return; }
@@ -942,7 +1169,11 @@
           '<div style="font-weight:800;color:var(--navy);font-size:17px">' + esc(monthLabel(ym)) + '</div>' +
           '<button class="btn small ghost" data-mstep="1">Next ›</button></div>';
       } else {
-        h += '<label class="f">Pay period</label><div class="row">' +
+        /* v116 (owner, Oct 16 2026): the chips row WRAPS (.rvchips)
+           — in a plain .row the six chips overflowed a phone-width
+           screen and "Custom" sat half cut off at the right edge.
+           Two rows of three now; every chip fully on screen. */
+        h += '<label class="f">Pay period</label><div class="row rvchips">' +
           PERIOD_OPTS.map(function (p) {
             return '<button class="btn small ' + (period === p[0] ? 'primary' : 'ghost') + '" data-p="' + p[0] + '">' + p[1] + '</button>';
           }).join('') + '</div>';
@@ -993,13 +1224,14 @@
         h += '<div class="card"><h3>🗓 Days in ' + esc(monthLabel(ym)) + '</h3>' +
           (ms.days.length ? ms.days.map(function (d) {
             var dl = new Date(d.date + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
-            return '<div class="listitem" data-day="' + d.date + '" style="cursor:pointer"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) +
+            return '<div class="listitem" data-day="' + d.date + '" style="cursor:pointer' + (d.date === graphSel ? ';background:#eef2fa;border:1px solid var(--navy)' : '') + '"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) +
               '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
               '<div class="b">' + fmtH(d.hours) + 'h' +
               (d.live ? ' · ● still running' : '') +
               (d.duplicate ? ' · ⚠️ not counted — check this day' : (d.unconfirmed ? ' · from tracker — unconfirmed' : '')) +
-              ' · tap for details</div></div>';
-          }).join('') : '<div class="empty">No days recorded this month yet. Import below or run the tracker.</div>') + '</div>';
+              ' · tap to preview, tap again for details</div></div>';
+          }).join('') : '<div class="empty">No days recorded this month yet. Import below or run the tracker.</div>') + '</div>' +
+          '<div id="rv_gprev"></div>';
 
         /* v38 (B2): paste-import from the hours sheet. */
         h += '<div class="card"><h3>📥 Import days</h3>' +
@@ -1014,7 +1246,8 @@
           '</div>';
       } else {
         h += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas>' +
-          '<div class="note" style="margin-top:6px">Tap a bar to open that day.</div></div>';
+          '<div class="note" style="margin-top:6px">Tap a bar to preview the day — tap the same bar again to open it.</div></div>' +
+          '<div id="rv_gprev"></div>';
       }
 
       h += '<div class="card"><h3>＋ Manual entry</h3>' +
@@ -1037,15 +1270,31 @@
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + (extras().length - 1 - ri) + '">Delete</button></div></div>';
         }).join('') : '<div class="empty">No extras yet.</div>') + '</div></div>';
 
+      /* v116: the flat list renders MONEY entries only — per day,
+         the record(s) the shared builder priced (entryMoneyFlags).
+         A tracker session stacked on a closed dispatch, a duplicate
+         sheet import, a 0.01h drip: none of them render here; they
+         live in the day's detail under Also recorded. Rows group by
+         day, newest day first, so a day's money always leads. */
+      var rvFlags = entryMoneyFlags();
+      var rvRows = [];
+      entries().forEach(function (e, i) { if (e && rvFlags[i] && rvFlags[i].money) rvRows.push({ e: e, index: i }); });
+      rvRows.sort(function (a, b) {
+        if (a.e.date !== b.e.date) return a.e.date < b.e.date ? 1 : -1;
+        return b.index - a.index;
+      });
       h += '<div class="card"><h3>📒 Entries</h3><div id="rv_list">' +
-        (entries().length ? entries().slice().reverse().map(function (e, ri) {
+        (rvRows.length ? rvRows.map(function (r) {
+          var e = r.e;
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
           var amt = payFor(e, std, App._store.get('onboarding', {}).payRate);
           var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
           return '<div class="listitem" data-day-link="' + esc(e.date) + '" style="cursor:pointer"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
             '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
-            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + (entries().length - 1 - ri) + '">Delete</button></div></div>';
-        }).join('') : '<div class="empty">No entries yet. Add one above or run the tracker.</div>') + '</div></div>';
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + r.index + '">Delete</button></div></div>';
+        }).join('') : (entries().length
+          ? '<div class="empty">Nothing counted right now — some days are recorded more than once. Open the day from the Month view to fix it.</div>'
+          : '<div class="empty">No entries yet. Add one above or run the tracker.</div>')) + '</div></div>';
 
       h += '<button class="btn navy" id="rv_export" style="width:100%;margin-bottom:16px">📝 Send summary to Manifest</button>';
 
@@ -1066,8 +1315,20 @@
           var i = Math.floor(x / (w / dates.length));
           if (i < 0) i = 0;
           if (i >= dates.length) i = dates.length - 1;
-          dayDetailDate = dates[i];
-          api.render(body);
+          /* v116: TWO-TAP — first tap selects the bar's day and
+             previews it; a second tap on the SAME bar opens the
+             day's detail; a tap on a different bar just moves the
+             selection (graphTap). */
+          var gt = graphTap(graphSel, dates[i]);
+          if (gt.open) {
+            graphSel = null;
+            dayDetailDate = gt.open;
+            api.render(body);
+          } else {
+            graphSel = gt.sel;
+            drawChart(chartEl);
+            paintGraphPreview(body);
+          }
         };
       }
 
@@ -1090,9 +1351,28 @@
       body.querySelectorAll('[data-mstep]').forEach(function (b) {
         b.onclick = function () { W('monthCur', shiftYM(ym, parseInt(b.getAttribute('data-mstep'), 10) || 0)); api.render(body); };
       });
-      /* v47: tapping a Month day row opens its Day Details view. */
+      /* v47: tapping a Month day row opens its Day Details view.
+         v116: TWO-TAP, same as the chart — first tap selects the
+         day and previews it under the list; a second tap on the
+         SAME row opens the detail; a different row just moves
+         the selection. */
       body.querySelectorAll('[data-day]').forEach(function (b) {
-        b.onclick = function () { dayDetailDate = b.getAttribute('data-day'); api.render(body); };
+        b.onclick = function () {
+          var gt = graphTap(graphSel, b.getAttribute('data-day'));
+          if (gt.open) {
+            graphSel = null;
+            dayDetailDate = gt.open;
+            api.render(body);
+            return;
+          }
+          graphSel = gt.sel;
+          body.querySelectorAll('[data-day]').forEach(function (r) {
+            var on = r.getAttribute('data-day') === graphSel;
+            r.style.background = on ? '#eef2fa' : '';
+            r.style.border = on ? '1px solid var(--navy)' : '';
+          });
+          paintGraphPreview(body);
+        };
       });
       var impBtn = body.querySelector('#rv_imp_btn');
       if (impBtn) impBtn.onclick = function () {
@@ -1186,6 +1466,16 @@
         api.exportToManifest();
         alert('Revenue summary sent to Manifest.');
       };
+      /* v116: restore the two-tap selection's preview when the
+         selected day is still part of what's on screen; a window
+         or month change quietly drops a selection that no longer
+         belongs to the view. */
+      if (graphSel) {
+        var inChart = !!(chartEl && chartEl._dayDates && chartEl._dayDates.indexOf(graphSel) >= 0);
+        var inMonth = (view === 'month' && graphSel.slice(0, 7) === ym);
+        if (!inChart && !inMonth) graphSel = null;
+      }
+      paintGraphPreview(body);
     }
   };
 

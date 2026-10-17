@@ -54,6 +54,7 @@ function revHelpers() {
   if (start === -1 || end === -1 || end <= start) throw new Error('revenue helper slice not found');
   return revSrc.slice(start, end);
 }
+function revRegion() { return extractCommentRegion(revSrc, 'DAY-DETAIL-BEGIN', 'DAY-DETAIL-END'); }
 function manifestHead() {
   return manSrc.slice(0, manSrc.indexOf('function toggles()'));
 }
@@ -248,6 +249,111 @@ console.log('\n— the invoice location banner follows the tax facts (fold-in) �
     sb.__banner(true).indexOf('Set your location first') >= 0);
   sb.__onbVal = { country: 'Canada', province: 'AB' };
   eq('province set → no banner either way', sb.__banner(true) + sb.__banner(false), '');
+}
+
+console.log('\n— v116: the pay-period chips fit a phone screen (owner order, Oct 16 2026) —');
+{
+  const cssSrc = fs.readFileSync(path.join(ROOT, 'css', 'style.css'), 'utf8');
+  ok('the chips row carries the wrapping class', revSrc.indexOf('<div class="row rvchips">') >= 0);
+  ok('all six period chips still render from PERIOD_OPTS', ['7', '14', '30', '45', '60', 'custom'].every(function (p) {
+    return revSrc.indexOf("'" + p + "'") >= 0;
+  }) && revSrc.indexOf('data-p="\' + p[0]') >= 0);
+  const chipsDiv = /\.rvchips\{([^}]*)\}/.exec(cssSrc);
+  const chipsKid = /\.rvchips>\*\{([^}]*)\}/.exec(cssSrc);
+  ok('.rvchips wraps — no overflow-x, no cut-off chip', !!chipsDiv && /flex-wrap\s*:\s*wrap/.test(chipsDiv[1]) && !/overflow-x/.test(chipsDiv[1]));
+  ok('.rvchips gap is the 8px the fit math assumes', !!chipsDiv && /gap\s*:\s*8px/.test(chipsDiv[1]));
+  ok('.rvchips children may shrink below their content size', !!chipsKid && /min-width\s*:\s*0/.test(chipsKid[1]));
+  /* The fit in numbers: a flex-basis in (25%, 33%] gives exactly
+     three chips per row at any width. At a 360px viewport the row
+     is 360 − 2×20 (.pad) − 2×20 (.card) = 280px wide; three chips
+     at basis + two 8px gaps fit inside it, a fourth cannot — so
+     it wraps to a second row, fully on screen. */
+  const basisM = !!chipsKid && /flex\s*:\s*1\s+1\s+(\d+(?:\.\d+)?)%/.exec(chipsKid[1]);
+  ok('.rvchips children flex-basis yields three per row', !!basisM && +basisM[1] > 25 && +basisM[1] <= 33, basisM ? basisM[1] + '%' : 'no match');
+  if (basisM) {
+    const rowW = 360 - 2 * 20 - 2 * 20, b = +basisM[1] / 100 * rowW, gap = 8;
+    ok('at 360px wide: three chips + gaps fit the row', 3 * b + 2 * gap <= rowW, (3 * b + 2 * gap).toFixed(1) + ' vs ' + rowW);
+    ok('at 360px wide: a fourth chip cannot fit — it wraps', 4 * b + 3 * gap > rowW, (4 * b + 3 * gap).toFixed(1) + ' vs ' + rowW);
+  }
+}
+
+console.log('\n— v116: the day detail + flat list tell the header\u2019s truth (owner screenshots, Oct 16 2026) —');
+{
+  /* Thu Oct 15 in the owner's exact shape: the day recorded three
+     ways (sheet import $333.50, dispatch completion $333.50) plus
+     two 0.01h tracker drips ($0.24 / $0.23). The header prices the
+     dispatch once; the entries list must show exactly that. */
+  const mem = oct16Mem();
+  mem.rev_entries = [
+    { date: '2026-10-15', type: 'hourly', hours: '11.5', amount: '333.50', note: 'Hours sheet import' },
+    { date: '2026-10-15', type: 'hourly', hours: '0.01', amount: '0.24', auto: true, note: 'Auto from tracker' },
+    { date: '2026-10-15', type: 'hourly', hours: '11.5', amount: '333.50', note: 'Dispatch: Aecon Infrastructure · foreman 10.5h + travel 1h = 11.5h (Card #21314)' },
+    { date: '2026-10-15', type: 'hourly', hours: '0.01', amount: '0.23', auto: true, note: 'Auto from tracker' }
+  ];
+  mem.sessions = [];
+  mem.dsp_list = [];
+  const sb = world(mem, null);
+  vm.runInContext(revRegion() + '\n' + extractFn(revSrc, 'graphTap') +
+    '\n__v116 = { dayDetailData: dayDetailData, entryMoneyFlags: entryMoneyFlags, graphTap: graphTap };', sb);
+
+  const d = sb.__v116.dayDetailData('2026-10-15');
+  eq('Oct 15 header is the builder truth ($333.50 / 11.5h)', money(d.amount) + '/' + Number(d.hours), '333.5/11.5');
+  eq('Oct 15 renders exactly ONE money entry', d.entries.length, 1);
+  eq('the money entry is the dispatch record', d.entries.length && d.entries[0].src, 'dispatch');
+  eq('the money entry is $333.50', d.entries.length && money(d.entries[0].amount), 333.5);
+  eq('displayed entries sum EXACTLY to the header earnings',
+    money(d.entries.reduce((a, e) => a + e.amount, 0)), money(d.amount));
+  eq('displayed entries sum EXACTLY to the header hours',
+    d.entries.reduce((a, e) => a + e.hours, 0), Number(d.hours));
+  eq('the other three records are evidence, not money', d.evidence.length, 3);
+  ok('both tracker drips are in evidence, flagged as drips',
+    d.evidence.filter(e => e.drip).length === 2);
+  ok('no drip is a money entry', d.entries.every(e => !e.drip));
+  ok('the sheet import is evidence (the dispatch outranks it)',
+    d.evidence.some(e => e.src === 'entry'));
+
+  /* the flat list on the same fixture: one money flag — the dispatch */
+  const fl = sb.__v116.entryMoneyFlags();
+  eq('flat list: exactly one money entry for Oct 15', fl.filter(f => f.money).length, 1);
+  ok('flat list: the money entry is the dispatch (index 2)', fl[2].money === true && fl[2].src === 'dispatch');
+  ok('flat list: the sheet import is not money', fl[0].money === false);
+  ok('flat list: both drips are not money', fl[1].money === false && fl[3].money === false && fl[1].drip && fl[3].drip);
+
+  /* TODAY's shape (Oct 16): tracker $282.75 stacked over the
+     closed dispatch $319 — the flat list leads with the dispatch */
+  const sb16 = world(oct16Mem(), null);
+  vm.runInContext(revRegion() + '\n__v116 = { dayDetailData: dayDetailData, entryMoneyFlags: entryMoneyFlags };', sb16);
+  const fl16 = sb16.__v116.entryMoneyFlags();
+  ok('Oct 16 flat list: the dispatch is money', fl16[0].money === true && fl16[0].src === 'dispatch');
+  ok('Oct 16 flat list: the tracker session is NOT money on a dispatch day', fl16[1].money === false && fl16[1].src === 'tracker');
+  const d16 = sb16.__v116.dayDetailData(D);
+  eq('Oct 16 detail: one money entry, $319.00', d16.entries.length + '/' + money(d16.entries[0] ? d16.entries[0].amount : 0), '1/319');
+  eq('Oct 16 detail: the session entry sits in evidence', d16.evidence.length, 1);
+
+  /* a tracker-only day: the session entry IS the day's entry */
+  const memT = oct16Mem();
+  memT.rev_entries = [
+    { date: '2026-10-14', type: 'hourly', hours: '9.75', amount: '282.75', auto: true, note: 'Auto from tracker' }
+  ];
+  memT.sessions = []; memT.dsp_list = [];
+  const sbT = world(memT, null);
+  vm.runInContext(revRegion() + '\n__v116 = { dayDetailData: dayDetailData, entryMoneyFlags: entryMoneyFlags };', sbT);
+  const flT = sbT.__v116.entryMoneyFlags();
+  ok('tracker-only day: the session entry is money', flT[0].money === true);
+  const dT = sbT.__v116.dayDetailData('2026-10-14');
+  eq('tracker-only day: detail shows the session as the money entry', dT.entries.length, 1);
+  eq('tracker-only day: no evidence rows', dT.evidence.length, 0);
+
+  /* the graph's two-tap state machine */
+  const gt = sb.__v116.graphTap;
+  eq('graph: first tap selects, opens nothing', JSON.stringify(gt(null, '2026-10-15')), JSON.stringify({ sel: '2026-10-15', open: null }));
+  eq('graph: second tap on the SAME day opens it', JSON.stringify(gt('2026-10-15', '2026-10-15')), JSON.stringify({ sel: null, open: '2026-10-15' }));
+  eq('graph: tapping a DIFFERENT day moves the selection only', JSON.stringify(gt('2026-10-15', '2026-10-16')), JSON.stringify({ sel: '2026-10-16', open: null }));
+  ok('graph: preview hosts exist in both views (chart + Month list)', (revSrc.match(/id="rv_gprev"/g) || []).length >= 2);
+  ok('graph: the chart note teaches the two-tap', revSrc.indexOf('Tap a bar to preview the day') >= 0);
+  ok('graph: the selected bar paints navy in drawChart', revSrc.indexOf("dates[i] === graphSel") >= 0);
+  ok('day detail: the Also recorded card renders evidence with no money column of its own',
+    revSrc.indexOf('Also recorded') >= 0 && revSrc.indexOf('rv_ev_toggle') >= 0);
 }
 
 console.log('\nmoney-truth: ' + pass + ' passed, ' + fail + ' failed');

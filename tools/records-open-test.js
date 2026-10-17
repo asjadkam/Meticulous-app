@@ -306,9 +306,15 @@ console.log('C. revenue open/edit');
 
   /* statics — opening + wiring */
   ok('c: chart stashes its bucket dates', revSrc.includes('cv._dayDates = dates'));
-  ok('c: chart canvas tap opens the bucket day',
-    revSrc.includes('chartEl.onclick') && revSrc.includes('dayDetailDate = dates[i]'));
-  ok('c: chart card tells him the bars open a day', revSrc.includes('Tap a bar to open that day.'));
+  /* v116 supersedes the v75 single-tap: the chart is TWO-TAP now
+     (owner's restored pattern) — a tap routes through graphTap;
+     only a second tap on the selected day sets dayDetailDate from
+     the tap (gt.open). The state machine itself is pinned in
+     money-truth-test. */
+  ok('c: chart canvas tap routes through the two-tap decision',
+    revSrc.includes('chartEl.onclick') && revSrc.includes('graphTap(graphSel, dates[i])') &&
+    revSrc.includes('dayDetailDate = gt.open'));
+  ok('c: chart card teaches the two-tap', revSrc.includes('Tap a bar to preview the day'));
   ok('c: main Entries rows open their day (data-day-link)',
     (revSrc.match(/data-day-link/g) || []).length >= 2);
   ok('c: day-link taps never fire from the row Delete button',
