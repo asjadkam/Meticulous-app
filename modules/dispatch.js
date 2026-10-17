@@ -2081,6 +2081,41 @@
         }
         if (form.notes && !body.querySelector('#dp_notes').value) body.querySelector('#dp_notes').value = form.notes;
       }
+      /* v142: a cloud transcription → the merged-read shape, via
+         the SAME local pipeline the local read uses (parse →
+         dispatch form → read report). Shared by the escalation leg
+         and the capture-time settle path — one parse, one shape. */
+      function cloudMergedFromText(txt) {
+        if (!txt || !window.TicketOCR) return null;
+        var p2 = TicketOCR.parse(txt);
+        var f2 = TicketOCR.toDispatchForm(p2);
+        var dr2 = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(p2, f2) : null;
+        return { parsed: p2, form: f2, docRead: dr2 };
+      }
+      /* v142: start the ticket photo's cloud read the moment the
+         photo exists (PowerRead.beginEarly), on its own smaller
+         rendition, and remember the image it used. The escalation
+         leg ADOPTS this read when the local read comes back thin
+         (same reader + photo — no second send); when the local
+         read is rich, onSettled delivers the cloud read instead
+         and the caller merges it fill-only. When power read is
+         unavailable the funnels behave exactly as before. */
+      function dspBeginEarly(img, onSettled) {
+        var state = { prImg: null };
+        if (!img || !window.PowerRead || !PowerRead.beginEarly) return state;
+        function begin(prImg) {
+          state.prImg = prImg || img;
+          var h = PowerRead.beginEarly({ reader: 'text', image: state.prImg, origin: { module: 'dispatch', label: 'Dispatch' } });
+          if (h && onSettled) h.onSettled(function (out) {
+            if (!out || out.status !== 'done') { onSettled(null); return; }
+            onSettled(cloudMergedFromText(out.fields && out.fields.rawText));
+          });
+        }
+        if (window.TicketOCR && TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(img, 'text', begin);
+        else begin(img);
+        return state;
+      }
+
       /* v107: the Power Read escalation shared by both ticket
          funnels (form attach + close-with-ticket). The cloud
          transcription is parsed by the SAME local pipeline and
@@ -2088,20 +2123,20 @@
          ticket facts the local read missed. Nothing is saved by
          the escalation itself — the normal Save / Confirm stays
          the confirm. Resolves with the merged {parsed, docRead}
-         or null when no better read arrived. */
-      function escalateTicketRead(ocrUrl, onMerged) {
+         or null when no better read arrived.
+         v142: prImg (the capture-time read's image, when the
+         funnel started one) is what the escalation asks with —
+         PowerRead.escalate adopts that in-flight read. */
+      function escalateTicketRead(ocrUrl, onMerged, prImg) {
         if (!window.PowerRead || !PowerRead.escalate || !window.TicketOCR) { onMerged(null); return; }
         var got = null;
         PowerRead.escalate({
-          reader: 'text', image: ocrUrl, origin: { module: 'dispatch', label: 'Dispatch' },
+          reader: 'text', image: prImg || ocrUrl, origin: { module: 'dispatch', label: 'Dispatch' },
           onStatus: function () {},
           onResult: function (res) {
             var txt = res && res.fields && res.fields.rawText;
             if (!txt) return;
-            var p2 = TicketOCR.parse(txt);
-            var f2 = TicketOCR.toDispatchForm(p2);
-            var dr2 = (window.TicketOCR.describeRead) ? TicketOCR.describeRead(p2, f2) : null;
-            got = { parsed: p2, form: f2, docRead: dr2 };
+            got = cloudMergedFromText(txt);
           }
         }).then(function () { onMerged(got); }, function () { onMerged(got); });
       }
@@ -2115,6 +2150,20 @@
         if (!window.TicketOCR) return;
         var nameEl = body.querySelector('#dp_img_name');
         nameEl.textContent = 'Reading ticket…';
+        /* v142: the cloud read starts NOW, in parallel with the
+           local read (it used to start only after a thin local read
+           — the serial wait). Its merge is fill-only, so whenever
+           it lands it can only complete the ticket, never rewrite
+           it; a thin local read still escalates, and the escalation
+           adopts this same read instead of sending a second one. */
+        var cloudMerged = null, cloudSettled = false, ticketBuilt = false;
+        var early = dspBeginEarly(ocrUrl || photoUrl, function (m) {
+          cloudMerged = m;
+          cloudSettled = true;
+          if (ticketBuilt) applyCloudMerged();
+        });
+        var applyMergedRef = null;
+        function applyCloudMerged() { if (applyMergedRef) applyMergedRef(cloudMerged); }
         TicketOCR.recognizeWithRotation(ocrUrl || photoUrl, function (p) {
           try { nameEl.textContent = 'Reading ticket… ' + Math.round(p * 100) + '%'; } catch (e) {}
         }).then(function (text) {
@@ -2150,22 +2199,35 @@
           pendingPhoto = photoUrl; // legacy compat
           renderTicketList();
           updateNameEl();
+          /* v107: the merge itself — fill-only into the form and
+             this ticket (see escalateTicketRead). v142: one shared
+             body serves both arrivals (the escalation's answer and
+             the capture-time read settling late); every write in
+             it is fill-only/absent-only, so applying it twice is a
+             no-op the second time. */
+          function applyMerged(merged) {
+            if (!merged) return;
+            fillFormFromRead(merged.parsed, merged.form);
+            if (!t.cardNumber && merged.parsed.cardNumber) t.cardNumber = merged.parsed.cardNumber;
+            if (!t.ticketNo && (merged.parsed.ticketNo || merged.form.ticketNo)) t.ticketNo = merged.parsed.ticketNo || merged.form.ticketNo;
+            if (!t.foremanHours && merged.parsed.totalHours) t.foremanHours = merged.parsed.totalHours;
+            if (!t.startTime && merged.parsed.startTime) t.startTime = merged.parsed.startTime;
+            if (!t.finishTime && merged.parsed.finishTime) t.finishTime = merged.parsed.finishTime;
+            if (merged.docRead && (!t.docRead || (merged.docRead.found || []).length > ((t.docRead && t.docRead.found) || []).length)) t.docRead = merged.docRead;
+            renderTicketList();
+            persistDraft();
+          }
+          applyMergedRef = applyMerged;
+          ticketBuilt = true;
+          /* v142: the cloud read beat the local one — merge it now. */
+          if (cloudSettled) applyCloudMerged();
           /* v107: a thin local read escalates to Power Read; the
              better read merges fill-only into the form and this
              ticket (see escalateTicketRead). */
           if (readNeedsEscalation(parsed, docRead)) {
             escalateTicketRead(ocrUrl || photoUrl, function (merged) {
-              if (!merged) return;
-              fillFormFromRead(merged.parsed, merged.form);
-              if (!t.cardNumber && merged.parsed.cardNumber) t.cardNumber = merged.parsed.cardNumber;
-              if (!t.ticketNo && (merged.parsed.ticketNo || merged.form.ticketNo)) t.ticketNo = merged.parsed.ticketNo || merged.form.ticketNo;
-              if (!t.foremanHours && merged.parsed.totalHours) t.foremanHours = merged.parsed.totalHours;
-              if (!t.startTime && merged.parsed.startTime) t.startTime = merged.parsed.startTime;
-              if (!t.finishTime && merged.parsed.finishTime) t.finishTime = merged.parsed.finishTime;
-              if (merged.docRead && (!t.docRead || (merged.docRead.found || []).length > ((t.docRead && t.docRead.found) || []).length)) t.docRead = merged.docRead;
-              renderTicketList();
-              persistDraft();
-            });
+              applyMerged(merged);
+            }, early.prImg);
           }
           // If haul card, immediately prompt for hours/payment unit
           if (parsed._type === 'haul_card') {
@@ -2746,6 +2808,14 @@
           closeToConfirm({ id: ticketId(), photo: photoUrl, ocrType: 'unknown', date: App._today() }, true);
           return;
         }
+        /* v142: the cloud read starts at capture here too — a haul
+           card's read is handwritten, so this funnel escalates
+           almost every time, and its confirm used to wait for the
+           local read AND THEN the whole cloud read in series. The
+           escalation below now adopts the in-flight read. (No
+           settle callback: a rich local read opens the confirm
+           immediately, exactly as before.) */
+        var early = dspBeginEarly(ocrUrl || photoUrl, null);
         TicketOCR.recognizeWithRotation(ocrUrl || photoUrl, function (p) {
           try { if (statusEl) statusEl.textContent = 'Reading ticket… ' + Math.round(p * 100) + '%'; } catch (e) {}
         }).then(function (text) {
@@ -2788,7 +2858,7 @@
                 if (merged.docRead && (!ticket.docRead || (merged.docRead.found || []).length > ((ticket.docRead && ticket.docRead.found) || []).length)) ticket.docRead = merged.docRead;
               }
               closeToConfirm(ticket, false);
-            });
+            }, early.prImg);
           } else {
             closeToConfirm(ticket, false);
           }

@@ -598,6 +598,8 @@
       if (nsCamBtn) nsCamBtn.onclick = function () { nsCamInput.click(); };
       if (nsPickBtn) nsPickBtn.onclick = function () { nsPickInput.click(); };
       var nsOcrToken = 0;
+      /* v142: per-photo race record for the sticker read. */
+      var nsRace = null;
       function nsSetRead(html) { var d = body.querySelector('#mt_ns_read'); if (d) d.innerHTML = html; }
       function nsHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
@@ -610,12 +612,28 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== nsOcrToken) return;
           if (!ocrUrl) { nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>'); return; }
+          /* v142: the cloud read starts NOW, in parallel with the
+             local read, on its own smaller rendition. */
+          var race = { odo: null, date: null, delivered: false, prImg: null };
+          nsRace = race;
+          var startCloud = function (prImg) {
+            if (token !== nsOcrToken) return;
+            race.prImg = prImg || ocrUrl;
+            if (window.PowerRead && PowerRead.beginEarly) {
+              var h = PowerRead.beginEarly({ reader: 'sticker', image: race.prImg, origin: { module: 'maintenance', label: 'Maintenance' } });
+              if (h) h.onSettled(function (out) { nsCloudSettled(token, race, out); });
+            }
+          };
+          if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'sticker', startCloud);
+          else startCloud(ocrUrl);
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== nsOcrToken) return;
             try { nsSetRead('📖 Reading sticker… ' + Math.round(p * 100) + '%'); } catch (e) {}
           }).then(function (text) {
             if (token !== nsOcrToken) return;
             var parsed = TicketOCR.parseServiceSticker(text);
+            race.odo = parsed.odo || null;
+            race.date = parsed.date || null;
             var rep = TicketOCR.describeStickerRead(parsed);
             if (!rep.found.length) {
               nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
@@ -634,12 +652,39 @@
                escalation. The cloud answer only FILLS the inputs
                (labelled); this card's Save stays the confirm. Silent
                when power read is off or no key is set. */
-            if (!rep.found.length) nsPowerRead(ocrUrl, token);
+            if (!rep.found.length) nsPowerRead(race.prImg || ocrUrl, token, race);
           }).catch(function () {
             if (token !== nsOcrToken) return;
             nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
           });
         });
+      }
+      /* v142: the sticker's cloud read settles. Per field: fill an
+         empty input, correct an input still holding exactly the
+         local read's value, never displace a value the driver
+         typed. The card's Save stays the confirm. */
+      function nsCloudSettled(token, race, out) {
+        if (token !== nsOcrToken || race !== nsRace) return;
+        if (!out || out.status !== 'done') return;
+        var f = out.fields || {};
+        if (!f.odo && !f.date) return;
+        if (race.delivered) return;
+        race.delivered = true;
+        var notes = [], corrected = false, agreed = false;
+        function apply(sel, cloudVal, localVal, label) {
+          if (!cloudVal) return;
+          var e = body.querySelector(sel);
+          if (!e) return;
+          if (!localVal) { if (!e.value) { e.value = cloudVal; notes.push(label); } return; }
+          if (String(cloudVal) === String(localVal)) { agreed = true; return; }
+          if (String(e.value) === String(localVal)) { e.value = cloudVal; corrected = true; notes.push(label); }
+        }
+        apply('#mt_ns_odo', f.odo, race.odo, 'next service ' + (f.odo ? Number(f.odo).toLocaleString('en-CA') + ' km' : ''));
+        apply('#mt_ns_date', f.date, race.date, 'due date ' + (f.date || ''));
+        if (corrected) nsSetRead('⚡ <b>Power read corrected:</b> ' + esc(notes.join(' · ')) + ' — check before saving.');
+        else if (notes.length) nsSetRead('⚡ <b>Power read — check before saving:</b> ' + esc(notes.join(' · ')) + ' filled in above.');
+        else if (agreed) nsSetRead('✓ Power read agrees with the sticker read — check before saving.');
+        else nsSetRead('⚡ Power read read the sticker differently — your values stay in the fields; its read: ' + esc(describeStickerPower(f)) + '.');
       }
       if (nsCamInput) nsCamInput.onchange = nsHandlePhoto;
       if (nsPickInput) nsPickInput.onchange = nsHandlePhoto;
@@ -647,7 +692,7 @@
       /* v59: power-read escalation for the sticker photo. Fill-only,
          exactly like the local read and the hunt chips — the card's
          Save is the one and only confirm. */
-      function nsPowerRead(ocrUrl, token) {
+      function nsPowerRead(ocrUrl, token, race) {
         if (!window.PowerRead || !PowerRead.escalate) return;
         PowerRead.escalate({
           reader: 'sticker', image: ocrUrl, origin: { module: 'maintenance', label: 'Maintenance' },
@@ -665,6 +710,12 @@
             if (token !== nsOcrToken) return;
             var f = (res && res.fields) || {};
             if (!f.odo && !f.date) { nsSetRead('<span style="color:#e67e22">⚡ Power read couldn\'t read that sticker either — type it in.</span>'); return; }
+            /* v142: no double-paint when the settle callback
+               already delivered this read. */
+            if (race) {
+              if (race.delivered) return;
+              race.delivered = true;
+            }
             if (f.odo) body.querySelector('#mt_ns_odo').value = f.odo;
             if (f.date) body.querySelector('#mt_ns_date').value = f.date;
             nsSetRead('⚡ <b>Power read — check before saving:</b> ' + esc(describeStickerPower(f)) + ' filled in above.');

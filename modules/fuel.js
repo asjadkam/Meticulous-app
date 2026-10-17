@@ -444,6 +444,12 @@
          photo entry?... The picture I took yesterday?"). Save now
          attaches it — see the save handler. */
       var fuPhoto = '';
+      /* v142: per-photo race record for the receipt read — the
+         cloud read starts at capture (PowerRead.beginEarly) and
+         races the local read; litres/cost remember what the LOCAL
+         read put in the fields so a later cloud answer can be
+         compared against them (see fuCloudSettled). */
+      var fuRace = null;
       function fuSetRead(html) { var d = body.querySelector('#fu_read'); if (d) d.innerHTML = html; }
       function fuHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
@@ -460,6 +466,18 @@
           if (token !== fuOcrToken) return;
           if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
           fuPhoto = ocrUrl; /* v127: keep the photo for the record (see fuPhoto above) */
+          var race = { litres: null, cost: null, delivered: false, prImg: null };
+          fuRace = race;
+          var startCloud = function (prImg) {
+            if (token !== fuOcrToken) return;
+            race.prImg = prImg || ocrUrl;
+            if (window.PowerRead && PowerRead.beginEarly) {
+              var h = PowerRead.beginEarly({ reader: 'text', image: race.prImg, origin: { module: 'fuel', label: 'Fuel' } });
+              if (h) h.onSettled(function (out) { fuCloudSettled(token, race, out); });
+            }
+          };
+          if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'text', startCloud);
+          else startCloud(ocrUrl);
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== fuOcrToken) return;
             try { fuSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
@@ -467,6 +485,8 @@
             if (token !== fuOcrToken) return;
             var parsed = TicketOCR.parseFuelReceipt(text);
             var rep = TicketOCR.describeFuelRead(parsed);
+            race.litres = parsed.litres ? fuRoundL(parsed.litres) : null;
+            race.cost = parsed.cost ? fuRoundC(parsed.cost) : null;
             fillField('#fu_l', fuRoundL(parsed.litres));
             fillField('#fu_cost', fuRoundC(parsed.cost));
             fillField('#fu_stn', parsed.station);
@@ -489,12 +509,58 @@
                the numbers he actually needs). The local finds stay
                in the fields; the power read only fills the gaps
                (fillField never overwrites). */
-            if (!parsed.litres || !parsed.cost) fuPowerRead(ocrUrl, token);
+            if (!parsed.litres || !parsed.cost) fuPowerRead(race.prImg || ocrUrl, token, race);
           }).catch(function () {
             if (token !== fuOcrToken) return;
             fuSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
           });
         });
+      }
+      /* v142: the receipt's cloud read settles (it started at
+         capture, in parallel). A money field is CORRECTED only
+         while it still holds exactly the value the local read put
+         there and the driver hasn't touched it — the same guard
+         fillField has always applied; a field the driver edited
+         is never overwritten, and the form's Save stays the
+         confirm for everything. */
+      function fuCloudSettled(token, race, out) {
+        if (token !== fuOcrToken || race !== fuRace) return;
+        if (!out || out.status !== 'done') return;
+        var txt = out.fields && out.fields.rawText;
+        if (!txt || !window.TicketOCR) return;
+        var parsed = TicketOCR.parseFuelReceipt(txt);
+        var rep = TicketOCR.describeFuelRead(parsed);
+        if (!rep.found.length) return;
+        if (race.delivered) return;
+        if (!race.litres && !race.cost) {
+          /* The local read hasn't landed (or found nothing): the
+             cloud transcription fills the form exactly the way the
+             escalation delivery does — fill-only. */
+          race.delivered = true;
+          fuFillFromParsed(parsed, rep, '⚡ <b>Power read — check before saving:</b>');
+          return;
+        }
+        race.delivered = true;
+        var corrected = [], filled = [];
+        function money(id, cloudVal, localVal, name) {
+          if (!cloudVal) return;
+          var e = body.querySelector(id);
+          if (!e || e.getAttribute('data-touched')) return;
+          if (!e.value) { e.value = cloudVal; filled.push(name); return; }
+          if (localVal && e.value === localVal && cloudVal !== localVal) { e.value = cloudVal; corrected.push(name); }
+        }
+        money('#fu_l', parsed.litres ? fuRoundL(parsed.litres) : null, race.litres, 'litres');
+        money('#fu_cost', parsed.cost ? fuRoundC(parsed.cost) : null, race.cost, 'total');
+        fillField('#fu_stn', parsed.station);
+        fillField('#fu_date', parsed.date);
+        if (parsed.time && !fuReadTime) fuReadTime = parsed.time;
+        if (corrected.length) {
+          fuSetRead('⚡ <b>Power read corrected:</b> ' + esc(corrected.join(' + ')) + ' — check before saving.<br>Read: ' + esc(rep.found.join(' · ')));
+        } else if (filled.length) {
+          fuSetRead('⚡ <b>Power read filled in:</b> ' + esc(filled.join(' + ')) + ' — check before saving.<br>Read: ' + esc(rep.found.join(' · ')));
+        } else {
+          fuSetRead('✓ Power read agrees with the receipt read — check before saving.');
+        }
       }
       fuCamInput.onchange = fuHandlePhoto;
       fuPickInput.onchange = fuHandlePhoto;
@@ -511,7 +577,7 @@
         fuSetRead(label + ' ' + esc(rep.found.join(' · ')) +
           (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
       }
-      function fuPowerRead(ocrUrl, token) {
+      function fuPowerRead(ocrUrl, token, race) {
         if (!window.PowerRead || !PowerRead.escalate) return;
         PowerRead.escalate({
           reader: 'text', image: ocrUrl, origin: { module: 'fuel', label: 'Fuel' },
@@ -529,6 +595,13 @@
             var parsed = TicketOCR.parseFuelReceipt(txt);
             var rep = TicketOCR.describeFuelRead(parsed);
             if (!rep.found.length) { fuSetRead('<span style="color:#e67e22">⚡ Power read couldn\'t read that receipt either — fill the form by hand.</span>'); return; }
+            /* v142: the settle callback may already have delivered
+               this read (the cloud beat the local read) — don't
+               paint it twice. */
+            if (race) {
+              if (race.delivered) return;
+              race.delivered = true;
+            }
             fuFillFromParsed(parsed, rep, '⚡ <b>Power read — check before saving:</b>');
           }
         });
@@ -558,6 +631,8 @@
       body.querySelector('#fu_odo_cam').onclick = function () { fuOdoCamInput.click(); };
       body.querySelector('#fu_odo_pick').onclick = function () { fuOdoPickInput.click(); };
       var fuOdoToken = 0;
+      /* v142: per-photo race record for the odometer read. */
+      var fuOdoRace = null;
       function fuOdoHandle(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
         var token = ++fuOdoToken;
@@ -571,6 +646,18 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== fuOdoToken) return;
           if (!ocrUrl) { setStatus('<span style="color:#e67e22">Couldn\'t read the odometer — type it in.</span>'); return; }
+          var race = { km: null, cloudVal: null, delivered: false, prImg: null };
+          fuOdoRace = race;
+          var startCloud = function (prImg) {
+            if (token !== fuOdoToken) return;
+            race.prImg = prImg || ocrUrl;
+            if (window.PowerRead && PowerRead.beginEarly) {
+              var h = PowerRead.beginEarly({ reader: 'odometer', image: race.prImg, origin: { module: 'fuel', label: 'Fuel' } });
+              if (h) h.onSettled(function (out) { fuOdoCloudSettled(token, race, setStatus, out); });
+            }
+          };
+          if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'odometer', startCloud);
+          else startCloud(ocrUrl);
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== fuOdoToken) return;
             try { setStatus('📖 Reading odometer… ' + Math.round(p * 100) + '%'); } catch (e) {}
@@ -590,8 +677,15 @@
             var odoFailed = (window.PowerRead && PowerRead.odoReadFailed)
               ? PowerRead.odoReadFailed(km) : !km;
             if (km && !odoFailed) {
-              body.querySelector('#fu_odo').value = km;
-              setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
+              race.km = km;
+              if (race.delivered && race.cloudVal && String(race.cloudVal) !== String(km)) {
+                /* v142: the cloud value landed first and holds the
+                   field; the local read speaks in the status line. */
+                setStatus('⚡ <b>Power read — check before saving:</b> odometer <b>' + fmtKm(race.cloudVal) + ' km</b> is in the field. The on-device read got <b>' + fmtKm(km) + ' km</b> — type that instead if it\'s right.');
+              } else {
+                body.querySelector('#fu_odo').value = km;
+                setStatus('📸 Odometer read: <b>' + fmtKm(km) + ' km</b>');
+              }
             } else {
               var why = (km && window.PowerRead && PowerRead.odoImplausible) ? PowerRead.odoImplausible(km) : null;
               var master = (window.PowerRead && PowerRead.masterOdo) ? PowerRead.masterOdo() : null;
@@ -601,7 +695,7 @@
               /* v59: power-read escalation — fills this same field
                  only; Save fill-up remains the confirm and the master
                  odometer still moves solely through that save. */
-              fuOdoPowerRead(ocrUrl, token, setStatus);
+              fuOdoPowerRead(race.prImg || ocrUrl, token, setStatus, race);
             }
           }).catch(function () {
             if (token !== fuOdoToken) return;
@@ -609,11 +703,42 @@
           });
         });
       }
+      /* v142: the Fuel odometer cloud read settles — same rules as
+         the other surfaces: fill an empty field, correct a field
+         still holding exactly the local value, never displace a
+         typed or first-standing value. */
+      function fuOdoCloudSettled(token, race, setStatus, out) {
+        if (token !== fuOdoToken || race !== fuOdoRace) return;
+        if (!out || out.status !== 'done') return;
+        var v = out.fields && out.fields.value;
+        if (!v) return;
+        race.cloudVal = v;
+        if (race.delivered) return;
+        var fld = body.querySelector('#fu_odo');
+        if (!race.km) {
+          if (fld && !fld.value) {
+            fld.value = v;
+            race.delivered = true;
+            setStatus('⚡ <b>Power read — check before saving:</b> odometer <b>' + fmtKm(v) + ' km</b>');
+          }
+          return;
+        }
+        if (String(v) === String(race.km)) {
+          setStatus('✓ Power read agrees: odometer <b>' + fmtKm(v) + ' km</b> — check before saving.');
+          return;
+        }
+        if (fld && String(fld.value) === String(race.km)) {
+          fld.value = v;
+          setStatus('⚡ <b>Power read corrected the odometer:</b> <b>' + fmtKm(v) + ' km</b> — check before saving.');
+        } else {
+          setStatus('⚡ Power read got odometer <b>' + fmtKm(v) + ' km</b> — type it in if that\'s the right one, otherwise keep yours.');
+        }
+      }
       fuOdoCamInput.onchange = fuOdoHandle;
       fuOdoPickInput.onchange = fuOdoHandle;
 
       /* v59: power-read escalation for the Fuel odometer photo. */
-      function fuOdoPowerRead(ocrUrl, token, setStatus) {
+      function fuOdoPowerRead(ocrUrl, token, setStatus, race) {
         if (!window.PowerRead || !PowerRead.escalate) return;
         PowerRead.escalate({
           reader: 'odometer', image: ocrUrl, origin: { module: 'fuel', label: 'Fuel' },
@@ -628,6 +753,13 @@
             if (token !== fuOdoToken) return;
             var v = res.fields && res.fields.value;
             if (!v) { setStatus('<span style="color:#e67e22">⚡ Power read couldn\'t read the odometer either — type it in.</span>'); return; }
+            /* v142: no double-paint when the settle callback
+               already delivered this value. */
+            if (race) {
+              race.cloudVal = v;
+              if (race.delivered) return;
+              race.delivered = true;
+            }
             body.querySelector('#fu_odo').value = v;
             setStatus('⚡ <b>Power read — check before saving:</b> odometer <b>' + fmtKm(v) + ' km</b>');
           }

@@ -371,7 +371,7 @@
     try { return typeof navigator !== 'undefined' && navigator && navigator.onLine === false; } catch (e) { return false; }
   }
 
-  function callModel(model, reader, dataUrl, key) {
+  function callModel(model, reader, dataUrl, key, timeoutMs) {
     var f = fetchFn();
     if (!f) return Promise.resolve({ ok: false, kind: 'network', message: '⚡ Power read needs a network connection.' });
     var mm = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
@@ -389,7 +389,10 @@
       if (typeof AbortController !== 'undefined') {
         ctrl = new AbortController();
         init.signal = ctrl.signal;
-        timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 45000);
+        /* v142: one shared per-attempt ceiling — the proxy route had
+           NO ceiling at all, so a slow server chain-walk could hold
+           the spinner indefinitely. */
+        timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, timeoutMs || PowerRead.FETCH_TIMEOUT_MS);
       }
     } catch (e) {}
     return f(PowerRead.ENDPOINT + model + ':generateContent', init).then(function (resp) {
@@ -433,14 +436,30 @@
      model's JSON text ({text}) or the model JSON itself. A proxy
      network failure reports kind 'network' so the escalation path
      queues the photo exactly as it does for a direct-call dropout. */
-  function callProxy(url, reader, dataUrl) {
+  function callProxy(url, reader, dataUrl, timeoutMs) {
     var f = fetchFn();
     if (!f) return Promise.resolve({ ok: false, kind: 'network', message: '⚡ Power read needs a network connection.' });
-    return f(url, {
+    var ctrl = null, timer = null;
+    var init = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Meticulous-App': PowerRead.APP_TOKEN },
       body: JSON.stringify({ reader: reader, image: dataUrl })
-    }).then(function (resp) {
+    };
+    try {
+      if (typeof AbortController !== 'undefined') {
+        ctrl = new AbortController();
+        init.signal = ctrl.signal;
+        /* v142: BEFORE this build the proxy route had NO timeout at
+           all — a slow server-side model chain-walk (45 s per attempt
+           server-side, several models) could hold the read spinner
+           for minutes. The abort lands in the rejection arm below and
+           reports kind 'network', so the escalation path queues the
+           photo and says so — a fast, honest failure. */
+        timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, timeoutMs || PowerRead.FETCH_TIMEOUT_MS);
+      }
+    } catch (e) {}
+    return f(url, init).then(function (resp) {
+      if (timer) clearTimeout(timer);
       return resp.json().then(function (j) { return { status: resp.status, json: j }; }, function () { return { status: resp.status, json: null }; });
     }).then(function (r) {
       if (r.status !== 200 || !r.json) return { ok: false, kind: 'http', status: r.status, message: '⚡ Power read failed — your photo and entries are unchanged.' };
@@ -453,6 +472,7 @@
       bumpCount();
       return { ok: true, fields: fields, model: 'proxy' };
     }, function () {
+      if (timer) clearTimeout(timer);
       return { ok: false, kind: 'network', message: '⚡ Power read could not reach the cloud reader.' };
     });
   }
@@ -460,9 +480,9 @@
   /* One read: the server proxy when one is set; otherwise the
      device-saved key walks the model chain on 404s only, remembers
      the model that worked. Counts exactly one read per success. */
-  function readOnce(reader, dataUrl) {
+  function readOnce(reader, dataUrl, timeoutMs) {
     var proxy = PowerRead.proxyUrl();
-    if (proxy) return callProxy(proxy, reader, dataUrl);
+    if (proxy) return callProxy(proxy, reader, dataUrl, timeoutMs);
     var key = PowerRead.getKey();
     if (!key) return Promise.resolve({ ok: false, kind: 'nokey' });
     var chain = PowerRead.MODELS.slice();
@@ -471,7 +491,7 @@
     var order = chain.slice(start).concat(chain.slice(0, start));
     function attempt(i) {
       if (i >= order.length) return { ok: false, kind: 'http', message: '⚡ Power read is unavailable right now (no model answered) — your photo and entries are unchanged.' };
-      return callModel(order[i], reader, dataUrl, key).then(function (res) {
+      return callModel(order[i], reader, dataUrl, key, timeoutMs).then(function (res) {
         if (res.kind === 'nomodel') return attempt(i + 1);
         if (res.ok) {
           sset('powerReadModel', order[i]);
@@ -493,6 +513,12 @@
      transport failure), or no-key. If the retry also fails
      transiently, the copy says so honestly — it was tried twice. */
   PowerRead.RETRY_DELAY_MS = 1200;
+  /* v142: per-attempt ceilings. A healthy read answered in 1.5–6 s in
+     the Oct 17 endpoint probes; 20 s is generous headroom for a slow
+     cell link, and the retry gets a shorter 12 s — the whole read is
+     wait-bounded at ~33 s worst case instead of unbounded. */
+  PowerRead.FETCH_TIMEOUT_MS = 20000;
+  PowerRead.RETRY_TIMEOUT_MS = 12000;
   function prTransient(res) {
     if (!res || res.ok) return false;
     if (res.kind === 'network') return true;
@@ -500,11 +526,11 @@
     return false;
   }
   PowerRead.read = function (reader, dataUrl) {
-    return readOnce(reader, dataUrl).then(function (res) {
+    return readOnce(reader, dataUrl, PowerRead.FETCH_TIMEOUT_MS).then(function (res) {
       if (!prTransient(res)) return res;
       return new Promise(function (resolve) {
         setTimeout(resolve, PowerRead.RETRY_DELAY_MS || 0);
-      }).then(function () { return readOnce(reader, dataUrl); }).then(function (res2) {
+      }).then(function () { return readOnce(reader, dataUrl, PowerRead.RETRY_TIMEOUT_MS); }).then(function (res2) {
         if (!res2.ok && prTransient(res2)) {
           res2.retried = true;
           res2.message = '⚡ Power read failed twice — the cloud reader may be having a moment. Your photo and entries are unchanged; you can type the number instead.';
@@ -618,35 +644,150 @@
       return Promise.resolve({ status: 'waiting' });
     }
     status('working', '⚡ Asking the power read…');
-    return PowerRead.read(reader, opts.image).then(function (res) {
-      if (res.ok) {
-        /* v80: a cloud odometer answer is a candidate like any
-           other — it passes the SAME plausibility gate before any
-           screen may fill it. An impossible value (below the
-           master, or a wild jump past it) is reported in plain
-           words and never delivered as a result. */
-        if (reader === 'odometer' && res.fields && res.fields.value) {
-          var why = PowerRead.odoImplausible(res.fields.value);
-          if (why) {
-            var m = PowerRead.masterOdo();
-            var msg = why === 'jump'
-              ? '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — that\'s way past your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.'
-              : '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — below your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.';
-            status('error', msg);
-            return { status: 'implausible', message: msg };
-          }
-        }
-        try { if (opts.onResult) opts.onResult({ fields: res.fields || {}, reader: reader }); } catch (e) {}
-        return { status: 'done', fields: res.fields || {} };
+    /* v142: a read the surface already started at capture time
+       (beginEarly, same reader + same photo) is ADOPTED — its
+       outcome feeds this exact delivery, no second network call. */
+    var early = _earlyTake(reader, opts.image);
+    var outcomeP = early ? early.promise
+      : PowerRead.read(reader, opts.image).then(function (res) { return settleRead(reader, opts.image, opts.origin, res); });
+    return outcomeP.then(function (out) {
+      if (out.status === 'done') {
+        try { if (opts.onResult) opts.onResult({ fields: out.fields || {}, reader: reader }); } catch (e) {}
+        return { status: 'done', fields: out.fields || {} };
       }
-      if (res.kind === 'network') {
-        enqueue(reader, opts.image, opts.origin);
+      if (out.status === 'waiting') {
         status('waiting', '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online.');
         return { status: 'waiting' };
       }
-      status('error', res.message || '⚡ Power read failed — your photo and entries are unchanged.');
-      return { status: 'error', message: res.message };
+      if (out.status === 'implausible') {
+        status('error', out.message);
+        return { status: 'implausible', message: out.message };
+      }
+      status('error', out.message || '⚡ Power read failed — your photo and entries are unchanged.');
+      return { status: 'error', message: out.message };
     });
+  };
+
+  /* ---------- one read outcome, shaped once (v142) ----------
+     Every cloud read — started by escalate, by beginEarly, whenever —
+     lands in the SAME outcome shape here: 'done' {fields} ·
+     'implausible' {message} (the v80 two-sided odometer gate) ·
+     'waiting' (network-class: the photo is queued for the drain) ·
+     'error' {message}. Surfaces never re-implement it. */
+  function settleRead(reader, image, origin, res) {
+    if (res && res.ok) {
+      if (reader === 'odometer' && res.fields && res.fields.value) {
+        var why = PowerRead.odoImplausible(res.fields.value);
+        if (why) {
+          var m = PowerRead.masterOdo();
+          var msg = why === 'jump'
+            ? '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — that\'s way past your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.'
+            : '⚡ Power read got ' + Number(res.fields.value).toLocaleString('en-CA') + ' km — below your current odometer (' + Number(m).toLocaleString('en-CA') + ' km), so it can\'t be right and wasn\'t used.';
+          return { status: 'implausible', message: msg };
+        }
+      }
+      return { status: 'done', fields: res.fields || {} };
+    }
+    if (res && res.kind === 'network') {
+      enqueue(reader, image, origin);
+      return { status: 'waiting' };
+    }
+    return { status: 'error', message: (res && res.message) || undefined };
+  }
+  PowerRead._settleRead = settleRead;
+
+  /* ---------- early-start registry (v142: the race) ----------
+     THE SPEED BUILD. Characterization (Oct 17, real fixtures, live
+     endpoint): the cloud read itself answers in 1.5–6 s — the
+     minutes came from every surface running the LOCAL Tesseract
+     read to completion (8.9 s for a 1600px dash rendition on a
+     desktop-class CPU; 23 s at full camera resolution; several×
+     slower on a phone) BEFORE the cloud request was even sent.
+     beginEarly starts the cloud read the moment the photo exists;
+     the local read races it. Whichever lands first shows; the
+     surface's own confirm rules decide corrections (a late cloud
+     value never silently replaces a value the driver acted on —
+     that policy lives in the surfaces; the outcome here is raw).
+     One read per (reader, photo): a later escalate for the same
+     pair adopts this record instead of sending again. An early
+     result nobody adopts is NOT stashed into powerReadResults —
+     that store is photo-unbound, and a transcription landing in a
+     DIFFERENT surface's form would be worse than losing it; the
+     queue drain remains the only producer there. */
+  var _early = {};
+  var _earlyOrder = [];
+  function _earlyKey(reader, image) {
+    return reader + '|' + image.length + '|' + String(image).slice(0, 48) + '|' + String(image).slice(-24);
+  }
+  function _earlyTake(reader, image) {
+    var rec = _early[_earlyKey(reader, image)];
+    if (!rec) return null;
+    rec.adopted = true;
+    return rec;
+  }
+  PowerRead.beginEarly = function (opts) {
+    opts = opts || {};
+    var reader = opts.reader || 'text';
+    var image = opts.image;
+    if (!image || !PowerRead.enabled()) return null;
+    var key = _earlyKey(reader, image);
+    var rec = _early[key];
+    if (!rec) {
+      rec = { key: key, reader: reader, settled: false, outcome: null, adopted: false, cbs: [], promise: null, handle: null };
+      rec.handle = {
+        key: key,
+        onSettled: function (cb) {
+          if (typeof cb === 'function') {
+            if (rec.settled) { try { cb(rec.outcome); } catch (e) {} }
+            else rec.cbs.push(cb);
+          }
+          return rec.handle;
+        }
+      };
+      rec.promise = new Promise(function (resolve) {
+        var finish = function (out) {
+          rec.settled = true;
+          rec.outcome = out;
+          var cbs = rec.cbs.slice(); rec.cbs.length = 0;
+          for (var i = 0; i < cbs.length; i++) { try { cbs[i](out); } catch (e) {} }
+          resolve(out);
+        };
+        if (isOffline()) {
+          /* Same queue semantics as an escalation that finds no
+             signal: the photo waits for the drain, the surface hears
+             'waiting' — never an error for being offline. */
+          finish(settleRead(reader, image, opts.origin, { ok: false, kind: 'network' }));
+        } else {
+          /* A transport that throws synchronously (or a read that
+             rejects) is a network-class failure here, never an
+             unhandled rejection: the read still settles, as
+             'waiting' with the photo queued. */
+          var readP;
+          try { readP = PowerRead.read(reader, image); }
+          catch (e) { readP = Promise.resolve({ ok: false, kind: 'network' }); }
+          readP.then(function (res) {
+            finish(settleRead(reader, image, opts.origin, res));
+          }, function () {
+            finish(settleRead(reader, image, opts.origin, { ok: false, kind: 'network' }));
+          });
+        }
+      });
+      _early[key] = rec;
+      _earlyOrder.push(key);
+      /* Keep the registry tiny: settled records beyond the cap are
+         dropped oldest-first; in-flight records are never dropped
+         out from under a waiting surface. */
+      while (_earlyOrder.length > 4) {
+        var dropped = false;
+        for (var j = 0; j < _earlyOrder.length; j++) {
+          var cand = _early[_earlyOrder[j]];
+          if (cand && cand.settled) { delete _early[_earlyOrder[j]]; _earlyOrder.splice(j, 1); dropped = true; break; }
+        }
+        if (!dropped) break;
+      }
+    }
+    if (typeof opts.onSettled === 'function') rec.handle.onSettled(opts.onSettled);
+    return rec.handle;
   };
 
   /* ---------- queue drain: app open + connectivity return ----------

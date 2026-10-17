@@ -141,8 +141,11 @@ console.log('\n— (e) statics: fill gate gone, escalation wired, marker threade
     dspSrc.indexOf('function fillFormFromRead(parsed, form)') >= 0);
   ok('the form fill takes the ticket # from the card number',
     dspSrc.indexOf("var ticketVal = form.ticketNo || (parsed && parsed.cardNumber) || null;") >= 0);
+  /* v142: signature moved ON PURPOSE — the helper now takes the
+     capture-time read's image (prImg) so the escalation adopts the
+     in-flight read instead of sending a second one. */
   ok('the shared escalation helper exists',
-    dspSrc.indexOf('function escalateTicketRead(ocrUrl, onMerged)') >= 0);
+    dspSrc.indexOf('function escalateTicketRead(ocrUrl, onMerged, prImg)') >= 0);
   ok('both funnels escalate thin reads',
     (dspSrc.match(/readNeedsEscalation\(parsed, docRead\)/g) || []).length >= 2);
   ok('readForm returns the loadsSet marker',

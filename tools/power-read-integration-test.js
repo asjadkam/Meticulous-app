@@ -415,22 +415,28 @@ async function partApp() {
   }
 
   /* A2: plausible read ABOVE the master (within the jump) →
-     accepted, NO escalation (cost discipline: the power read is
-     not a per-photo tax). v80: "plausible above" now means within
-     ODO_MAX_JUMP_KM — the v63 fixture value 182,345 (+13,827) is a
-     wild jump since Oct 15 and lives in A2b below. */
+     accepted, NO escalation. v80: "plausible above" now means
+     within ODO_MAX_JUMP_KM — the v63 fixture value 182,345
+     (+13,827) is a wild jump since Oct 15 and lives in A2b below.
+     v142 CONTRACT CHANGE (owner's speed order, Oct 17): the cloud
+     read now starts AT CAPTURE in parallel — the old "zero
+     provider calls for a plausible read" cost discipline is
+     superseded by "one bounded confirmation call; it may correct
+     an untouched value or wait as a chip, and a plausible local
+     read still never ESCALATES". The provider here AGREES with
+     the local read. */
   {
     const w = makeAppWorld({
       seed: [['mt_odo', '168518'], ['powerReadKey', 'TESTKEY-123']],
       ocrText: 'TOTAL 168934 km',
-      fetchHandler: () => { throw new Error('fetch must not be called for a plausible read'); },
+      fetchHandler: () => geminiOk({ value: 168934 }),
     });
     snapAppPhoto(w);
     await flush();
     eq('A2 plausible value filled', w.els.pf_odo.value, '168934');
     eq('A2 plausible value persisted', JSON.stringify(w.persistCalls), JSON.stringify([['odometer', '168934']]));
     eq('A2 NO escalation for a plausible read', w.escalateCalls.length, 0);
-    eq('A2 zero provider calls', w.fetchCalls.length, 0);
+    eq('A2 exactly one provider call (the v142 capture-time read)', w.fetchCalls.length, 1);
   }
 
   /* A2b: THE RECEIPT CASE (Oct 15, 2026) — local read 519,326 (a
@@ -608,7 +614,10 @@ function partStatic() {
   const sheetEnd = appSrc.indexOf('timed auto-start', sheetStart);
   const sheet = appSrc.slice(sheetStart, sheetEnd);
   ok('S1 odo sheet gates its fill on odoLocalFailed', sheet.indexOf('!odoLocalFailed(km)') >= 0);
-  ok('S2 odo sheet escalates on the gated/empty path', sheet.indexOf('odoSheetPowerRead(ocrUrl, kindAtStart)') >= 0);
+  /* v142: call moved ON PURPOSE — the sheet hands over the
+     capture-time read's image + race record so the escalation
+     adopts the in-flight read. */
+  ok('S2 odo sheet escalates on the gated/empty path', sheet.indexOf('odoSheetPowerRead(race.prImg || ocrUrl, kindAtStart, race)') >= 0);
   ok('S3 odo sheet surfaces unavailable (never silent)', sheet.indexOf("s.state === 'unavailable'") >= 0);
   const fuelSrc = fs.readFileSync(path.join(ROOT, 'modules', 'fuel.js'), 'utf8');
   eq('S4 fuel has unavailable surfaces in BOTH consumers', (fuelSrc.match(/state === 'unavailable'/g) || []).length, 2);

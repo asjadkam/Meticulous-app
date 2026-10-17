@@ -74,8 +74,11 @@ eq('garbage parses to nothing', sb.__parse('ONBNERREEEEARAL HH HHE'), null);
 
 console.log('\n— statics: escalation + steppers wired into the shared pipeline —');
 {
+  /* v142: call moved ON PURPOSE — the branch now hands over the
+     capture-time read's image + race state so the escalation
+     adopts the in-flight read (the file stays as the fallback). */
   ok('the safety branch escalates on failure',
-    appSrc.indexOf('safetyPowerRead(prefix, file, token);') >= 0);
+    appSrc.indexOf('safetyPowerRead(prefix, state.prImg, file, token, state);') >= 0);
   ok('the safety branch presents the steppers on failure',
     (appSrc.match(/showSafetySteppers\(prefix\)/g) || []).length >= 3); // failure + definition-site + catch
   ok("the escalation reads a transcription ('text' reader) and re-parses it locally",

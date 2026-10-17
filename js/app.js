@@ -1193,6 +1193,9 @@
     var st = el('trkEndOdoStatus');
     if (st) st.innerHTML = html;
   }
+  /* v142: per-photo race record for the end sheet (see the odo
+     sheet's twin below). */
+  var _endRace = null;
   function endSheetOdoHandleFile(file) {
     if (!file) return;
     var token = ++_endOdoToken;
@@ -1204,31 +1207,86 @@
     TicketOCR.fileToOCRImage(file, function (ocrUrl) {
       if (!endOdoLive(token)) return;
       if (!ocrUrl) { endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.'); return; }
+      /* v142: the cloud read starts NOW, in parallel with the
+         local read (it used to start only after the local read
+         failed — the serial wait the owner clocked in minutes). */
+      var race = { km: null, cloudVal: null, delivered: false, prImg: null };
+      _endRace = race;
+      var startCloud = function (prImg) {
+        if (!endOdoLive(token)) return;
+        race.prImg = prImg || ocrUrl;
+        if (window.PowerRead && PowerRead.beginEarly) {
+          var h = PowerRead.beginEarly({ reader: 'odometer', image: race.prImg, origin: { module: 'tracker', label: 'the end-of-shift sheet' } });
+          if (h) h.onSettled(function (out) { endSheetCloudSettled(token, race, out); });
+        }
+      };
+      if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'odometer', startCloud);
+      else startCloud(ocrUrl);
       TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
         try { if (endOdoLive(token)) endOdoSetStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
       }).then(function (text) {
         if (!endOdoLive(token)) return;
         var km = parseOdometerReading(text);
         if (km && !odoLocalFailed(km)) {
+          race.km = km;
           var inp = el('trkEndOdo');
-          if (inp) inp.value = km;
-          endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+          if (race.delivered && race.cloudVal && String(race.cloudVal) !== String(km)) {
+            /* v142: the cloud value reached the field first and
+               holds it; the local read speaks in the status line
+               only — first confident answer is never displaced
+               silently. Save stays the confirm either way. */
+            endOdoSetStatus('⚡ Power read: <b>' + Number(race.cloudVal).toLocaleString('en-CA') + ' km</b> is in the field. The on-device read got <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — type that instead if it\'s right, then tap Stop & save.');
+          } else {
+            if (inp) inp.value = km;
+            endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+          }
         } else {
           if (km && odoImplausible(km) === 'jump') endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is way past your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right; it\'s likely another number in the photo. Trying the power read…');
           else if (km) endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
           else endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.');
-          endSheetOdoPowerRead(ocrUrl, token);
+          endSheetOdoPowerRead(race.prImg || ocrUrl, token, race);
         }
       }).catch(function () {
         if (endOdoLive(token)) endOdoSetStatus('⚠️ Couldn\'t read the odometer — type it above, or leave it blank.');
       });
     });
   }
+  /* v142: the end sheet's cloud read settles. Same rules as the
+     odo sheet's twin: fill an untouched field, correct a field
+     still holding exactly the local value, never displace a value
+     the driver typed or a first answer already standing. */
+  function endSheetCloudSettled(token, race, out) {
+    if (!endOdoLive(token) || race !== _endRace) return;
+    if (!out || out.status !== 'done') return;
+    var v = out.fields && out.fields.value;
+    if (!v) return;
+    race.cloudVal = v;
+    if (race.delivered) return;
+    var inp = el('trkEndOdo');
+    if (!race.km) {
+      if (inp && !inp.value) {
+        inp.value = v;
+        race.delivered = true;
+        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+      }
+      return;
+    }
+    if (String(v) === String(race.km)) {
+      endOdoSetStatus('✓ Power read agrees: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+      return;
+    }
+    if (inp && String(inp.value) === String(race.km)) {
+      inp.value = v;
+      endOdoSetStatus('⚡ Power read corrected it: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+    } else {
+      endOdoSetStatus('⚡ Power read got <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — type it above if that\'s the right one, otherwise keep yours.');
+    }
+  }
   /* Power-read escalation for the end sheet — mirrors the odo
      sheet's: the cloud value fills this same field, and the sheet's
      Stop & save stays the confirm. A skip (off / no key) is reported
      in the sheet, never silent. */
-  function endSheetOdoPowerRead(ocrUrl, token) {
+  function endSheetOdoPowerRead(ocrUrl, token, race) {
     if (!window.PowerRead || !PowerRead.escalate) return;
     PowerRead.escalate({
       reader: 'odometer', image: ocrUrl, origin: { module: 'tracker', label: 'the end-of-shift sheet' },
@@ -1242,6 +1300,14 @@
         if (!endOdoLive(token)) return;
         var v = res.fields && res.fields.value;
         if (!v) { endOdoSetStatus('⚡ Power read couldn\'t read it either — type it above, or leave it blank.'); return; }
+        /* v142: the settle callback may already have filled this
+           exact value (the cloud beat the local read) — don't
+           repaint it. */
+        if (race) {
+          race.cloudVal = v;
+          if (race.delivered) return;
+          race.delivered = true;
+        }
         var inp = el('trkEndOdo');
         if (inp) inp.value = v;
         endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
@@ -1425,6 +1491,8 @@
     if (st) st.innerHTML = '✓ Saved: <b>' + Number(n).toLocaleString('en-CA') + ' km</b>';
     setTimeout(closeOdoSheet, 900);
   };
+  /* v142: per-photo race record for the odo sheet. */
+  var _odoRace = null;
   function odoSheetHandleFile(file) {
     if (!file || !_odoPromptKind) return;
     var kindAtStart = _odoPromptKind;
@@ -1437,14 +1505,37 @@
     setStatus('📖 Reading photo…');
     TicketOCR.fileToOCRImage(file, function (ocrUrl) {
       if (!ocrUrl) { setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.'); return; }
+      if (_odoPromptKind !== kindAtStart) return;
+      /* v142: the cloud read starts NOW, in parallel with the
+         local read — the morning-departure wait the owner clocked
+         was the two reads running one after another. */
+      var race = { km: null, cloudVal: null, delivered: false, prImg: null };
+      _odoRace = race;
+      var startCloud = function (prImg) {
+        if (_odoPromptKind !== kindAtStart) return;
+        race.prImg = prImg || ocrUrl;
+        if (window.PowerRead && PowerRead.beginEarly) {
+          var h = PowerRead.beginEarly({ reader: 'odometer', image: race.prImg, origin: { module: 'tracker', label: 'the odometer prompt' } });
+          if (h) h.onSettled(function (out) { odoSheetCloudSettled(kindAtStart, race, out); });
+        }
+      };
+      if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'odometer', startCloud);
+      else startCloud(ocrUrl);
       TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
         try { setStatus('📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
       }).then(function (text) {
         var km = parseOdometerReading(text);
         if (km && !odoLocalFailed(km)) {
+          race.km = km;
           var inp = el('odoSheetVal');
-          if (inp) inp.value = km;
-          setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.');
+          if (race.delivered && race.cloudVal && String(race.cloudVal) !== String(km)) {
+            /* v142: the cloud value holds the field (it landed
+               first); the local read speaks in the status line. */
+            setStatus('⚡ Power read: <b>' + Number(race.cloudVal).toLocaleString('en-CA') + ' km</b> is in the field. The on-device read got <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — type that instead if it\'s right, then tap Save reading.');
+          } else {
+            if (inp) inp.value = km;
+            setStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.');
+          }
         } else {
           /* v59: local read found nothing → power-read escalation.
              The value fills this same field; the sheet's Save reading
@@ -1454,17 +1545,48 @@
           if (km && odoImplausible(km) === 'jump') setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is way past your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right; it\'s likely another number in the photo. Trying the power read…');
           else if (km) setStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is below your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right. Trying the power read…');
           else setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
-          odoSheetPowerRead(ocrUrl, kindAtStart);
+          odoSheetPowerRead(race.prImg || ocrUrl, kindAtStart, race);
         }
       }).catch(function () {
         setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.');
       });
     });
   }
+  /* v142: the odo sheet's cloud read settles — same rules as the
+     end sheet's twin (fill untouched, correct the exact local
+     value, never displace the driver's own edit). */
+  function odoSheetCloudSettled(kindAtStart, race, out) {
+    if (_odoPromptKind !== kindAtStart || race !== _odoRace) return;
+    if (!out || out.status !== 'done') return;
+    var v = out.fields && out.fields.value;
+    if (!v) return;
+    race.cloudVal = v;
+    if (race.delivered) return;
+    var st = el('odoSheetStatus'); if (!st) return;
+    var inp = el('odoSheetVal');
+    if (!race.km) {
+      if (inp && !inp.value) {
+        inp.value = v;
+        race.delivered = true;
+        st.innerHTML = '⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.';
+      }
+      return;
+    }
+    if (String(v) === String(race.km)) {
+      st.innerHTML = '✓ Power read agrees: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.';
+      return;
+    }
+    if (inp && String(inp.value) === String(race.km)) {
+      inp.value = v;
+      st.innerHTML = '⚡ Power read corrected it: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.';
+    } else {
+      st.innerHTML = '⚡ Power read got <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — type it below if that\'s the right one, otherwise keep yours.';
+    }
+  }
   /* v59: power-read escalation for the day start/end odometer sheet.
      Callbacks re-check the sheet is still on the same prompt before
      touching it — a late answer never hijacks a later prompt. */
-  function odoSheetPowerRead(ocrUrl, kindAtStart) {
+  function odoSheetPowerRead(ocrUrl, kindAtStart, race) {
     if (!window.PowerRead || !PowerRead.escalate) return;
     PowerRead.escalate({
       reader: 'odometer', image: ocrUrl, origin: { module: 'tracker', label: 'the odometer prompt' },
@@ -1480,6 +1602,13 @@
         var st = el('odoSheetStatus'); if (!st) return;
         var v = res.fields && res.fields.value;
         if (!v) { st.innerHTML = '⚡ Power read couldn\'t read it either — type it below, or tap Skip.'; return; }
+        /* v142: no double-paint when the settle callback already
+           delivered this value. */
+        if (race) {
+          race.cloudVal = v;
+          if (race.delivered) return;
+          race.delivered = true;
+        }
         var inp = el('odoSheetVal');
         if (inp) inp.value = v;
         st.innerHTML = '⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Save reading.';
@@ -2484,9 +2613,25 @@
     if (!camBtn || !pickBtn) return;
     camBtn.onclick = function () { if (camIn) camIn.click(); };
     pickBtn.onclick = function () { if (pickIn) pickIn.click(); };
+    /* v142: per-photo race state. The cloud read starts the moment
+       the photo is taken (PowerRead.beginEarly) and races the local
+       read; this record is how the two arrivals meet: localVal =
+       what the on-device read filled, cloudVal = what the power
+       read answered, delivered = a suggestion/correction for this
+       photo is already on screen (the escalation path and the
+       settle callback must never paint it twice). */
+    var photoState = null;
     function handleFile(file) {
       if (!file) return;
       var token = ++_onbOcrToken;
+      /* v142: this photo's race record (see photoState above).
+         localDone: the local read has landed and spoken — a cloud
+         chip arriving after that must not talk over its line.
+         gated: the local read produced a value the plausibility
+         gate rejected — its plain explanation is the status this
+         photo keeps; the cloud chip stands below it, unannounced. */
+      var state = { localVal: null, cloudVal: null, delivered: false, prImg: null, localDone: false, gated: false, gateLine: null, announced: false };
+      photoState = state;
       /* v127: a NEW photo supersedes any pending suggestion — this
          is the one legitimate clear of the suggestion boxes (a user
          act, not a timer or another producer's repaint; see prBox). */
@@ -2501,18 +2646,48 @@
         if (prevEl) prevEl.innerHTML = '<img src="' + dataUrl + '" style="width:100%;border-radius:8px;margin:8px 0" alt="Photo">';
         if (!window.TicketOCR) { onbSetStatus(prefix, '⚠️ Photo reader not ready — enter it manually below.'); return; }
         onbSetStatus(prefix, '📖 Reading photo… 0%');
+        /* v142: both reads start NOW, off the same photo. The
+           local read starts immediately — TicketOCR.recognize caps
+           its input to the OCR rendition internally (it used to
+           run on the raw full-resolution frame: measured 23 s on
+           the owner's real dash photo, while the cloud was only
+           asked AFTER it gave up). The cloud read starts in
+           parallel on its own smaller rendition
+           (TicketOCR.READ_MAX). First confident answer shows; the
+           cloud answer corrects an untouched local value or waits
+           as a tap-to-use chip (onbCloudSettled). */
+        var reader = kind === 'odometer' ? 'odometer' : 'text';
+        var startCloud = function (prImg) {
+          if (token !== _onbOcrToken) return;
+          state.prImg = prImg || dataUrl;
+          if (window.PowerRead && PowerRead.beginEarly) {
+            var h = PowerRead.beginEarly({ reader: reader, image: state.prImg, origin: (opts && opts.origin) || { module: 'preferences', label: 'Preferences' } });
+            if (h) h.onSettled(function (out) { if (token === _onbOcrToken) onbCloudSettled(prefix, kind, state, out, token); });
+          }
+        };
+        if (window.TicketOCR && TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(dataUrl, reader, startCloud);
+        else startCloud(dataUrl);
         TicketOCR.recognize(dataUrl, function (p) {
           if (token !== _onbOcrToken) return;
           try { onbSetStatus(prefix, '📖 Reading photo… ' + Math.round(p * 100) + '%'); } catch (e) {}
         }).then(function (text) {
+          state.localDone = true;
           if (token !== _onbOcrToken) return;
           if (kind === 'odometer') {
             var km = parseOdometerReading(text);
             if (km && fieldEl && !odoLocalFailed(km)) {
+              state.localVal = km;
               fieldEl.value = km;
               persist(kind, km);
               onbSetStatus(prefix, '✓ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
+              /* v142: if the cloud read beat this one and left its
+                 chip up, the chip STAYS (v127's box is touched only
+                 by prBox/prSuggest + the new-photo clear): same
+                 value — tapping it is a harmless no-op; different
+                 value — it is the driver's alternative, and the
+                 field keeps the local read until he taps. */
             } else if (km && odoLocalFailed(km)) {
+              state.gated = true; /* v142: the gate's line stands (see state above) */
               /* v63 plausibility gate: the value exists but is
                  impossible against the master odometer, so it counts
                  as a FAILED read: never filled, never persisted, and
@@ -2522,11 +2697,16 @@
                  message names the direction — below the master
                  (v63), or a wild jump past it (Oct 15: a receipt's
                  invoice number outranked the dash). */
+              /* v142: the gate line is kept on the race record —
+                 when the cloud answer lands, its announcement is
+                 APPENDED to this explanation (the driver keeps the
+                 why AND gets the what-next), never swapped for it. */
               if (odoImplausible(km) === 'jump') {
-                onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but your odometer is at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right — it\'s likely another number in the photo. Trying the power read…');
+                state.gateLine = '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but your odometer is at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right — it\'s likely another number in the photo. Trying the power read…';
               } else {
-                onbSetStatus(prefix, '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but the odometer is already at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right. Trying the power read…');
+                state.gateLine = '⚠️ We read <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — but the odometer is already at <b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>, so that can\'t be right. Trying the power read…';
               }
+              onbSetStatus(prefix, state.gateLine);
             } else {
               onbSetStatus(prefix, '⚠️ Could not read the mileage — enter it manually below.');
             }
@@ -2542,13 +2722,16 @@
                plausibility gate — nothing found OR an impossible
                below-master value both escalate; a skip (off / no key
                on this device) is reported in-page, never silent. */
-            if (odoLocalFailed(km)) odoPowerRead(prefix, file, token);
+            if (odoLocalFailed(km)) odoPowerRead(prefix, state.prImg, file, token, state);
           } else {
             var iso = parseStickerExpiry(text);
             if (iso && fieldEl) {
+              state.localVal = iso;
               fieldEl.value = iso;
               persist(kind, iso);
               onbSetStatus(prefix, '✓ We read expiry <b>' + iso + '</b> — fix it below if that is wrong.');
+              /* v142: a standing power-read chip stays standing
+                 (see the odometer branch's note). */
             } else {
               /* v107 (Stage 5): a failed sticker read used to end
                  at this status line with a dead manual path — the
@@ -2563,7 +2746,7 @@
                  and the photo stays attached above. */
               onbSetStatus(prefix, '⚠️ Could not read the expiry date from the photo — asking the power read to try. You can also set the sticker\'s month and year below: it expires on the last day of that month.');
               showSafetySteppers(prefix);
-              safetyPowerRead(prefix, file, token);
+              safetyPowerRead(prefix, state.prImg, file, token, state);
             }
           }
         }).catch(function () {
@@ -2698,8 +2881,13 @@
        rendition, not the full-size photo. The answer renders as ONE
        labelled chip; tapping it fills the field and persists through
        the same persist() the local reads use — nothing is written
-       until that tap. */
-    function odoPowerRead(prefix, file, token) {
+       until that tap.
+       v142: the caller hands over the READ rendition it started at
+       capture (prImg) — the escalation ADOPTS that in-flight read
+       (same reader + photo) instead of sending a second one. The
+       file-based rendition build remains as the fallback for when
+       no early image exists. */
+    function odoPowerRead(prefix, prImg, file, token, state) {
       if (!window.PowerRead || !PowerRead.escalate) return;
       function go(img) {
         if (token !== _onbOcrToken) return;
@@ -2707,7 +2895,11 @@
           reader: 'odometer', image: img, origin: (opts && opts.origin) || { module: 'preferences', label: 'Preferences' },
           onStatus: function (s) {
             if (token !== _onbOcrToken) return;
-            if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');
+            /* v142: when the capture-time read already delivered
+               its chip, "asking…" would be a stale line — skip it.
+               A gated local read's explanation also stands (its own
+               line already ends "Trying the power read…"). */
+            if (s.state === 'working') { if (!(state && (state.delivered || state.gated))) onbSetStatus(prefix, '⚡ Asking the power read to try…'); }
             else if (s.state === 'waiting') onbSetStatus(prefix, '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still enter the mileage below.');
             else if (s.state === 'unavailable') onbSetStatus(prefix, s.message + ' You can still enter the mileage below.');
             else if (s.state === 'error') onbSetStatus(prefix, s.message + ' You can still enter the mileage below.');
@@ -2716,6 +2908,17 @@
             if (token !== _onbOcrToken) return;
             var v = res.fields && res.fields.value;
             if (!v) { onbSetStatus(prefix, '⚡ Power read couldn\'t read it either — enter it manually below.'); return; }
+            if (state) state.cloudVal = v;
+            /* v142: the settle callback may already have put this
+               exact suggestion up (the cloud beat the local read) —
+               never paint the CHIP twice. The completion line still
+               lands here (it is the last word on the escalation),
+               except over a gated read's explanation, which stands. */
+            if (state && state.delivered) {
+              announceFind(prefix, state);
+              return;
+            }
+            if (state) state.delivered = true;
             /* v127: the suggestion renders in its OWN box and
                stays until the user accepts or dismisses it (see
                prBox) — the hunt can no longer erase it. */
@@ -2725,10 +2928,11 @@
                 persist(kind, v);
               },
               '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
-            onbSetStatus(prefix, '⚡ Power read found a reading — tap it below if it looks right, or type the mileage yourself.');
+            announceFind(prefix, state);
           }
         });
       }
+      if (prImg) { go(prImg); return; }
       if (window.TicketOCR && TicketOCR.fileToOCRImage && file) {
         TicketOCR.fileToOCRImage(file, function (u) {
           if (u) { go(u); return; }
@@ -2736,6 +2940,118 @@
              silence — say so, with the manual fallback. */
           if (token === _onbOcrToken) onbSetStatus(prefix, '⚡ Power read didn\'t run — that photo couldn\'t be prepared for it. You can still enter the mileage below.');
         });
+      }
+    }
+
+    /* v142: the completion line for a delivered power-read chip.
+       Over a gated local read it APPENDS to the gate's explanation
+       (state.gateLine) — the driver keeps the why and gets the
+       what-next; the announced flag keeps the two delivery paths
+       (settle callback, escalation onResult) from saying it twice. */
+    function announceFind(prefix, state) {
+      if (state && state.gated && state.gateLine) {
+        if (state.announced) return;
+        state.announced = true;
+        onbSetStatus(prefix, state.gateLine + '<br>⚡ Power read found a reading — tap it below if it looks right, or type the mileage yourself.');
+      } else {
+        onbSetStatus(prefix, '⚡ Power read found a reading — tap it below if it looks right, or type the mileage yourself.');
+      }
+    }
+
+    /* v142: the cloud read settles (it started at capture, in
+       parallel with the local read). Only a 'done' outcome speaks
+       here — waiting/error/implausible are the escalation path's
+       words when the local read also failed; when the local read
+       landed, silence about a failed confirmation is the honest
+       state (the local value stands, labelled as the local read).
+       A DONE cloud value:
+         · local hasn't landed → the suggestion chip, NOW (this is
+           the common case on the owner's dash: local Tesseract
+           never cracks the dot-matrix display, the cloud answers
+           in ~2 s);
+         · agrees with the local value → a one-line agreement;
+         · disagrees and the field still holds EXACTLY the local
+           value (the driver hasn't typed, tapped a chip, or used
+           the steppers since) → correct the field through the same
+           persist() the local read used, and SAY it was corrected;
+         · disagrees and the driver HAS touched the field → the
+           cloud value waits as a tap-to-use chip. The driver's act
+           is never silently overwritten. */
+    function onbCloudSettled(prefix, kind, state, out, token) {
+      if (token !== _onbOcrToken) return;
+      if (!out || out.status !== 'done' || !out.fields) return;
+      if (kind === 'odometer') {
+        var v = out.fields.value;
+        if (!v) return;
+        state.cloudVal = v;
+        if (state.delivered) return;
+        if (!state.localVal) {
+          state.delivered = true;
+          prSuggest(prefix, Number(v).toLocaleString('en-CA') + ' km',
+            function () {
+              if (fieldEl) fieldEl.value = v;
+              persist(kind, v);
+            },
+            '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
+          announceFind(prefix, state);
+          return;
+        }
+        if (String(v) === String(state.localVal)) {
+          onbSetStatus(prefix, '✓ Power read agrees: <b>' + Number(v).toLocaleString('en-CA') + ' km</b>.');
+          return;
+        }
+        var cur = fieldEl ? String(fieldEl.value || '').replace(/[^\d]/g, '') : '';
+        if (cur === String(state.localVal)) {
+          fieldEl.value = v;
+          persist(kind, v);
+          onbSetStatus(prefix, '⚡ Power read corrected the reading to <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — fix it below if that is wrong.');
+        } else {
+          state.delivered = true;
+          prSuggest(prefix, Number(v).toLocaleString('en-CA') + ' km',
+            function () {
+              if (fieldEl) fieldEl.value = v;
+              persist(kind, v);
+            },
+            '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
+          onbSetStatus(prefix, '⚡ Power read got a different reading — tap it below to use it, or keep yours.');
+        }
+        return;
+      }
+      /* safety: the cloud answer is a transcription; the same local
+         parser the escalation path uses reads the expiry from it. */
+      var iso = parseStickerExpiry(out.fields.rawText);
+      if (!iso) return;
+      state.cloudVal = iso;
+      if (state.delivered) return;
+      if (!state.localVal) {
+        state.delivered = true;
+        prSuggest(prefix, 'Expiry ' + iso,
+          function () {
+            if (fieldEl) fieldEl.value = iso;
+            persist(kind, iso);
+          },
+          '⚡ Power read: using expiry <b>' + iso + '</b> — thanks for confirming.');
+        if (!state.localDone) onbSetStatus(prefix, '⚡ Power read found an expiry — tap it below if it looks right, or set the month and year yourself.');
+        return;
+      }
+      if (String(iso) === String(state.localVal)) {
+        onbSetStatus(prefix, '✓ Power read agrees: expiry <b>' + iso + '</b>.');
+        return;
+      }
+      var curD = fieldEl ? String(fieldEl.value || '') : '';
+      if (curD === String(state.localVal)) {
+        fieldEl.value = iso;
+        persist(kind, iso);
+        onbSetStatus(prefix, '⚡ Power read corrected the expiry to <b>' + iso + '</b> — fix it below if that is wrong.');
+      } else {
+        state.delivered = true;
+        prSuggest(prefix, 'Expiry ' + iso,
+          function () {
+            if (fieldEl) fieldEl.value = iso;
+            persist(kind, iso);
+          },
+          '⚡ Power read: using expiry <b>' + iso + '</b> — thanks for confirming.');
+        onbSetStatus(prefix, '⚡ Power read got a different expiry — tap it below to use it, or keep yours.');
       }
     }
 
@@ -2819,7 +3135,7 @@
        that reads printed stickers extracts the month/year from
        the transcription. A hit lands as a tap-to-use chip, never
        auto-applied; the steppers stay available either way. */
-    function safetyPowerRead(prefix, file, token) {
+    function safetyPowerRead(prefix, prImg, file, token, state) {
       if (!window.PowerRead || !PowerRead.escalate) return;
       function go(img) {
         if (token !== _onbOcrToken) return;
@@ -2827,7 +3143,7 @@
           reader: 'text', image: img, origin: (opts && opts.origin) || { module: 'preferences', label: 'Preferences' },
           onStatus: function (s) {
             if (token !== _onbOcrToken) return;
-            if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');
+            if (s.state === 'working') { if (!(state && state.delivered)) onbSetStatus(prefix, '⚡ Asking the power read to try…'); }
             else if (s.state === 'waiting') onbSetStatus(prefix, '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. Meanwhile, the month/year steppers below always work.');
             else if (s.state === 'unavailable' || s.state === 'error') onbSetStatus(prefix, s.message + ' The month/year steppers below always work.');
           },
@@ -2835,6 +3151,11 @@
             if (token !== _onbOcrToken) return;
             var iso = parseStickerExpiry(res && res.fields && res.fields.rawText);
             if (!iso) { onbSetStatus(prefix, '⚡ Power read couldn\'t read the sticker either — set the punched month and year with the steppers below.'); return; }
+            if (state) state.cloudVal = iso;
+            /* v142: never paint the suggestion twice (see
+               odoPowerRead's onResult). */
+            if (state && state.delivered) return;
+            if (state) state.delivered = true;
             /* v127: same own-box rule as the odometer suggestion
                (see prBox) — the sticker suggestion stays until the
                user accepts or dismisses it. */
@@ -2848,6 +3169,8 @@
           }
         });
       }
+      /* v142: adopt the capture-time read when there is one. */
+      if (prImg) { go(prImg); return; }
       if (window.TicketOCR && TicketOCR.fileToOCRImage && file) {
         TicketOCR.fileToOCRImage(file, function (u) {
           if (u) { go(u); return; }

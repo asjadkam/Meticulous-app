@@ -137,8 +137,10 @@ console.log('— 1. the wiring (static) —');
   check('the marker is still painted by paintYou/render and swapped only at the chooser tap (wiring untouched)',
     navSrc.indexOf("youEl.innerHTML = avatarGlyph(S.settings.avatar, 'm')") >= 0 &&
     navSrc.indexOf("avatarGlyph(k, 'p')") >= 0);
-  check('ships as webVersion 143, and index.html loads the navigator at the 143 pin',
-    ver.webVersion === 143 && idxSrc.indexOf('src="modules/navigator.js?v=143"') >= 0,
+  /* v142 pin move (the standing convention): the OTA number only
+     moves forward, so the pin follows the live version 143 -> 144. */
+  check('ships as webVersion 144, and index.html loads the navigator at the 144 pin',
+    ver.webVersion === 144 && idxSrc.indexOf('src="modules/navigator.js?v=144"') >= 0,
     'webVersion=' + ver.webVersion);
   check('version.json carries all three render assets in the OTA manifest',
     ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

@@ -223,7 +223,10 @@ function eq(name, got, want) {
     src.indexOf('endSheetOdoHandleFile(el(\'trkEndOdoCamIn\').files[0])') !== -1 &&
     src.indexOf('endSheetOdoHandleFile(el(\'trkEndOdoIn\').files[0])') !== -1);
   const hAt = src.indexOf('function endSheetOdoHandleFile');
-  const hBody = hAt !== -1 ? src.slice(hAt, hAt + 2600) : '';
+  /* v142: the window widened 2600 → 4600 ON PURPOSE — the handler
+     grew the parallel cloud-race preamble (beginEarly at capture);
+     the pins below assert the same wiring facts as before. */
+  const hBody = hAt !== -1 ? src.slice(hAt, hAt + 4600) : '';
   ok('photo handler goes through the shared OCR image step', hBody.indexOf('TicketOCR.fileToOCRImage') !== -1);
   ok('photo handler parses an odometer reading', hBody.indexOf('parseOdometerReading') !== -1);
   ok('photo handler applies the plausibility gate', hBody.indexOf('odoLocalFailed') !== -1);

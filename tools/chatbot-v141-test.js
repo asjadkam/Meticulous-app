@@ -420,8 +420,9 @@ console.log('— F: statics —');
   /* v140 pin move (the standing convention): this was the v138
      build's own ship assertion at 141; the OTA number only moves
      forward, so the pin follows the live version.
-     v141 pin move: 142 -> 143, same convention. */
-  eq('F10 webVersion ships as 143', JSON.parse(read('version.json')).webVersion, 143);
+     v141 pin move: 142 -> 143, same convention.
+     v142 pin move: 143 -> 144, same convention. */
+  eq('F10 webVersion ships as 144', JSON.parse(read('version.json')).webVersion, 144);
 }
 
 console.log('chatbot-v141-test: ' + pass + ' passed, ' + fail + ' failed');

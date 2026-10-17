@@ -38,15 +38,52 @@
     return _tessReady;
   };
 
+  /* v142: no local read ever runs on a full-resolution camera frame.
+     Measured on the owner's real dash photo: Tesseract took 23.4 s
+     at 2048px and 8.9 s at the 1600px OCR rendition (desktop-class
+     CPU; a phone is slower) — and a caller could still hand the raw
+     frame in (the Preferences/Maintenance photo wiring did, while
+     its escalation path used the rendition). Data-URL inputs larger
+     than the OCR rendition are capped to it before the read; File /
+     Blob inputs pass through (their callers hand over renditions).
+     Any environment without Image/canvas (test sandboxes) passes
+     the original through untouched. */
+  TicketOCR._capReadSize = function (image) {
+    return new Promise(function (resolve) {
+      if (typeof image !== 'string' || image.indexOf('data:') !== 0) { resolve(image); return; }
+      var done = false;
+      function give(v) { if (!done) { done = true; resolve(v); } }
+      try {
+        if (typeof Image === 'undefined' || typeof document === 'undefined' || !document.createElement) { give(image); return; }
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+            if (!w || !h || Math.max(w, h) <= 1600) { give(image); return; }
+            var s = 1600 / Math.max(w, h);
+            var c = document.createElement('canvas');
+            c.width = Math.round(w * s); c.height = Math.round(h * s);
+            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+            give(c.toDataURL('image/jpeg', 0.85));
+          } catch (e) { give(image); }
+        };
+        img.onerror = function () { give(image); };
+        img.src = image;
+      } catch (e) { give(image); }
+    });
+  };
+
   /* Run OCR on an image (data URL, File, or URL). Returns raw text. */
   TicketOCR.recognize = function (image, onProgress) {
-    return TicketOCR.ensureLoaded().then(function () {
-      return Tesseract.recognize(image, 'eng', {
-        logger: function (m) {
-          if (onProgress && m.status === 'recognizing text') {
-            try { onProgress(m.progress); } catch (e) {}
+    return TicketOCR._capReadSize(image).then(function (capped) {
+      return TicketOCR.ensureLoaded().then(function () {
+        return Tesseract.recognize(capped, 'eng', {
+          logger: function (m) {
+            if (onProgress && m.status === 'recognizing text') {
+              try { onProgress(m.progress); } catch (e) {}
+            }
           }
-        }
+        });
       });
     }).then(function (result) {
       return result.data.text;
@@ -1142,12 +1179,12 @@
      callers keep/store their own smaller copy. (Dispatch has used this
      recipe since v35; it lives here now so Fuel and future modules share
      one implementation instead of growing private copies.) */
-  TicketOCR.fileToOCRImage = function (file, cb) {
+  function _fileToSizedImage(file, max, cb) {
     var r = new FileReader();
     r.onload = function () {
       var img = new Image();
       img.onload = function () {
-        var max = 1600, w = img.width, h = img.height;
+        var w = img.width, h = img.height;
         if (w > max || h > max) {
           var s = Math.min(max / w, max / h);
           w = Math.round(w * s); h = Math.round(h * s);
@@ -1162,6 +1199,48 @@
     };
     r.onerror = function () { cb(null); };
     r.readAsDataURL(file);
+  }
+  TicketOCR.fileToOCRImage = function (file, cb) { _fileToSizedImage(file, 1600, cb); };
+
+  /* ---------- v142: the cloud-send rendition ----------
+     The cloud vision reader does not need the OCR rendition's pixels:
+     probed against the live endpoint on the owner's real fixtures
+     (Oct 17), an odometer photo read correctly at 1024px (body
+     307 KB vs 727 KB at 1600px; 1.5–2.3 s vs 2.5–4.4 s) and receipt
+     transcriptions carried every money figure at 1280px (363 KB vs
+     542 KB; ~5 s). LOCAL Tesseract is the opposite — the same
+     receipt's money column vanished at 1280px — so the local read
+     keeps the 1600px rendition above and only the SEND shrinks. */
+  TicketOCR.READ_MAX = { odometer: 1024, text: 1280, sticker: 1280 };
+  TicketOCR.fileToReadImage = function (file, reader, cb) {
+    _fileToSizedImage(file, TicketOCR.READ_MAX[reader] || 1280, cb);
+  };
+  /* Same shrink for a caller already holding a data URL (a rendition
+     or a stored photo); an image already small enough passes through
+     unchanged, and any failure passes the original — the read still
+     happens, just at the old size. */
+  TicketOCR.urlToReadImage = function (dataUrl, reader, cb) {
+    var max = TicketOCR.READ_MAX[reader] || 1280;
+    if (typeof dataUrl !== 'string' || !dataUrl) { cb(dataUrl || null); return; }
+    var done = false;
+    function give(v) { if (!done) { done = true; cb(v); } }
+    try {
+      if (typeof Image === 'undefined' || typeof document === 'undefined' || !document.createElement) { give(dataUrl); return; }
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h || Math.max(w, h) <= max) { give(dataUrl); return; }
+          var s = max / Math.max(w, h);
+          var c = document.createElement('canvas');
+          c.width = Math.round(w * s); c.height = Math.round(h * s);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          give(c.toDataURL('image/jpeg', 0.85));
+        } catch (e) { give(dataUrl); }
+      };
+      img.onerror = function () { give(dataUrl); };
+      img.src = dataUrl;
+    } catch (e) { give(dataUrl); }
   };
 
   /* ---------- v39: FUEL RECEIPT parser ----------

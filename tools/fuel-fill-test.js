@@ -99,7 +99,10 @@ console.log('\n— edges —');
 
 console.log('\n— fuel.js wiring —');
 ok('the read time is held from the local read', fuelSrc.includes('if (parsed.time) fuReadTime = parsed.time;'));
-ok('the power-read fill carries the time too', (fuelSrc.match(/fuReadTime = parsed\.time/g) || []).length === 2);
+/* v142: count moved 2 → 3 ON PURPOSE — the capture-time settle
+   path (fuCloudSettled) is a third fill route and carries the time
+   too (guarded: it never replaces a time the local read found). */
+ok('the power-read fill carries the time too', (fuelSrc.match(/fuReadTime = parsed\.time/g) || []).length === 3);
 ok('the saved record gains the time', fuelSrc.includes('if (fuReadTime) rec.time = fuReadTime;'));
 ok('an edited record gains the time on a fresh read', fuelSrc.includes('if (fuReadTime) updated.time = fuReadTime;'));
 ok('a hand-changed date detaches the time', fuelSrc.includes("if (id === '#fu_date') fuReadTime = '';"));
