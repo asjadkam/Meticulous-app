@@ -99,6 +99,7 @@
          Save preferences then wrote the stale number back OVER the
          master — a silent rewind on every save.) */
       var odoMaster = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+      var econU = (window.App && App._econUnit) ? App._econUnit() : 'kpl'; // v127: the economy-unit preference
       var ROLE_LABEL = { driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' };
       /* v107 (Stage 6, owner Oct 16 19:39-19:43): Advanced is a
          TAB at the top of Preferences — its own swapped view, never
@@ -247,7 +248,19 @@
         '<input type="file" id="pf_safety_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="pf_safety_prev"></div><div id="pf_safety_status" class="note"></div>' +
         '<input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
-        '<p class="note">We remind you 30 days before it expires.</p></div>';
+        '<p class="note">We remind you 30 days before it expires.</p>' +
+        /* v127 (owner, Oct 17 09:33 MDT: "there has to be a way to
+           change the unit… some users prefer mpg, not km/L"): the
+           economy unit — set once here, read live by Fuel and
+           Maintenance. It persists the moment it changes (the
+           role-select pattern below), never through Save
+           preferences, and it changes only how economy is
+           PRINTED: distances stay km, fuel stays litres. */
+        '<label class="f">Fuel economy shown as</label><select id="pf_econ">' +
+        [['kpl', 'km/L'], ['l100', 'L/100 km'], ['mpg', 'MPG (US)']].map(function (x) {
+          return '<option value="' + x[0] + '"' + (econU === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
+        }).join('') + '</select>' +
+        '<p class="note">How fuel economy is printed in Fuel and Maintenance.</p></div>';
 
       /* v77 (Navigator): the truck profile every truck route is costed
          with — dimensions and weights the routing engine checks against
@@ -545,6 +558,14 @@
           var ob = App._store.get('onboarding', {}) || {};
           ob.odoDailyPhotos = odoTgl.checked;
           App._store.set('onboarding', ob);
+        };
+      } catch (e) {}
+      /* v127: the economy-unit select also persists the moment it
+         changes — Fuel and Maintenance read it live next render. */
+      try {
+        var econSel = body.querySelector('#pf_econ');
+        if (econSel) econSel.onchange = function () {
+          try { App._store.set('mt_econUnit', econSel.value); } catch (e) {}
         };
       } catch (e) {}
       /* v106: the sign-in door + change-password wiring moved with

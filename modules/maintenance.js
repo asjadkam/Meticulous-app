@@ -170,12 +170,30 @@
     /* Add cost of the very first leg too (approximation: count all fill costs) */
     var totalFuelCost = 0;
     fills().forEach(function (x) { totalFuelCost += parseFloat(x.cost) || 0; });
+    /* v127: LIFETIME inputs — every fill-up's litres (the fuel
+       bought over the records' life) and the span the records
+       cover (first → last fill date + the fill count), so the
+       summary can label its lifetime figures honestly. */
+    var totalLitres = 0, firstFillDate = '', lastFillDate = '';
+    fills().forEach(function (x) {
+      totalLitres += parseFloat(x.litres) || 0;
+      var d = String(x.date || '');
+      if (d) {
+        if (!firstFillDate || d < firstFillDate) firstFillDate = d;
+        if (!lastFillDate || d > lastFillDate) lastFillDate = d;
+      }
+    });
     return {
       legs: legs,
       avgKpl: litres > 0 ? (km / litres) : 0,
       costPerKm: km > 0 ? (cost / km) : 0,
       totalFuelCost: totalFuelCost,
-      kmTracked: km
+      kmTracked: km,
+      legLitres: litres,
+      totalLitres: totalLitres,
+      fillCount: fills().length,
+      firstFillDate: firstFillDate,
+      lastFillDate: lastFillDate
     };
   }
 
@@ -309,6 +327,14 @@
 
   function money(v) { return '$' + (parseFloat(v) || 0).toFixed(2); }
   function kmStr(v) { return Math.round(v).toLocaleString('en-CA') + ' km'; }
+  /* v127: economy figures print in the driver's chosen unit
+     (App._econFormat — Preferences → "Fuel economy shown as").
+     Falls back to km/L when the helper is absent (partial load). */
+  function econDisp(kpl) {
+    var f = null;
+    try { if (window.App && App._econFormat) f = App._econFormat(parseFloat(kpl)); } catch (e) {}
+    return f || { value: (parseFloat(kpl) || 0).toFixed(1), unit: 'km/L' };
+  }
 
   var api = {
     /* Account-type gate: REMOVED (Oct 13, 2026) — Asjad is a Driver and
@@ -337,6 +363,7 @@
     render: function (body) {
       /* Gate removed Oct 13, 2026 — everyone (including Drivers) gets access. */
       var ms = mileageStats();
+      var msEcon = econDisp(ms.avgKpl); /* v127: the summary economy, in the chosen unit */
       var d = dueItems();
       var ev = events();
       var totalMaint = 0;
@@ -350,13 +377,28 @@
         (d.odo > 0 ? kmStr(d.odo) : '—') + '</div></div>' +
         '<div class="card" style="flex:1;margin:0"><div class="note">Fuel efficiency</div>' +
         '<div class="center" style="font-size:20px;font-weight:800;color:var(--navy)">' +
-        (ms.legs > 0 ? ms.avgKpl.toFixed(1) + ' <small style="font-size:12px">km/L</small>' : '—') + '</div></div>' +
+        (ms.legs > 0 ? msEcon.value + ' <small style="font-size:12px">' + msEcon.unit + '</small>' : '—') + '</div></div>' +
         '<div class="card" style="flex:1;margin:0"><div class="note">Maint. spend (all)</div>' +
         '<div class="center" style="font-size:20px;font-weight:800;color:var(--navy)">' + money(totalMaint) + '</div></div>' +
         '</div>' +
         '<div class="kv"><span>Fuel cost per km</span><b>' + (ms.kmTracked > 0 ? '$' + ms.costPerKm.toFixed(3) : '—') + '</b></div>' +
         '<div class="kv"><span>Total fuel spend</span><b>' + money(ms.totalFuelCost) + '</b></div>' +
-        (ms.legs > 0 ? '<div class="kv"><span>Tracked over</span><b>' + kmStr(ms.kmTracked) + ' (' + ms.legs + ' legs)</b></div>' : '') +
+        /* v127 (owner, Oct 17 09:39 MDT: "It should tell over the
+           life time how many km's and how many liters of fuel and
+           how much kmpl"): the LIFETIME block — distance + fuel +
+           economy over every record the app holds, with the span
+           the records cover said out loud. Distance and economy
+           count the legs between fill-ups with odometer readings
+           (the same sane legs as the trend); fuel counts every
+           fill-up. This replaces the old "Tracked over" line —
+           its facts (tracked km + leg count) live on in the first
+           row here. */
+        (ms.fillCount > 0
+          ? '<div class="kv"><span>Lifetime distance</span><b>' + kmStr(ms.kmTracked) + (ms.legs ? ' (' + ms.legs + ' leg' + (ms.legs === 1 ? '' : 's') + ')' : '') + '</b></div>' +
+            '<div class="kv"><span>Lifetime fuel</span><b>' + ms.totalLitres.toFixed(1) + ' L</b></div>' +
+            (ms.legs > 0 ? '<div class="kv"><span>Lifetime economy</span><b>' + msEcon.value + ' ' + msEcon.unit + '</b></div>' : '') +
+            '<p class="note">Lifetime — from your fill-up records' + (ms.firstFillDate ? ', ' + esc(ms.firstFillDate) + ' → ' + esc(ms.lastFillDate) : '') + ' (' + ms.fillCount + ' fill-up' + (ms.fillCount === 1 ? '' : 's') + '). Distance and economy count the legs between fill-ups with odometer readings; fuel counts every fill-up.</p>'
+          : '') +
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +
         '<div class="row"><div><label class="f">Update odometer (km)</label><input id="mt_odo" type="number" inputmode="decimal" placeholder="' + (d.odo > 0 ? Math.round(d.odo) : '') + '"></div>' +
         '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_odo_save">Save</button></div></div>' +
@@ -381,6 +423,18 @@
         '<div class="row"><button type="button" class="btn small ghost" id="mt_odo_cam" style="flex:1;">📷 Take photo</button>' +
         '<button type="button" class="btn small ghost" id="mt_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<div id="mt_odo_prev"></div><div id="mt_odo_status" class="note"></div>' +
+        /* v127: the past-reading door — a quiet secondary in this
+           card (wiring below): a reading from before the app, or
+           one that was missed, recorded with its true date so
+           that day's manifest gets its real start and end. */
+        '<button type="button" class="btn small ghost" id="mt_past_toggle" style="margin-top:6px;">＋ Add a past reading</button>' +
+        '<div id="mt_past_box" style="display:none;margin-top:8px;">' +
+        '<p class="note">Recorded with the date you pick — it never moves today\'s odometer.</p>' +
+        '<div class="row"><div><label class="f">Date</label><input type="date" id="mt_past_date" value="' + App._today() + '"></div>' +
+        '<div><label class="f">Time</label><input type="time" id="mt_past_time"></div></div>' +
+        '<div class="row"><div><label class="f">Odometer (km)</label><input id="mt_past_val" type="number" inputmode="decimal" placeholder="e.g. 169166"></div>' +
+        '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_past_save">Save past reading</button></div></div>' +
+        '<div id="mt_past_note" class="note"></div></div>' +
         '</div>';
 
       /* v107 (Stage 4): the separate v97 "Correct odometer from
@@ -444,6 +498,39 @@
         '<div class="row"><button class="btn navy" id="mt_ns_save">Save next service</button>' +
         ((nsNow.odo > 0 || nsNow.date) ? '<button class="btn ghost" id="mt_ns_clear">Clear</button>' : '') +
         '</div></div>';
+
+      /* --- Annual safety inspection sticker (v127) ---
+         Owner, Oct 17 09:32 MDT: "maintenance should have section
+         to take a picture of the annual safety sticker." Until now
+         the date lived only in Preferences (Maintenance merely
+         DISPLAYED it in Upcoming, and the intervals card below
+         holds a bare date input). This card is the capture home:
+         snap the sticker → the shared photo pipeline reads the
+         expiry (local read, month/year steppers on a miss, power
+         read behind that) → the read lands in the date box →
+         Save expiry confirms. Fill-only reads, exactly like this
+         module's odometer card (v61): nothing is written by a
+         read; Save writes BOTH stores of the fact (mt_annualDate
+         + the onboarding mirror, the v118 two-store rule). */
+      var sfNow = S('annualDate', '');
+      var sfLine = 'No expiry saved yet.';
+      if (sfNow) {
+        var sfDays = Math.round((new Date(sfNow + 'T12:00:00') - new Date(App._today() + 'T12:00:00')) / 86400000);
+        sfLine = 'Expires <b>' + esc(sfNow) + '</b> — ' + (sfDays < 0
+          ? '<span style="color:#c0392b;font-weight:800">⚠️ OVERDUE by ' + Math.abs(sfDays) + ' day' + (Math.abs(sfDays) === 1 ? '' : 's') + '</span>'
+          : 'due in ' + sfDays + ' day' + (sfDays === 1 ? '' : 's'));
+      }
+      h += '<div class="card"><h3>🛡️ Annual safety inspection</h3>' +
+        '<p class="note" style="margin-top:0">' + sfLine + '</p>' +
+        '<p class="note">Snap the sticker on the windshield — the read lands in the box below; check it, then Save. A punched sticker expires on the last day of the punched month; if the punches won\'t read, you tap the month and year instead.</p>' +
+        '<label class="f">📷 Safety sticker photo</label>' +
+        '<input type="file" id="mt_safety_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="mt_safety_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div class="row"><button type="button" class="btn secondary" id="mt_safety_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="mt_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<div id="mt_safety_prev"></div><div id="mt_safety_status" class="note"></div>' +
+        '<label class="f">Expiry date</label><input id="mt_safety" type="date" value="' + esc(sfNow) + '">' +
+        '<div class="row" style="margin-top:8px"><button class="btn navy" id="mt_safety_save">Save expiry</button></div></div>';
 
       /* --- Log a service --- */
       h += '<div class="card"><h3>＋ Log service</h3>' +
@@ -681,6 +768,28 @@
           App._wirePhotoOCR('mt_odo', 'odometer', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
         }
       } catch (e) {}
+      /* v127: the safety sticker card wires to the SAME pipeline
+         with the same fill-only contract (no-op persist — reads
+         land in #mt_safety only). Its Save is the confirm: it
+         writes mt_annualDate AND mirrors onboarding.safetyExpiry,
+         the two-store rule (v118) the intervals Save below and
+         the Preferences save both follow, so no later save from
+         any screen can resurrect a stale date. */
+      try {
+        if (App._wirePhotoOCR) {
+          App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
+        }
+      } catch (e) {}
+      var sfSaveBtn = body.querySelector('#mt_safety_save');
+      if (sfSaveBtn) sfSaveBtn.onclick = function () {
+        var v = body.querySelector('#mt_safety').value || '';
+        W('annualDate', v);
+        try {
+          var obSf = App._store.get('onboarding', {}) || {};
+          if (String(obSf.safetyExpiry || '') !== v) { obSf.safetyExpiry = v; App._store.set('onboarding', obSf); }
+        } catch (e) {}
+        api.render(body);
+      };
       /* v61: a power read queued from an earlier dash photo snapped
          HERE may have finished since — offer it in the status line
          as a tap-to-use button (peek, not take). The tap only FILLS
@@ -790,6 +899,55 @@
           if (note) note.textContent = 'Kept ' + kmStr(master) + ' — nothing was changed.';
         };
       };
+
+      /* v127: the past-reading door's wiring. The write goes
+         through the audited correction path — App._logOdoReading
+         with isCorrection: a past reading sits BELOW today's
+         master by nature, and this door's whole point is history,
+         so the supervised flag is what lets it land; the master
+         itself is never touched by the log. The box stays open
+         after a save, so several missed readings can go in one
+         after another (the owner's backfill is three). */
+      (function () {
+        var tgl = body.querySelector('#mt_past_toggle');
+        var box = body.querySelector('#mt_past_box');
+        var save = body.querySelector('#mt_past_save');
+        var note = body.querySelector('#mt_past_note');
+        if (!tgl || !box || !save) return;
+        tgl.onclick = function () { box.style.display = (box.style.display === 'none') ? '' : 'none'; };
+        save.onclick = function () {
+          var dEl = body.querySelector('#mt_past_date');
+          var tEl = body.querySelector('#mt_past_time');
+          var vEl = body.querySelector('#mt_past_val');
+          var v = vEl ? parseFloat(vEl.value) : NaN;
+          var dv = dEl ? dEl.value : '';
+          if (!(v > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(dv || '')) {
+            if (note) note.innerHTML = '<span style="color:#c2410c;font-weight:600">Enter the reading and its date.</span>';
+            return;
+          }
+          var p = dv.split('-');
+          var tp = /^(\d{1,2}):(\d{2})/.exec((tEl && tEl.value) || '');
+          var ts = new Date(+p[0], +p[1] - 1, +p[2], tp ? +tp[1] : 12, tp ? +tp[2] : 0).getTime();
+          var added = false;
+          try { if (window.App && App._logOdoReading) added = !!App._logOdoReading(v, 'past', ts, true); } catch (e) {}
+          if (!added) {
+            /* the log's only refusal at a chosen past stamp is
+               its same-value collapse — say whether this exact
+               reading is already recorded for that day. */
+            var already = false;
+            try {
+              var rl = App._store.get('odo_readings', []) || [];
+              already = rl.some(function (r) { return r && parseFloat(r.value) === v && r.date === dv; });
+            } catch (e) {}
+            if (note) note.innerHTML = already
+              ? 'That reading is already recorded for ' + esc(dv) + ' — nothing added.'
+              : '<span style="color:#c2410c;font-weight:600">Couldn\'t record that reading.</span>';
+            return;
+          }
+          if (vEl) vEl.value = '';
+          if (note) note.innerHTML = '✓ Recorded <b>' + Math.round(v).toLocaleString('en-CA') + ' km</b> for ' + esc(dv) + '. Add another, or keep going.';
+        };
+      })();
 
       body.querySelector('#mt_add').onclick = function () {
         var odo = parseFloat(body.querySelector('#mt_sodo').value);

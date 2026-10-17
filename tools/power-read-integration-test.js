@@ -381,9 +381,14 @@ async function partApp() {
     eq('A1 field NOT filled with the impossible 45100', w.els.pf_odo.value, '');
     eq('A1 persist NEVER called with the misread', w.persistCalls.length, 0);
     eq('A1 master unchanged', w.store.get('mt_odo', ''), '168518');
-    const box = w.doc.getElementById('pf_odo_chips');
+    /* v127: the power-read suggestion lives in its OWN box
+       (#pf_odo_prbox) — the shared #pf_odo_chips box was erased by
+       the hunt's later passes (owner's 169,211 chip, Oct 17). The
+       box also carries the ✕ Not it dismiss button; the chip count
+       below counts value chips only. */
+    const box = w.doc.getElementById('pf_odo_prbox');
     ok('A1 power-read chip box exists', !!box);
-    const btns = box ? box.findAll(e => e.tagName === 'BUTTON') : [];
+    const btns = box ? box.findAll(e => e.tagName === 'BUTTON' && e.textContent !== '✕ Not it') : [];
     eq('A1 exactly one power-read chip', btns.length, 1);
     eq('A1 chip offers the true 168,518 km', btns[0] && btns[0].textContent, '168,518 km');
     ok('A1 status announces the power read find', /⚡ Power read found a reading/.test(w.els.pf_odo_status.innerHTML), w.els.pf_odo_status.innerHTML);
@@ -446,8 +451,8 @@ async function partApp() {
     eq('A2b persist NEVER called with the misread', w.persistCalls.length, 0);
     eq('A2b master unchanged', w.store.get('mt_odo', ''), '168518');
     ok('A2b status explains the jump', /519,326/.test(w.els.pf_odo_status.innerHTML) || /Power read found/.test(w.els.pf_odo_status.innerHTML), w.els.pf_odo_status.innerHTML);
-    const box = w.doc.getElementById('pf_odo_chips');
-    const btns = box ? box.findAll(e => e.tagName === 'BUTTON') : [];
+    const box = w.doc.getElementById('pf_odo_prbox');
+    const btns = box ? box.findAll(e => e.tagName === 'BUTTON' && e.textContent !== '✕ Not it') : [];
     eq('A2b exactly one power-read chip', btns.length, 1);
     eq('A2b chip offers the plausible 168,934 km', btns[0] && btns[0].textContent, '168,934 km');
   }

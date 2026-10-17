@@ -272,11 +272,29 @@
           return;
         }
       }
+      /* v127: the trend card tells the truth about what it is.
+         (c) HONESTY — under 3 legs there is no trend: the figure
+         is the LAST LEG and is labelled as such (owner, Oct 17
+         09:14 MDT: "Fuel trend 2.5 liters?" over a card reading
+         "Last 1 fill-ups" off ONE leg — and legs are not
+         fill-ups; the label now counts legs). (d) UNIT — every
+         economy figure renders in the driver's chosen unit via
+         App._econFormat (Preferences → "Fuel economy shown as");
+         the records stay km/L — only the print converts. */
+      function econDisp(kpl) {
+        var f = null;
+        try { if (window.App && App._econFormat) f = App._econFormat(parseFloat(kpl)); } catch (e) {}
+        return f || { value: String(kpl), unit: 'km/L' };
+      }
+      var lastLeg = trend.length ? econDisp(trend[trend.length - 1].mpg) : null;
       var h = '<div class="card"><h3>⛽ Fuel trend</h3>' +
-        (trend.length ? '<div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + trend[trend.length - 1].mpg + ' <small style="font-size:13px">km/L</small></div>' +
-          '<div class="note center">Last ' + trend.length + ' fill-ups</div>' +
-          trend.slice(-8).map(function (t) { return '<div class="kv"><span>' + esc(t.date) + '</span><b>' + t.mpg + '</b></div>'; }).join('')
-          : '<div class="empty">Add 2+ fill-ups with odometer readings to see MPG.</div>') + '</div>';
+        (trend.length
+          ? '<div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + lastLeg.value + ' <small style="font-size:13px">' + lastLeg.unit + '</small></div>' +
+            (trend.length >= 3
+              ? '<div class="note center">Last ' + trend.length + ' legs</div>'
+              : '<div class="note center">Last leg — a trend needs 3 legs; you have ' + trend.length + ' so far</div>') +
+            trend.slice(-8).map(function (t) { var d = econDisp(t.mpg); return '<div class="kv"><span>' + esc(t.date) + '</span><b>' + d.value + ' ' + d.unit + '</b></div>'; }).join('')
+          : '<div class="empty">Add 2+ fill-ups with odometer readings to see your fuel economy.</div>') + '</div>';
 
       h += '<div class="card" id="fu_form_card"><h3>' + (editRec ? '✏️ Edit fill-up' : '＋ Fuel-up') + '</h3>' +
         (editRec ? '<div class="note" style="margin-bottom:8px">You\'re editing the fill-up from ' + esc(editRec.date || '') + ' — “Save changes” updates that same entry, it does not add a new one.</div>' : '') +
@@ -417,6 +435,15 @@
          other fields and shown in the read line; saved on the
          record at Save. Not a form field — nothing extra to type. */
       var fuReadTime = '';
+      /* v127: the receipt photo itself (the 1600px OCR rendition —
+         already downscaled by TicketOCR.fileToOCRImage), held
+         until Save. Before v127 the photo was read and THROWN
+         AWAY: the save built the record with no photo field, so
+         the v118 details page's photo slot had nothing to show
+         for any entry (owner, Oct 17 09:53 MDT: "Why is there no
+         photo entry?... The picture I took yesterday?"). Save now
+         attaches it — see the save handler. */
+      var fuPhoto = '';
       function fuSetRead(html) { var d = body.querySelector('#fu_read'); if (d) d.innerHTML = html; }
       function fuHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
@@ -432,6 +459,7 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== fuOcrToken) return;
           if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          fuPhoto = ocrUrl; /* v127: keep the photo for the record (see fuPhoto above) */
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== fuOcrToken) return;
             try { fuSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
@@ -698,12 +726,29 @@
         if (editFillIdx !== null && f[editFillIdx]) {
           /* v75: EDIT — update the SAME entry in place (no duplicate),
              verified the v48 way before anything else happens. */
+          var prevPhoto = f[editFillIdx].photo;
           var updated = applyFillEdit(f[editFillIdx], formVals);
           if (fuReadTime) updated.time = fuReadTime;
+          /* v127: a FRESH receipt photo replaces the stored one;
+             no new photo → applyFillEdit already kept the old one. */
+          var freshPhoto = !!(fuPhoto && fuPhoto !== updated.photo);
+          if (freshPhoto) updated.photo = fuPhoto;
           f[editFillIdx] = updated;
+          var editPhotoDropped = false;
           if (!saveFillsVerified(f)) {
-            showErr('Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the saved fill-up is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.');
-            return;
+            /* v127: if the fresh photo is what didn't fit, fall
+               back to the entry's previous photo state and retry
+               ONCE — the edit itself is never blocked by a photo. */
+            var editRetry = false;
+            if (freshPhoto) {
+              if (prevPhoto) updated.photo = prevPhoto; else delete updated.photo;
+              editPhotoDropped = true;
+              editRetry = saveFillsVerified(f);
+            }
+            if (!editRetry) {
+              showErr('Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the saved fill-up is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.');
+              return;
+            }
           }
           try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
           if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
@@ -718,6 +763,7 @@
             try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(updated)); } catch (e) {}
           }
           saveNote = un || '✓ Fill-up updated.';
+          if (editPhotoDropped) saveNote += ' The new receipt photo didn\'t fit in the app storage, so it wasn\'t kept.';
           Meticulous.modules.fuel.render(body);
           return;
         }
@@ -727,12 +773,25 @@
         rec.litres = litresV;
         rec.cost = costV;
         rec.station = formVals.station;
+        /* v127: the receipt photo rides on the record (see
+           fuPhoto) — the details page and the edit form read
+           rec.photo, which no save path ever wrote before v127. */
+        if (fuPhoto) rec.photo = fuPhoto;
         f.push(rec);
         /* v75: the add path is verified too — a failed write used to
            look exactly like a saved fill-up. */
+        var photoDropped = false;
         if (!saveFillsVerified(f)) {
-          showErr('That fill-up did NOT save — the app storage on your phone looks full, or the write failed. Your entry is still in the form — free up some phone space and tap “Save fill-up” again.');
-          return;
+          /* v127: the photo is the largest thing in the record —
+             if it is what didn't fit, retry ONCE without it. The
+             entry always saves; the photo is kept only when it
+             fits, and the drop is said once (saveNote below). */
+          var addRetry = false;
+          if (rec.photo) { delete rec.photo; photoDropped = true; addRetry = saveFillsVerified(f); }
+          if (!addRetry) {
+            showErr('That fill-up did NOT save — the app storage on your phone looks full, or the write failed. Your entry is still in the form — free up some phone space and tap “Save fill-up” again.');
+            return;
+          }
         }
         /* v59: this save confirms the form — consume any power-read
            result that was waiting for this screen. */
@@ -745,6 +804,7 @@
         if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} saveNote = odoOutcomeNote(); }
         else if (odoPlan.mode === 'refuse') { saveNote = odoOutcomeNote(); }
         else { saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.'; }
+        if (photoDropped) saveNote = (saveNote ? saveNote + ' ' : '') + 'The receipt photo didn\'t fit in the app storage, so this entry was saved without it.';
         /* v122: the fill's own reading joins the dated log at
            the fill's moment (see fuFillTs). */
         if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {

@@ -261,10 +261,15 @@ const maintPersist = persistMatch ? (0, eval)('(' + persistMatch[1] + ')') : nul
     eq('escalation reader is odometer', w.captured.escalate && w.captured.escalate.reader, 'odometer');
     eq('escalation origin module is maintenance', w.captured.escalate && w.captured.escalate.origin && w.captured.escalate.origin.module, 'maintenance');
     eq('escalation origin label is Maintenance', w.captured.escalate && w.captured.escalate.origin && w.captured.escalate.origin.label, 'Maintenance');
-    const box = w.doc.getElementById('mt_odo_chips');
+    /* v127: the power-read suggestion moved to its OWN box
+       (#mt_odo_prbox) — in the shared #mt_odo_chips box the hunt's
+       later passes erased it (the owner's 169,211 chip, Oct 17).
+       The prbox also carries the ✕ Not it dismiss; chips below
+       count value chips only. */
+    const box = w.doc.getElementById('mt_odo_prbox');
     const labels = box ? box.findAll(function (e) { return e.tagName === 'DIV'; }) : [];
     ok('power-read chip carries the check-first label', labels.some(function (e) { return e.textContent.indexOf('Power read — check before') >= 0; }), JSON.stringify(labels.map(function (e) { return e.textContent; })));
-    const chips = box ? box.findAll(function (e) { return e.tagName === 'BUTTON'; }) : [];
+    const chips = box ? box.findAll(function (e) { return e.tagName === 'BUTTON' && e.textContent !== '✕ Not it'; }) : [];
     eq('one power-read chip', chips.length, 1);
     eq('field NOT auto-filled by the power read', w.els.mt_odo.value, '');
     if (chips.length) chips[0].onclick();

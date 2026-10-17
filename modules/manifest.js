@@ -568,7 +568,12 @@
     }
     /* v87: no blocked-reason note here anymore — see the v87 note
        where GEOLOAD_BLOCKED used to live. Silence over blame. */
-    if (t.earned) L.push({ k: 'kv', a: 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
+    /* v127 (owner, Oct 17 09:56 MDT): while the shift is still
+       OPEN the figure is a running total, and the row must say
+       so — "Income earned today so far". "Total Earned Income"
+       is earned only once the day is closed. collect() already
+       knows the live session (c.live). */
+    if (t.earned) L.push({ k: 'kv', a: c.live ? 'Income earned today so far' : 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
     return L;
   }
 
@@ -771,7 +776,7 @@
       }
       /* v87: no blocked-reason note here anymore — silence over
          blame (see the v87 note where GEOLOAD_BLOCKED used to be). */
-      if (t.earned) h += '<div class="kv"><span>Total Earned Income</span><b>$' + c.earned.toFixed(2) + '</b></div>';
+      if (t.earned) h += '<div class="kv"><span>' + (c.live ? 'Income earned today so far' : 'Total Earned Income') + '</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
         '<button class="btn ghost" id="mn_dl">⬇️ Download</button></div>' +

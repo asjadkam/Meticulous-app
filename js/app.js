@@ -2169,6 +2169,103 @@
     store.set('odo_readings', log);
     return true;
   }
+  /* v127: SEED THE DATED LOG FROM DATED RECORDS THE APP ALREADY
+     HOLDS. The log was born with v122 (Oct 17), so every reading
+     captured before that morning exists in the app — as a fuel
+     fill's odometer (with the fill's date/time) or a session's
+     start/end odometer (with its stamps) — but has no dated-log
+     entry, and the manifest honestly reported "no readings
+     captured" for days the driver HAD photographed (owner,
+     Oct 17 09:53 MDT: "I uploaded that to you last night!"). The
+     seed derives log entries from exactly that evidence — never
+     from the undated master, which proves a value but not a
+     moment. Rules:
+       - a candidate already in the log (same value, same date)
+         is skipped, so re-running adds nothing (idempotent —
+         it runs on every app open);
+       - fills are walked in the order they happened as an
+         ascending chain: a stamp that runs backwards, or leaps
+         more than 50,000 km past the previous accepted stamp
+         (the economy sanity rule's leg ceiling), or sits more
+         than ODO_MAX_JUMP_KM past the master, is skipped — the
+         Oct 15 receipt whose invoice number (519,326) was saved
+         as an odometer can never seed a day boundary;
+       - seeded entries carry their source ('seed-fill' /
+         'seed-session') so every boundary stays auditable;
+       - the manifest's boundary rules are untouched — the seed
+         only supplies evidence, it decides nothing. */
+  function seedOdoReadings() {
+    var log = store.get('odo_readings', []);
+    if (!Array.isArray(log)) log = [];
+    var have = {};
+    log.forEach(function (r) {
+      if (r && parseFloat(r.value) > 0 && r.date) have[String(parseFloat(r.value)) + '|' + String(r.date)] = true;
+    });
+    var added = [];
+    function consider(value, ts, source) {
+      var v = parseFloat(value);
+      if (!(v > 0)) return;
+      if (!(typeof ts === 'number' && isFinite(ts) && ts > 0)) return;
+      var d = new Date(ts);
+      var date = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      var key = String(v) + '|' + date;
+      if (have[key]) return;
+      have[key] = true;
+      added.push({ ts: Math.round(ts), date: date, value: v, source: source });
+    }
+    function dayTs(dateStr, timeStr) {
+      var p = String(dateStr || '').split('-');
+      if (p.length !== 3) return null;
+      var hh = 12, mm = 0;
+      var tm = /(\d{1,2}):(\d{2})/.exec(String(timeStr || ''));
+      if (tm) { hh = parseInt(tm[1], 10); mm = parseInt(tm[2], 10); }
+      var t = new Date(+p[0], +p[1] - 1, +p[2], hh, mm).getTime();
+      return isFinite(t) ? t : null;
+    }
+    /* fuel fills — the pump readings, in the order they happened */
+    var master = masterOdometer();
+    var fills = store.get('fuel_fills', []);
+    if (Array.isArray(fills)) {
+      var stamped = fills.filter(function (f) { return f && parseFloat(f.odo) > 0 && dayTs(f.date, f.time) !== null; });
+      stamped.sort(function (a, b) {
+        var dt = dayTs(a.date, a.time) - dayTs(b.date, b.time);
+        return dt !== 0 ? dt : parseFloat(a.odo) - parseFloat(b.odo);
+      });
+      var lastV = 0;
+      stamped.forEach(function (f) {
+        var v = parseFloat(f.odo);
+        if (master !== null && v > master + ODO_MAX_JUMP_KM) return;
+        if (lastV > 0 && (v < lastV || v - lastV > 50000)) return;
+        lastV = v;
+        consider(v, dayTs(f.date, f.time), 'seed-fill');
+      });
+    }
+    /* sessions — the day start/end readings the by-mile flow saved */
+    var sessions = store.get('sessions', []);
+    if (Array.isArray(sessions)) {
+      sessions.forEach(function (s) {
+        if (!s) return;
+        var endMs = (typeof s.endedAt === 'number') ? s.endedAt : Date.parse(s.endedAt);
+        if (!(isFinite(endMs) && endMs > 0)) return;
+        var startMs = endMs - (parseFloat(s.seconds) || 0) * 1000;
+        if (parseFloat(s.startOdo) > 0) consider(s.startOdo, startMs, 'seed-session');
+        if (parseFloat(s.endOdo) > 0) consider(s.endOdo, endMs, 'seed-session');
+      });
+    }
+    if (!added.length) return 0;
+    var merged = log.concat(added);
+    merged.sort(function (a, b) { return (parseFloat(a.ts) || 0) - (parseFloat(b.ts) || 0); });
+    /* the log's own same-value collapse, applied across the seam */
+    var out = [];
+    merged.forEach(function (r) {
+      var prev = out[out.length - 1];
+      if (prev && parseFloat(prev.value) === parseFloat(r.value) && Math.abs((parseFloat(r.ts) || 0) - (parseFloat(prev.ts) || 0)) < 60000) return;
+      out.push(r);
+    });
+    if (out.length > 2000) out = out.slice(out.length - 2000);
+    store.set('odo_readings', out);
+    return added.length;
+  }
   function bumpOdometer(v, src) {
     var n = parseFloat(v);
     var prev = masterOdometer();
@@ -2230,6 +2327,36 @@
     return { action: 'keep', value: master };
   }
   /* ODO-MASTER-END */
+  /* ECON-UNIT-BEGIN (v127) — THE ECONOMY UNIT. One preference
+     (store key 'mt_econUnit': 'kpl' | 'l100' | 'mpg'), chosen once
+     in Preferences (owner, Oct 17 09:33 MDT: "there has to be a
+     way to change the unit… some users prefer mpg, not km/L"),
+     read by every surface that prints an economy figure (Fuel
+     trend, the Maintenance summary + lifetime). The records never
+     change — km and litres are the facts; only the printed figure
+     converts: L/100 km = 100 / (km/L); MPG (US) = (km/L) ×
+     2.3521458 (US gallon 3.785411784 L ÷ 1.609344 km/mile).
+     Default 'kpl' — the historical display. Harness-extractable:
+     store + pure JS only. */
+  var ECON_UNIT_LABELS = { kpl: 'km/L', l100: 'L/100 km', mpg: 'MPG' };
+  function econUnit() {
+    var u = store.get('mt_econUnit', 'kpl');
+    return ECON_UNIT_LABELS[u] ? u : 'kpl';
+  }
+  function econConvert(kpl, unit) {
+    var v = parseFloat(kpl);
+    if (!(v > 0)) return null;
+    var u = unit || econUnit();
+    if (u === 'l100') return 100 / v;
+    if (u === 'mpg') return v * 2.3521458;
+    return v;
+  }
+  function econFormat(kpl) {
+    var c = econConvert(kpl);
+    if (c === null) return null;
+    return { value: c.toFixed(1), unit: ECON_UNIT_LABELS[econUnit()] };
+  }
+  /* ECON-UNIT-END */
   var _ONB_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
   function parseStickerExpiry(text) {
     if (!text) return null;
@@ -2327,6 +2454,13 @@
     function handleFile(file) {
       if (!file) return;
       var token = ++_onbOcrToken;
+      /* v127: a NEW photo supersedes any pending suggestion — this
+         is the one legitimate clear of the suggestion boxes (a user
+         act, not a timer or another producer's repaint; see prBox). */
+      var oldChips = document.getElementById(prefix + '_chips');
+      if (oldChips) oldChips.innerHTML = '';
+      var oldPr = document.getElementById(prefix + '_prbox');
+      if (oldPr) oldPr.innerHTML = '';
       var rd = new FileReader();
       rd.onload = function () {
         var dataUrl = rd.result;
@@ -2412,6 +2546,63 @@
     if (camIn) camIn.onchange = function () { handleFile(camIn.files[0]); camIn.value = ''; };
     if (pickIn) pickIn.onchange = function () { handleFile(pickIn.files[0]); pickIn.value = ''; };
 
+    /* v127: THE POWER-READ SUGGESTION'S OWN BOX. Owner evidence
+       (Oct 17, 09:32 MDT, Maintenance): the odometer power read
+       returned 169,211 correctly and its tap-to-use chip showed
+       for ~2 seconds, then vanished before he could tap it; the
+       field kept the old value. ROOT CAUSE: the chip lived in the
+       SHARED #<prefix>_chips box, and the background candidate
+       hunt's onUpdate blanks that box wholesale (box.innerHTML =
+       '') on every pass before re-rendering only its own
+       candidates. The pooled hunt runs SECONDS behind the ~2 s
+       cloud answer, so its next pass erased a suggestion it never
+       painted. THE FIX: the power-read suggestion gets its OWN
+       box (#<prefix>_prbox) that no other producer writes. It is
+       cleared only by the user's own acts — tapping the value
+       (accept), tapping ✕ Not it (dismiss), or snapping a NEW
+       photo (handleFile). No timer, no repaint clears it. */
+    function prBox(prefix) {
+      var statusEl = el(prefix + '_status');
+      if (!statusEl || !statusEl.parentNode) return null;
+      var box = document.getElementById(prefix + '_prbox');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = prefix + '_prbox';
+        statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
+      }
+      return box;
+    }
+    function prSuggest(prefix, btnText, onAccept, acceptedStatus) {
+      var box = prBox(prefix);
+      if (!box) return;
+      box.innerHTML = '';
+      var lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
+      lbl.textContent = '⚡ Power read — check before using:';
+      box.appendChild(lbl);
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn small';
+      b.style.margin = '2px 4px 2px 0';
+      b.textContent = btnText;
+      b.onclick = function () {
+        box.innerHTML = '';
+        onAccept();
+        onbSetStatus(prefix, acceptedStatus);
+      };
+      box.appendChild(b);
+      var x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'btn small ghost';
+      x.style.margin = '2px 4px 2px 0';
+      x.textContent = '✕ Not it';
+      x.onclick = function () {
+        box.innerHTML = '';
+        onbSetStatus(prefix, '⚡ Power-read suggestion set aside — enter the value yourself below.');
+      };
+      box.appendChild(x);
+    }
+
     /* v58: background candidate hunt for odometer photos (Round 2).
        Renders up to 4 ranked candidate chips under the status line;
        a tap fills the field and persists through the SAME persist()
@@ -2439,8 +2630,14 @@
              it, like a receipt's invoice number) is never offered
              as a tap-to-use chip. */
           var list = (res.odo || []).filter(function (c) { return String(c.value) !== cur && !odoImplausible(c.value); }).slice(0, 4);
-          box.innerHTML = '';
+          /* v127: an empty later pass no longer blanks the box —
+             chips painted by an earlier pass of THIS photo stay
+             until the user taps one or snaps a new photo. (The
+             wholesale clear was one of the two erasers of the
+             shared box; the power-read suggestion has moved to
+             its own box entirely — see prBox.) */
           if (!list.length) return;
+          box.innerHTML = '';
           var lbl = document.createElement('div');
           lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
           lbl.textContent = 'Or is it one of these? Tap the right one:';
@@ -2486,31 +2683,15 @@
             if (token !== _onbOcrToken) return;
             var v = res.fields && res.fields.value;
             if (!v) { onbSetStatus(prefix, '⚡ Power read couldn\'t read it either — enter it manually below.'); return; }
-            var statusEl = el(prefix + '_status');
-            if (!statusEl || !statusEl.parentNode) return;
-            var box = document.getElementById(prefix + '_chips');
-            if (!box) {
-              box = document.createElement('div');
-              box.id = prefix + '_chips';
-              statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
-            }
-            box.innerHTML = '';
-            var lbl = document.createElement('div');
-            lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
-            lbl.textContent = '⚡ Power read — check before using:';
-            box.appendChild(lbl);
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'btn small';
-            b.style.margin = '2px 4px 2px 0';
-            b.textContent = Number(v).toLocaleString('en-CA') + ' km';
-            b.onclick = function () {
-              if (fieldEl) fieldEl.value = v;
-              persist(kind, v);
-              box.innerHTML = '';
-              onbSetStatus(prefix, '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
-            };
-            box.appendChild(b);
+            /* v127: the suggestion renders in its OWN box and
+               stays until the user accepts or dismisses it (see
+               prBox) — the hunt can no longer erase it. */
+            prSuggest(prefix, Number(v).toLocaleString('en-CA') + ' km',
+              function () {
+                if (fieldEl) fieldEl.value = v;
+                persist(kind, v);
+              },
+              '⚡ Power read: using <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — thanks for confirming.');
             onbSetStatus(prefix, '⚡ Power read found a reading — tap it below if it looks right, or type the mileage yourself.');
           }
         });
@@ -2621,31 +2802,15 @@
             if (token !== _onbOcrToken) return;
             var iso = parseStickerExpiry(res && res.fields && res.fields.rawText);
             if (!iso) { onbSetStatus(prefix, '⚡ Power read couldn\'t read the sticker either — set the punched month and year with the steppers below.'); return; }
-            var statusEl = el(prefix + '_status');
-            if (!statusEl || !statusEl.parentNode) return;
-            var box = document.getElementById(prefix + '_chips');
-            if (!box) {
-              box = document.createElement('div');
-              box.id = prefix + '_chips';
-              statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
-            }
-            box.innerHTML = '';
-            var lbl = document.createElement('div');
-            lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
-            lbl.textContent = '⚡ Power read — check before using:';
-            box.appendChild(lbl);
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'btn small';
-            b.style.margin = '2px 4px 2px 0';
-            b.textContent = 'Expiry ' + iso;
-            b.onclick = function () {
-              if (fieldEl) fieldEl.value = iso;
-              persist(kind, iso);
-              box.innerHTML = '';
-              onbSetStatus(prefix, '⚡ Power read: using expiry <b>' + iso + '</b> — thanks for confirming.');
-            };
-            box.appendChild(b);
+            /* v127: same own-box rule as the odometer suggestion
+               (see prBox) — the sticker suggestion stays until the
+               user accepts or dismisses it. */
+            prSuggest(prefix, 'Expiry ' + iso,
+              function () {
+                if (fieldEl) fieldEl.value = iso;
+                persist(kind, iso);
+              },
+              '⚡ Power read: using expiry <b>' + iso + '</b> — thanks for confirming.');
             onbSetStatus(prefix, '⚡ Power read found an expiry — tap it below if it looks right, or use the steppers.');
           }
         });
@@ -2987,6 +3152,11 @@
     // tomorrow's counting can begin with this app completely dead.
     try { App.armNativeDay(); } catch (e) {}
 
+    // v127: seed the dated odometer log from the app's own dated
+    // records (fuel fills + session readings) — idempotent, runs
+    // on every open, adds only what the records can prove.
+    try { seedOdoReadings(); } catch (e) {}
+
     // v59: power-read queue — retry waiting cloud reads on app open
     // and the moment connectivity returns. Inert without a key.
     try {
@@ -3192,6 +3362,10 @@
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
   App._logOdoReading = logOdoReading; // v122: the dated readings log (odo_readings) — every master write path appends
+  App._seedOdoReadings = seedOdoReadings; // v127: seed the dated log from the app's own dated records (fills + sessions)
+  App._econUnit = econUnit; // v127: the economy-unit preference ('kpl' | 'l100' | 'mpg')
+  App._econConvert = econConvert; // v127: km/L → the chosen unit (pure, test-pinned)
+  App._econFormat = econFormat; // v127: { value, unit } for economy displays
   App._moduleTitle = moduleTitle; // v122: the presented module name (Payroll → 'Pay Stub')
   App._odoImplausible = odoImplausible; // v80: 'below' | 'jump' | null for a machine-read candidate
   App._odoSaveDecision = odoSaveDecision; // v80: supervised Preferences odometer save (correction door)

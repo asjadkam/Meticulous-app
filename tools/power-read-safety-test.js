@@ -85,8 +85,13 @@ console.log('\n— statics: escalation + steppers wired into the shared pipeline
     appSrc.indexOf('var iso = stickerExpiryISO(st.mo, st.y);') >= 0);
   ok('a stepper choice persists through the host persist()',
     appSrc.indexOf('persist(kind, v);') >= 0);
+  /* v127: the hit now renders through prSuggest into the
+     suggestion's OWN box (#<prefix>_prbox) — the shared chips box
+     was erased by the background hunt's next pass ~2 s after the
+     cloud answer (owner, Oct 17 09:32). Same contract: chip only,
+     never auto-applied. */
   ok('a power-read hit persists only on tap (chip), never auto-applied',
-    appSrc.indexOf("b.textContent = 'Expiry ' + iso;") >= 0);
+    appSrc.indexOf("prSuggest(prefix, 'Expiry ' + iso,") >= 0);
   ok('the helpers are exposed for this test',
     appSrc.indexOf('App._stickerExpiryISO = stickerExpiryISO;') >= 0);
   ok('no failure path clears the photo preview',
