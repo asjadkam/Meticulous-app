@@ -234,6 +234,10 @@
       return { action: dec.action, value: master, previous: master, logged: null };
     }
     W('odo', dec.value);
+    /* v122: an applied master write joins the dated readings log
+       (a correction may legitimately sit below the old master —
+       it is the supervised door, so it logs as one). */
+    try { if (window.App && App._logOdoReading) App._logOdoReading(dec.value, 'maintenance', null, true); } catch (e) {}
     var logged = null;
     if (master !== null && master !== undefined && dec.value !== master) {
       logged = logOdoCorrection(master, dec.value, source);
@@ -755,6 +759,10 @@
         if (dec.action === 'ignore') { alert('Enter a valid odometer reading.'); return; }
         if (dec.action === 'set') {
           W('odo', dec.value);
+          /* v122: the night's dash save is THE reading the
+             manifest's day boundaries are drawn from — it joins
+             the dated readings log like every master write. */
+          try { if (window.App && App._logOdoReading) App._logOdoReading(dec.value, 'maintenance'); } catch (e) {}
           api.render(body);
           return;
         }

@@ -108,7 +108,7 @@
     var n = parseFloat(odoVal);
     if (!(n > 0)) return '';
     if (!(window.App && App._bumpOdometer)) return '';
-    var res = App._bumpOdometer(n);
+    var res = App._bumpOdometer(n, 'fuel');
     if (!res || res.value === null || res.value === undefined) return '';
     if (res.raised) {
       return res.previous
@@ -117,6 +117,24 @@
     }
     return 'Odometer kept at ' + fmtKm(res.value) + ' km — the reading you saved (' +
       fmtKm(n) + ') was lower, so the master was not changed.';
+  }
+
+  /* v122: the moment a fill's odometer reading belongs to — the
+     fill's own date + its read time when the receipt carried one,
+     else the save moment. The dated readings log (odo_readings)
+     stamps the fill reading THERE, not at data-entry time, so a
+     fill typed in at night still evidences the afternoon's dash.
+     Unparseable → null (the log stamps 'now'). */
+  function fuFillTs(rec) {
+    try {
+      var p = String((rec && rec.date) || '').split('-');
+      if (p.length !== 3) return null;
+      var hh = 12, mm = 0;
+      var tm = /(\d{1,2}):(\d{2})/.exec(String((rec && rec.time) || ''));
+      if (tm) { hh = parseInt(tm[1], 10); mm = parseInt(tm[2], 10); }
+      var t = new Date(+p[0], +p[1] - 1, +p[2], hh, mm).getTime();
+      return isFinite(t) ? t : null;
+    } catch (e) { return null; }
   }
 
   /* v107 — ECONOMY SANITY (Stage 3): one poisoned odometer stamp
@@ -691,9 +709,14 @@
           if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
           editFillIdx = null; editErr = '';
           var un = '';
-          if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} un = odoOutcomeNote(); }
+          if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} un = odoOutcomeNote(); }
           else if (odoPlan.mode === 'refuse') { un = odoOutcomeNote(); }
           else if (hasOdo) { un = masterOnSave(odo); }
+          /* v122: the fill's own reading joins the dated log at
+             the fill's moment (see fuFillTs). */
+          if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {
+            try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(updated)); } catch (e) {}
+          }
           saveNote = un || '✓ Fill-up updated.';
           Meticulous.modules.fuel.render(body);
           return;
@@ -719,9 +742,14 @@
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
         editErr = '';
-        if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} saveNote = odoOutcomeNote(); }
+        if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} saveNote = odoOutcomeNote(); }
         else if (odoPlan.mode === 'refuse') { saveNote = odoOutcomeNote(); }
         else { saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.'; }
+        /* v122: the fill's own reading joins the dated log at
+           the fill's moment (see fuFillTs). */
+        if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {
+          try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(rec)); } catch (e) {}
+        }
         Meticulous.modules.fuel.render(body);
       };
       /* v42: receipt photo → OCR on the Other-expenses card — same

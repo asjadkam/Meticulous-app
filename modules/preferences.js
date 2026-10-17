@@ -402,6 +402,9 @@
             : App._odoSaveDecision(o.odometerBaseline, masterNow, !!(fixEl && fixEl.checked));
           if (dec.action === 'set' || dec.action === 'correct') {
             App._store.set('mt_odo', String(dec.value));
+            /* v122: an applied Preferences odometer write joins
+               the dated readings log (odo_readings). */
+            try { if (App._logOdoReading) App._logOdoReading(dec.value, 'preferences', null, dec.action === 'correct'); } catch (e) {}
             o.odometerBaseline = String(dec.value);
             if (dec.action === 'correct') odoNote = ' Odometer corrected to ' + Number(dec.value).toLocaleString('en-CA') + ' km.';
           } else if (dec.action === 'keep') {

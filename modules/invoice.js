@@ -1,8 +1,11 @@
 /* Invoice / Pay Stub module (Meticulous.modules convention)
    Contractor: period-based lines from revenue + manual items, province-based
-   tax (editable), invoice numbering, print. Payroll: manual deductions only —
-   nothing auto-calculated, never defaults to US rules; country/province
-   required from Preferences before use. */
+   tax (editable), invoice numbering, print. Payroll (v122): the stub builds
+   itself — gross pre-filled from the period's completed work at the driver's
+   own wage rate, CPP/CPP2 + EI + federal/provincial income tax auto-calculated
+   with the CRA T4127 formulas (PAYROLL-CALC region), every auto field
+   overridable; never defaults to US rules; country/province required from
+   Preferences before use. */
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('inv_' + k, d); };
@@ -189,6 +192,26 @@
     var r = Number(taxRate) || 0;
     var tax = taxIncluded ? invCycRound2(s * r / (100 + r)) : invCycRound2(s * r / 100);
     return { sub: s, tax: tax, total: taxIncluded ? s : invCycRound2(s + tax) };
+  }
+  /* v122: what has actually been PAID against an invoice record,
+     from the payment facts the record itself carries (a payments
+     list of {amount} entries, or a paid / paidAmount figure).
+     The app holds no separate payments ledger today, so for any
+     record without payment facts this is honestly 0 — the print
+     then shows Paid $0.00 and Balance = Total due, and a record
+     that ever gains payment facts prints them without a code
+     change. */
+  function invCycPaidTotal(rec) {
+    if (!rec) return 0;
+    var paid = 0;
+    if (Array.isArray(rec.payments)) {
+      rec.payments.forEach(function (p) {
+        paid += parseFloat(p && (p.amount !== undefined ? p.amount : p.amt)) || 0;
+      });
+    }
+    if (parseFloat(rec.paidAmount) > 0) paid += parseFloat(rec.paidAmount);
+    else if (parseFloat(rec.paid) > 0) paid += parseFloat(rec.paid);
+    return invCycRound2(paid);
   }
   function invCycCompanyMissing(company) {
     return !String((company && company.name) || '').trim();
@@ -432,6 +455,11 @@
          the live stores hold by then. */
       dayHours: x.dayHours || null, cardDays: x.cardDays || null,
       rate: parseFloat(x.rate) || 0,
+      /* v122: the truck number in force, archived like the rate —
+         the printed Bill-to block carries it (his old #1150
+         structure) and a reprint must not depend on whatever
+         Preferences hold by then. */
+      truckNo: x.truckNo || '',
       notes: draft.notes, company: x.company,
       province: x.province, country: x.country, at: x.today
     };
@@ -564,6 +592,160 @@
   }
   /* ================= INV-CYCLE-END ================= */
 
+  /* ================= PAYROLL-CALC-BEGIN =================
+     v122: the pay stub CALCULATES (owner, Oct 17: "It should do
+     the deduction based on the tax code of the locality as well.
+     That's the whole magic!"). The engine is CRA's own formula
+     method — Guide T4127, Payroll Deductions Formulas, 122nd
+     edition (effective Jan 1, 2026), Option 1 — for a REGULAR
+     pay period, TD1 claim code 1 (basic amounts only), no
+     year-to-date balances: the stub is an estimate built from
+     this period's gross, and the honesty label printed on it
+     says exactly that. Semi-monthly = P 24 (the app's cycle).
+     Parameters are PER YEAR so a future year slots in as data;
+     a year or province the table does not cover returns null
+     and the form stays manual there — never a guessed number.
+
+     2026 (canada.ca: T4127 Jan 2026 + T4032AB Jan 2026; the
+     July 2026 T4127 edition confirms no federal/CPP/EI/Alberta
+     change for Jul–Dec 2026):
+       CPP  5.95% over (YMPE $74,600 − basic exemption $3,500),
+            max $4,230.45; per-period exemption $145.83 at P=24
+            (TRUNCATED $3,500/24, per T4127 Table 6.1).
+       CPP2 4.00% on the band $74,600–$85,000 (YAMPE), max $416.
+       EI   1.63%, MIE $68,900, max premium $1,123.07.
+       Federal brackets + K constants; BPA $16,452 phasing out
+            to $14,829 between $181,440 and $258,482; CEA $1,501.
+       Alberta brackets + KP constants; BPA $22,769; NO Alberta
+            CEA; K5P supplemental credit when K1P+K2P passes
+            $4,896 (0.08 × the $61,200 first-bracket top).
+     The CPP split, per T4127 Ch.4: the ENHANCED slice
+     (1.00/5.95 of C, plus ALL of C2) is a DEDUCTION from income
+     (F5, before annualizing); only the BASE slice (4.95/5.95
+     of C) plus EI earns the K2 non-refundable credit, at the
+     lowest rate of each jurisdiction. No double counting.
+     Cross-checked to the cent against CRA's published T4032AB
+     worked Examples B and C in tools/paystub-auto-test.js.
+     Harness-extractable: pure JS, no store, no DOM. */
+  var PS_YEARS = {
+    2026: {
+      cppRate: 0.0595, cppBaseRatio: 0.0495 / 0.0595, cppEnhRatio: 0.0100 / 0.0595,
+      ympe: 74600, cppExemptYr: 3500, cppMax: 4230.45, cppBaseMax: 3519.45,
+      cpp2Rate: 0.04, cpp2Max: 416,
+      eiRate: 0.0163, eiMax: 1123.07,
+      fedLow: 0.14,
+      fedBrackets: [
+        { to: 58523, r: 0.14, k: 0 }, { to: 117045, r: 0.205, k: 3804 },
+        { to: 181440, r: 0.26, k: 10241 }, { to: 258482, r: 0.29, k: 15685 },
+        { to: Infinity, r: 0.33, k: 26024 }
+      ],
+      bpaMax: 16452, bpaMin: 14829, bpaPhaseFrom: 181440, bpaPhaseTo: 258482,
+      cea: 1501,
+      prov: {
+        AB: {
+          low: 0.08,
+          brackets: [
+            { to: 61200, r: 0.08, k: 0 }, { to: 154259, r: 0.10, k: 1224 },
+            { to: 185111, r: 0.12, k: 4309 }, { to: 246813, r: 0.13, k: 6160 },
+            { to: 370220, r: 0.14, k: 8628 }, { to: Infinity, r: 0.15, k: 12331 }
+          ],
+          bpa: 22769, suppThreshold: 4896, suppRate: 0.25
+        }
+      }
+    }
+  };
+  function psR2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+  function psBracket(brackets, A) {
+    for (var i = 0; i < brackets.length; i++) { if (A <= brackets[i].to) return brackets[i]; }
+    return brackets[brackets.length - 1];
+  }
+  /* psCalcDeductions(gross, opts) — one regular period.
+     opts: { year, province (code), periods (default 24),
+       f (per-period RPP/RRSP-type deductions at source),
+       ytdCpp, ytdCpp2, ytdEi, ytdPensionable,
+       tcFed, tcProv (TD1 total claims; default = the basic
+       amounts, with the federal BPA phase-out applied) }.
+     Returns { cpp, cpp2, ei, fedTax, provTax, tax, A, f5,
+       fedAnnual, provAnnual, provSupported } — provTax null
+     when the province is not covered — or null when the YEAR
+     is not covered at all. fedAnnual/provAnnual are the T1/T2
+     annual figures before the /P division (the values CRA's
+     published worked examples state). */
+  function psCalcDeductions(gross, opts) {
+    opts = opts || {};
+    var Y = PS_YEARS[opts.year || 2026];
+    if (!Y) return null;
+    var P = opts.periods || 24;
+    var PV = Y.prov[String(opts.province || 'AB').toUpperCase()] || null;
+    var I = parseFloat(gross) || 0;
+    var zero = { cpp: 0, cpp2: 0, ei: 0, fedTax: 0, provTax: PV ? 0 : null, tax: 0, A: 0, f5: 0, fedAnnual: 0, provAnnual: PV ? 0 : null, provSupported: !!PV };
+    if (!(I > 0)) return zero;
+    var D = parseFloat(opts.ytdCpp) || 0, D2 = parseFloat(opts.ytdCpp2) || 0;
+    var D1 = parseFloat(opts.ytdEi) || 0, PIYTD = parseFloat(opts.ytdPensionable) || 0;
+    var F = parseFloat(opts.f) || 0;
+    /* CPP (T4127 Ch.6): C = min(annual max − YTD, rate ×
+       (PI − exemption/P)); the per-period exemption is the
+       annual $3,500 / P TRUNCATED to cents (Table 6.1). */
+    var exempt = Math.floor(Y.cppExemptYr / P * 100) / 100;
+    var C = psR2(Math.max(0, Math.min(Y.cppMax - D, Y.cppRate * (I - exempt))));
+    /* CPP2 (Ch.6): 4% of cumulative pensionable earnings over
+       the YMPE — W = max(PIYTD, YMPE) — capped at the CPP2 max. */
+    var W = Math.max(PIYTD, Y.ympe);
+    var C2 = psR2(Math.max(0, Math.min(Y.cpp2Max - D2, (PIYTD + I - W) * Y.cpp2Rate)));
+    /* EI (Ch.7): rate × insurable earnings, capped at the max. */
+    var EI = psR2(Math.max(0, Math.min(Y.eiMax - D1, Y.eiRate * I)));
+    /* F5: the enhanced CPP slice is deducted from income BEFORE
+       annualizing (Ch.4 Step 1). A = P × (I − F − F5). */
+    var enhSlice = psR2(C * Y.cppEnhRatio);
+    var F5 = psR2(enhSlice + C2);
+    var A = psR2(P * (I - F - F5));
+    if (A < 0) A = 0;
+    /* The K2 credit base: the BASE CPP slice only. CRA's own
+       step-by-step arithmetic (T4032AB Example B) takes the base
+       as C − enhanced slice, annualized; once the annual max is
+       reached the maximum itself is substituted (Example C) —
+       hence the max of the annualized and the YTD-based figure,
+       capped at the base maximum. Same shape for EI. */
+    var basePer = psR2(C - enhSlice);
+    var baseAnnual = Math.min(Y.cppBaseMax, Math.max(P * basePer, (D + C) * Y.cppBaseRatio));
+    var eiAnnual = Math.min(Y.eiMax, Math.max(P * EI, D1 + EI));
+    /* Federal (Ch.4): T3 = R×A − K − K1 − K2 − K4, floored at 0.
+       TC defaults to the BPA WITH its phase-out on NI (= A). */
+    var bpaf = Y.bpaMax;
+    if (A > Y.bpaPhaseFrom && A < Y.bpaPhaseTo) {
+      bpaf = psR2(Y.bpaMax - (A - Y.bpaPhaseFrom) * ((Y.bpaMax - Y.bpaMin) / (Y.bpaPhaseTo - Y.bpaPhaseFrom)));
+    } else if (A >= Y.bpaPhaseTo) bpaf = Y.bpaMin;
+    var TC = (opts.tcFed === undefined || opts.tcFed === null) ? bpaf : (parseFloat(opts.tcFed) || 0);
+    var fb = psBracket(Y.fedBrackets, A);
+    var K1 = Y.fedLow * TC;
+    var K2 = Y.fedLow * (baseAnnual + eiAnnual);
+    var K4 = Math.min(Y.fedLow * (P * I), Y.fedLow * Y.cea);
+    var T3 = Math.max(0, fb.r * A - fb.k - K1 - K2 - K4);
+    var fedTax = psR2(T3 / P);
+    /* Provincial: T4 mirrors T3 with the province's own rates,
+       constants, BPA and lowest rate; Alberta adds the K5P
+       supplemental credit and has NO CEA (K4P = 0). */
+    var provTax = null, T4 = null;
+    if (PV) {
+      var TCP = (opts.tcProv === undefined || opts.tcProv === null) ? PV.bpa : (parseFloat(opts.tcProv) || 0);
+      var pb = psBracket(PV.brackets, A);
+      var K1P = PV.low * TCP;
+      var K2P = PV.low * (baseAnnual + eiAnnual);
+      var K5P = Math.max(0, (K1P + K2P - PV.suppThreshold) * PV.suppRate);
+      T4 = Math.max(0, pb.r * A - pb.k - K1P - K2P - K5P);
+      provTax = psR2(T4 / P);
+    }
+    return {
+      cpp: C, cpp2: C2, ei: EI,
+      fedTax: fedTax, provTax: provTax,
+      tax: psR2(fedTax + (provTax || 0)),
+      A: A, f5: F5,
+      fedAnnual: psR2(T3), provAnnual: (T4 === null ? null : psR2(T4)),
+      provSupported: !!PV
+    };
+  }
+  /* ================= PAYROLL-CALC-END ================= */
+
   /* The line plan for a period: the grouped lines plus the days
      that block issuing and the tracker-only days to flag. The
      grouping/source rules live in invCycBuildRevenueLines
@@ -629,6 +811,15 @@
       'th{background:#1F3764;color:#fff;text-align:left;padding:8px;}td{padding:8px;border-bottom:1px solid #dfe4f2;}' +
       '.tot{text-align:right;font-weight:700;}.muted{color:#6b7690;font-size:13px;}' +
       '.row{display:flex;justify-content:space-between;margin:4px 0;}' +
+      /* v122: the printed structure the owner asked for (his old
+         invoice #1150's STRUCTURE — header band, ruled sections,
+         a totals block, a prepared-by footer). */
+      '.band{background:#1F3764;color:#fff;padding:14px 18px;border-radius:4px;margin-bottom:14px;}' +
+      '.band h1{color:#fff;margin:0 0 2px;}.band p{margin:2px 0;color:#c9d4ee;font-size:13px;}' +
+      '.sec{color:#1F3764;border-bottom:2px solid #F26522;padding-bottom:4px;margin:20px 0 8px;font-size:16px;}' +
+      '.billto{margin:4px 0 6px;line-height:1.55;}' +
+      '.totblock{margin-top:16px;border-top:3px solid #1F3764;padding-top:8px;}' +
+      '.foot{margin-top:26px;border-top:1px solid #dfe4f2;padding-top:8px;}' +
       '</style></head><body>' + bodyHtml + '</body></html>');
     w.document.close(); w.focus();
     setTimeout(function () { w.print(); }, 400);
@@ -858,6 +1049,7 @@
           cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
             (revPlan && revPlan.dayHours) || {}, paV, pbV),
           rate: parseFloat(o.payRate) || 0,
+          truckNo: o.truckNo || '',
           setNextInvoiceNo: function (next) {
             try {
               var oo = App._store.get('onboarding', {});
@@ -896,16 +1088,42 @@
     }
 
     function printInvoice(rec) {
+      /* v122: the STRUCTURE the owner specified (Oct 17, modeled
+         on his old invoice #1150 — structure, not its look):
+         header band (business name + address); invoice # + date;
+         a pay-period line; the Bill-to block (name, address,
+         truck number when known) with clear space after it; the
+         hours as their OWN section — a ruled table Description |
+         Rate | Hours | Amount with one row per day; the notes as
+         a separate section; a totals block — Net subtotal | GST
+         (GST number printed) | Total due | Paid amount | Balance
+         owing; and a "Prepared by" footer with the invoice
+         number + page. Tax-INCLUSIVE law stands: Total due is
+         hours × rate exactly; the Net subtotal is the total with
+         the included GST backed out, and the GST line is that
+         included portion — nothing is added on top. */
+      var o = onb();
+      var bizName = (rec.company && rec.company.name) || '';
+      var truckNo = rec.truckNo || o.truckNo || '';
       var rows = '';
       (rec.revLines || []).forEach(function (l) {
-        /* v105: day lines print in the hour-sheet shape the owner
-           sends ("Oct 16: 11h"); extras and records without stored
-           day hours keep their stored descriptions. */
-        var label = l.src === 'extra' ? (l.desc || '') : (invCycLineLabel(l, rec.dayHours) || l.desc || '');
-        rows += '<tr><td>' + esc(label) + '</td><td class="tot">$' + (Number(l.amt) || 0).toFixed(2) + '</td></tr>';
+        var hrs = (rec.dayHours && l.date) ? parseFloat(rec.dayHours[l.date]) : NaN;
+        var isDay = l.src !== 'extra' && isFinite(hrs) && hrs > 0;
+        /* Day rows read "Oct 1" in the Description column (the
+           owner's #1150 shape); extras and hour-less lines keep
+           their stored descriptions (the v105 hour-sheet label
+           remains the fallback). */
+        var label = l.src === 'extra' ? (l.desc || '')
+          : isDay ? invCycDateShort(l.date)
+          : (invCycLineLabel(l, rec.dayHours) || l.desc || '');
+        var rateTxt = isDay && rec.rate ? '$' + Number(rec.rate).toFixed(2) + (rec.taxIncluded ? ' tax incl.' : '') : '—';
+        rows += '<tr><td>' + esc(label) + '</td><td>' + esc(rateTxt) + '</td>' +
+          '<td>' + (isDay ? invCycFmtH(hrs) : '—') + '</td>' +
+          '<td class="tot">$' + (Number(l.amt) || 0).toFixed(2) + '</td></tr>';
       });
       (rec.items || []).forEach(function (it) {
         rows += '<tr><td>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</td>' +
+          '<td>—</td><td>—</td>' +
           '<td class="tot">$' + ((Number(it.qty) || 0) * (Number(it.rate) || 0)).toFixed(2) + '</td></tr>';
       });
       /* v105: the closing note is GENERATED from the record's own
@@ -923,41 +1141,113 @@
       var genNote = invCycDocNote(rec.revLines || [], rec.dayHours, cardDays,
         { rate: rec.rate, taxRate: rec.taxRate, taxIncluded: rec.taxIncluded });
       var noteText = [genNote, String(rec.notes || '').trim()].filter(Boolean).join(' ');
+      /* The Bill-to block: name on its own line, address under it,
+         truck number when known — the stored Bill-to is the saved
+         "Name, Address" string, split on its first comma. */
+      var btParts = String(rec.billTo || '').split(',');
+      var btName = (btParts.shift() || '').trim();
+      var btAddr = btParts.join(',').trim();
+      var netSub = rec.taxIncluded ? invCycRound2((Number(rec.sub) || 0) - (Number(rec.tax) || 0)) : (Number(rec.sub) || 0);
+      var gstLabel = 'GST (' + esc(rec.taxRate) + '%' + (rec.taxIncluded ? ', included in the rate' : '') + ')' +
+        ((rec.company && rec.company.gst) ? ' — GST/HST ' + esc(rec.company.gst) : '');
+      var paid = invCycPaidTotal(rec);
+      var balance = invCycRound2((Number(rec.total) || 0) - paid);
       printDoc('Invoice ' + rec.no,
-        '<h1>' + esc((rec.company && rec.company.name) || 'Invoice') + '</h1>' +
-        '<p class="muted">' + esc((rec.company && rec.company.addr) || '').replace(/\n/g, '<br>') +
-        (rec.company && rec.company.gst ? '<br>GST/HST: ' + esc(rec.company.gst) : '') + '</p>' +
+        '<div class="band"><h1>' + esc(bizName || 'Invoice') + '</h1>' +
+        '<p>' + esc((rec.company && rec.company.addr) || '').replace(/\n/g, '<br>') + '</p></div>' +
         '<h2>INVOICE #' + esc(rec.no) + '</h2>' +
-        '<div class="row"><span><b>Bill to:</b> ' + esc(rec.billTo || '—') + '</span><span><b>Date:</b> ' + esc(rec.date) + '</span></div>' +
-        '<table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>' + rows + '</table>' +
-        '<div class="row"><span>Subtotal</span><span>$' + rec.sub.toFixed(2) + '</span></div>' +
-        '<div class="row"><span>' + (rec.taxIncluded
-          ? 'Tax (' + esc(rec.taxRate) + '% GST, included in the rate)'
-          : 'Tax (' + esc(rec.taxRate) + '%)') + '</span><span>$' + rec.tax.toFixed(2) + '</span></div>' +
-        '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + rec.total.toFixed(2) + '</b></span></div>' +
-        (noteText ? '<p class="muted">' + esc(noteText) + '</p>' : '') +
-        '<p class="muted">Invoice ' + esc(rec.no) + '</p>');
+        '<div class="row"><span><b>Date:</b> ' + esc(rec.date) + '</span>' +
+        ((rec.pa && rec.pb) ? '<span><b>Pay period:</b> ' + esc(invCycLabel({ a: rec.pa, b: rec.pb })) + '</span>' : '') + '</div>' +
+        '<h3 class="sec">Bill to</h3>' +
+        '<div class="billto"><b>' + esc(btName || '—') + '</b>' +
+        (btAddr ? '<br>' + esc(btAddr) : '') +
+        (truckNo ? '<br>Truck #' + esc(truckNo) : '') + '</div>' +
+        '<h3 class="sec">Hours</h3>' +
+        '<table><tr><th>Description</th><th>Rate</th><th>Hours</th><th style="text-align:right">Amount</th></tr>' + rows + '</table>' +
+        (noteText ? '<h3 class="sec">Notes</h3><p class="muted">' + esc(noteText) + '</p>' : '') +
+        '<div class="totblock">' +
+        '<div class="row"><span>Net subtotal</span><span>$' + netSub.toFixed(2) + '</span></div>' +
+        '<div class="row"><span>' + gstLabel + '</span><span>$' + (Number(rec.tax) || 0).toFixed(2) + '</span></div>' +
+        '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + (Number(rec.total) || 0).toFixed(2) + '</b></span></div>' +
+        '<div class="row"><span>Paid amount</span><span>$' + paid.toFixed(2) + '</span></div>' +
+        '<div class="row"><span><b>Balance owing</b></span><span><b>$' + balance.toFixed(2) + '</b></span></div>' +
+        '</div>' +
+        '<p class="muted foot">Prepared by ' + esc(bizName || '—') + ' · Invoice ' + esc(rec.no) + ' · Page 1</p>');
     }
 
     draw();
   }
 
-  /* ---------------- payroll pay stub (manual deductions) ---------------- */
+  /* ---------------- payroll pay stub ----------------
+     v122: THE STUB BUILDS ITSELF (owner, Oct 17: "That's the
+     whole magic!"). The period opens on the current open
+     semi-monthly cycle; the gross is PRE-FILLED from the
+     period's completed work through the SAME per-day builder
+     Revenue/P&L/invoice use — priced at the driver's OWN wage
+     rate (Preferences "My wage rate", falling back to the
+     general rate) — with the hours shown; CPP/CPP2, EI and
+     federal + provincial income tax are AUTO-CALCULATED by the
+     CRA formula engine (PAYROLL-CALC region) for the period's
+     year and the driver's home province; net is computed live.
+     Every auto field stays editable: an edited field is marked
+     as overridden and stops auto-updating for that stub (the
+     employer's real stub can differ — TD1 credits beyond the
+     basic amounts are the usual reason, and the printed stub's
+     honesty label says so). 'Other deductions' stays manual. */
+  var PS_PROV_NAMES = {};
+  Object.keys(CA_NAME2CODE).forEach(function (nm) { PS_PROV_NAMES[CA_NAME2CODE[nm]] = nm; });
+  function psWageRate(o) { return parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0; }
+  /* The period's gross + hours from the shared per-day builder:
+     the winning day lines only (dispatch-confirmed days win, the
+     v79/v105 rules), extras excluded — extras are billing
+     charges, not wages. Hourly: gross = hours × the wage rate
+     (the spec's own arithmetic: 124.5 h × $29 = $3,610.50). */
+  function psPeriodGross(o, a, b) {
+    var entries = App._store.get('rev_entries', []).filter(function (e) { return e && e.date >= a && e.date <= b; });
+    var rate = psWageRate(o);
+    var built = invCycBuildRevenueLines(entries, [], rate, o.payStandard);
+    var hours = 0;
+    Object.keys(built.dayHours || {}).forEach(function (d) { hours += parseFloat(built.dayHours[d]) || 0; });
+    hours = invCycRound2(hours);
+    var gross;
+    if (String(o.payStandard || '').toLowerCase() === 'hourly' && rate > 0) {
+      gross = invCycRound2(hours * rate);
+    } else {
+      gross = 0;
+      built.lines.forEach(function (l) { gross += Number(l.amt) || 0; });
+      gross = invCycRound2(gross);
+    }
+    return { gross: gross, hours: hours, days: built.lines.length };
+  }
+
   function renderPayroll(body) {
     var o = onb();
+    var provName = PS_PROV_NAMES[o.province] || o.province || '';
+    /* (a) the period opens on the current open semi-monthly
+       cycle — the period after the latest saved stub's period,
+       else the period containing today (invCycOpenPeriod reads
+       pb/date/at; a stub's period end rides as pb). */
+    var openP = invCycOpenPeriod(paystubs().map(function (r) { return { pb: r.b }; }), App._today());
     var h = jurisdictionBanner();
     h += '<div class="card"><h3>💵 New pay stub</h3>' +
-      '<p class="note">Jurisdiction: <b>' + esc(o.country || 'not set') + ' / ' + esc(o.province || 'not set') + '</b><br>' +
-      'Enter deductions yourself — the app does not calculate tax for you.</p>' +
-      '<div class="row"><div><label class="f">Period from</label><input type="date" id="ps_a" value="' + esc(App._today()) + '"></div>' +
-      '<div><label class="f">Period to</label><input type="date" id="ps_b" value="' + esc(App._today()) + '"></div></div>' +
+      '<p class="note">Jurisdiction: <b>' + esc(o.country || 'not set') + ' / ' + esc(o.province || 'not set') + '</b></p>' +
+      '<div class="row"><div><label class="f">Period from</label><input type="date" id="ps_a" value="' + esc(openP.a) + '"></div>' +
+      '<div><label class="f">Period to</label><input type="date" id="ps_b" value="' + esc(openP.b) + '"></div></div>' +
       '<label class="f">Gross earnings $</label><input id="ps_gross" type="number" step="0.01" placeholder="0.00">' +
-      '<label class="f">EI deducted $</label><input id="ps_ei" type="number" step="0.01" placeholder="0.00">' +
+      '<p class="note" id="ps_gross_note" style="margin:2px 0 8px"></p>' +
       '<label class="f">CPP deducted $</label><input id="ps_cpp" type="number" step="0.01" placeholder="0.00">' +
-      '<label class="f">Income tax deducted $</label><input id="ps_tax" type="number" step="0.01" placeholder="0.00">' +
+      '<p class="note" id="ps_cpp2_note" style="margin:2px 0 8px;display:none"></p>' +
+      '<label class="f">EI deducted $</label><input id="ps_ei" type="number" step="0.01" placeholder="0.00">' +
+      '<label class="f">Income tax — federal $</label><input id="ps_ftax" type="number" step="0.01" placeholder="0.00">' +
+      '<label class="f">Income tax — ' + esc(provName || 'provincial') + ' $</label><input id="ps_ptax" type="number" step="0.01" placeholder="0.00">' +
+      '<p class="note" id="ps_calc_note" style="margin:2px 0 8px"></p>' +
+      '<p class="note" id="ps_over_note" style="margin:2px 0 8px;display:none;color:#b97a0f;font-weight:600"></p>' +
       '<label class="f">Other deductions $</label><input id="ps_other" type="number" step="0.01" placeholder="0.00">' +
       '<label class="f">Other deduction note</label><input id="ps_onote" placeholder="e.g. benefits, union dues">' +
-      '<div class="kv" style="font-size:17px;margin-top:10px"><span><b>Net pay</b></span><b id="ps_net">$0.00</b></div></div>' +
+      '<div class="kv" style="font-size:17px;margin-top:10px"><span><b>Net pay</b></span><b id="ps_net">$0.00</b></div>' +
+      '<p class="note" style="margin-top:8px">Calculated with the federal' + (provName ? ' + ' + esc(provName) : '') +
+      ' basic amounts (CRA formulas). Your employer\'s figures may differ if your TD1 claims more than the basic amounts.</p>' +
+      '<button class="btn ghost small" id="ps_recalc" style="margin:0">↺ Recalculate all fields</button></div>' +
       '<button class="btn primary" id="ps_save">Save &amp; print pay stub</button>';
 
     var stubs = paystubs();
@@ -974,31 +1264,112 @@
     var gp = body.querySelector('#iv_goprefs');
     if (gp) gp.onclick = function () { App.openModule('preferences'); };
 
-    function calc() {
-      var g = Number(body.querySelector('#ps_gross').value) || 0;
-      var d = ['ps_ei', 'ps_cpp', 'ps_tax', 'ps_other'].reduce(function (s, id) {
-        return s + (Number(body.querySelector('#' + id).value) || 0);
-      }, 0);
-      return { gross: g, net: g - d };
+    var FIELDS = { gross: '#ps_gross', cpp: '#ps_cpp', ei: '#ps_ei', ftax: '#ps_ftax', ptax: '#ps_ptax' };
+    var LABELS = { gross: 'Gross', cpp: 'CPP', ei: 'EI', ftax: 'Federal tax', ptax: (provName || 'Provincial') + ' tax' };
+    var psOver = {};      /* field -> true once hand-edited */
+    var psFilling = false; /* true while recompute() writes */
+    var psAuto = { gross: 0, hours: 0, days: 0 };
+    var psCalc = null;
+    function el(id) { return body.querySelector(id); }
+    function setField(key, v) {
+      var n = el(FIELDS[key]);
+      if (n) n.value = (v === null || v === undefined) ? '' : Number(v).toFixed(2);
     }
-    ['ps_gross', 'ps_ei', 'ps_cpp', 'ps_tax', 'ps_other'].forEach(function (id) {
-      body.querySelector('#' + id).addEventListener('input', function () {
-        body.querySelector('#ps_net').textContent = '$' + calc().net.toFixed(2);
+    function fieldVal(key) { var n = el(FIELDS[key]); return n ? (Number(n.value) || 0) : 0; }
+    function paintOver() {
+      var names = Object.keys(psOver).map(function (k) { return LABELS[k]; });
+      var note = el('#ps_over_note');
+      if (note) {
+        note.style.display = names.length ? '' : 'none';
+        note.textContent = names.length
+          ? '✏️ Hand-edited: ' + names.join(', ') + ' — ' + (names.length === 1 ? 'it' : 'these') + ' won\'t auto-update for this stub. "Recalculate all" restores the calculated figures.'
+          : '';
+      }
+      var gn = el('#ps_gross_note');
+      if (gn) {
+        if (psOver.gross) {
+          gn.innerHTML = '✏️ Gross edited by hand. The period\'s completed work adds up to <b>$' + psAuto.gross.toFixed(2) + '</b>' +
+            (psAuto.hours > 0 ? ' (' + invCycFmtH(psAuto.hours) + ' hrs)' : '') + '.';
+        } else if (psAuto.days > 0) {
+          gn.innerHTML = 'From your completed days in this period: <b>' + invCycFmtH(psAuto.hours) + ' hrs</b>' +
+            (psWageRate(o) > 0 && String(o.payStandard || '').toLowerCase() === 'hourly' ? ' × $' + psWageRate(o).toFixed(2) : '') +
+            ' = <b>$' + psAuto.gross.toFixed(2) + '</b>. Edit it if your employer\'s stub says different.';
+        } else {
+          gn.textContent = 'No completed work found in this period yet — enter the gross from your employer\'s stub.';
+        }
+      }
+    }
+    function paintNet() {
+      var net = fieldVal('gross') - fieldVal('cpp') - fieldVal('ei') - fieldVal('ftax') - fieldVal('ptax') - (Number(el('#ps_other').value) || 0);
+      el('#ps_net').textContent = '$' + net.toFixed(2);
+      return net;
+    }
+    function recompute() {
+      var a = el('#ps_a').value, b = el('#ps_b').value;
+      psAuto = psPeriodGross(o, a, b);
+      psFilling = true;
+      if (!psOver.gross) setField('gross', psAuto.gross);
+      var year = parseInt(String(b || a || '').slice(0, 4), 10) || (new Date()).getFullYear();
+      psCalc = psCalcDeductions(fieldVal('gross'), { year: year, province: o.province, periods: 24 });
+      var cn = el('#ps_calc_note');
+      if (psCalc) {
+        if (!psOver.cpp) setField('cpp', psR2(psCalc.cpp + psCalc.cpp2));
+        if (!psOver.ei) setField('ei', psCalc.ei);
+        if (!psOver.ftax) setField('ftax', psCalc.fedTax);
+        if (!psOver.ptax && psCalc.provTax !== null) setField('ptax', psCalc.provTax);
+        var c2 = el('#ps_cpp2_note');
+        if (c2) {
+          c2.style.display = psCalc.cpp2 > 0 ? '' : 'none';
+          c2.textContent = psCalc.cpp2 > 0 ? 'CPP above includes CPP2 of $' + psCalc.cpp2.toFixed(2) + ' (the second additional CPP on earnings over the year\'s maximum pensionable earnings).' : '';
+        }
+        if (cn) cn.textContent = psCalc.provSupported
+          ? 'CPP, EI and income tax calculated from the ' + year + ' CRA formulas (semi-monthly, basic amounts).'
+          : 'CPP, EI and federal tax calculated from the ' + year + ' CRA formulas. Provincial tax for ' + (provName || o.province || 'your province') + ' isn\'t auto-calculated yet — enter it from your employer\'s stub.';
+      } else {
+        if (cn) cn.textContent = 'Auto-calculation covers ' + Object.keys(PS_YEARS).join(', ') + ' periods — enter the deductions from your employer\'s stub for this period.';
+      }
+      psFilling = false;
+      paintOver();
+      paintNet();
+    }
+    Object.keys(FIELDS).forEach(function (key) {
+      el(FIELDS[key]).addEventListener('input', function () {
+        if (!psFilling) {
+          if (!psOver[key]) { psOver[key] = true; }
+          /* A hand-changed gross re-derives the deductions from
+             the NEW gross (the overridden deductions, if any,
+             still hold); a hand-changed deduction just re-nets. */
+          if (key === 'gross') { recompute(); return; }
+          paintOver();
+        }
+        paintNet();
       });
     });
+    el('#ps_other').addEventListener('input', paintNet);
+    el('#ps_a').addEventListener('change', recompute);
+    el('#ps_b').addEventListener('change', recompute);
+    el('#ps_recalc').onclick = function () { psOver = {}; recompute(); };
+    recompute();
+
     body.querySelector('#ps_save').onclick = function () {
-      var n = calc();
-      if (!(n.gross > 0)) { alert('Enter gross earnings first.'); return; }
+      var gross = fieldVal('gross');
+      if (!(gross > 0)) { alert('Enter gross earnings first.'); return; }
+      var fed = fieldVal('ftax'), prov = fieldVal('ptax');
       var rec = {
         id: 'ps' + Date.now(),
-        a: body.querySelector('#ps_a').value, b: body.querySelector('#ps_b').value,
-        gross: n.gross, ei: Number(body.querySelector('#ps_ei').value) || 0,
-        cpp: Number(body.querySelector('#ps_cpp').value) || 0,
-        tax: Number(body.querySelector('#ps_tax').value) || 0,
-        other: Number(body.querySelector('#ps_other').value) || 0,
-        otherNote: body.querySelector('#ps_onote').value.trim(),
-        net: n.net, country: o.country, province: o.province,
-        employer: o.contractingCo || o.companyName || ''
+        a: el('#ps_a').value, b: el('#ps_b').value,
+        hours: psAuto.hours, gross: gross,
+        ei: fieldVal('ei'),
+        cpp: fieldVal('cpp'), cpp2: psCalc ? psCalc.cpp2 : 0,
+        fedTax: fed, provTax: prov, tax: psR2(fed + prov),
+        other: Number(el('#ps_other').value) || 0,
+        otherNote: el('#ps_onote').value.trim(),
+        net: paintNet(), country: o.country, province: o.province,
+        employer: o.contractingCo || o.companyName || '',
+        /* v122: the stub remembers HOW it was built — calculated
+           vs hand-entered, and which fields were overridden — so
+           the print carries the right honesty label. */
+        autoCalc: !!psCalc, overFields: Object.keys(psOver)
       };
       var l = paystubs(); l.push(rec); W('stubs', l);
       printPayStub(rec);
@@ -1014,18 +1385,38 @@
   }
 
   function printPayStub(rec) {
+    /* v122: the same structural cleanliness as the invoice —
+       header band, a pay-period line, ruled Earnings and
+       Deductions sections, a totals block, and an honest
+       footer. Stubs saved before v122 (no fedTax split) print
+       their single Income tax row as recorded. */
+    var provName = PS_PROV_NAMES[rec.province] || rec.province || '';
+    var dedRows =
+      '<tr><td>CPP' + (rec.cpp2 > 0 ? ' (includes CPP2 $' + Number(rec.cpp2).toFixed(2) + ')' : '') + '</td><td class="tot">−$' + Number(rec.cpp || 0).toFixed(2) + '</td></tr>' +
+      '<tr><td>EI</td><td class="tot">−$' + Number(rec.ei || 0).toFixed(2) + '</td></tr>' +
+      (rec.fedTax !== undefined && rec.fedTax !== null
+        ? '<tr><td>Income tax — federal</td><td class="tot">−$' + Number(rec.fedTax || 0).toFixed(2) + '</td></tr>' +
+          '<tr><td>Income tax — ' + esc(provName || 'provincial') + '</td><td class="tot">−$' + Number(rec.provTax || 0).toFixed(2) + '</td></tr>'
+        : '<tr><td>Income tax</td><td class="tot">−$' + Number(rec.tax || 0).toFixed(2) + '</td></tr>') +
+      '<tr><td>Other' + (rec.otherNote ? ' (' + esc(rec.otherNote) + ')' : '') + '</td><td class="tot">−$' + Number(rec.other || 0).toFixed(2) + '</td></tr>';
     printDoc('Pay stub ' + rec.a,
-      '<h1>Pay Stub</h1>' +
-      '<p class="muted">' + esc(rec.employer) + '<br>Pay period: ' + esc(rec.a) + ' to ' + esc(rec.b) +
-      '<br>Jurisdiction: ' + esc(rec.country || '') + ' / ' + esc(rec.province || '') + '</p>' +
+      '<div class="band"><h1>Pay Stub</h1>' +
+      '<p>' + esc(rec.employer || '') + '</p></div>' +
+      '<div class="row"><span><b>Pay period:</b> ' + esc(rec.a) + ' to ' + esc(rec.b) +
+      ((invCycPeriodOf(rec.a) || {}).b === rec.b ? ' (' + esc(invCycLabel({ a: rec.a, b: rec.b })) + ')' : '') + '</span>' +
+      '<span><b>Jurisdiction:</b> ' + esc(rec.country || '') + ' / ' + esc(rec.province || '') + '</span></div>' +
+      '<h3 class="sec">Earnings</h3>' +
       '<table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>' +
-      '<tr><td>Gross earnings</td><td class="tot">$' + rec.gross.toFixed(2) + '</td></tr>' +
-      '<tr><td>EI</td><td class="tot">−$' + rec.ei.toFixed(2) + '</td></tr>' +
-      '<tr><td>CPP</td><td class="tot">−$' + rec.cpp.toFixed(2) + '</td></tr>' +
-      '<tr><td>Income tax</td><td class="tot">−$' + rec.tax.toFixed(2) + '</td></tr>' +
-      '<tr><td>Other' + (rec.otherNote ? ' (' + esc(rec.otherNote) + ')' : '') + '</td><td class="tot">−$' + rec.other.toFixed(2) + '</td></tr></table>' +
-      '<div class="row" style="font-size:18px"><span><b>Net pay</b></span><span><b>$' + rec.net.toFixed(2) + '</b></span></div>' +
-      '<p class="muted">Deductions entered manually. This stub is a record, not tax advice.</p>');
+      (rec.hours > 0 ? '<tr><td>Hours worked</td><td class="tot">' + invCycFmtH(rec.hours) + ' hrs</td></tr>' : '') +
+      '<tr><td>Gross earnings</td><td class="tot">$' + Number(rec.gross || 0).toFixed(2) + '</td></tr></table>' +
+      '<h3 class="sec">Deductions</h3>' +
+      '<table><tr><th>Description</th><th style="text-align:right">Amount</th></tr>' + dedRows + '</table>' +
+      '<div class="totblock">' +
+      '<div class="row" style="font-size:18px"><span><b>Net pay</b></span><span><b>$' + Number(rec.net || 0).toFixed(2) + '</b></span></div>' +
+      '</div>' +
+      '<p class="muted foot">' + (rec.autoCalc
+        ? 'Calculated with the federal' + (provName ? ' + ' + esc(provName) : '') + ' basic amounts using CRA payroll formulas. Your employer\'s figures may differ if your TD1 claims more than the basic amounts. This stub is a record, not tax advice.'
+        : 'Deductions entered manually. This stub is a record, not tax advice.') + '</p>');
   }
 
   /* ---------------- main ---------------- */

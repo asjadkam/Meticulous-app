@@ -284,7 +284,12 @@ function runManifestWorlds() {
     }
     check('f1: Start Time shows the running session start (~2h ago)', startOk, 'row: ' + (mRow && mRow[0]));
     check('f1: End Time honestly open — Still working', w.body._html.indexOf('<div class="kv"><span>End Time</span><b>Still working</b></div>') >= 0);
-    check('f1: no Odometer KV row when none captured (v87: one merged line, omitted when empty)', w.body._html.indexOf('<div class="kv"><span>Odometer</span>') < 0);
+    /* v122 supersedes the v87 omission pinned here before: with
+       the Odometer section ON but nothing captured, the row now
+       SAYS "no readings captured" — a silently vanished line is
+       indistinguishable from the toggle being ignored (owner,
+       Oct 17). Full behaviour pinned in manifest-odo-test.js. */
+    check('f1: no captures → the Odometer row says "no readings captured" (v122)', w.body._html.indexOf('<div class="kv"><span>Odometer</span><b>no readings captured</b>') >= 0);
   }
   /* ---- (f2) running + pending by-mile start odo shows ---- */
   {

@@ -277,6 +277,7 @@
      places component (its file still loads; the Navigator's
      front face renders it). No card, no drawer entry, no meta. */
   var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  /* MODULE-TITLE-BEGIN — harness-extractable (store + pure JS). */
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
     dispatch:   { title: 'Dispatch',          icon: '📋', tier: 'basic' },
@@ -290,6 +291,26 @@
     connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
     // v36: 'autostart' registry entry removed — settings moved into Revenue (Asjad); modules/autostart.js is now a shared card library + pointer stub
   };
+  /* v122: the invoice module's NAME follows how the user is paid
+     (owner catch, Oct 17: "I changed my payment method to
+     payroll... And that was suppose to change the name of the
+     invoice module to paystub!"). The module's guts already
+     switch on onboarding.employment (modules/invoice.js opens
+     renderPayroll for a payroll employee); this function is the
+     ONE place the presented name is decided, and every surface
+     — dashboard card, drawer, module header — reads it here, so
+     the name can never disagree with the guts again. Contract
+     keeps 'Invoice'. */
+  function moduleTitle(key) {
+    if (key === 'invoice') {
+      var o = {};
+      try { o = store.get('onboarding', {}) || {}; } catch (e) {}
+      if (o.employment === 'Payroll') return 'Pay Stub';
+    }
+    var meta = MODULE_META[key];
+    return meta ? meta.title : key;
+  }
+  /* MODULE-TITLE-END */
 
   /* ---------------- v52: user role — the PERSON, not the account ----------------
      Onboarding's last question: "Do you drive a truck yourself?" Stored as
@@ -415,7 +436,7 @@
       var ok = App.tierAllows(meta.tier);
       html += '<div class="modcard' + (ok ? '' : ' locked') + '" data-mod="' + key + '">' +
         (ok ? '' : '<span class="lock">🔒</span>') +
-        '<div class="ic">' + meta.icon + '</div><div class="t">' + meta.title + '</div>' +
+        '<div class="ic">' + meta.icon + '</div><div class="t">' + moduleTitle(key) + '</div>' +
         '<div class="s">' + esc(modStatus(key)) + '</div></div>';
     });
     g.innerHTML = html;
@@ -455,7 +476,7 @@
     roleSidebarOrder(App.userRole(), SIDEBAR_ITEMS).forEach(function (it) {
       if (it[0] === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
       if (it[0] === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
-      html += '<button data-act="' + it[0] + '"><span>' + it[1] + '</span> ' + it[2] + '</button>';
+      html += '<button data-act="' + it[0] + '"><span>' + it[1] + '</span> ' + (it[0] === 'invoice' ? moduleTitle('invoice') : it[2]) + '</button>';
     });
     nav.innerHTML = html;
     Array.prototype.forEach.call(nav.querySelectorAll('button'), function (b) {
@@ -533,7 +554,7 @@
     App._modKey = key;
     el('dashView').classList.add('hidden');
     el('modView').classList.remove('hidden');
-    var title = meta ? meta.title : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription', account: 'Account & login' }[key] || key);
+    var title = meta ? moduleTitle(key) : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription', account: 'Account & login' }[key] || key);
     el('modTitle').textContent = title;
     var body = el('modBody');
     body.innerHTML = '';
@@ -963,7 +984,14 @@
     var t = App.tracker;
     return t.elapsed + (t.status === 'running' ? Math.floor((endMs - t.startTs) / 1000) : 0);
   }
+  /* v122: set by App.stopSessionOnDispatchClose for the duration
+     of its stopSessionAt call — a dispatch-close stop stamps the
+     session's closing odometer from the nearest capture the app
+     already holds (see inside stopSessionAt); a tracker Stop
+     never does (its end prompt follows, as always). */
+  var _stopViaDispatch = false;
   function stopSessionAt(endMs, endOdoVal) {
+    var viaDispatch = _stopViaDispatch; _stopViaDispatch = false;
     var sec = trackedSecondsAt(endMs);
     // v40: close out live-miles tracking first (watcher off, final
     // crumb + total persisted) so the finished entry can carry the day.
@@ -988,6 +1016,29 @@
       // before the reconcile below and before the entry is handed to
       // FB.saveDoc / Revenue, so every consumer sees the whole entry.
       applyEndOdoToEntry(entry, endOdoVal);
+      /* v122: a DISPATCH-CLOSE stop (the path the owner actually
+         uses — he closes the day by completing the dispatch, then
+         saves the dash reading at night on the Maintenance card)
+         stamps the closing odometer from the nearest capture the
+         app already holds: the latest entry in the dated readings
+         log, else the master itself. Without this the session the
+         manifest reads never carries an end reading on his flow,
+         and the manifest's Odometer line had nothing to print
+         (Oct 17 root cause). Only when no end reading was handed
+         in with the stop. */
+      if (viaDispatch && !entry.endOdo) {
+        var stamp = null, stampTs = -1;
+        var rlog = store.get('odo_readings', []);
+        if (Array.isArray(rlog)) {
+          for (var ri = 0; ri < rlog.length; ri++) {
+            var rv = parseFloat(rlog[ri] && rlog[ri].value);
+            var rt = parseFloat(rlog[ri] && rlog[ri].ts) || 0;
+            if (rv > 0 && rt >= stampTs) { stamp = rv; stampTs = rt; }
+          }
+        }
+        if (!(stamp > 0)) stamp = masterOdometer();
+        if (stamp > 0) entry.endOdo = stamp;
+      }
       // v40: live miles for the day (only when fixes actually flowed —
       // no field at all when location was unavailable; never a fake 0).
       if (milesFin && typeof milesFin.liveKm === 'number') {
@@ -1028,6 +1079,7 @@
      odometer prompt). Returns true when a session was stopped. */
   App.stopSessionOnDispatchClose = function () {
     if (!sessionActive()) return false;
+    _stopViaDispatch = true;
     stopSessionAt(Date.now());
     return true;
   };
@@ -1229,7 +1281,7 @@
   function applyOdoReading(kind, value) {
     var n = parseFloat(value);
     if (!(n > 0)) return false;
-    bumpOdometer(n);
+    bumpOdometer(n, 'session');
     var today = todayStr(new Date());
     if (kind === 'start') {
       App.tracker.odoStart = { date: today, value: n };
@@ -1265,7 +1317,7 @@
     var n = parseFloat(value);
     if (!entry || !(n > 0)) return false;
     entry.endOdo = n;
-    bumpOdometer(n);
+    bumpOdometer(n, 'session');
     return true;
   }
   /* stopSessionAt: move the pending start reading onto the new session
@@ -2030,7 +2082,43 @@
     var v = parseFloat(store.get('mt_odo', ''));
     return (isFinite(v) && v > 0) ? v : null;
   }
-  function bumpOdometer(v) {
+  /* v122: THE DATED ODOMETER LOG (store key 'odo_readings').
+     The master is ONE undated number — the manifest needs to know
+     what the dash read at the START and END of a given day, and
+     before v122 no dated record existed for it to draw a day's
+     boundaries from (Oct 17 root cause: the owner's readings
+     existed — in the master, saved at night on the Maintenance
+     card — but the manifest reads session startOdo/endOdo, which
+     his close-by-dispatch workflow never fills, so the Odometer
+     line silently vanished with the section ON). Every capture
+     that lands on the master now also lands here as
+     {ts, date, value, source}. The master's upward-only semantics
+     are unchanged; this log only REMEMBERS.
+     Trust rules: an ordinary capture BELOW the current master is
+     a stale or misread number and is refused (it would poison a
+     day boundary with a backwards value at a fresh timestamp);
+     only a supervised correction (isCorrection — the audited
+     Maintenance/Preferences/Fuel correction paths, whose whole
+     point is moving the master deliberately) may log below it.
+     A repeat of the same value inside a minute collapses. */
+  function logOdoReading(value, source, tsMs, isCorrection) {
+    var n = parseFloat(value);
+    if (!(n > 0)) return false;
+    var master = masterOdometer();
+    if (!isCorrection && master !== null && n < master) return false;
+    var ts = (typeof tsMs === 'number' && isFinite(tsMs) && tsMs > 0) ? Math.round(tsMs) : Date.now();
+    var d = new Date(ts);
+    var date = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    var log = store.get('odo_readings', []);
+    if (!Array.isArray(log)) log = [];
+    var last = log[log.length - 1];
+    if (last && parseFloat(last.value) === n && Math.abs(ts - (parseFloat(last.ts) || 0)) < 60000) return false;
+    log.push({ ts: ts, date: date, value: n, source: String(source || 'app') });
+    if (log.length > 2000) log = log.slice(log.length - 2000);
+    store.set('odo_readings', log);
+    return true;
+  }
+  function bumpOdometer(v, src) {
     var n = parseFloat(v);
     var prev = masterOdometer();
     if (!(n > 0)) return { value: prev, raised: false, previous: prev };
@@ -2047,8 +2135,16 @@
     }
     if (prev === null || n > prev) {
       store.set('mt_odo', String(n));
+      /* v122: a master write is a dated reading (see above). */
+      try { logOdoReading(n, src || 'app'); } catch (e) {}
       return { value: n, raised: true, previous: prev };
     }
+    /* v122: a capture that CONFIRMS the master (same value, new
+       moment — e.g. the morning start reading equals last night's
+       closing number) is genuine boundary evidence too: log it.
+       A below-master capture is not (stale/misread — see
+       logOdoReading's trust rules). */
+    if (n === prev) { try { logOdoReading(n, src || 'app'); } catch (e) {} }
     return { value: prev, raised: false, previous: prev };
   }
   /* v80: the SUPERVISED odometer save decision (Preferences). The
@@ -2564,6 +2660,9 @@
         var obDec = odoSaveDecision(o.odometerBaseline, odoMasterNow(), false);
         if (obDec.action === 'set' || obDec.action === 'correct') {
           App._store.set('mt_odo', String(obDec.value));
+          /* v122: an applied onboarding odometer write is a dated
+             reading like every other master write path. */
+          try { logOdoReading(obDec.value, 'onboarding', null, obDec.action === 'correct'); } catch (e) {}
         }
       }
     } catch (e) {}
@@ -3041,6 +3140,8 @@
   App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
+  App._logOdoReading = logOdoReading; // v122: the dated readings log (odo_readings) — every master write path appends
+  App._moduleTitle = moduleTitle; // v122: the presented module name (Payroll → 'Pay Stub')
   App._odoImplausible = odoImplausible; // v80: 'below' | 'jump' | null for a machine-read candidate
   App._odoSaveDecision = odoSaveDecision; // v80: supervised Preferences odometer save (correction door)
   App._odoDailyKm = odoDailyKm; // v46: session start/end pair -> the day's km (or null), used by Revenue

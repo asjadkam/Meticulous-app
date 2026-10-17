@@ -178,8 +178,18 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   console.log('\n— Glue + Oct 14 audit blockers —');
   ok('print: day rows use the hour-sheet label', invSrc.indexOf('invCycLineLabel(l, rec.dayHours)') !== -1);
   ok('print: the closing note is generated from the record', invSrc.indexOf('invCycDocNote(rec.revLines') !== -1);
-  ok('print: page footer carries the invoice number', invSrc.indexOf("'<p class=\"muted\">Invoice ' + esc(rec.no)") !== -1);
-  ok('print: tax row label is the sent wording', invSrc.indexOf("'Tax (' + esc(rec.taxRate) + '% GST, included in the rate)'") !== -1);
+  /* v122 (owner spec, Oct 17 — the STRUCTURE of his old #1150):
+     the footer is now "Prepared by <business> · Invoice N ·
+     Page 1" and the totals block's tax row is a GST row that
+     prints the GST number. These two pins move DELIBERATELY
+     with that spec; the byte-for-byte closing NOTE above — the
+     part that was law — is untouched and still pinned. The
+     full v122 structure is pinned in paystub-auto-test.js. */
+  ok('print: page footer is the v122 Prepared-by line (name + number + page)',
+    invSrc.indexOf("'<p class=\"muted foot\">Prepared by '") !== -1 &&
+    invSrc.indexOf("' · Invoice ' + esc(rec.no) + ' · Page 1</p>'") !== -1);
+  ok('print: GST row label carries the rate + included wording (v122 totals block)',
+    invSrc.indexOf("'GST (' + esc(rec.taxRate) + '%' + (rec.taxIncluded ? ', included in the rate' : '') + ')'") !== -1);
   ok('screen: draft lines use the hour-sheet label too', invSrc.indexOf('invCycLineLabel(l, revPlan.dayHours)') !== -1);
   ok('issue: day hours + cards + rate are archived with the record',
     invSrc.indexOf('dayHours: (revPlan && revPlan.dayHours) || null') !== -1 &&

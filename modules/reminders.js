@@ -169,7 +169,7 @@
              locally — this screen no longer keeps a private reading. */
           var v = odoInput.value.trim();
           if (v && window.App && App._bumpOdometer) {
-            var res = App._bumpOdometer(parseFloat(v));
+            var res = App._bumpOdometer(parseFloat(v), 'reminder');
             if (res && res.value) W('odo', String(res.value));
           } else if (v) {
             W('odo', v);

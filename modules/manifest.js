@@ -75,9 +75,11 @@
      starting and ending" — his own sheet carries the pair every
      day). Start → end with the day's km between them:
      "168,759 → 168,926 km (167 km)". An end that was never
-     captured is SAID ("end not recorded"), never invented; no
-     captures at all → no line (null). Replaces the separate
-     Start/End Odometer lines. */
+     captured is SAID ("end not recorded"), never invented.
+     v122: no captures at all → this TEXT is null, and both
+     renderers print "no readings captured" in its place when
+     the section is ON — the line is never silently omitted
+     again. Replaces the separate Start/End Odometer lines. */
   function odoLineText(c) {
     if (!c || (c.odoStart === null && c.odoEnd === null)) return null;
     var fmt = function (v) { return Number(v).toLocaleString('en-CA'); };
@@ -272,6 +274,68 @@
       /* else: the session end already sits in endT/endSrc. */
     }
 
+    /* v122: THE DATED READINGS LOG fills the boundaries the
+       session entries never got. The owner's real flow closes the
+       day by completing the dispatch and saves the dash reading
+       at night on the Maintenance card — neither writes a session
+       startOdo/endOdo, so before v122 the Odometer line silently
+       vanished even with the section ON (Oct 17 root cause).
+       Every master-odometer write now appends to odo_readings
+       (js/app.js logOdoReading); here the log only FILLS what
+       the session/fill logic above left missing:
+         start(D) = the LAST reading at or before the day's work
+           start (ticket start, else dispatch start, else session
+           start, else the day's first moment);
+         end(D) = the FIRST reading at or after the day's end
+           (session end, else the dispatch close).
+       A mid-day reading sits strictly between the anchors and
+       qualifies for NEITHER — it is never promoted to the day's
+       end (the v87 honesty rule stands). */
+    (function () {
+      if (odoStart !== null && odoEnd !== null) return;
+      var rl = G('odo_readings', []);
+      if (!Array.isArray(rl) || !rl.length) return;
+      var readings = [];
+      rl.forEach(function (r) {
+        var v = parseFloat(r && r.value);
+        var ts = (r && typeof r.ts === 'number') ? r.ts : Date.parse(r && r.ts);
+        if (v > 0 && typeof ts === 'number' && isFinite(ts)) readings.push({ ts: ts, value: v });
+      });
+      if (!readings.length) return;
+      readings.sort(function (a, b) { return a.ts - b.ts; });
+      var dp = String(d).split('-');
+      var dayStartMs = (dp.length === 3) ? new Date(+dp[0], +dp[1] - 1, +dp[2]).getTime() : null;
+      var sessStartMs = null, sessEndMs2 = null;
+      sessions.forEach(function (s) {
+        var e2 = stampMs(s.endedAt);
+        if (e2 !== null) {
+          var st2 = e2 - (parseFloat(s.seconds) || 0) * 1000;
+          if (sessStartMs === null || st2 < sessStartMs) sessStartMs = st2;
+          if (sessEndMs2 === null || e2 > sessEndMs2) sessEndMs2 = e2;
+        }
+      });
+      if (odoStart === null) {
+        var startAnchor = (tkStartMs !== null) ? tkStartMs
+          : (dspStartMs !== null) ? dspStartMs
+          : (sessStartMs !== null) ? sessStartMs
+          : (live ? live.startMs : dayStartMs);
+        if (startAnchor !== null && startAnchor !== undefined) {
+          for (var i = readings.length - 1; i >= 0; i--) {
+            if (readings[i].ts <= startAnchor) { odoStart = readings[i].value; break; }
+          }
+        }
+      }
+      if (odoEnd === null && !live) {
+        var endAnchor = (sessEndMs2 !== null) ? sessEndMs2 : dspEndMs;
+        if (endAnchor !== null) {
+          var limit = (dayStartMs !== null) ? dayStartMs + 2 * 86400000 : Infinity;
+          for (var j = 0; j < readings.length; j++) {
+            if (readings[j].ts >= endAnchor && readings[j].ts < limit) { odoEnd = readings[j].value; break; }
+          }
+        }
+      }
+    })();
+
     /* v107: earned, from the shared builder (see the note at the
        top of collect). The live session mirrors Revenue's rule
        exactly: it adds only on a day no confirmed line speaks
@@ -452,8 +516,12 @@
       L.push({ k: 'note', a: trkParts.join(' and ') + (trkParts.length > 1 ? ' times are' : ' time is') + ' from the tracker — no confirmed dispatch time for this day.' });
     }
     /* v87: one Odometer line — start → end with the day's km
-       (see odoLineText); absent captures omit it entirely. */
-    if (t.odo) { var ol = odoLineText(c); if (ol !== null) L.push({ k: 'kv', a: 'Odometer', b: ol }); }
+       (see odoLineText). v122: with the section ON but no
+       boundary data at all, the line now SAYS so ("no readings
+       captured") instead of vanishing silently — a vanished line
+       is indistinguishable from the toggle being ignored, which
+       is exactly what the owner reported on Oct 17. */
+    if (t.odo) { var ol = odoLineText(c); L.push({ k: 'kv', a: 'Odometer', b: (ol !== null) ? ol : 'no readings captured' }); }
     if (t.odo && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
     if (t.odo && c.milesIssues.length && window.LiveMiles) {
       c.milesIssues.forEach(function (s) {
@@ -650,7 +718,7 @@
          number is the tracking, the odometer only confirms it.
          v87: the readings print as ONE Odometer line — start → end
          with the day's km (see odoLineText). */
-      if (t.odo) { var ol2 = odoLineText(c); if (ol2 !== null) h += '<div class="kv"><span>Odometer</span><b>' + esc(ol2) + '</b></div>'; }
+      if (t.odo) { var ol2 = odoLineText(c); h += '<div class="kv"><span>Odometer</span><b>' + esc(ol2 !== null ? ol2 : 'no readings captured') + '</b></div>'; }
       if (t.odo && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
       if (t.odo && c.milesIssues.length && window.LiveMiles) {
         c.milesIssues.forEach(function (s) {

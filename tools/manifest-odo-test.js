@@ -12,6 +12,13 @@
  *      start is the session start reading, else the day's
  *      earliest odo-bearing record (a fuel fill); a mid-day fill
  *      is NEVER promoted to the day's end.
+ *      v122 SUPERSEDES the "no captures → no line" clause and
+ *      adds the dated readings log (odo_readings): with the
+ *      section ON but no boundary data, the line now prints
+ *      "no readings captured" (case c), and boundaries the
+ *      session entries never got are drawn from the log —
+ *      start = last reading at/before the work start, end =
+ *      first reading at/after the day's end (cases h, i).
  *  (2) "I told you yesterday that dump coordinates are usually
  *      not available on dispatch… They are verbally relayed to
  *      us on site!" The manifest printed "GPS load counting
@@ -149,13 +156,65 @@ console.log('\n— (b) start captured, end never captured —');
   check('pdf: same honest line', !!kv && kv.b === '168,759 km → end not recorded', kv && kv.b);
 }
 
-/* ============ (c) no captures at all: no line ============ */
-console.log('\n— (c) nothing captured —');
+/* ============ (c) no captures at all: the line SAYS so (v122) ============
+ * v87's rule was "no captures → no line". The owner, Oct 17:
+ * "why is the manifest not showing starting odo and closing
+ * odo? It's selected" — a vanished line is indistinguishable
+ * from the toggle being ignored. v122: with the section ON but
+ * no boundary data, both renderers print "Odometer — no
+ * readings captured". (Section OFF still prints nothing —
+ * case (g) below is unchanged.) */
+console.log('\n— (c) nothing captured: the absence is said, not silent (v122) —');
 {
   const w = makeWorld(fixtureMem());
   w.render();
-  hasnt('preview: no Odometer line', w.body._html, '<div class="kv"><span>Odometer</span>');
-  check('pdf: no Odometer kv', odoKv(w.pdfLines()) === null);
+  has('preview: the Odometer line says no readings captured', w.body._html, '<span>Odometer</span><b>no readings captured</b>');
+  const kv = odoKv(w.pdfLines());
+  check('pdf: the Odometer kv says no readings captured', !!kv && kv.b === 'no readings captured', kv && kv.b);
+}
+
+/* ============ (h) v122: the dated readings log fills the boundaries ============
+ * The owner's REAL flow, the Oct 17 root cause: the day is
+ * closed by completing the dispatch (the session carries NO
+ * odometer fields) and the dash reading is saved at night on
+ * the Maintenance card. Before v122 there was no dated record
+ * at all; now every master write appends to odo_readings, and
+ * collect() draws the boundaries from it: start = the last
+ * reading at or before the 8:00 dispatch start (last night's
+ * save), end = the first reading at or after the 17:45 close
+ * (tonight's save). */
+console.log('\n— (h) readings log: night-before + night-of saves bound the day —');
+{
+  const mem = fixtureMem();
+  mem.sessions = [{ date: DAY, endedAt: Date.parse('2026-10-15T17:45:00'), seconds: 35100 }];
+  mem.dsp_list = [{ date: DAY, scheduledAt: '2026-10-15T08:00:00', status: 'completed', endedAt: Date.parse('2026-10-15T17:45:00'), tickets: [] }];
+  mem.odo_readings = [
+    { ts: Date.parse('2026-10-14T19:26:00'), date: '2026-10-14', value: 168759, source: 'maintenance' },
+    { ts: Date.parse('2026-10-15T19:26:00'), date: '2026-10-15', value: 168971, source: 'maintenance' }
+  ];
+  const w = makeWorld(mem);
+  w.render();
+  has('preview: boundaries drawn from the log — 168,759 → 168,971 km (212 km)', w.body._html, '<span>Odometer</span><b>168,759 → 168,971 km (212 km)</b>');
+  const kv = odoKv(w.pdfLines());
+  check('pdf: same boundaries from the log', !!kv && kv.b === '168,759 → 168,971 km (212 km)', kv && kv.b);
+}
+
+/* ============ (i) v122: a mid-day reading is NEVER promoted to the end ============ */
+console.log('\n— (i) readings log: mid-day reading qualifies for neither boundary —');
+{
+  const mem = fixtureMem();
+  mem.sessions = [{ date: DAY, endedAt: Date.parse('2026-10-15T17:45:00'), seconds: 35100 }];
+  mem.dsp_list = [{ date: DAY, scheduledAt: '2026-10-15T08:00:00', status: 'completed', endedAt: Date.parse('2026-10-15T17:45:00'), tickets: [] }];
+  mem.odo_readings = [
+    { ts: Date.parse('2026-10-14T19:26:00'), date: '2026-10-14', value: 168759, source: 'maintenance' },
+    { ts: Date.parse('2026-10-15T12:00:00'), date: '2026-10-15', value: 168850, source: 'fuel' }
+  ];
+  const w = makeWorld(mem);
+  w.render();
+  has('preview: start is last night\'s reading, end honestly not recorded', w.body._html, '<span>Odometer</span><b>168,759 km → end not recorded</b>');
+  hasnt('preview: the mid-day reading was NOT promoted to the end', w.body._html, '168,850');
+  const kv = odoKv(w.pdfLines());
+  check('pdf: same — mid-day reading unused', !!kv && kv.b === '168,759 km → end not recorded', kv && kv.b);
 }
 
 /* ============ (d) his Oct 15 shape: session start + mid-day fuel capture, end absent ============ */
