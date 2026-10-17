@@ -935,24 +935,33 @@
   TicketOCR.describeRead = function (parsed, form) {
     form = form || TicketOCR.toDispatchForm(parsed);
     var found = [], missing = [];
-    function add(ok, foundLabel, missingLabel) {
+    /* v117: the gibberish gate covers the SUMMARY at composition
+       too — a "found" entry whose free-text value is letter-salad
+       is not a find: the field reports as missing, honestly. (The
+       v108 gate cleaned the FORM fields, but summaries composed
+       from raw parsed values — or through the escalation merge —
+       could still carry the salad into the stored report, where
+       it rendered forever. Stored reports are cleaned again at
+       render by dspCleanDocRead in modules/dispatch.js.) */
+    function add(ok, foundLabel, missingLabel, value) {
+      if (ok && value && TicketOCR.looksGibberish(value)) ok = false;
       if (ok) found.push(foundLabel); else missing.push(missingLabel);
     }
     if (parsed._type === 'rate_confirmation' || parsed._type === 'bill_of_lading' || parsed._type === 'document') {
       add(!!form.amount, 'amount $' + (form.amount ? Number(form.amount).toLocaleString('en-US') : ''), 'amount');
-      add(!!parsed.pickupCompany, 'pickup ' + parsed.pickupCompany + (parsed.pickupCity ? ' (' + parsed.pickupCity + ')' : ''), 'pickup');
-      add(!!parsed.deliveryCompany, 'delivery ' + parsed.deliveryCompany + (parsed.deliveryCity ? ' (' + parsed.deliveryCity + ')' : ''), 'delivery');
+      add(!!parsed.pickupCompany, 'pickup ' + parsed.pickupCompany + (parsed.pickupCity ? ' (' + parsed.pickupCity + ')' : ''), 'pickup', parsed.pickupCompany);
+      add(!!parsed.deliveryCompany, 'delivery ' + parsed.deliveryCompany + (parsed.deliveryCity ? ' (' + parsed.deliveryCity + ')' : ''), 'delivery', parsed.deliveryCompany);
       add(!!parsed.pickupDate, 'pickup ' + parsed.pickupDate + (parsed.pickupTime ? ' ' + (parsed.pickupQualifier ? parsed.pickupQualifier + ' ' : '') + parsed.pickupTime : ''), 'pickup date/time');
       add(!!(parsed.deliveryDate || parsed.deliveryNote), 'delivery ' + (parsed.deliveryDate || parsed.deliveryNote), 'delivery date/time');
-      add(!!parsed.equipment, 'truck ' + parsed.equipment, 'truck type');
-      add(!!parsed.material, 'material ' + parsed.material, 'material');
+      add(!!parsed.equipment, 'truck ' + parsed.equipment, 'truck type', parsed.equipment);
+      add(!!parsed.material, 'material ' + parsed.material, 'material', parsed.material);
       add(!!(parsed.qty || parsed.weight), (parsed.qty ? 'qty ' + parsed.qty : '') + (parsed.qty && parsed.weight ? ' · ' : '') + (parsed.weight ? 'weight ' + parsed.weight : ''), 'qty/weight');
       add(!!parsed.waitingRate, 'waiting ' + parsed.waitingRate, 'waiting time');
       add(!!(parsed.instructions && parsed.instructions.length), 'instructions (' + (parsed.instructions ? parsed.instructions.length : 0) + ')', 'instructions');
     } else {
-      add(!!form.jobSite, 'job site ' + form.jobSite, 'job site');
+      add(!!form.jobSite, 'job site ' + form.jobSite, 'job site', form.jobSite);
       add(!!form.scheduledAt, 'scheduled ' + form.scheduledAt, 'scheduled time');
-      add(!!form.material, 'material ' + form.material, 'material');
+      add(!!form.material, 'material ' + form.material, 'material', form.material);
       add(!!form.ticketNo, 'ticket #' + form.ticketNo, 'ticket #');
       add(!!form.notes, 'notes', 'notes');
     }

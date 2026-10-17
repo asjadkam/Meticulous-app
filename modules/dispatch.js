@@ -143,6 +143,79 @@
     d.photo = d.tickets.length ? null : (legacyPhoto || null);
     return d;
   }
+  /* v117 (owner, Oct 16 2026, over the Oct 16 Aecon edit form):
+     the edit form's pre-fill, from the record AND its tickets.
+     The facts a ticket read produced live ON the tickets — the
+     haul card's number, the tickets' loads — and a record whose
+     top-level fields were never promoted opened HALF-EMPTY:
+     Material blank, Ticket # blank, Amount 0.00, Loads reset to
+     the bare default 1. Promotion rule: a set top-level field
+     always wins; a blank one is filled from the tickets (first
+     card/ticket number, first material, the tickets' loads sum);
+     Loads falls back to the form default ONLY when nothing was
+     recorded anywhere; a zero amount opens blank (the field's
+     placeholder), never as a fake 0.00 value. When the loads came
+     from the tickets they are recorded loads, so loadsSet rides
+     true — the same trust dspBuildClosed gives a ticket sum. */
+  function dspEditFieldsFor(d) {
+    var tkNo = '', tkMat = '', tkLoads = 0;
+    (d.tickets || []).forEach(function (t) {
+      if (!t) return;
+      if (!tkNo && (t.cardNumber || t.ticketNo)) tkNo = t.cardNumber || t.ticketNo;
+      if (!tkMat && t.material) tkMat = t.material;
+      var tl = parseInt(t.loads, 10);
+      if (tl > 0) tkLoads += tl;
+    });
+    var amt = parseFloat(d.amount);
+    return {
+      jobSite: d.jobSite || '', scheduledAt: d.scheduledAt || '', equipment: d.equipment || '',
+      lat: (d.lat !== null && d.lat !== undefined) ? String(d.lat) : '',
+      lng: (d.lng !== null && d.lng !== undefined) ? String(d.lng) : '',
+      material: d.material || tkMat || '',
+      ticketNo: d.ticketNo || tkNo || '',
+      amount: (isNaN(amt) || !(amt > 0)) ? '' : String(d.amount),
+      loads: d.loadsSet ? String(d.loads) : (tkLoads > 0 ? String(tkLoads) : ((d.loads !== null && d.loads !== undefined && d.loads !== '') ? String(d.loads) : '1')),
+      loadsSet: !!d.loadsSet || tkLoads > 0,
+      notes: d.notes || '', driverId: d.driverId || ''
+    };
+  }
+  /* v117: the read-summary cleaner for STORED docRead reports.
+     Summaries composed before the gibberish gate (or through a
+     path that bypassed it) sit on saved tickets forever and
+     rendered verbatim — the owner's Oct 16 ticket still printed
+     "Read: Job site ONBNERREEEEARAL HH HHE". A found entry is
+     dirty when any word in it (4+ letters) is gibberish by the
+     v108 gate; dirty entries never render — their field label
+     (recovered from the known prefixes) joins the missing list
+     instead, which is the honest state of that read. Clean
+     entries pass through untouched. */
+  function dspCleanDocRead(docRead) {
+    if (!docRead) return docRead;
+    var gate = (typeof window !== 'undefined' && window.TicketOCR && window.TicketOCR.looksGibberish) || null;
+    if (!gate) return docRead;
+    var LABELS = ['job site', 'scheduled', 'material', 'ticket #', 'notes',
+      'amount', 'pickup', 'delivery', 'truck', 'qty', 'weight', 'waiting', 'instructions'];
+    var MISS = { 'job site': 'job site', 'scheduled': 'scheduled time', 'material': 'material',
+      'ticket #': 'ticket #', 'notes': 'notes', 'amount': 'amount', 'pickup': 'pickup',
+      'delivery': 'delivery', 'truck': 'truck type', 'qty': 'qty/weight', 'weight': 'qty/weight',
+      'waiting': 'waiting time', 'instructions': 'instructions' };
+    var found = [], missing = (docRead.missing || []).slice();
+    (docRead.found || []).forEach(function (entry) {
+      var words = String(entry).split(/\s+/);
+      var dirty = words.some(function (w) {
+        var letters = w.replace(/[^A-Za-z]/g, '');
+        return letters.length >= 4 && gate(letters);
+      });
+      if (!dirty) { found.push(entry); return; }
+      var label = null;
+      LABELS.forEach(function (L) {
+        if (!label && String(entry).toLowerCase().indexOf(L) === 0) label = L;
+      });
+      var miss = label ? (MISS[label] || label) : null;
+      if (miss && missing.indexOf(miss) === -1) missing.push(miss);
+    });
+    return { found: found, missing: missing };
+  }
   function dspVerifyUpdated(updated, inList, isActive) {
     var want = JSON.stringify(updated);
     if (inList) {
@@ -954,17 +1027,24 @@
 
       /* ---- History ---- */
       var hist = list().slice().reverse();
+      /* v117 (owner, Oct 16 2026: "Why is it showing me on 2
+         cards?"): while a dispatch is being edited, its History
+         card is NOT rendered — the open edit form IS that record's
+         one presence on the page. The card returns on its own
+         when the edit closes (Save changes / Cancel edit clear
+         the edit and re-render). The v75 "you're editing this
+         one" marker card is superseded by this rule. */
+      var histShown = [];
+      hist.forEach(function (d, ri) {
+        if (editingId && d.id === editingId) return; // v117: the form is its one presence
+        histShown.push({ d: d, i: hist.length - 1 - ri });
+      });
       h += '<div class="card"><h3>📋 History</h3>' +
-        (hist.length ? hist.map(function (d, ri) {
-          var i = list().length - 1 - ri;
+        (histShown.length ? histShown.map(function (it) {
+          var d = it.d, i = it.i;
           var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
                    d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
-          /* v75: the item being edited says so, HERE, where he
-             tapped — orange frame + a plain line — so even before
-             the scroll lands, the tap visibly DID something. */
-          var isEditing = !!(editingId && d.id === editingId);
-          return '<div class="listitem"' + (isEditing ? ' style="border:2px solid var(--orange);border-radius:10px"' : '') + '><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
-            (isEditing ? '<div style="color:var(--orange);font-weight:700;margin-top:2px">✏️ You\'re editing this one — the form is at the top of this page ↑</div>' : '') +
+          return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
             '<div class="b">' + esc(d.date || '') +
             (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
             (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
@@ -986,9 +1066,9 @@
               '<button class="btn small ghost" data-delcancel="1" style="flex:1">Cancel</button></div></div>' :
               '<div class="row" style="margin-top:8px">' +
               (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
-              '<button class="btn small ghost" data-edit="' + i + '">' + (isEditing ? '✏️ Editing ↑' : '✏️ Edit') + '</button>' +
+              '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>' +
               '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
-        }).join('') : '<div class="empty">No dispatches yet. Create one above.</div>') + '</div>';
+        }).join('') : '<div class="empty">' + (hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : 'No dispatches yet. Create one above.') + '</div>') + '</div>';
 
       body.innerHTML = h;
 
@@ -1322,14 +1402,17 @@
           if (t.netWeight) detail += (detail ? ' · ' : '') + esc(t.netWeight) + 't';
           /* v35: no silent failure — the read report is always visible:
              every field the document reader filled, and every one it
-             couldn't find. */
+             couldn't find.
+             v117: the summary renders through dspCleanDocRead — a
+             stored pre-gate summary can never print gibberish here. */
           var readLines = '';
           if (t.docRead) {
-            if (t.docRead.found && t.docRead.found.length) {
-              readLines += '<div class="b">📄 Read: ' + esc(t.docRead.found.join(' · ')) + '</div>';
+            var cleanRead = dspCleanDocRead(t.docRead);
+            if (cleanRead.found && cleanRead.found.length) {
+              readLines += '<div class="b">📄 Read: ' + esc(cleanRead.found.join(' · ')) + '</div>';
             }
-            if (t.docRead.missing && t.docRead.missing.length) {
-              readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(t.docRead.missing.join(', ')) + '</div>';
+            if (cleanRead.missing && cleanRead.missing.length) {
+              readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(cleanRead.missing.join(', ')) + '</div>';
             }
           }
           h += '<div class="listitem" style="align-items:flex-start">' +
@@ -1729,19 +1812,13 @@
       }
       /* v56: enter edit mode for a record — the record is loaded into
          the form THROUGH the draft (editId carried), so a mid-edit
-         app close restores the edit itself, never a new dispatch. */
+         app close restores the edit itself, never a new dispatch.
+         v117: the pre-fill comes from dspEditFieldsFor — the record
+         AND its tickets — never the half-empty top-level-only read
+         that opened Material/Ticket # blank and Loads at default. */
       function startEdit(d) {
         if (!d) return;
-        var fields = {
-          jobSite: d.jobSite || '', scheduledAt: d.scheduledAt || '', equipment: d.equipment || '',
-          lat: (d.lat !== null && d.lat !== undefined) ? String(d.lat) : '',
-          lng: (d.lng !== null && d.lng !== undefined) ? String(d.lng) : '',
-          material: d.material || '', ticketNo: d.ticketNo || '',
-          amount: (d.amount !== null && d.amount !== undefined) ? String(d.amount) : '',
-          loads: (d.loads !== null && d.loads !== undefined) ? String(d.loads) : '1',
-          loadsSet: !!d.loadsSet,
-          notes: d.notes || '', driverId: d.driverId || ''
-        };
+        var fields = dspEditFieldsFor(d);
         var tk = (d.tickets || []).map(function (t) {
           var c = {};
           for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) c[k] = t[k]; }
@@ -1970,11 +2047,14 @@
         } else if (closeState.readFail) {
           readLines = '<div class="b" style="color:var(--orange)">⚠️ That photo couldn\'t be read — it is still attached below as the record. Type the hours from the card.</div>';
         } else if (t.docRead) {
-          if (t.docRead.found && t.docRead.found.length) {
-            readLines += '<div class="b">📄 Read: ' + esc(t.docRead.found.join(' · ')) + '</div>';
+          /* v117: cleaned at render like everywhere else — a
+             stored pre-gate summary never prints gibberish. */
+          var cleanRead2 = dspCleanDocRead(t.docRead);
+          if (cleanRead2.found && cleanRead2.found.length) {
+            readLines += '<div class="b">📄 Read: ' + esc(cleanRead2.found.join(' · ')) + '</div>';
           }
-          if (t.docRead.missing && t.docRead.missing.length) {
-            readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(t.docRead.missing.join(', ')) + '</div>';
+          if (cleanRead2.missing && cleanRead2.missing.length) {
+            readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(cleanRead2.missing.join(', ')) + '</div>';
           }
         }
         /* v86: the ticket number is an editable field on EVERY

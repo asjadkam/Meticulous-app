@@ -156,5 +156,31 @@ console.log('\n— (e) statics: fill gate gone, escalation wired, marker threade
     ocrSrc.indexOf('if (form.material && TicketOCR.looksGibberish(form.material)) delete form.material;') >= 0);
 }
 
+console.log('\n— (k) v117: the gibberish gate covers the READ SUMMARY, composed and stored —');
+{
+  /* composed today: a salad job site must not become a "found" */
+  const dr = T.describeRead({ _type: 'dispatch' },
+    { jobSite: 'ONBNERREEEEARAL HH HHE', scheduledAt: '', material: '', ticketNo: '', notes: '' });
+  ok('describeRead: the salad site is NOT a find', !dr.found.some(function (x) { return x.indexOf('ONBNER') >= 0; }), JSON.stringify(dr));
+  ok('describeRead: the site honestly reports as missing', dr.missing.indexOf('job site') >= 0);
+  const dr2 = T.describeRead({ _type: 'dispatch' },
+    { jobSite: 'Aecon — A2-L20', scheduledAt: '2026-10-16T08:00', material: 'Clay', ticketNo: '22729', notes: '' });
+  ok('describeRead: a clean read still reports its finds',
+    dr2.found.some(function (x) { return x.indexOf('Aecon') >= 0; }) && dr2.found.some(function (x) { return x.indexOf('22729') >= 0; }));
+
+  /* stored yesterday: the render-time cleaner scrubs it */
+  vm.runInContext(extractFn(dspSrc, 'dspCleanDocRead') + '\n__cleanRead = dspCleanDocRead;', sb);
+  const stored = { found: ['job site ONBNERREEEEARAL HH HHE', 'ticket #22729'], missing: ['scheduled time', 'material', 'notes'] };
+  const cleaned = sb.__cleanRead(stored);
+  eq('stored summary: the gibberish entry is dropped', JSON.stringify(cleaned.found), JSON.stringify(['ticket #22729']));
+  ok('stored summary: job site joins the missing list', cleaned.missing.indexOf('job site') >= 0);
+  ok('stored summary: the stored object is not mutated', stored.found.length === 2 && stored.missing.length === 3);
+  const cleanIn = { found: ['job site Aecon — A2-L20', 'material Clay'], missing: ['notes'] };
+  eq('stored summary: a clean report passes through untouched',
+    JSON.stringify(sb.__cleanRead(cleanIn)), JSON.stringify(cleanIn));
+  ok('both render sites clean the summary (form list + close confirm)',
+    (dspSrc.match(/dspCleanDocRead\(t\.docRead\)/g) || []).length === 2);
+}
+
 console.log('\ndispatch-intake: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

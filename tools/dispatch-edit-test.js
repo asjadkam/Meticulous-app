@@ -278,5 +278,60 @@ function eq(name, got, want) {
   ok('i: v103: the in-app delete confirm ships (arm + confirm + cancel)', dspSrc.includes('data-delconfirm') && dspSrc.includes('data-delcancel') && dspSrc.includes('pendingDelId'));
 })();
 
+/* (j) v117 — the edit form opens FULL, and the record has ONE
+ * presence on the page (owner, Oct 16 2026, over the Oct 16 Aecon
+ * edit: Material/Ticket # empty, Loads reset to 1, and the same
+ * dispatch rendered again as a History card under the form). */
+(function () {
+  const b = freshBacking();
+  const w = makeWorld(b);
+  /* the owner's Oct 16 shape: facts live on the ticket; the
+     top-level fields were never promoted */
+  const rec = baseRec({
+    id: 'd-oct16', date: '2026-10-16', scheduledAt: '2026-10-16T08:00',
+    material: '', ticketNo: '', amount: '', loads: '1', loadsSet: false,
+    notes: 'Go Empty To A2-L20', status: 'completed',
+    tickets: [{ id: 't-1', ocrType: 'haul_card', cardNumber: '22729', foremanHours: '10', loads: '6' }]
+  });
+  const f = w.dspEditFieldsFor(rec);
+  eq('j: ticket # promoted from the haul card', f.ticketNo, '22729');
+  eq('j: loads promoted from the ticket sum — never the bare default', f.loads, '6');
+  eq('j: ticket-promoted loads count as recorded (loadsSet)', f.loadsSet, true);
+  eq('j: a zero/unset amount opens blank, not a fake 0.00', f.amount, '');
+  eq('j: material stays blank when it exists nowhere (honest)', f.material, '');
+  eq('j: job site + notes ride from the record', f.jobSite + '|' + f.notes, 'Aecon Infrastructure|Go Empty To A2-L20');
+
+  /* a ticket that carries material promotes it */
+  const rec2 = baseRec({ material: '', ticketNo: '', tickets: [{ id: 't-2', ocrType: 'scale_ticket', ticketNo: '991', material: 'Gravel', loads: '2' }] });
+  const f2 = w.dspEditFieldsFor(rec2);
+  eq('j: material promoted from the ticket', f2.material, 'Gravel');
+  eq('j: ticket # promoted from a scale ticket', f2.ticketNo, '991');
+
+  /* a set top-level field always wins over the tickets */
+  const f3 = w.dspEditFieldsFor(baseRec({}));
+  eq('j: top-level material wins', f3.material, 'Gravel');
+  eq('j: top-level ticket # wins', f3.ticketNo, '48213');
+  eq('j: recorded loads (loadsSet) win over everything', w.dspEditFieldsFor(baseRec({ loads: '9', loadsSet: true, tickets: [{ id: 't-3', loads: '4' }] })).loads, '9');
+  eq('j: nothing recorded anywhere → the form default 1', w.dspEditFieldsFor(baseRec({ loads: '', loadsSet: false, tickets: [] })).loads, '1');
+
+  /* ROUND-TRIP: edit → Save changes → reopen ⇒ the values are there */
+  w.App._store.set('dsp_list', [rec]);
+  const fields = w.dspEditFieldsFor(rec);
+  fields.material = 'Gravel';            // the owner fills what the read missed
+  const updated = w.dspApplyEdit(rec, fields, rec.tickets, null);
+  eq('j: the edit save verifies', w.dspUpdateRecord(updated, rec).ok, true);
+  const saved = w.dspFindRecord('d-oct16');
+  const reopened = w.dspEditFieldsFor(saved);
+  eq('j: reopened edit shows the saved material', reopened.material, 'Gravel');
+  eq('j: reopened edit shows the ticket #', reopened.ticketNo, '22729');
+  eq('j: reopened edit shows the recorded loads', reopened.loads, '6');
+  eq('j: the saved record itself carries them', saved.material + '|' + saved.ticketNo + '|' + saved.loads, 'Gravel|22729|6');
+
+  /* ONE presence: while editing, the History card is not rendered */
+  ok('j: history skips the record being edited', dspSrc.includes('histShown') && dspSrc.includes('the form is its one presence'));
+  ok('j: the v75 second-presence marker card is gone', !dspSrc.includes("You're editing this one"));
+  ok('j: startEdit pre-fills through dspEditFieldsFor', dspSrc.includes('var fields = dspEditFieldsFor(d);'));
+})();
+
 console.log('\ndispatch-edit test: ' + pass + '/' + (pass + fail) + ' passed');
 process.exit(fail ? 1 : 0);

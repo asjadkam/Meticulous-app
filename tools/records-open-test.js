@@ -386,10 +386,14 @@ console.log('D. dispatch edit scroll');
   ok('d: startEdit scrolls via dspScrollToForm', se.includes('dspScrollToForm(body)'));
   ok('d: the old one-shot scroll is gone from startEdit', !se.includes('siteEl.scrollIntoView'));
   ok('d: the form card carries the scroll target id', dspSrc.includes('<div class="card" id="dp_form_card">'));
-  ok('d: the History item being edited is marked at the tap point',
-    dspSrc.includes('editing this one — the form is at the top of this page') &&
-    dspSrc.includes('✏️ Editing ↑'));
-  ok('d: marker keys off the render editingId', dspSrc.includes('var isEditing = !!(editingId && d.id === editingId)'));
+  /* v117 supersedes the v75 tap-point marker (owner, Oct 16
+     2026: "Why is it showing me on 2 cards?"): while a dispatch
+     is being edited, its History card is NOT rendered at all —
+     the open form is the record's one presence. */
+  ok('d: v117: while editing, the History card is not rendered (one presence)',
+    dspSrc.includes('histShown') && !dspSrc.includes('editing this one — the form is at the top of this page'));
+  ok('d: v117: the history skip keys off the render editingId',
+    dspSrc.includes('if (editingId && d.id === editingId) return;'));
 }
 
 console.log('');
