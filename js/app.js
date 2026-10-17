@@ -215,6 +215,7 @@
     buildSidebar();
     buildDashboard();
     try { if (window.CloudSync) CloudSync.onAuth(user); } catch (e) {} // v27: cloud sync
+    try { if (window.ConnectLive) ConnectLive.onAuth(user); } catch (e) {} // v131: live Connect (directory self-heal + connection reconcile)
   };
 
   /* ---------------- trial & tiers ---------------- */
@@ -2843,6 +2844,10 @@
 
   function finishOnboarding() {
     collectOnbInputs();
+    /* v131: the company step may have just given this account its
+       findable name — publish the Connect directory record now,
+       not at the next app start. */
+    try { if (window.ConnectLive) ConnectLive.publishMine(); } catch (e) {}
     var o = App.onb || {};
     /* v76 (F1): finishing is impossible with the role question
        unanswered — hold AT the question instead of stamping a

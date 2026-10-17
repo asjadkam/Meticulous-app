@@ -199,15 +199,17 @@
   var PAY_LABEL = { hourly: 'Hourly', permile: 'Per mile', perload: 'Per load', salary: 'Salary' };
   /* v120: the Add-driver doors (this session only, never
      persisted) + the Connect invite's ONE honest status line.
-     Connect today is Phase-1/local (modules/connect.js's own
-     header: shares package into a local outbox; delivery is not
-     enabled) — so a "Connect a driver" invite SAVES the driver +
-     a Connect connection on this device and says exactly that.
-     It must never claim an invite was delivered or a link is
-     live. When Connect delivery lands, this is the sentence
-     that changes. */
-  var pnlConnectOpen = false, pnlManualOpen = false;
-  var PNL_INVITE_NOTE = 'Invites go live with Connect — this driver is saved and will link when they join.';
+     v131 SUPERSEDES the v120 honesty gate: finding and connecting
+     people in Connect is LIVE (directory search + requests +
+     accept, js/connectlive.js). The P&L door no longer collects an
+     email/phone "invite" that went nowhere — the button routes to
+     the Connect screen's live search. Drivers saved under v120
+     keep their pending line below; its wording now points at the
+     live Connect screen instead of a future update. Pay setup
+     stays here and stays private: what YOU pay a driver is set in
+     P&L and never crosses the connection. */
+  var pnlManualOpen = false;
+  var PNL_INVITE_NOTE = 'Connections are live now — find them in Connect, tap Connect, and when they accept you are connected.';
   function pnlInviteLine(d) {
     if (!d || !d.viaConnect || d.inviteStatus !== 'pending') return '';
     return '<div class="b" style="color:var(--navy);font-weight:600">🤝 Invite saved — waiting for them to accept. ' + PNL_INVITE_NOTE + '</div>';
@@ -583,33 +585,19 @@
 
       /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
          drivers should have an option of connecting via
-         'connect'."): TWO doors. PRIMARY: Connect a driver — a
-         real Meticulous user, invited by email or phone; the
-         driver appears in these wages immediately as a pending
-         entry, and when Connect delivery is live their own
-         completed dispatches post here automatically (one
-         record, two books — the owner sets only what HE pays).
-         SECONDARY (quiet): the manual form, unchanged, for
-         drivers not on the app. HONESTY GATE: Connect delivery
-         is Phase-1/local today, so the pending state says so in
-         plain words (PNL_INVITE_NOTE) — never a fake "sent" or
-         "connected". What the invite DOES do today: saves the
-         pending driver here + a connection in the Connect
-         module (con_list, its own store and record shape). */
+         'connect'."), v131: TWO doors. PRIMARY: Connect a driver —
+         routes to the Connect screen's LIVE people search (find
+         them by name, tap Connect, they accept). SECONDARY
+         (quiet): the manual form, unchanged — for drivers not on
+         the app, and for setting what YOU pay a connected driver
+         (pay terms are set here, privately, and never cross the
+         connection). The v120 email/phone invite form is GONE: it
+         saved a pending driver + a local-only connection and
+         delivered nothing. v120 pending entries still render their
+         status line (PNL_INVITE_NOTE, reworded for the live era). */
       h += '<div class="card"><h3>＋ Add driver</h3>' +
         '<button class="btn primary big" id="pnl_connect_open" style="width:100%">🤝 Connect a driver</button>' +
-        '<p class="note">For a driver who uses Meticulous — invite them by email or phone and they appear below right away. When they join, their identity comes from their own account, not from typing.</p>' +
-        '<div id="pnl_connect_wrap" style="display:' + (pnlConnectOpen ? 'block' : 'none') + ';margin-top:8px">' +
-        '<label class="f">Driver\u2019s email or phone</label><input id="pnl_ccontact" placeholder="e.g. driver@example.com or 403-555-0100">' +
-        '<div class="row"><div><label class="f">Pay type (what YOU pay)</label><select id="pnl_ctype">' +
-        PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
-        '</select></div>' +
-        '<div><label class="f">Rate $</label><input id="pnl_crate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
-        '<div class="row"><div><label class="f">Start month</label><input id="pnl_cstart" type="month" value="' + esc(m) + '"></div>' +
-        '<div><label class="f">Travel time (hours/day)</label><input id="pnl_ctravel" type="number" inputmode="decimal" min="0" step="0.25" placeholder="0"></div></div>' +
-        '<button class="btn primary" id="pnl_csend">Save driver &amp; invite</button>' +
-        '<p class="note" style="margin-top:6px">🤝 ' + esc(PNL_INVITE_NOTE) + '</p>' +
-        '</div>' +
+        '<p class="note">For a driver who uses Meticulous — Connect finds them by name, and their identity comes from their own account, not from typing. When they accept, you are connected; what you pay them is set below and never crosses to their side.</p>' +
         '<button class="btn ghost" id="pnl_manual_open" style="margin-top:10px">Add manually instead</button>' +
         '<div id="pnl_manual_wrap" style="display:' + (pnlManualOpen ? 'block' : 'none') + ';margin-top:8px">' +
         '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1"></div>' +
@@ -800,44 +788,19 @@
         };
       });
 
-      /* Driver wages: add driver — v120: the two doors */
+      /* Driver wages: add driver — v120: the two doors.
+         v131: the Connect door ROUTES to the Connect screen's live
+         people search (the flag lands the user on its search box);
+         it no longer opens a form. The v120 email/phone invite
+         handler is removed with its form — it saved a local-only
+         pending driver + connection and delivered nothing. */
       var cOpen = body.querySelector('#pnl_connect_open');
-      if (cOpen) cOpen.onclick = function () { pnlConnectOpen = true; pnlManualOpen = false; api.render(body); };
-      var mOpen = body.querySelector('#pnl_manual_open');
-      if (mOpen) mOpen.onclick = function () { pnlManualOpen = true; pnlConnectOpen = false; api.render(body); };
-      var cSend = body.querySelector('#pnl_csend');
-      if (cSend) cSend.onclick = function () {
-        var contact = body.querySelector('#pnl_ccontact').value.trim();
-        if (!contact) { alert('Enter the driver\u2019s email or phone number.'); return; }
-        var rec = {
-          id: 'd' + Date.now(),
-          name: contact, // until they join: the invite label; their account supplies the real name on link
-          contact: contact,
-          viaConnect: true,
-          inviteStatus: 'pending',
-          payType: body.querySelector('#pnl_ctype').value,
-          rate: parseFloat(body.querySelector('#pnl_crate').value) || 0,
-          travelHours: parseFloat(body.querySelector('#pnl_ctravel').value) || 0,
-          start: body.querySelector('#pnl_cstart').value || App._today().slice(0, 7)
-        };
-        var l = drivers(); l.push(rec); W('drivers', l);
-        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
-        /* The Connect side of the invite, as far as the existing
-           pipe genuinely goes (Phase 1, local): a connection in
-           the Connect module's own store + record shape, so the
-           driver exists there for shares today — delivery/linking
-           itself is Phase 2 and the UI says so (PNL_INVITE_NOTE). */
-        try {
-          var cl = App._store.get('con_list', []) || [];
-          var already = cl.some(function (c) { return c && String(c.contact || '').trim().toLowerCase() === contact.toLowerCase(); });
-          if (!already) {
-            cl.push({ id: 'c' + Date.now(), name: contact, role: 'Driver', contact: contact });
-            App._store.set('con_list', cl);
-          }
-        } catch (e) {}
-        pnlConnectOpen = false;
-        api.render(body);
+      if (cOpen) cOpen.onclick = function () {
+        try { window.__mtConnectSearch = true; } catch (e) {}
+        if (window.App && App.openModule) App.openModule('connect');
       };
+      var mOpen = body.querySelector('#pnl_manual_open');
+      if (mOpen) mOpen.onclick = function () { pnlManualOpen = true; api.render(body); };
       /* Driver wages: add driver (manual door — unchanged) */
       var dadd = body.querySelector('#pnl_dadd');
       if (dadd) dadd.onclick = function () {

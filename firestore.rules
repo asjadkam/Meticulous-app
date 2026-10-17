@@ -10,6 +10,51 @@ service cloud.firestore {
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+
+    // Connect directory (v131): a small PUBLIC record per account so
+    // users can find each other by name. Identity ONLY — display
+    // name, business name, role (+ lowercase/token search indexes
+    // derived from those same strings). No email, no rates, no
+    // personal data. Readable by any signed-in user (search needs
+    // it); writable only by the account it describes.
+    match /directory/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId
+        && request.resource.data.name is string
+        && request.resource.data.business is string
+        && request.resource.data.role is string;
+    }
+
+    // Connect requests (v131): one doc per ordered pair,
+    // id = "{fromUid}_{toUid}", fields {from, to, fromName,
+    // fromBusiness, fromRole, toName, toBusiness, toRole, status,
+    // createdAt, updatedAt} — the name/business/role fields are the
+    // same identity-only values the directory publishes.
+    // Readable by the two parties only. Created by the sender, and
+    // only as 'pending'. The recipient answers (pending ->
+    // accepted/declined); the sender may re-open a declined request
+    // (-> pending). Neither side can rewrite the pair (from/to are
+    // immutable after create). Nobody else can touch a request.
+    match /requests/{requestId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.from || request.auth.uid == resource.data.to);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.from
+        && request.resource.data.status == 'pending';
+      allow update: if request.auth != null
+        && request.resource.data.from == resource.data.from
+        && request.resource.data.to == resource.data.to
+        && (
+          (request.auth.uid == resource.data.to
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['accepted', 'declined'])
+          || (request.auth.uid == resource.data.from
+            && resource.data.status == 'declined'
+            && request.resource.data.status == 'pending')
+        );
+      allow delete: if false;
+    }
+
     // No other paths are used by the app; everything else stays denied.
   }
 }

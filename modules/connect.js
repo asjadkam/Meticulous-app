@@ -1,20 +1,27 @@
-/* Connect module — Phase 1 (Meticulous.modules convention)
-   Connections (name / role / phone-email), per-connection share
-   pickers, and a local outbox. Phase 1 is UI + local packaging only —
-   real-time delivery arrives with Connect Phase 2.
+/* Connect module — Phase 2 slice 1 (v131): finding and connecting
+   people is LIVE (js/connectlive.js + the directory/requests
+   collections). The screen: Find people (directory search by name
+   or business -> tap Connect), Requests (incoming Accept/Decline,
+   outgoing states), Current connections (manual entries + linked
+   accounts from their own cloud data), History (prepared shares).
 
    v76 (owner directive Oct 14 19:15 + boss QA F7): TWO cards only —
    (1) Current connections (the list + Add; sharing lives ON the
    connection, via its own picker), (2) History (the outbox, rendered
-   as history; queued items are pending). The "Phase 1 — local only"
-   banner card and the standalone "Share something" card are gone —
-   the local-only honesty is ONE quiet line inside the module. The
-   per-connection Send buttons now package the ACTUAL content (a
-   dispatch share carries the dispatch's fields, and the picker names
-   dispatches by jobSite) instead of content-free stubs. No native
-   alert()/confirm() — errors and the remove confirm are in-page,
-   like the newer modules. Store keys unchanged (con_list/con_outbox);
-   old outbox stubs still render in History. */
+   as history; queued items are pending). The per-connection Send
+   buttons package the ACTUAL content (a dispatch share carries the
+   dispatch's fields, and the picker names dispatches by jobSite)
+   instead of content-free stubs. No native alert()/confirm() —
+   errors and the remove confirm are in-page, like the newer
+   modules. Store keys unchanged (con_list/con_outbox); old outbox
+   stubs still render in History.
+
+   v131: dispatch/document SHARING across a connection is not live
+   yet — the copy says "comes next" wherever that space shows, and
+   shares still package locally into History as preparation. What
+   IS live: search, requests, accept/decline, and the connection
+   itself (con_list entries extended with {uid, status,
+   viaConnect} by ConnectLive; manual entries untouched). */
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('con_' + k, d); };
@@ -35,6 +42,14 @@
   var uiPicker = null;      // {conn: index, type: 'dispatch'|DOC_TYPES…}
   var uiConfirmDel = -1;    // connection index awaiting its inline confirm
   var uiFlash = '';         // one-shot note at the top of the connections card
+  var uiResults = null;     // last directory search results (v131)
+  var uiSearchMsg = '';     // line under the search box (v131)
+  var uiReqs = null;        // last requests load {incoming, outgoing} (v131)
+
+  function live() {
+    try { return (window.ConnectLive && window.FB && FB.ready && FB.user) ? window.ConnectLive : null; }
+    catch (e) { return null; }
+  }
 
   function dispatchName(d) {
     /* v76 (F7): dispatch records carry jobSite — the old picker read
@@ -44,8 +59,9 @@
   }
 
   /* shareable content pulled from other modules; each item carries
-     the CONTENT a share packages (Phase 1: packaged locally into the
-     outbox item — the same payload Phase 2 delivery will send). */
+     the CONTENT a share packages (packaged locally into the outbox
+     item — the same payload cross-account delivery will send when
+     sharing ships). */
   function contentItems(type) {
     var out = [];
     if (type === 'dispatch') {
@@ -118,32 +134,124 @@
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
+  /* ---- v131: live handshake rendering helpers ---- */
+
+  /* the action state for one directory result, from my con_list and
+     my requests: connected / sent (outgoing pending) / incoming
+     (they already asked me) / declined / none */
+  function peerState(uid) {
+    var st = 'none';
+    conns().forEach(function (c) { if (c && c.uid === uid && c.status === 'connected') st = 'connected'; });
+    if (st === 'connected' || !uiReqs) return st;
+    uiReqs.outgoing.forEach(function (q) {
+      if (q.to === uid) { if (q.status === 'pending') st = 'sent'; else if (q.status === 'declined' && st === 'none') st = 'declined'; }
+    });
+    uiReqs.incoming.forEach(function (q) {
+      if (q.from === uid && q.status === 'pending') st = 'incoming';
+    });
+    return st;
+  }
+
+  function resultsHtml() {
+    if (uiResults === null) return uiSearchMsg ? '<p class="note" style="margin-top:8px">' + esc(uiSearchMsg) + '</p>' : '';
+    if (!uiResults.length) return '<p class="note" style="margin-top:8px">Nobody found by that name yet. Check the spelling — or they may not be on Meticulous yet.</p>';
+    return uiResults.map(function (p, i) {
+      var st = peerState(p.uid);
+      var btn = st === 'connected' ? '<button class="btn small ghost" disabled>✓ Connected</button>'
+        : st === 'sent' ? '<button class="btn small ghost" disabled>Request sent ✓</button>'
+        : st === 'incoming' ? '<button class="btn small ghost" disabled>Asked you — answer below ↓</button>'
+        : '<button class="btn small primary" data-cn-connect="' + i + '">🤝 Connect</button>';
+      return '<div class="listitem"><div class="a">' + esc(p.name) + '</div>' +
+        '<div class="b">' + esc(p.role || '') + (p.business && p.business !== p.name ? ' · ' + esc(p.business) : '') + '</div>' +
+        '<div class="row" style="margin-top:8px">' + btn + '</div></div>';
+    }).join('') + (uiSearchMsg ? '<p class="note" style="margin-top:6px">' + esc(uiSearchMsg) + '</p>' : '');
+  }
+
+  function requestsHtml() {
+    if (!live()) return '<p class="note">Sign in to see your requests.</p>';
+    if (!uiReqs) return '<p class="note">Loading…</p>';
+    var inc = uiReqs.incoming.filter(function (q) { return q.status === 'pending'; });
+    var out = uiReqs.outgoing;
+    if (!inc.length && !out.length) return '<div class="empty">No requests right now. Find your people above and tap Connect.</div>';
+    var h = '';
+    inc.forEach(function (q) {
+      h += '<div class="listitem"><div class="a">' + esc(q.fromName || 'Meticulous user') + '</div>' +
+        '<div class="b">' + esc(q.fromRole || '') + (q.fromBusiness && q.fromBusiness !== q.fromName ? ' · ' + esc(q.fromBusiness) : '') +
+        ' · wants to connect</div>' +
+        '<div class="row" style="margin-top:8px">' +
+        '<button class="btn small primary" data-cn-accept="' + esc(q.id) + '">✓ Accept</button>' +
+        '<button class="btn small ghost" data-cn-decline="' + esc(q.id) + '">Decline</button></div></div>';
+    });
+    out.forEach(function (q) {
+      if (q.status === 'accepted') return; // lives in Current connections now
+      var line = q.status === 'pending'
+        ? '⏳ Waiting for them to accept'
+        : 'They declined — you can send the request again any time.';
+      h += '<div class="listitem"><div class="a">' + esc(q.toName || 'Meticulous user') + '</div>' +
+        '<div class="b">' + esc(line) + '</div>' +
+        (q.status === 'declined'
+          ? '<div class="row" style="margin-top:8px"><button class="btn small navy" data-cn-resend="' + esc(q.id) + '">Send again</button></div>'
+          : '') + '</div>';
+    });
+    return h || '<div class="empty">No requests right now. Find your people above and tap Connect.</div>';
+  }
+
   Meticulous.modules.connect = {
     /* v78: the card preview — shares WAITING lead (the fact that
-       needs the user); the connection count is the quiet fallback. */
+       needs the user); the connection count is the quiet fallback.
+       v131: an incoming connection request outranks both — it is
+       the one thing on this screen that needs the user's tap. */
     status: function () {
+      var pin = 0;
+      try { pin = (window.ConnectLive && window.ConnectLive.pendingIn) || 0; } catch (e) {}
       var q = outbox().length, n = conns().length;
       var cs = n + ' connection' + (n === 1 ? '' : 's');
+      if (pin) return pin + ' request' + (pin === 1 ? '' : 's') + ' waiting' + (n ? ' · ' + cs : '');
       if (q) return q + ' waiting to send' + (n ? ' · ' + cs : '');
       return n ? cs : 'No connections yet';
     },
     render: function (body) {
       var list = conns(), ob = outbox();
+      var CL = live();
+
+      /* ============ CARD 0: Find people (v131, LIVE) ============ */
+      var h = '<div class="card"><h3>🔎 Find people</h3>';
+      if (CL) {
+        h += '<div class="row"><div style="flex:1"><label class="f">Name or business</label>' +
+          '<input id="cn_q" placeholder="e.g. Asjad Kamal"></div>' +
+          '<button class="btn primary" id="cn_search" style="align-self:flex-end">Search</button></div>' +
+          '<div id="cn_results">' + resultsHtml() + '</div>';
+      } else {
+        h += '<p class="note" style="margin-top:0">Sign in to find people and connect — search runs on your account, not on this device alone.</p>';
+      }
+      h += '</div>';
+
+      /* ============ CARD: Requests (v131, LIVE) ============ */
+      h += '<div class="card"><h3>🤝 Requests</h3><div id="cn_req_wrap">' + requestsHtml() + '</div></div>';
 
       /* ============ CARD 1: Current connections ============ */
-      var h = '<div class="card"><h3>👥 Current connections (' + list.length + ')</h3>' +
-        /* the local-only honesty: ONE quiet line, not a banner card */
-        '<p class="note" style="margin-top:0">Shares are packaged on this device and wait in History below — delivery to your connections arrives in a later update.</p>';
+      h += '<div class="card"><h3>👥 Current connections (' + list.length + ')</h3>' +
+        /* the sharing honesty: ONE quiet line, not a banner card.
+           v131: finding/connecting people is live; only dispatch &
+           document sharing is still to come, and it says so. */
+        '<p class="note" style="margin-top:0">Dispatch &amp; document sharing arrives next — shares you prepare wait in History below.</p>';
       if (uiFlash) h += '<p class="note" style="color:#2e7d32;font-weight:600">' + esc(uiFlash) + '</p>';
       if (!list.length) {
         h += '<div class="empty">No connections yet.<br>Add your dispatcher, manager, or family below.</div>';
       } else {
         list.forEach(function (c, i) {
+          var linked = !!c.uid;
+          var shareable = !linked || c.status === 'connected';
           h += '<div class="listitem"><div class="a">' + esc(c.name) + '</div>' +
             '<div class="b">' + esc(c.role || '') + (c.contact ? ' · ' + esc(c.contact) : '') + '</div>' +
-            '<div class="row" style="margin-top:8px">' +
-            '<button class="btn small navy" data-quick="dispatch" data-i="' + i + '">📋 Send dispatch</button>' +
-            '<button class="btn small navy" data-quick="doc" data-i="' + i + '">📎 Send doc</button></div>';
+            (linked && c.status === 'connected' ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected</div>' : '') +
+            (linked && c.status === 'pending' ? '<div class="b">⏳ Request sent — waiting for them to accept</div>' : '') +
+            (linked && c.status === 'declined' ? '<div class="b">Request declined</div>' : '') +
+            (shareable
+              ? '<div class="row" style="margin-top:8px">' +
+                '<button class="btn small navy" data-quick="dispatch" data-i="' + i + '">📋 Send dispatch</button>' +
+                '<button class="btn small navy" data-quick="doc" data-i="' + i + '">📎 Send doc</button></div>'
+              : '');
           /* the share picker lives ON the connection (v76) */
           if (uiPicker && uiPicker.conn === i) {
             var isDsp = uiPicker.type === 'dispatch';
@@ -197,7 +305,7 @@
       /* ============ CARD 2: History ============ */
       h += '<div class="card"><h3>🕘 History (' + ob.length + ')</h3>';
       if (!ob.length) {
-        h += '<div class="empty">Nothing shared yet. Shares you queue wait here until delivery is enabled.</div>';
+        h += '<div class="empty">Nothing shared yet. Dispatch &amp; document sharing comes next — what you prepare waits here.</div>';
       } else {
         ob.slice().reverse().forEach(function (o, ri) {
           var i = ob.length - 1 - ri;
@@ -244,7 +352,16 @@
       });
       body.querySelectorAll('[data-condel-yes]').forEach(function (a) {
         a.onclick = function () {
-          var l = conns(); l.splice(+a.getAttribute('data-condel-yes'), 1); W('list', l);
+          var l = conns();
+          var gone = l.splice(+a.getAttribute('data-condel-yes'), 1)[0];
+          W('list', l);
+          /* v131: a removed LINKED connection stays removed — the
+             uid is remembered locally (con_hidden) so reconcile
+             never resurrects it from the accepted request. */
+          if (gone && gone.uid) {
+            var hid = App._store.get('con_hidden', []) || [];
+            if (hid.indexOf(gone.uid) === -1) { hid.push(gone.uid); App._store.set('con_hidden', hid); }
+          }
           uiConfirmDel = -1;
           rerender();
         };
@@ -292,6 +409,114 @@
           rerender();
         };
       });
+
+      /* ---- v131: live handshake wiring ---- */
+      var paintResults = function () {
+        var w = body.querySelector('#cn_results');
+        if (w) w.innerHTML = resultsHtml();
+        wireResults();
+      };
+      var paintRequests = function () {
+        var w = body.querySelector('#cn_req_wrap');
+        if (w) w.innerHTML = requestsHtml();
+        wireRequests();
+      };
+      function wireResults() {
+        body.querySelectorAll('[data-cn-connect]').forEach(function (b) {
+          b.onclick = function () {
+            if (!CL || !uiResults) return;
+            var p = uiResults[+b.getAttribute('data-cn-connect')];
+            if (!p) return;
+            b.disabled = true; b.textContent = 'Sending…';
+            CL.sendRequest(p).then(function (r) {
+              uiSearchMsg = r === 'sent' ? 'Request sent to ' + p.name + ' — they accept it in their Connect screen.'
+                : r === 'connected' ? 'You are already connected to ' + p.name + '.'
+                : 'Could not send the request — check your connection and try again.';
+              CL.listMine().then(function (res) { uiReqs = res; paintResults(); paintRequests(); CL.reconcile(); });
+            });
+          };
+        });
+      }
+      function wireRequests() {
+        body.querySelectorAll('[data-cn-accept]').forEach(function (b) {
+          b.onclick = function () {
+            if (!CL || !uiReqs) return;
+            var q = null;
+            uiReqs.incoming.forEach(function (x) { if (x.id === b.getAttribute('data-cn-accept')) q = x; });
+            if (!q) return;
+            b.disabled = true;
+            CL.respond(q, true).then(function () {
+              uiFlash = 'Connected to ' + (q.fromName || 'them') + '.';
+              refreshLive(true);
+            });
+          };
+        });
+        body.querySelectorAll('[data-cn-decline]').forEach(function (b) {
+          b.onclick = function () {
+            if (!CL || !uiReqs) return;
+            var q = null;
+            uiReqs.incoming.forEach(function (x) { if (x.id === b.getAttribute('data-cn-decline')) q = x; });
+            if (!q) return;
+            b.disabled = true;
+            CL.respond(q, false).then(function () { refreshLive(true); });
+          };
+        });
+        body.querySelectorAll('[data-cn-resend]').forEach(function (b) {
+          b.onclick = function () {
+            if (!CL || !uiReqs) return;
+            var q = null;
+            uiReqs.outgoing.forEach(function (x) { if (x.id === b.getAttribute('data-cn-resend')) q = x; });
+            if (!q) return;
+            b.disabled = true;
+            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole }).then(function () { refreshLive(true); });
+          };
+        });
+      }
+      /* Reloads requests from the cloud, paints them, then lets
+         reconcile land any newly-accepted pairs in con_list (one
+         re-render if it changed anything). */
+      function refreshLive(rerenderAfter) {
+        if (!CL) return;
+        CL.listMine().then(function (res) {
+          uiReqs = res;
+          paintRequests();
+          if (uiResults !== null) paintResults();
+          return CL.reconcile();
+        }).then(function (changed) {
+          if (changed && rerenderAfter) rerender();
+        }).catch(function () {});
+      }
+      var searchBtn = body.querySelector('#cn_search');
+      var runSearch = function () {
+        if (!CL) return;
+        var qEl = body.querySelector('#cn_q');
+        var q = qEl ? qEl.value.trim() : '';
+        if (!q) { uiResults = null; uiSearchMsg = 'Type a name or business first.'; paintResults(); return; }
+        uiSearchMsg = 'Searching…'; paintResults();
+        CL.search(q).then(function (res) {
+          uiResults = res; uiSearchMsg = '';
+          paintResults();
+        });
+      };
+      if (searchBtn) searchBtn.onclick = runSearch;
+      var qInput = body.querySelector('#cn_q');
+      if (qInput) qInput.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } };
+      wireResults();
+      wireRequests();
+      if (CL) {
+        /* self-heal on every visit: my directory record is current
+           (so I stay findable) and my connections reflect reality. */
+        try { CL.publishMine(); } catch (e) {}
+        refreshLive(true);
+        /* arrived via P&L's "Connect a driver" door: land on the
+           search box, ready to type. */
+        try {
+          if (window.__mtConnectSearch) {
+            window.__mtConnectSearch = false;
+            if (qInput) { qInput.focus(); try { qInput.scrollIntoView(); } catch (e2) {} }
+          }
+        } catch (e) {}
+      }
     }
   };
 })();

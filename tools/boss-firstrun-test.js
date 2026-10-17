@@ -492,7 +492,10 @@ console.log('(e) Connect — two cards, content-carrying shares (F7 + owner dire
   const stripped = conSrc.replace(/\/\*[\s\S]*?\*\//g, '');
   lacks('connect code: no native alert()', stripped, 'alert(');
   lacks('connect code: no native confirm()', stripped, 'confirm(');
-  eq('connect renders exactly TWO cards', (conSrc.match(/'<div class="card">/g) || []).length, 2);
+  /* v131 deliberate pin move: the v76 TWO-card law governed the Phase-1
+     module. The live handshake adds Find people + Requests cards by design
+     (owner order Oct 17) — Current connections + History keep their shape. */
+  eq('connect renders its FOUR cards (v131: Find people, Requests, connections, History)', (conSrc.match(/'<div class="card">/g) || []).length, 4);
   lacks('no "Phase 1 — local only" banner card (code, comments stripped)', stripped, 'Phase 1 — local only');
   lacks('no standalone "Share something" card (code, comments stripped)', stripped, 'Share something');
   lacks('old persisted showAdd key gone', conSrc, 'showAdd');
@@ -529,7 +532,10 @@ console.log('(e) Connect — two cards, content-carrying shares (F7 + owner dire
   has('card 2: History', body.innerHTML, 'History');
   lacks('rendered: no Phase-1 banner', body.innerHTML, 'Phase 1 — local only');
   lacks('rendered: no Share-something card', body.innerHTML, 'Share something');
-  has('the honest line is ONE quiet line in the module', body.innerHTML, 'Shares are packaged on this device');
+  /* v131 deliberate pin move: the v76 line ('Shares are packaged on this device…')
+     was the Phase-1 disclaimer; finding/connecting people is LIVE now, and the one
+     quiet line now scopes the honesty to sharing only. */
+  has('the honest line is ONE quiet line in the module', body.innerHTML, 'Dispatch &amp; document sharing arrives next');
   has('connection listed', body.innerHTML, 'Boss Man');
   has('legacy stub still renders in History', body.innerHTML, 'Queued — on this device');
   has('status counts the connection', sb.Meticulous.modules.connect.status(), '1 connection');

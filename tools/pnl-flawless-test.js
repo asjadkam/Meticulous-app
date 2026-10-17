@@ -303,16 +303,23 @@ const OCT_FUEL = [
    pending state must say so in plain words — never a fake
    "invite sent / connected". What ships: the pending driver in
    the wages list immediately, a connection in Connect's own
-   store, wage math untouched. */
+   store, wage math untouched.
+   v131 SUPERSESSION (deliberate pin moves below): finding and
+   connecting people in Connect is LIVE, so the door changed:
+   the button now routes to Connect's live people search and the
+   email/phone invite form (which delivered nothing) is gone.
+   v120 pending entries keep rendering a status line, reworded
+   to point at the live Connect screen; wage math untouched. */
 {
   console.log('\n— v120: Connect a driver —');
   ok('v120: the Connect door is the one big primary action', pnlSrc.indexOf('id="pnl_connect_open"') !== -1 && pnlSrc.indexOf('🤝 Connect a driver') !== -1 && pnlSrc.indexOf('btn primary big') !== -1);
   ok('v120: the manual door is the quiet secondary', pnlSrc.indexOf('id="pnl_manual_open"') !== -1 && pnlSrc.indexOf('Add manually instead') !== -1);
   ok('v120: the manual form is unchanged (same ids, same fields)', ['id="pnl_dname"', 'id="pnl_drate"', 'id="pnl_dtype"', 'id="pnl_dstart"', 'id="pnl_dtravel"', 'id="pnl_dadd"'].every(function (s) { return pnlSrc.indexOf(s) !== -1; }));
-  ok('v120: the honest status line ships verbatim', pnlSrc.indexOf('Invites go live with Connect — this driver is saved and will link when they join.') !== -1);
+  ok('v131: the honest status line ships verbatim (v120 note superseded — connections are live now)', pnlSrc.indexOf('Connections are live now — find them in Connect, tap Connect, and when they accept you are connected.') !== -1);
   ok('v120: no fake delivery claim anywhere in the pnl copy', !/Invite sent|invitation (was )?sent|✓ Connected/.test(pnlSrc));
-  ok('v120: the invite also lands a connection in Connect\u2019s own store (con_list, its record shape)',
-    pnlSrc.indexOf("App._store.get('con_list', [])") !== -1 && pnlSrc.indexOf("role: 'Driver', contact: contact") !== -1);
+  ok('v131: the Connect door routes to the LIVE Connect search (the v120 local-only invite + its con_list landing are gone)',
+    pnlSrc.indexOf("App.openModule('connect')") !== -1 && pnlSrc.indexOf('__mtConnectSearch') !== -1 &&
+    pnlSrc.indexOf('pnl_ccontact') === -1 && pnlSrc.indexOf('pnl_csend') === -1 && pnlSrc.indexOf("role: 'Driver', contact: contact") === -1);
   /* The pending line itself, extracted and driven: */
   const seg = (() => {
     const a = pnlSrc.indexOf('var PNL_INVITE_NOTE');
@@ -323,7 +330,7 @@ const OCT_FUEL = [
   })();
   const inviteLine = new Function('esc', seg + '\nreturn pnlInviteLine;')(function (s) { return String(s == null ? '' : s); });
   const pend = inviteLine({ viaConnect: true, inviteStatus: 'pending', contact: 'driver@example.com', name: 'driver@example.com' });
-  ok('v120: a pending driver renders the honest status line', pend.indexOf('Invite saved — waiting for them to accept.') !== -1 && pend.indexOf('Invites go live with Connect') !== -1, pend);
+  ok('v120: a pending driver renders the honest status line', pend.indexOf('Invite saved — waiting for them to accept.') !== -1 && pend.indexOf('Connections are live now') !== -1, pend);
   eq('v120: a manual driver renders NO invite line', inviteLine({ name: 'Bob' }), '');
   eq('v120: a linked driver renders NO pending line', inviteLine({ viaConnect: true, inviteStatus: 'linked' }), '');
   /* Wage math on a pending driver: identical rules. */
