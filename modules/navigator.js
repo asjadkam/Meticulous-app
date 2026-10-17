@@ -464,112 +464,60 @@
      2026 12:05 MDT: "this is a truck gps! An arrow as you! That's
      more like something puny! The moving avatar should be
      something bigger, a truck which you should be able to click
-     and change!"). Top-down vehicle glyphs, drawn pointing UP —
+     and change!"). Top-down vehicle markers, drawn pointing UP —
      the drive plane spins heading-up under the fixed anchor, so
      up on the glass is always the direction of travel. The glyph
      is painted once per render and swapped only on the driver's
      own tap in the chooser — the drive tick never touches it
      (the v133 mutate-only guarantee is untouched). 'arrow' keeps
      the classic chevron for drivers who prefer it.
-     v139 (owner, Oct 17 12:46 MDT: "This truck looks horrible,
-     better 3d image of a truck! Still cartoonish but should have
-     allot more details then a 2d image slapped on"): the flat
-     two-tone glyphs are redrawn as DETAILED, DIMENSIONAL trucks —
-     gradient-shaded cab with glass, mirrors, bumper and lights;
-     a steel dump box with a recessed bed, rim light and ribs;
-     wheels with tyres AND hubs; a soft ground shadow PAINTED
-     INTO the art (the marker element carries no filter any
-     more — see .nv-drive-you in style.css). Still stylised,
-     still crisp: inline SVG, no image files. Gradient ids are
-     suffixed per kind AND per slot ('m' marker / 'p' picker) so
-     the five on-screen instances never share a paint server.
+     v139 redrew the glyphs as detailed dimensional inline SVG —
+     and the owner rejected the art a second time (Oct 17, 13:35
+     MDT, with a live Drive screenshot): "Still horrendous! When
+     I said 3d! That what came to mind? When I said realistic is
+     this it?" — the SVG still read as a flat cartoon on his
+     glass.
+     v141: THE ART IS A RENDER NOW, NOT A DRAWING. Each vehicle
+     kind is a photorealistic top-down 3D render shipped as a PNG
+     asset (assets/avatar-<kind>.png): a glossy navy cab with sky
+     reflected in the glass, a steel dump box carrying a real
+     gravel load (dump), a corrugated trailer (semi), an open bed
+     (pickup) — treaded tyres, mirrors, chrome tanks, and a soft
+     ground shadow baked into the raster. Produced from generated
+     renders (chroma-keyed off their green ground, shadow
+     composited in, sized at 3x the marker box) and raster-proofed
+     at exact marker size in the build: at marker scale they read
+     as little real trucks, not clip-art. The renders carry true
+     vehicle proportions (aspect ~2.4–4.8); AVATAR_BOX compresses
+     the length the way every navigation marker does. 'arrow'
+     keeps its v139 chevron — a symbol, never the complaint.
      AVATAR_BOX is each kind's element box in px — the marker is
      centred on the anchor by negative margins from this table
      (paintYou + the render), never by a transform. */
   var AVATAR_KINDS = ['dump', 'semi', 'pickup', 'arrow'];
   var AVATAR_LABELS = { dump: 'Dump truck', semi: 'Semi', pickup: 'Pickup', arrow: 'Arrow' };
-  var AVATAR_BOX = { dump: [54, 84], semi: [54, 92], pickup: [52, 78], arrow: [54, 72] };
+  var AVATAR_BOX = { dump: [62, 118], semi: [62, 136], pickup: [60, 104], arrow: [54, 72] };
+  var AVATAR_ASSET = { dump: 'assets/avatar-dump.png', semi: 'assets/avatar-semi.png', pickup: 'assets/avatar-pickup.png' };
   function avatarBoxStyle(kind) {
     var b = AVATAR_BOX[kind] || AVATAR_BOX.dump;
     return 'width:' + b[0] + 'px;height:' + b[1] + 'px;margin-left:' + (-b[0] / 2) + 'px;margin-top:' + (-b[1] / 2) + 'px';
   }
   function avatarGlyph(kind, slot) {
-    var u = kind + (slot === 'p' ? 'p' : 'm');
-    var defsOpen = '<defs>' +
-      '<linearGradient id="cb' + u + '" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0" stop-color="#3d64a0"/><stop offset=".55" stop-color="#274a7e"/><stop offset="1" stop-color="#152a4e"/></linearGradient>' +
-      '<linearGradient id="gl' + u + '" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0" stop-color="#e2f0ff"/><stop offset="1" stop-color="#7fa8d9"/></linearGradient>';
-    var wheel = function (x, y) {
-      return '<rect x="' + x + '" y="' + y + '" width="7" height="12" rx="2.5" fill="#12161f"/>' +
-        '<rect x="' + (x + 1.8) + '" y="' + (y + 3) + '" width="3.4" height="6" rx="1.4" fill="#4a5872"/>';
-    };
-    var cab = function (top) {
-      return '<rect x="10.5" y="' + (top + 3) + '" width="33" height="23" rx="6" fill="url(#cb' + u + ')" stroke="#0d1830" stroke-width="1.5"/>' +
-        '<rect x="13" y="' + (top + 0.5) + '" width="28" height="4.5" rx="2.2" fill="#4a6ea3"/>' +
-        '<path d="M14.5 ' + (top + 8.5) + ' h25 l-2.6 7 h-19.8 z" fill="url(#gl' + u + ')" stroke="#e8f2ff" stroke-width=".8"/>' +
-        '<rect x="14.5" y="' + (top + 17.5) + '" width="25" height="6.5" rx="2" fill="#2c4d84"/>' +
-        '<circle cx="27" cy="' + (top + 20.7) + '" r="1.7" fill="#f5a623" stroke="#8a5a00" stroke-width=".6"/>' +
-        '<rect x="5.5" y="' + (top + 7) + '" width="4" height="7" rx="1.5" fill="#16294d"/>' +
-        '<rect x="44.5" y="' + (top + 7) + '" width="4" height="7" rx="1.5" fill="#16294d"/>' +
-        '<rect x="9.5" y="' + (top - 1.2) + '" width="35" height="3" rx="1.5" fill="#93a9c9"/>' +
-        '<rect x="12.5" y="' + (top - 0.6) + '" width="6" height="2" rx="1" fill="#ffe9a8"/>' +
-        '<rect x="35.5" y="' + (top - 0.6) + '" width="6" height="2" rx="1" fill="#ffe9a8"/>';
-    };
-    if (kind === 'semi') {
-      return '<svg viewBox="0 0 54 92" aria-hidden="true">' + defsOpen +
-        '<linearGradient id="tr' + u + '" x1="0" y1="0" x2="1" y2="0">' +
-        '<stop offset="0" stop-color="#c3d0e2"/><stop offset=".5" stop-color="#eef3fa"/><stop offset="1" stop-color="#b4c4d9"/></linearGradient></defs>' +
-        '<ellipse cx="27" cy="48" rx="23" ry="43" fill="#0a1220" opacity=".20"/>' +
-        wheel(1.5, 13) + wheel(45.5, 13) + wheel(1.5, 25) + wheel(45.5, 25) +
-        wheel(1.5, 62) + wheel(45.5, 62) + wheel(1.5, 74) + wheel(45.5, 74) +
-        '<rect x="12" y="29" width="30" height="5" fill="#1b2a47"/>' +
-        '<rect x="8" y="33" width="38" height="56" rx="3" fill="url(#tr' + u + ')" stroke="#5a6c88" stroke-width="1.5"/>' +
-        '<path d="M11 41h32M11 48h32M11 55h32M11 62h32M11 69h32M11 76h32" stroke="#7d92b0" stroke-width="1" opacity=".55"/>' +
-        '<rect x="11" y="81" width="32" height="6" fill="none" stroke="#5a6c88" stroke-width="1.2"/>' +
-        '<path d="M27 81v6" stroke="#5a6c88" stroke-width="1.2"/>' +
-        cab(4) + '</svg>';
+    /* v141: the vehicle kinds are rendered raster assets (see the
+       note above); one <img> serves the marker and the chooser —
+       CSS sizes it to each stage (.nv-drive-you img /
+       .nv-avatar-opt img in style.css). */
+    if (AVATAR_ASSET[kind]) {
+      return '<img class="nv-avatar-img" src="' + AVATAR_ASSET[kind] + '" alt="" draggable="false">';
     }
-    if (kind === 'pickup') {
-      return '<svg viewBox="0 0 52 78" aria-hidden="true">' + defsOpen +
-        '<linearGradient id="bd' + u + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0" stop-color="#2a4069"/><stop offset="1" stop-color="#3a568a"/></linearGradient></defs>' +
-        '<ellipse cx="26" cy="41" rx="22" ry="36" fill="#0a1220" opacity=".20"/>' +
-        wheel(1.5, 13) + wheel(43.5, 13) + wheel(1.5, 52) + wheel(43.5, 52) +
-        '<rect x="9" y="5" width="34" height="68" rx="7" fill="url(#cb' + u + ')" stroke="#0d1830" stroke-width="1.5"/>' +
-        '<path d="M13.5 12.5 h25 l-2.6 7 h-19.8 z" fill="url(#gl' + u + ')" stroke="#e8f2ff" stroke-width=".8"/>' +
-        '<rect x="13.5" y="21.5" width="25" height="6.5" rx="2" fill="#2c4d84"/>' +
-        '<rect x="12" y="36" width="28" height="34" rx="3" fill="url(#bd' + u + ')" stroke="#101c33" stroke-width="1.5"/>' +
-        '<path d="M14 45h24M14 53h24M14 61h24" stroke="#ffffff" stroke-width="1" opacity=".14"/>' +
-        '<rect x="12" y="67" width="28" height="3" fill="#101c33" opacity=".6"/>' +
-        '<rect x="8.5" y="2.8" width="35" height="3" rx="1.5" fill="#93a9c9"/>' +
-        '<rect x="11.5" y="3.4" width="6" height="2" rx="1" fill="#ffe9a8"/>' +
-        '<rect x="34.5" y="3.4" width="6" height="2" rx="1" fill="#ffe9a8"/></svg>';
-    }
-    if (kind === 'arrow') {
-      return '<svg viewBox="0 0 54 72" aria-hidden="true">' + defsOpen +
-        '<linearGradient id="ar' + u + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0" stop-color="#4a7ec2"/><stop offset="1" stop-color="#1F3764"/></linearGradient></defs>' +
-        '<ellipse cx="27" cy="38" rx="17" ry="31" fill="#0a1220" opacity=".20"/>' +
-        '<polygon points="27,4 46,62 27,48 8,62" fill="url(#ar' + u + ')" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>' +
-        '<polygon points="27,13 38.5,53 27,43.5 15.5,53" fill="#ffffff" opacity=".16"/></svg>';
-    }
-    /* dump — the default: cab over a steel dump box. */
-    return '<svg viewBox="0 0 54 84" aria-hidden="true">' + defsOpen +
-      '<linearGradient id="bx' + u + '" x1="0" y1="0" x2="1" y2="0">' +
-      '<stop offset="0" stop-color="#5d779f"/><stop offset=".18" stop-color="#879cb9"/><stop offset=".5" stop-color="#adbed8"/><stop offset=".82" stop-color="#879cb9"/><stop offset="1" stop-color="#546c92"/></linearGradient>' +
-      '<linearGradient id="bd' + u + '" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0" stop-color="#2a4069"/><stop offset="1" stop-color="#3a568a"/></linearGradient></defs>' +
-      '<ellipse cx="27" cy="44" rx="23" ry="38" fill="#0a1220" opacity=".20"/>' +
-      wheel(1.5, 15) + wheel(45.5, 15) + wheel(1.5, 52) + wheel(45.5, 52) + wheel(1.5, 64) + wheel(45.5, 64) +
-      '<rect x="10" y="30" width="34" height="50" rx="4" fill="#1b2a47"/>' +
-      '<rect x="8.5" y="31" width="37" height="49" rx="4" fill="url(#bx' + u + ')" stroke="#132038" stroke-width="1.5"/>' +
-      '<rect x="13" y="35.5" width="28" height="40" rx="3" fill="url(#bd' + u + ')"/>' +
-      '<rect x="13" y="35.5" width="28" height="3" fill="#101c33" opacity=".55"/>' +
-      '<path d="M13 46h28M13 56h28M13 66h28" stroke="#ffffff" stroke-width="1.2" opacity=".14"/>' +
-      '<path d="M13 47.5h28M13 57.5h28M13 67.5h28" stroke="#000000" stroke-width="1" opacity=".18"/>' +
-      '<rect x="11" y="76.5" width="32" height="3" rx="1.5" fill="#132038"/>' +
-      cab(4) + '</svg>';
+    /* arrow — the v139 chevron, unchanged. */
+    var u = 'arrow' + (slot === 'p' ? 'p' : 'm');
+    return '<svg viewBox="0 0 54 72" aria-hidden="true"><defs>' +
+      '<linearGradient id="ar' + u + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#4a7ec2"/><stop offset="1" stop-color="#1F3764"/></linearGradient></defs>' +
+      '<ellipse cx="27" cy="38" rx="17" ry="31" fill="#0a1220" opacity=".20"/>' +
+      '<polygon points="27,4 46,62 27,48 8,62" fill="url(#ar' + u + ')" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>' +
+      '<polygon points="27,13 38.5,53 27,43.5 15.5,53" fill="#ffffff" opacity=".16"/></svg>';
   }
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */

@@ -593,13 +593,18 @@ function encodeShape(points) {
       fetchHandler: queueHandler([cleanFixture()]) });
     w.api.render(w.container);
     const markup = w.container._html;
-    check('G1 the drive markup paints a TRUCK avatar (SVG), not the old 30px ▲ text',
-      markup.indexOf('id="nvd_you"') >= 0 && markup.indexOf('<svg') >= 0 && markup.indexOf('>▲<') < 0);
+    /* v141 PIN MOVE: the glyph is no longer an inline SVG at
+       all — v139's dimensional drawing was rejected by the
+       owner too (Oct 17, 13:35), so the vehicle kinds ship as
+       rendered PNG assets (see navigator-v141-test). */
+    check('G1 the drive markup paints a TRUCK avatar (rendered asset), not the old 30px ▲ text',
+      markup.indexOf('id="nvd_you"') >= 0 && markup.indexOf('assets/avatar-dump.png') >= 0 && markup.indexOf('>▲<') < 0);
     /* v139 PIN MOVE: was keyed on the flat art's box-outline
        colour (#9db8d9). The dimensional dump glyph's signature
-       is its steel-box gradient (id bxdump<slot>). */
-    check('G2 the default avatar is the DUMP truck (its dimensional steel box is in the glyph)',
-      markup.indexOf('bxdumpm') >= 0);
+       is its steel-box gradient (id bxdump<slot>).
+       v141 PIN MOVE: the signature is the rendered dump asset. */
+    check('G2 the default avatar is the DUMP truck (its rendered asset is in the glyph)',
+      markup.indexOf('assets/avatar-dump.png') >= 0);
     check('G3 the chooser offers all four kinds with the dump truck selected',
       (markup.match(/data-avatar=/g) || []).length === 4 &&
       /class="nv-avatar-opt on" data-avatar="dump"/.test(markup));
@@ -616,9 +621,10 @@ function encodeShape(points) {
       JSON.stringify(w.storeData.navigator));
     /* v139 PIN MOVE: was keyed on the flat trailer fill
        (#e8edf5); the dimensional semi's signature is its
-       corrugated-trailer gradient (id trsemi<slot>). */
-    check('G7 the glyph swaps AT THE TAP (semi trailer now painted)',
-      w.reg.nvd_you._html.indexOf('trsemim') >= 0, w.reg.nvd_you._html.slice(0, 80));
+       corrugated-trailer gradient (id trsemi<slot>).
+       v141 PIN MOVE: the signature is the rendered semi asset. */
+    check('G7 the glyph swaps AT THE TAP (semi render now painted)',
+      w.reg.nvd_you._html.indexOf('assets/avatar-semi.png') >= 0, w.reg.nvd_you._html.slice(0, 80));
     check('G8 the chooser closes on the choice and marks it selected',
       w.reg.nvd_avatar_picker.classList.contains('hidden') &&
       w.avOpts[1].classList.contains('on') && !w.avOpts[0].classList.contains('on'));
@@ -626,7 +632,7 @@ function encodeShape(points) {
     w.api.teardown();
     w.api.render(w.container);
     check('G9 a fresh render paints the persisted choice (semi in the markup)',
-      w.container._html.indexOf('trsemim') >= 0 &&
+      w.container._html.indexOf('assets/avatar-semi.png') >= 0 &&
       w.world.MeticulousNav.loadSettings().avatar === 'semi');
     /* Mutate-only: the drive tick must never repaint the marker. */
     w.firePos(ORIGIN[0], ORIGIN[1], 40);

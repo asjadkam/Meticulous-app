@@ -218,16 +218,25 @@ console.log('— 3. the mute button (static) —');
 
 console.log('— 4. the truck art (static) —');
 {
-  check('AVATAR_BOX carries a per-kind box for all four kinds',
-    /AVATAR_BOX = \{ dump: \[54, 84\], semi: \[54, 92\], pickup: \[52, 78\], arrow: \[54, 72\] \}/.test(navSrc));
-  check('every kind is drawn dimensional: gradients (cab/glass/body) + a baked ground-shadow ellipse in avatarGlyph',
-    (navSrc.match(/linearGradient/g) || []).length >= 6 &&
-    navSrc.indexOf('<ellipse') >= 0 && navSrc.indexOf('opacity=".20"') >= 0);
-  check('wheels carry tyres AND hubs (two-tone wheel painter), the dump box has a recessed bed + ribs, the semi a corrugated trailer',
-    navSrc.indexOf('fill="#12161f"') >= 0 && navSrc.indexOf('fill="#4a5872"') >= 0 &&
-    navSrc.indexOf('bd\' + u') >= 0 && navSrc.indexOf('tr\' + u') >= 0);
-  check('gradient ids are per-kind AND per-slot (marker and picker instances can never share a paint server)',
-    navSrc.indexOf("kind + (slot === 'p' ? 'p' : 'm')") >= 0 &&
+  /* v141 PIN MOVES (this section): the v139 art was inline SVG —
+     gradients, two-tone wheel painter, per-slot gradient ids.
+     The owner rejected that art too (Oct 17, 13:35 MDT: "Still
+     horrendous! When I said realistic is this it?"), so v141
+     ships rendered PNG assets for the vehicle kinds; the full
+     raster pins live in tools/navigator-v141-test.js. What
+     remains here: the box table (new, bigger sizes), the asset
+     wiring, and the arrow — the one kind that is still drawn. */
+  check('AVATAR_BOX carries a per-kind box for all four kinds (v141: bigger boxes for the renders)',
+    /AVATAR_BOX = \{ dump: \[62, 118\], semi: \[62, 136\], pickup: \[60, 104\], arrow: \[54, 72\] \}/.test(navSrc));
+  check('v141: the vehicle kinds are rendered assets (AVATAR_ASSET -> assets/avatar-<kind>.png), painted as <img>',
+    navSrc.indexOf("dump: 'assets/avatar-dump.png'") >= 0 &&
+    navSrc.indexOf("semi: 'assets/avatar-semi.png'") >= 0 &&
+    navSrc.indexOf("pickup: 'assets/avatar-pickup.png'") >= 0 &&
+    navSrc.indexOf('class="nv-avatar-img"') >= 0);
+  check('v141: the arrow keeps its drawn chevron (gradient + baked shadow ellipse) — the only SVG glyph left',
+    navSrc.indexOf('<linearGradient id="ar') >= 0 && navSrc.indexOf('<ellipse') >= 0 &&
+    navSrc.indexOf('opacity=".20"') >= 0);
+  check('the glyph painters are called for the marker AND the picker (wiring unchanged)',
     navSrc.indexOf("avatarGlyph(settings.avatar, 'm')") >= 0 && navSrc.indexOf("avatarGlyph(k, 'p')") >= 0);
   check('the render sizes the marker inline from AVATAR_BOX (avatarBoxStyle: negative half-box margins) — centred before any JS runs',
     navSrc.indexOf('avatarBoxStyle(settings.avatar)') >= 0 &&
@@ -430,9 +439,12 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
   w.reg.nvd_avatar_picker.classList.add('hidden');
   api.render(w.body);
 
-  check('the render paints the marker sized + margin-centred from AVATAR_BOX (dump 54x84, -27/-42) before any drive',
-    w.body._html.indexOf('width:54px;height:84px;margin-left:-27px;margin-top:-42px') >= 0 &&
-    w.body._html.indexOf('bxdumpm') >= 0);
+  /* v141 PIN MOVE: box 54x84 -> 62x118; the glyph signature was
+     the v139 steel-box gradient id (bxdumpm) — v141's glyph is
+     the rendered dump asset. */
+  check('the render paints the marker sized + margin-centred from AVATAR_BOX (dump 62x118, -31/-59) before any drive',
+    w.body._html.indexOf('width:62px;height:118px;margin-left:-31px;margin-top:-59px') >= 0 &&
+    w.body._html.indexOf('assets/avatar-dump.png') >= 0);
   check('the render paints the UNMUTED icon button (speaker + waves, aria-pressed=false, no text label)',
     /id="nvd_mute" aria-pressed="false"/.test(w.body._html) &&
     w.body._html.indexOf('M15.5 8.5') >= 0 && !/id="nvd_mute"[^>]*>🔊/.test(w.body._html));
@@ -500,18 +512,26 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
   w.avOpts[1].onclick(); /* semi */
   check('the choice persists through the navigator settings store',
     storeData.navigator.avatar === 'semi', JSON.stringify(storeData.navigator));
-  check('the glyph swaps AT THE TAP to the dimensional semi (corrugated trailer painted)',
-    w.reg.nvd_you._html.indexOf('trsemim') >= 0, w.reg.nvd_you._html.slice(0, 60));
-  check('the marker box follows the kind: semi 54x92, margins -27/-46 (plain styles, no transform)',
-    w.reg.nvd_you.style.width === '54px' && w.reg.nvd_you.style.height === '92px' &&
-    w.reg.nvd_you.style.marginLeft === '-27px' && w.reg.nvd_you.style.marginTop === '-46px',
+  /* v141 PIN MOVE: the semi's signature was its corrugated-
+     trailer gradient id (trsemim) — now the semi render asset;
+     the box follows the v141 table. */
+  check('the glyph swaps AT THE TAP to the semi (its render asset painted)',
+    w.reg.nvd_you._html.indexOf('assets/avatar-semi.png') >= 0, w.reg.nvd_you._html.slice(0, 60));
+  check('the marker box follows the kind: semi 62x136, margins -31/-68 (plain styles, no transform)',
+    w.reg.nvd_you.style.width === '62px' && w.reg.nvd_you.style.height === '136px' &&
+    w.reg.nvd_you.style.marginLeft === '-31px' && w.reg.nvd_you.style.marginTop === '-68px',
     JSON.stringify(w.reg.nvd_you.style));
   check('the chooser closes on the choice and marks semi selected',
     w.reg.nvd_avatar_picker.classList.contains('hidden') && w.avOpts[1].classList.contains('on') &&
     !w.avOpts[0].classList.contains('on'));
-  const allIds = (w.body._html + w.reg.nvd_you._html).match(/id="[a-z]+(dump|semi|pickup|arrow)[mp]"/g) || [];
-  check('every gradient id on the face is unique (marker + picker instances never share a paint server)',
-    allIds.length >= 8 && new Set(allIds).size === allIds.length, allIds.join(','));
+  /* v141 PIN MOVE: the old check counted eight per-kind/per-slot
+     gradient ids on the face. The vehicles are rasters now — the
+     drawn arrow is the only gradient left, and it still
+     namespaces its id per slot (picker instance painted here;
+     the marker slot is pinned in navigator-v141-test). */
+  check('v141: the drawn arrow still namespaces its gradient per slot (picker instance on the face)',
+    w.body._html.indexOf('id="ararrowp"') >= 0 &&
+    navSrc.indexOf("'arrow' + (slot === 'p' ? 'p' : 'm')") >= 0);
   api.teardown();
 
   console.log('— 8. behaviour: the persisted states paint correctly on a fresh render —');
@@ -522,9 +542,11 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
   check('a muted driver reopens muted: the render paints the slashed icon + .muted class + aria-pressed=true',
     /id="nvd_mute" aria-pressed="true"/.test(w2.body._html) && w2.body._html.indexOf('nv-mute muted') >= 0 &&
     w2.body._html.indexOf('#f26522') >= 0);
-  check('the persisted avatar paints in the markup, sized from its box (semi 54x92, -27/-46)',
-    w2.body._html.indexOf('trsemim') >= 0 &&
-    w2.body._html.indexOf('width:54px;height:92px;margin-left:-27px;margin-top:-46px') >= 0);
+  /* v141 PIN MOVE: semi signature trsemim -> the render asset;
+     box 54x92 -> 62x136. */
+  check('the persisted avatar paints in the markup, sized from its box (semi 62x136, -31/-68)',
+    w2.body._html.indexOf('assets/avatar-semi.png') >= 0 &&
+    w2.body._html.indexOf('width:62px;height:136px;margin-left:-31px;margin-top:-68px') >= 0);
   api2.teardown();
 
   console.log('\nnavigator-v139: ' + pass + ' passed, ' + fail + ' failed');
