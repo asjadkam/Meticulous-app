@@ -150,16 +150,28 @@
   function mileageStats() {
     var f = fills().filter(function (x) { return x.odo && parseFloat(x.litres) > 0 && plausibleReading(parseFloat(x.odo)); })
       .sort(function (a, b) { return a.odo - b.odo; });
-    var km = 0, litres = 0, cost = 0;
+    var km = 0, litres = 0, cost = 0, legs = 0;
     for (var i = 1; i < f.length; i++) {
       var dist = f[i].odo - f[i - 1].odo, l = parseFloat(f[i].litres);
-      if (dist > 0 && l > 0) { km += dist; litres += l; cost += parseFloat(f[i].cost) || 0; }
+      /* v107 — ECONOMY SANITY (Stage 3), the same rule as Fuel's
+         trend (modules/fuel.js econLegOk): a leg counts only when
+         its distance is possible between fill-ups (<= 50,000 km)
+         and its implied economy is possible for a truck
+         (0.5–20 km/L). The plausibleReading filter above already
+         drops a stamp that is impossible against the master; this
+         delta guard stands even when no master judgement exists,
+         so one poisoned stamp (519,326 among 168k readings) can
+         never bend the average or the leg count. Data untouched. */
+      if (dist > 0 && dist <= 50000 && l > 0) {
+        var kpl = dist / l;
+        if (kpl >= 0.5 && kpl <= 20) { km += dist; litres += l; cost += parseFloat(f[i].cost) || 0; legs++; }
+      }
     }
     /* Add cost of the very first leg too (approximation: count all fill costs) */
     var totalFuelCost = 0;
     fills().forEach(function (x) { totalFuelCost += parseFloat(x.cost) || 0; });
     return {
-      legs: f.length - 1,
+      legs: legs,
       avgKpl: litres > 0 ? (km / litres) : 0,
       costPerKm: km > 0 ? (cost / km) : 0,
       totalFuelCost: totalFuelCost,

@@ -103,19 +103,39 @@
       fmtKm(n) + ') was lower, so the master was not changed.';
   }
 
+  /* v107 — ECONOMY SANITY (Stage 3): one poisoned odometer stamp
+     must never poison the trend. Oct 15's fill carried 519,326 km
+     (a receipt's invoice number read as the odometer) beside real
+     168k readings, so the leg INTO it "drove" ~350,000 km on one
+     tank and the trend printed 4,484.5 km/L. A leg is only real
+     when its distance is possible between fill-ups (<= 50,000 km)
+     and the economy it implies is possible for a truck
+     (0.5–20 km/L — his class is ~2.5). The DATA is left intact:
+     the fill stays in the history, editable as always; only the
+     impossible leg is excluded from the math. The same rule
+     guards Maintenance's mileage stats (modules/maintenance.js). */
+  var ECON_MAX_LEG_KM = 50000, ECON_MIN_KPL = 0.5, ECON_MAX_KPL = 20;
+  function econLegOk(dist, l) {
+    if (!(dist > 0) || dist > ECON_MAX_LEG_KM || !(l > 0)) return false;
+    var kpl = dist / l;
+    return kpl >= ECON_MIN_KPL && kpl <= ECON_MAX_KPL;
+  }
+
   function mpgTrend() {
     var f = fills().filter(function (x) { return x.odo && x.litres; })
       .sort(function (a, b) { return a.odo - b.odo; });
     var out = [];
     for (var i = 1; i < f.length; i++) {
       var dist = f[i].odo - f[i - 1].odo, l = parseFloat(f[i].litres);
-      if (dist > 0 && l > 0) out.push({ date: f[i].date, mpg: (dist / l).toFixed(1) });
+      if (econLegOk(dist, l)) out.push({ date: f[i].date, mpg: (dist / l).toFixed(1) });
     }
     return out;
   }
 
   Meticulous.modules.fuel = {
     _masterOnSave: masterOnSave,
+    _mpgTrend: mpgTrend,
+    _econLegOk: econLegOk,
     /* v78: the card preview — the most recent fill-up (litres · $
        · when), the fact a driver glances for; the MPG trend stays
        inside the module where it always lived. */

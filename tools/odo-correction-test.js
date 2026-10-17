@@ -201,10 +201,17 @@ console.log('\n— C: maintenance odometer math + correction flow —');
   vm.runInContext(mtSrc, sb);
   const api = sb.Meticulous.modules.maintenance;
 
-  /* The owner's screen, reproduced from the field data. */
+  /* The owner's screen, reproduced from the field data.
+     v107 PIN MOVE (Stage 3, economy sanity): C1/C2 pinned the v97
+     poisoned totals (350,816 km / 2 legs — the impossible leg
+     counted). The delta guard now excludes the poisoned leg from
+     the math even before any correction, so the poisoned screen
+     already shows the TRUE leg (249 km / 1 leg); the poisoned
+     stamp still drives the displayed odometer + overdue state
+     (C3–C5), which is what the correction flow exists to fix. */
   const before = api._mileageStats();
-  eq('C1 poisoned screen: tracked km', Math.round(before.kmTracked), 350816);
-  eq('C2 poisoned screen: legs', before.legs, 2);
+  eq('C1 poisoned screen: tracked km (poisoned leg excluded)', Math.round(before.kmTracked), 249);
+  eq('C2 poisoned screen: legs (real legs only)', before.legs, 1);
   const dueBefore = api._dueItems();
   eq('C3 poisoned screen: displayed odometer', dueBefore.odo, 519326);
   const oilBefore = dueBefore.items.filter(function (i) { return i.id === 'oil'; })[0];
