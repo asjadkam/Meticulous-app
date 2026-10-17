@@ -402,13 +402,20 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
      now states the server shape and the switch alone remains. */
   ok(pref.indexOf('pf_pr_key') === -1, 'v94 prefs: NO key input rendered anywhere in Preferences');
   ok(!/Paste your key|Google AI Studio|Get API key|key not set/i.test(pref), 'v94 prefs: no key-instruction strings in Preferences');
-  eq((pref.match(/id="pf_pr_on"/g) || []).length, 1, 'v94 prefs: the Power read toggle survives, exactly once');
-  ok(pref.indexOf('A second, cloud look at photos') >= 0 && pref.indexOf('Nothing to set up') === -1, 'v107 prefs: Power read copy is one short line now (the v94 essay was skeleton prose; the no-key ruling stands via the pins around this one)');
+  /* v137 SUPERSEDES the v94/v107 "the switch/field survives" pins
+     below (owner, Oct 17 12:25 MDT: "Power read and navigator
+     Server are plumbing! Don't need to be there!"): BOTH controls
+     are removed from the Preferences face entirely. The Power
+     Read machinery is untouched (defaults on, capture flows
+     unchanged); the routing address is a baked-in constant in
+     the Navigator module. What survives is the ABSENCE. */
+  eq((pref.match(/id="pf_pr_on"/g) || []).length, 0, 'v137 prefs: the Power read toggle is GONE from the face (owner order, Oct 17)');
+  ok(pref.indexOf('A second, cloud look at photos') === -1 && pref.indexOf('Nothing to set up') === -1, 'v137 prefs: the Power read card copy is gone with the card');
   ok(pref.indexOf('Honest limit: an ask can only appear') === -1, 'v94 prefs: park-place "honest limit" essay is gone');
   ok(pref.indexOf('or set it now while you are parked there') === -1, 'v94 prefs: park-place explainer trimmed (old essay wording absent)');
   ok(pref.indexOf('The Navigator routes trucks on Calgary') === -1, 'v94 prefs: Navigator server explainer trimmed (old essay wording absent)');
-  ok(pref.indexOf('>Server address</label>') >= 0, 'v94 prefs: Navigator server field carries the shorter label');
-  ok(pref.indexOf('No server set — the Navigator will say routing is unavailable.') >= 0, 'v94 prefs: the one-line no-server note stays');
+  ok(pref.indexOf('>Server address</label>') === -1, 'v137 prefs: NO server address field anywhere (owner order, Oct 17)');
+  ok(pref.indexOf('No server set — the Navigator will say routing is unavailable.') === -1, 'v137 prefs: the no-server note is gone with the card');
   ok(pref.indexOf('Free key:') === -1 && pref.indexOf('Key saved on this device') === -1, 'v94 prefs: no key-state paint remains in the Power read note');
 
   /* v95 (owner, Oct 16, 2026): TWO rulings from his screenshots.
@@ -446,12 +453,15 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(/id="pf_view_advanced" class="hidden"/.test(pref), 'v107 prefs: the Advanced view renders hidden (Settings is the opening view)');
   ok(pref.indexOf('id="pf_tab_advanced"') < pref.indexOf('id="pf_acct"'), 'v107 prefs: the tab strip sits at the TOP, above the first settings card');
   const iAdvView = pref.indexOf('id="pf_view_advanced"');
-  ['pf_checkupd', 'pf_push', 'pf_syncnow', 'pf_pr_on', 'pf_nav_url', 'pf_resetonb'].forEach(function (id) {
+  ['pf_checkupd', 'pf_push', 'pf_syncnow', 'pf_resetonb'].forEach(function (id) {
     eq((pref.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'v107 prefs: Advanced control #' + id + ' survives exactly once');
     ok(pref.indexOf('id="' + id + '"') > iAdvView, 'v107 prefs: #' + id + ' renders INSIDE the Advanced view');
   });
-  ['pf_bgtrack', 'pf_bgallow', 'pf_bgbatt', 'pf_pr_note', 'pf_parknote', 'pf_parkset', 'pf_parkforget'].forEach(function (id) {
-    eq(pref.indexOf('id="' + id + '"'), -1, 'v107 prefs: removed skeleton/feature element #' + id + ' is absent from Preferences');
+  /* v137: pf_pr_on + pf_nav_url moved from the survives list to
+     the ABSENT list (owner order, Oct 17 — see the v137 note in
+     the v94 block above). */
+  ['pf_bgtrack', 'pf_bgallow', 'pf_bgbatt', 'pf_pr_note', 'pf_parknote', 'pf_parkset', 'pf_parkforget', 'pf_pr_on', 'pf_nav_url', 'pf_nav_note'].forEach(function (id) {
+    eq(pref.indexOf('id="' + id + '"'), -1, 'v107/v137 prefs: removed skeleton/feature element #' + id + ' is absent from Preferences');
   });
   ok(pref.indexOf('id="pf_save"') > pref.indexOf('id="pf_view_settings"') && pref.indexOf('id="pf_save"') < iAdvView, 'v107 prefs: Save preferences lives in the Settings view');
   ok(pref.indexOf('🔒 Security') === -1, 'v106 prefs: no Security heading anywhere on the page (it lives on Account & login)');

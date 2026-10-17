@@ -105,8 +105,14 @@
          TAB at the top of Preferences — its own swapped view, never
          an expanding drawer in the scroll. Settings is the default
          view and owns the Save button; Advanced holds plumbing
-         only (updates, sync retry, power read switch, navigator
-         server, reset) and its controls persist as they change. */
+         only (updates, notifications, sync retry, reset) and its
+         controls persist as they change.
+         v137 (owner, Oct 17 12:25): "Power read and navigator
+         Server are plumbing! Don't need to be there!" — the Power
+         Read switch and the Navigator server text box are GONE
+         from Advanced entirely (see the Advanced build below):
+         both machines run in the background with baked values,
+         and no user-facing surface edits either. */
       var h = '<div class="card" style="padding:10px 12px;"><div class="row" style="gap:6px;margin:0;">' +
         '<button type="button" class="btn navy" id="pf_tab_settings" style="flex:1;">Settings</button>' +
         '<button type="button" class="btn ghost" id="pf_tab_advanced" style="flex:1;">⚙️ Advanced</button></div></div>' +
@@ -131,17 +137,40 @@
          ids, same wiring. This page now carries NO password inputs,
          which also unblocks assisted browsing of Preferences. */
 
+      /* v137 (owner, Oct 17 12:22 MDT): "This shouldn't say my
+         rate... Under pnl each driver gets their own rate!" There
+         is NO universal rate field in Preferences anymore: crew
+         pay rates live in each driver's P&L entry (the v132 pipe
+         prices wages from pnl_drivers — the single source). What
+         renders here is only the signed-in user's OWN money
+         identity, framed as theirs: an owner-operator's two rates
+         (what he bills, what he pays himself), a driver's one pay
+         rate, and NO rate fields at all for an office/boss face.
+         The setup-time onboarding.payRate stays stored as the
+         legacy fallback inside every rate chain (wage readers use
+         ownWageRate || payRate; billing uses billingRate ||
+         ownWageRate || payRate) — Preferences no longer writes it,
+         so every computed number for an existing setup is
+         unchanged. */
+      var pfOfficeFace = (effRole === 'office' || o.accountType === 'Fleet Manager');
+      var pfOO = (!pfOfficeFace && o.accountType === 'Owner-Operator');
       h += '<div class="card"><h3>💵 Pay</h3>' +
         '<label class="f">Payment standard</label><select id="pf_std">' +
         ['Miles', 'Hourly', 'Trip', 'Weight'].map(function (x) { return '<option' + (o.payStandard === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
-        '<label class="f">Rate ($)</label><input id="pf_rate" type="number" inputmode="decimal" value="' + esc(o.payRate || '') + '">' +
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
-        '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p>' +
-        /* v105: the two-books rates for an owner-operator whose card
-           posts BOTH sides of his own P&L. Blank = same as Rate. */
-        '<label class="f">Client billing rate ($/foreman hour) — owner-operators</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="Same as rate">' +
-        '<label class="f">My wage rate ($/hour) — owner-operators</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || '') + '" placeholder="Same as rate">' +
-        '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave blank to use your rate for both.</p></div>';
+        '<p class="note">Fixed daily bonus added to foreman ticket hours — for example 1 h, some drivers 1.5 h.</p>';
+      if (pfOO) {
+        /* v105: the two-books rates for an owner-operator whose
+           card posts BOTH sides of his own P&L — v137 framing:
+           shown only to an owner-operator, as HIS two rates. */
+        h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="Blank = your wage rate">' +
+          '<label class="f">My wage rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
+          '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave the billing rate blank to bill at your wage rate.</p>';
+      } else if (!pfOfficeFace) {
+        h += '<label class="f">Your pay rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
+          '<p class="note">Your own rate — your pay stubs, invoices and day earnings are figured at it. Every driver carries their own; a boss sets his drivers\u2019 rates in P&L, not here.</p>';
+      }
+      h += '</div>';
 
       /* v36: tracker auto-start settings live in Revenue (the tracker
          feeds Revenue). A pointer card sat here until v52 — removed at
@@ -200,7 +229,7 @@
         '<label class="f">Tax rate %</label><input id="pf_invtax" type="number" step="0.01" min="0" value="' + esc(o.invoiceTaxRate == null || o.invoiceTaxRate === '' ? '5' : o.invoiceTaxRate) + '">' +
         '<p class="note">The next invoice uses this number. After it is saved, the number moves up by one.</p></div></div>';
 
-      /* v31: photo retake buttons — same OCR as onboarding. Lets Asjad update
+      /* v31: photo retake buttons — same OCR as onboarding. Lets the user update
          the odometer baseline (e.g. new truck / rolled over) or the safety
          sticker (renewed) without redoing onboarding. */
       h += '<div class="card"><h3>🚛 Truck</h3>' +
@@ -267,11 +296,14 @@
          Calgary's truck-network rules. Defaults are a tandem dump
          truck. The fields persist the moment they change (the power-
          read pattern), never through Save preferences, and live in the
-         shared 'navigator' store (MeticulousNav) the Navigator module
-         reads. The routing server URL itself is plumbing — it lives
-         in Advanced below, not on this card. */
+         shared 'navigator' store (MeticulousNav) the Navigator
+         module reads. v137: the routing server address is NOT here
+         and NOT in Advanced — it is a baked-in constant inside the
+         Navigator module, with no user-editable surface anywhere
+         (the old Advanced text box is gone: one altered character
+         used to break routing silently). */
       var nvSet = (window.MeticulousNav && MeticulousNav.loadSettings) ? MeticulousNav.loadSettings()
-        : { profile: { height: 3.9, width: 2.6, length: 9.0, weight: 24, axleLoad: 10, axles: 3, hazmat: false }, serverUrl: '' };
+        : { profile: { height: 3.9, width: 2.6, length: 9.0, weight: 24, axleLoad: 10, axles: 3, hazmat: false } };
       var nvp = nvSet.profile;
       h += '<div class="card"><h3>🧭 Navigator</h3>' +
         '<p class="note" style="margin-top:0">Your truck, as the Navigator sees it. Truck routes keep you legal for a truck of this size and weight.</p>' +
@@ -282,7 +314,7 @@
         '<label class="f">Axle load (tonnes)</label><input id="pf_nv_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(nvp.axleLoad) + '">' +
         '<label class="f">Axles</label><input id="pf_nv_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(nvp.axles) + '">' +
         '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_nv_hazmat"' + (nvp.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +
-        '<p class="note" id="pf_nv_note">Saves as you type. The routing server address lives in Advanced → Navigator server.</p></div>';
+        '<p class="note" id="pf_nv_note">Saves as you type.</p></div>';
 
       /* v54 (owner, Oct 14): the standalone Notifications card is gone —
          "Updates and notifications should also be in advanced features!
@@ -345,31 +377,17 @@
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote"></p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
-        /* v59 (owner, Oct 14): Power read is plumbing too — it lives
-           here in Advanced, not as a feature card. The switch persists
-           the moment it changes (same pattern as the role select),
-           never through Save preferences.
-           v94 (owner ruling, Oct 16): the key field is GONE — users
-           are never asked for a key. Power read reaches Meticulous's
-           cloud reader through the server; there is nothing here to
-           set up, so the card carries only the switch. */
-        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
-        '<p class="note" style="margin-top:0">⚡ Power read — cloud help for hard photos</p>' +
-        '<p class="note">A second, cloud look at photos the built-in reader can\'t read. The answer always waits for your check.</p>' +
-        '<label class="chk"><input type="checkbox" id="pf_pr_on"> Power read on</label></div>' +
-        /* v77 (Navigator): the routing server URL is plumbing — a user
-           sets it once (or never) — so it lives here in Advanced, not
-           on the Navigator card. v98: the field shows the effective
-           address — the app ships with the Meticulous routing server
-           as the default; clearing the field saves an explicit '' and
-           the Navigator honestly reports routing unavailable.
-           Persists the moment it changes. */
-        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
-        '<p class="note" style="margin-top:0">🧭 Navigator server</p>' +
-        '<p class="note">Where the Navigator gets its truck routes. Your truck\'s size and weight are set on the Navigator card above.</p>' +
-        '<label class="f">Server address</label>' +
-        '<input id="pf_nav_url" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://your-routing-server.example">' +
-        '<p class="note" id="pf_nav_note"></p></div>' +
+        /* v137 (owner, Oct 17 12:25 MDT: "Power read and navigator
+           Server are plumbing! Don't need to be there!"): the Power
+           Read switch row and the Navigator server row that stood
+           here are REMOVED from the face entirely — not greyed, not
+           moved. Power Read keeps running in the background for the
+           capture flows (it defaults on; the app figures it out by
+           itself, and users are never asked for a key — the v94
+           ruling). The routing server address is a baked-in
+           constant in the Navigator module; the text box that let
+           one altered character break routing is gone, and no
+           user-facing surface anywhere edits it. */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div></div>';
@@ -379,8 +397,13 @@
       body.querySelector('#pf_save').onclick = function () {
         var g = function (id) { return body.querySelector('#' + id).value.trim(); };
         o.accountType = g('pf_acct'); o.employment = g('pf_emp'); o.payStandard = g('pf_std');
-        o.payRate = g('pf_rate'); o.travelBonus = g('pf_travel') || '1';
-        o.billingRate = g('pf_billrate'); o.ownWageRate = g('pf_wagerate');
+        o.travelBonus = g('pf_travel') || '1';
+        /* v137: only the rate fields this role's face rendered are
+           written (an office face renders none). o.payRate is NOT
+           written here anymore — the setup-time value stays as the
+           legacy fallback inside every rate chain. */
+        var pfBrEl = body.querySelector('#pf_billrate'); if (pfBrEl) o.billingRate = pfBrEl.value.trim();
+        var pfWgEl = body.querySelector('#pf_wagerate'); if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont'); o.contractingAddr = g('pf_contaddr');
         o.nextInvoiceNo = g('pf_nextinv');
@@ -679,19 +702,10 @@
           setTimeout(paint, 4500);
         };
       })();
-      /* v59: the power-read switch persists on change (never via
-         Save preferences). v94: no key control exists here (owner
-         ruling, Oct 16). v107: the monthly counter / queue prose
-         is GONE (owner: no skeleton in Advanced) — the switch is
-         the whole row now. */
-      (function () {
-        var onEl = body.querySelector('#pf_pr_on');
-        if (!onEl) return;
-        if (window.PowerRead) onEl.checked = PowerRead.isOn();
-        onEl.onchange = function () {
-          if (window.PowerRead) PowerRead.setOn(!!onEl.checked);
-        };
-      })();
+      /* v137: the power-read switch wiring that stood here is
+         GONE with its card (see the Advanced build above).
+         PowerRead.isOn() defaults on and the stored value, if one
+         was ever set, simply stays — no UI remains to flip it. */
       /* v107: the background-tracking status block is GONE from
          Preferences (owner, Stage 6: no skeleton prose in Advanced).
          The native ask banner on the tracker (trkBgAsk) still
@@ -733,42 +747,26 @@
         }
         paintParkCard();
       })();
-      /* v77: Navigator profile + server URL — persist the moment they
-         change (the power-read pattern), through the shared
-         MeticulousNav store helpers the Navigator module reads. If the
-         module failed to load, fall back to the same 'navigator' store
-         key directly so the settings are never lost. */
+      /* v77: Navigator truck profile — persists the moment it
+         changes, through the shared MeticulousNav store helpers
+         the Navigator module reads. If the module failed to load,
+         fall back to the same 'navigator' store key directly so
+         the settings are never lost.
+         v137: the server-URL wiring that shared this block is
+         GONE — Preferences no longer reads, shows, or writes a
+         routing address anywhere. The address is a baked-in
+         constant inside MeticulousNav.loadSettings. */
       (function () {
         function navLoad() {
           if (window.MeticulousNav && MeticulousNav.loadSettings) return MeticulousNav.loadSettings();
           var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-          /* v98: the same default rule as MeticulousNav.loadSettings
-             (never-saved → the shipped default; a saved value, even a
-             deliberate '', wins). The literal is duplicated on purpose:
-             this fallback exists for when the module failed to load. */
-          return { profile: s.profile || {}, serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
-            ? 'https://2.31.47.19' : String(s.serverUrl) };
+          return { profile: s.profile || {} };
         }
         function navSave(patch) {
           if (window.MeticulousNav && MeticulousNav.saveSettings) { MeticulousNav.saveSettings(patch); return; }
           var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
           for (var k in patch) s[k] = patch[k];
           try { App._store.set('navigator', s); } catch (e) {}
-        }
-        var urlEl = body.querySelector('#pf_nav_url');
-        var urlNote = body.querySelector('#pf_nav_note');
-        if (urlEl) {
-          urlEl.value = navLoad().serverUrl || '';
-          if (urlNote) urlNote.textContent = urlEl.value
-            ? 'Server set — the Navigator routes through it.'
-            : 'No server set — the Navigator will say routing is unavailable.';
-          urlEl.onchange = function () {
-            var v = urlEl.value.trim();
-            navSave({ serverUrl: v });
-            if (urlNote) urlNote.textContent = v
-              ? '✓ Saved — the Navigator routes through this server.'
-              : 'Cleared — the Navigator will say routing is unavailable.';
-          };
         }
         var profIds = { height: 'pf_nv_height', width: 'pf_nv_width', length: 'pf_nv_length', weight: 'pf_nv_weight', axleLoad: 'pf_nv_axleload', axles: 'pf_nv_axles' };
         var nvNote = body.querySelector('#pf_nv_note');

@@ -1,5 +1,5 @@
 /* Auto-start settings card — shared library.
-   v36: the controls live in the REVENUE module (Asjad: the auto tracker
+   v36: the controls live in the REVENUE module (owner: the auto tracker
    was "still in preferences, not in revenue" — the tracker feeds Revenue,
    so its settings sit with the earnings it produces). Before v36 the same
    shared card was rendered by Preferences (prefix 'pf') and by a

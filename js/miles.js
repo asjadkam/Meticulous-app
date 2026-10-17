@@ -1,6 +1,6 @@
 /* Meticulous — live miles tracking + odometer reconciliation (v40).
  *
- * Asjad's design (Oct 13, 2026): LIVE miles are the primary tracking —
+ * The owner's design (Oct 13, 2026): LIVE miles are the primary tracking —
  * GPS accumulating during the shift. The odometer subtraction
  * (end − start, from the by-mile day photos) is only the CONFIRMATION.
  * If the margin between the two is reasonable, ignore it. If the
@@ -451,7 +451,7 @@
     return gaps;
   }
 
-  /* Reconciliation (Asjad's rule): live miles are the tracking; the
+  /* Reconciliation (the owner's rule): live miles are the tracking; the
      odometer difference only confirms. Small margin -> "confirmed"
      (stored, shown nowhere). Big difference -> "discrepancy" with the
      gap list and an odometer-suspicion verdict.

@@ -35,19 +35,21 @@
    the truck is kept on legal streets by costing, never by hard bans —
    a Restricted street stays reachable when it is the only way in.
 
-   The module is honest about its one dependency: the routing service
-   URL lives in Preferences (Navigator card + Advanced > Navigator
-   server URL). v98: the app ships with the Meticulous routing server
-   as the DEFAULT (NAV_DEFAULT_SERVER_URL below), so a user who has
-   never saved an address routes through it out of the box. A saved
-   address always wins, and a deliberately cleared one ('' saved on
-   purpose) keeps routing off — the module still says so in plain
-   words rather than silently falling back to the default.
+   The module is honest about its one dependency: the routing service.
+   v98: the app shipped with the Meticulous routing server as the
+   DEFAULT (NAV_DEFAULT_SERVER_URL below), so a user who had never
+   saved an address routed through it out of the box.
+   v137 (owner, Oct 17 12:25-12:26 MDT: the server text box in
+   Preferences "is plumbing", and "if that is altered app.."): the
+   address is now a BAKED-IN CONSTANT, full stop. The Preferences
+   text box is gone, loadSettings ALWAYS returns the constant, and
+   a serverUrl value saved by an older build (or cleared to '') is
+   ignored — nothing a user can type, clear, or corrupt can steer
+   or break routing anymore.
 
    Persists via App._store (localStorage, mt_ prefix), key 'navigator':
    { profile: {height,width,length,weight,axleLoad,axles,hazmat},
-     serverUrl: <absent until the user sets or clears it>, muted: false,
-     mode: 'truck', avatar: 'dump' }.
+     muted: false, mode: 'truck', avatar: 'dump' }.
 */
 (function () {
   'use strict';
@@ -571,12 +573,13 @@
   }
 
   /* ---- shared settings (Preferences reads/writes the same store) ---- */
-  /* v98: the routing server the app ships with. It applies ONLY when
-     the user has never saved an address (no serverUrl key in the
-     store): a saved address always wins, and a deliberately cleared
-     '' stays cleared — loadSettings never resurrects the default over
-     a saved value. (The nav.meticuloustechnologies.com name replaces
-     this IP literal once its DNS lands.) */
+  /* v98: the routing server the app ships with.
+     v137: it is now the ONLY address the app will ever use — a
+     baked-in constant, not a default. loadSettings returns it
+     unconditionally; any serverUrl an older build persisted is
+     ignored, and saveSettings refuses to persist one. (The
+     nav.meticuloustechnologies.com name replaces this IP literal
+     once its DNS lands — a code change, never a user setting.) */
   var NAV_DEFAULT_SERVER_URL = 'https://2.31.47.19';
 
   function loadSettings() {
@@ -584,8 +587,7 @@
     try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
     return {
       profile: navProfile(s.profile),
-      serverUrl: (s.serverUrl === undefined || s.serverUrl === null)
-        ? NAV_DEFAULT_SERVER_URL : String(s.serverUrl),
+      serverUrl: NAV_DEFAULT_SERVER_URL,
       muted: !!s.muted,
       mode: s.mode === 'car' ? 'car' : 'truck',
       /* v135: the drive avatar (see avatarGlyph) — the stored
@@ -596,7 +598,7 @@
   function saveSettings(patch) {
     var s = {};
     try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-    for (var k in patch) s[k] = patch[k];
+    for (var k in patch) { if (k === 'serverUrl') continue; s[k] = patch[k]; } // v137: the address is baked in — never user-persisted
     try { App._store.set('navigator', s); } catch (e) {}
     return loadSettings();
   }

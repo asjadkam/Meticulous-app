@@ -60,8 +60,8 @@
 
   /* The display name the account is findable by. The app holds no
      separate person-name field: the business/company name IS the
-     trading name for this user base (the owner's invoices read
-     "Asjad Kamal" from exactly this field). Only when it is empty
+     trading name for this user base (an owner-operator's invoices read
+     his business name from exactly this field). Only when it is empty
      do we fall back to a name-shaped reading of the account email's
      local part — the email itself is never stored. */
   CL.identity = function () {

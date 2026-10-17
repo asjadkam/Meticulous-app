@@ -360,7 +360,7 @@
   /* ================= DSP-SAVE-END ================= */
 
   /* ---- v78: dashboard card preview helpers ----
-     The card face shows ONE live fact (Asjad, Oct 15: he missed the
+     The card face shows ONE live fact (owner, Oct 15: he missed the
      old app's cards previewing state on the dashboard). dspCardLabel
      is the short job line — the site, plus where the load goes when
      the record carries a drop-off/destination; dspDayShort renders a
@@ -795,7 +795,7 @@
     var entries = App._store.get('rev_entries', []).filter(function (e) { return e && e.date === dateStr; });
     var extras = App._store.get('rev_extras', []).filter(function (e) { return e && e.date === dateStr; });
     var o = App._store.get('onboarding', {});
-    var rate = parseFloat(o.payRate) || 0;
+    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0; // v137: the user's own wage chain (was the universal payRate)
     var std = String(o.payStandard || '').toLowerCase();
     var built = null;
     try {
@@ -2370,11 +2370,18 @@
         }
         return {
           std: (o.payStandard || 'hourly').toLowerCase(),
-          rate: parseFloat(o.payRate) || 0,
+          /* v137: the base rate is the completer's OWN wage chain
+             (ownWageRate || payRate) — the universal Preferences
+             "Rate" field is gone. Crew wages never come from here:
+             an office completer's drivers are priced from their
+             P&L entries (v132). */
+          rate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
           travelBonus: parseFloat(o.travelBonus) || 0,
-          /* v105: the two-books rates (owner-operator). Each falls
-             back to the plain rate when the owner hasn't split them. */
-          billingRate: parseFloat(o.billingRate) || parseFloat(o.payRate) || 0,
+          /* v105: the two-books rates (owner-operator). v137 chain:
+             billing falls back to the wage rate, then the setup
+             rate; wage falls back to the setup rate. For a setup
+             that never split them, every value is unchanged. */
+          billingRate: parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
           wageRate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
           role: role, driver: matchedDriver, today: App._today()
         };

@@ -841,7 +841,13 @@
     var o = onb();
     var entries = App._store.get('rev_entries', []).filter(function (e) { return e.date >= a && e.date <= b; });
     var extras = App._store.get('rev_extras', []).filter(function (x) { return x.date >= a && x.date <= b; });
-    return invCycBuildRevenueLines(entries, extras, o.payRate, o.payStandard);
+    /* v137: priced at the user's OWN wage rate (ownWageRate ||
+       payRate — the same chain the pay stub uses), never a
+       universal Preferences "Rate": that field is gone, and each
+       driver's rates live in their own books / P&L entry. For a
+       setup that never split the rates this is the same number
+       as before, byte for byte. */
+    return invCycBuildRevenueLines(entries, extras, psWageRate(o), o.payStandard);
   }
 
   /* lines from revenue entries + extras inside a period, using pay standard */
@@ -1187,7 +1193,7 @@
           dayHours: (revPlan && revPlan.dayHours) || null,
           cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
             (revPlan && revPlan.dayHours) || {}, paV, pbV),
-          rate: parseFloat(o.payRate) || 0,
+          rate: psWageRate(o), // v137: the rate in force = the user's own wage chain
           truckNo: o.truckNo || '',
           setNextInvoiceNo: function (next) {
             try {
@@ -1231,7 +1237,7 @@
           dayHours: (revPlan && revPlan.dayHours) || null,
           cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
             (revPlan && revPlan.dayHours) || {}, paV, pbV),
-          rate: parseFloat(o.payRate) || 0,
+          rate: psWageRate(o), // v137: same wage chain as the issued record
           truckNo: o.truckNo || '',
           notes: draft.notes,
           company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },

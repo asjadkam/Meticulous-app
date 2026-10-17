@@ -291,7 +291,7 @@
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
     connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
-    // v36: 'autostart' registry entry removed — settings moved into Revenue (Asjad); modules/autostart.js is now a shared card library + pointer stub
+    // v36: 'autostart' registry entry removed — settings moved into Revenue (owner); modules/autostart.js is now a shared card library + pointer stub
   };
   /* v122: the invoice module's NAME follows how the user is paid
      (owner catch, Oct 17: "I changed my payment method to
@@ -392,12 +392,12 @@
   App.userRole = function () { return provisionalRole(store.get('onboarding', {}) || {}); };
   /* ================= ROLE-END ================= */
 
-  /* P&L gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
+  /* P&L gate REMOVED (owner, Oct 13): He is a Driver but needs access to everything. */
   function pnlAllowed() {
     return true;
   }
 
-  /* Maintenance gate REMOVED (Asjad, Oct 13): He is a Driver but needs access to everything. */
+  /* Maintenance gate REMOVED (owner, Oct 13): He is a Driver but needs access to everything. */
   function maintAllowed() {
     return true;
   }
@@ -545,7 +545,7 @@
     if (key === 'navigation') key = 'navigator';
     var meta = MODULE_META[key];
     var special = { reminders: 1, preferences: 1, subscription: 1, account: 1 };
-    /* P&L + Maintenance gates removed Oct 13, 2026 — Asjad (Driver) gets full access. */
+    /* P&L + Maintenance gates removed Oct 13, 2026 — the owner (Driver) gets full access. */
     if (meta && !App.tierAllows(meta.tier)) {
       // locked -> go to subscription
       key = 'subscription';
@@ -602,7 +602,7 @@
   /* ---------------- tracker ---------------- */
   function trackerSave() { store.set('tracker', App.tracker); }
 
-  /* DYN-TRACKER-BEGIN — the dynamic tracker (v41, Asjad: "a very key
+  /* DYN-TRACKER-BEGIN — the dynamic tracker (v41, owner: "a very key
      feature"). The big home-screen tracker tracks a different quantity
      per pay method (onboarding.payStandard):
        Hourly -> a timer (unchanged) · Miles -> a live-miles dial ·
@@ -986,7 +986,7 @@
     // releases the hold, a resume takes it back (js/miles.js owns it).
     try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
   };
-  /* v34: stop with an explicit end time. Asjad often forgets to press STOP
+  /* v34: stop with an explicit end time. The owner often forgets to press STOP
      when the shift actually ends, so the recorded end overshot. The STOP
      button now opens an end-time sheet (defaults to now — same result as
      before) where he can set the real finish; the saved session's duration
@@ -1228,7 +1228,7 @@
      Decision + record-keeping only (DOM lives in maybePromptOdo below).
      Harness-extractable: may use `store`, `App.tracker`, `todayStr`,
      `trackerSave` and the ODO-MASTER helpers.
-     Rules (Asjad, Oct 13 + Oct 14): pay mode is onboarding.payStandard;
+     Rules (owner, Oct 13 + Oct 14): pay mode is onboarding.payStandard;
      'Miles' means by-mile. By-mile days prompt once at shift start and
      once at stop, always. Hourly/trip/weight prompt ONLY when the
      Preferences toggle onboarding.odoDailyPhotos ("Daily odometer
@@ -1304,7 +1304,7 @@
       if (ss[i].date === today && ss[i].startOdo && !ss[i].endOdo) {
         ss[i].endOdo = n;
         // v40: the end reading completes the pair — reconcile live
-        // miles against the odometer (Asjad's confirmation rule).
+        // miles against the odometer (the owner's confirmation rule).
         try { if (window.LiveMiles) LiveMiles.reconcileSession(ss[i]); } catch (e) {}
         store.set('sessions', ss);
         return true;
@@ -1520,7 +1520,7 @@
   }
 
   /* ------------- v53: dispatch-driven auto-start -------------
-     Asjad (Oct 14, 2026): "whatever the start time says on the Dispatch…
+     The owner (Oct 14, 2026): "whatever the start time says on the Dispatch…
      It should be automatically set as an auto starter" — refined the
      same morning: "Can be changed but as a default dispatch time."
      So TODAY's start time resolves by precedence:
@@ -2071,7 +2071,7 @@
      only `store` and pure JS. */
   function parseOdometerReading(text) {
     if (!text) return null;
-    /* v34: prefer the TOTAL odometer over the trip meter. On Asjad's dash
+    /* v34: prefer the TOTAL odometer over the trip meter. On the owner's dash
        photo the old largest-number rule still lost because the trip value
        came through clean while the total (168472, beside its "KM" label)
        competed with every other gauge number. Ranking now:

@@ -954,7 +954,7 @@
     try {
       if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
         var o = sget('onboarding', {}) || {};
-        var rate = parseFloat(o.payRate) || 0;
+        var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0; // v137: the user's own wage chain
         var std = String(o.payStandard || '').toLowerCase();
         return Meticulous.shared.buildRevenueLines(sget('rev_entries', []), sget('rev_extras', []), rate, std);
       }

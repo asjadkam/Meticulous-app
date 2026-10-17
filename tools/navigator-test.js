@@ -12,19 +12,19 @@
  *      math; the maneuver plan + current-maneuver tracking over the
  *      real Test B trip (fixture: tools/navigator-fixture-tripb.json,
  *      captured from the live service Oct 15, 2026).
- *   2. RENDER + FLOW in a stubbed DOM: with a server URL set, a GPS fix
- *      at the Test B origin and a map-tap destination, pressing Route
- *      POSTs the proven payload shape, draws the polyline, fills the
- *      banner + steps from the real response, speaks the first verbal
- *      line, and an off-route fix held past the hysteresis re-routes.
- *      With the server address DELIBERATELY CLEARED (an explicit '' is
- *      saved) the module states "Navigator server not set — routing
- *      unavailable" and never fetches a route. With NO address ever
- *      saved (v98) it routes against the shipped default server.
+ *   2. RENDER + FLOW in a stubbed DOM: a GPS fix at the Test B origin
+ *      and a map-tap destination, pressing Route POSTs the proven
+ *      payload shape, draws the polyline, fills the banner + steps
+ *      from the real response, speaks the first verbal line, and an
+ *      off-route fix held past the hysteresis re-routes.
+ *      v137 SUPERSEDES the v98 saved-address rule: the routing
+ *      address is a BAKED-IN CONSTANT — a stored address (custom or
+ *      deliberately cleared '') no longer steers or disables
+ *      routing; every world routes against the shipped server.
  *   3. STATICS: module registry + teardown hook in app.js, Preferences
- *      card + Advanced server row, index.html pins; and the ONE
- *      routing-server address baked in is the shipped v98 default
- *      (no loopback/private literals anywhere in the module).
+ *      card (v137: NO server row anywhere user-facing), index.html
+ *      pins; and the ONE routing-server address baked in is the
+ *      shipped constant (no loopback/private literals in the module).
  */
 const fs = require('fs');
 const path = require('path');
@@ -430,7 +430,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('v103: the manual Route affordance remains for re-planning', w.body.innerHTML.indexOf('id="nv_route"') >= 0);
   await tick(); await tick();
   const routeCalls = w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
-  check('v103: AUTO-ROUTE — the tap alone requested the route (no Route press)', routeCalls.length === 1 && routeCalls[0].url === 'http://nav.test/route',
+  check('v137: AUTO-ROUTE — the tap alone requested the route (no Route press), at the BAKED server (the stored nav.test address no longer steers routing)',
+    routeCalls.length === 1 && routeCalls[0].url === 'https://2.31.47.19/route',
     routeCalls.length ? routeCalls[0].url : 'no fetch');
   if (routeCalls.length) {
     const sent = JSON.parse(routeCalls[0].opts.body);
@@ -462,19 +463,27 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w.world.Date = Date;
   api.teardown();
 
-  console.log('— flow: server deliberately cleared —');
-  /* v98: '' is a SAVED value (the user cleared the field in
-     Preferences) — the default must NOT resurrect over it. */
+  console.log('— flow: a stored address no longer steers routing (v137) —');
+  /* v137 SUPERSEDES the v98 rule pinned here before (a deliberately
+     cleared '' used to keep routing off): the owner's Oct 17 order
+     took the server text box out of Preferences entirely and baked
+     the address in. A stored '' or custom value from an older build
+     is now IGNORED — routing cannot be cleared or repointed from
+     any user surface. */
   const w2 = makeWorld({ navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' } });
   const api2 = w2.world.Meticulous.modules.navigator;
-  check('a cleared server stays cleared (no default resurrection)', w2.world.MeticulousNav.loadSettings().serverUrl === '');
-  check('status says the server is not set', /not set/.test(api2.status()), api2.status());
+  check('v137: a stored cleared address is ignored — loadSettings returns the baked constant', w2.world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19');
+  check('v137: saveSettings refuses to persist a serverUrl patch',
+    w2.world.MeticulousNav.saveSettings({ serverUrl: 'http://evil.test' }).serverUrl === 'https://2.31.47.19');
+  check('v137: status reports the truck profile (never "not set")', /Truck/.test(api2.status()) && !/not set/.test(api2.status()), api2.status());
   api2.render(w2.body);
-  check('module states routing unavailable, in plain words', w2.body.innerHTML.indexOf('Navigator server not set — routing unavailable') >= 0);
+  check('v137: no routing-unavailable warning can appear', w2.body.innerHTML.indexOf('routing unavailable') < 0);
   w2.firePos(ORIGIN[0], ORIGIN[1]);
-  w2.reg.nv_route.onclick();
-  await tick();
-  check('no route fetch is attempted without a server', w2.calls.fetch.length === 0);
+  w2.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
+  await tick(); await tick();
+  check('v137: routing still functions on the baked address after a legacy clear',
+    w2.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route'; }).length === 1,
+    JSON.stringify(w2.calls.fetch.map(function (c) { return c.url; })));
   api2.teardown();
 
   console.log('— flow: default server, never set (v98) —');
@@ -484,8 +493,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w4.world.MeticulousNav.DEFAULT_SERVER_URL);
   check('v98: never-saved → loadSettings returns the default', w4.world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19',
     w4.world.MeticulousNav.loadSettings().serverUrl);
-  check('v98: a saved custom server still wins over the default',
-    makeWorld({ navigator: { serverUrl: 'http://nav.test' } }).world.MeticulousNav.loadSettings().serverUrl === 'http://nav.test');
+  check('v137: a stored custom address is IGNORED — the baked constant wins (v98 saved-wins rule superseded)',
+    makeWorld({ navigator: { serverUrl: 'http://nav.test' } }).world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19');
   check('v98: status reports the truck profile under the default (not "not set")',
     /Truck/.test(api4.status()) && !/not set/.test(api4.status()), api4.status());
   api4.render(w4.body);
@@ -509,38 +518,37 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w4.calls.anchors.length === 0 && w4.calls.opened.length === 0);
   api4.teardown();
 
-  console.log('— flow: no server — navigation stays in-app (v103) —');
-  /* Since v103 the no-server state (reached, since v98, via a
-     deliberately cleared address) offers NO external fallback:
-     the owner ruled navigation never leaves the app. The module
-     says routing is off, the destination still arms, and nothing
-     is ever opened, anchored, or fetched to a routing server. */
+  console.log('— flow: navigation stays in-app (v103), server baked (v137) —');
+  /* Since v103 navigation offers NO external fallback: the owner
+     ruled it never leaves the app. v137: the world below carries a
+     legacy CLEARED address in its store — ignored, because the
+     address is baked in — so the in-app guarantees are pinned in a
+     world that ROUTES (the old "no server" state no longer exists:
+     nothing a user can do turns routing off from the face). */
   const w3 = makeWorld({ navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' } });
   const api3 = w3.world.Meticulous.modules.navigator;
   api3.render(w3.body);
-  check('v103: no server: there is NO handoff button or other-app copy anywhere in the sheet',
+  check('v103: there is NO handoff button or other-app copy anywhere in the sheet',
     w3.body.innerHTML.indexOf('nv_ttn') < 0 && w3.body.innerHTML.indexOf('Turn-by-turn') < 0 &&
     w3.body.innerHTML.indexOf('Opens Google Maps') < 0);
-  check('v103: no server: MeticulousNav exposes no link builder', w3.world.MeticulousNav.ttnLinks === undefined);
+  check('v103: MeticulousNav exposes no link builder', w3.world.MeticulousNav.ttnLinks === undefined);
   w3.reg.nv_route.onclick();
-  check('no destination: the Route tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent) ||
-    /server/.test(w3.reg.nv_note.textContent), w3.reg.nv_note.textContent);
+  check('no destination: the Route tap explains itself', /Pick a destination first/.test(w3.reg.nv_note.textContent),
+    w3.reg.nv_note.textContent);
   check('no destination: nothing was opened', w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
   w3.firePos(ORIGIN[0], ORIGIN[1]);
   w3.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
-  check('v103: no server: the destination note says routing needs the server — never another app',
-    w3.reg.nv_destnote.textContent.indexOf('routing needs the Navigator server') >= 0 &&
-    w3.reg.nv_destnote.textContent.indexOf('Turn-by-turn') < 0, w3.reg.nv_destnote.textContent);
-  check('v103: no server: the banner says routing is off',
-    w3.reg.nv_banner.children['.nv-banner-sub'].textContent.indexOf('Routing is off') >= 0,
+  check('v137: the destination note is the normal armed line — the needs-server state is unreachable',
+    /Destination:/.test(w3.reg.nv_destnote.textContent) &&
+    w3.reg.nv_destnote.textContent.indexOf('routing needs the Navigator server') < 0, w3.reg.nv_destnote.textContent);
+  check('v137: the banner never says routing is off',
+    w3.reg.nv_banner.children['.nv-banner-sub'].textContent.indexOf('Routing is off') < 0,
     w3.reg.nv_banner.children['.nv-banner-sub'].textContent);
   await tick(); await tick();
-  w3.reg.nv_route.onclick();
-  await tick();
-  check('v103: no server: no route is ever fetched (auto-route stays off too)',
-    w3.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 0,
+  check('v137: the route IS fetched — to the baked server, from a world whose store says routing was cleared',
+    w3.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route'; }).length === 1,
     JSON.stringify(w3.calls.fetch.map(function (c) { return c.url; })));
-  check('v103: no server: nothing external was opened or anchored, ever',
+  check('v103: nothing external was opened or anchored, ever',
     w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
   api3.teardown();
 
@@ -903,12 +911,15 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('app.js registers the Navigator module meta', appSrc.indexOf("navigator:  { title: 'Navigator'") >= 0);
   check('app.js runs module teardown on exit (v77 hook)', appSrc.indexOf('function teardownModule()') >= 0 && appSrc.indexOf('prev.teardown()') >= 0);
   check('preferences has the Navigator profile card', prefSrc.indexOf('pf_nv_height') >= 0 && prefSrc.indexOf('pf_nv_hazmat') >= 0);
-  check('preferences Advanced has the Navigator server URL', prefSrc.indexOf('pf_nav_url') >= 0 && prefSrc.indexOf('Navigator server') >= 0);
+  /* v137 deliberate pin move: the "preferences Advanced has the
+     Navigator server URL" pin is INVERTED — the editable address
+     is gone from every user-facing surface (owner, Oct 17). */
+  check('v137: Preferences renders NO server URL field or card anywhere (owner: the text box is out)', prefSrc.indexOf('pf_nav_url') < 0 && prefSrc.indexOf('pf_nav_note') < 0 && prefSrc.indexOf('>Server address</label>') < 0 && prefSrc.indexOf('🧭 Navigator server') < 0);
   check('navigator.js carries no loopback/private server literals', !/127\.0\.0\.1|localhost|:8002|198\.19\.|192\.168\./.test(navSrc));
-  check('v98: the one baked-in address is the shipped default server', navSrc.indexOf("var NAV_DEFAULT_SERVER_URL = 'https://2.31.47.19'") >= 0);
+  check('v98→v137: the one baked-in address is the shipped server', navSrc.indexOf("var NAV_DEFAULT_SERVER_URL = 'https://2.31.47.19'") >= 0);
   check('v98: MeticulousNav exposes the default (Preferences/tests)', navSrc.indexOf('DEFAULT_SERVER_URL: NAV_DEFAULT_SERVER_URL') >= 0);
-  check('v98: Preferences fallback carries the same default rule', prefSrc.indexOf("? 'https://2.31.47.19' : String(s.serverUrl)") >= 0);
-  check('navigator.js states the honest unset-server line', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
+  check('v137: Preferences carries no server-address resolution at all (no fallback copy of the rule)', prefSrc.indexOf('serverUrl') < 0);
+  check('navigator.js still carries the honest unset-server line (unreachable since v137 — the address cannot be unset)', navSrc.indexOf('Navigator server not set — routing unavailable') >= 0);
   check('navigator.js adds no native dialogs', !/[^a-z]alert\(|[^a-z]confirm\(/.test(navSrc));
   check('v103: NO external handoff survives in navigator.js (no button, no link builder, no cascade, no other-app URLs)',
     navSrc.indexOf('nv_ttn') < 0 && navSrc.indexOf('ttnLinks') < 0 && navSrc.indexOf('waze.com') < 0 &&

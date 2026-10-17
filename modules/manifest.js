@@ -101,7 +101,7 @@
     var revEntries = (G('rev_entries', [])).filter(function (x) { return x.date === d; });
     var extras = (G('rev_extras', [])).filter(function (x) { return x.date === d; });
     var o = G('onboarding', {});
-    var rate = parseFloat(o.payRate) || 0, earned = 0;
+    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0, earned = 0; // v137: the user's own wage chain
     /* v107 — ONE MONEY TRUTH: the day's earned is priced by the
        SAME shared per-day builder the invoice and Revenue use
        (Meticulous.shared.buildRevenueLines), computed below once

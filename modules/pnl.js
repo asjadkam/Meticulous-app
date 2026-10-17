@@ -50,7 +50,7 @@
     return { label: "Workers' comp", defRate: 4.88 };
   }
 
-  /* Detailed expense categories — matches Asjad's "monthly analysis" spreadsheet.
+  /* Detailed expense categories — matches the owner's "monthly analysis" spreadsheet.
      auto: 'pct_rev' = % of revenue, 'pct_wages' = % of driver wages,
            'maintenance' = auto from Maintenance module, null = manual entry.
      The 'wsib' row (key kept for storage compat) takes its label and default
@@ -369,7 +369,7 @@
   /* Core calculation — pure logic over the three stores. Exposed as _calc for tests. */
   function calc(m) {
     var o = App._store.get('onboarding', {});
-    var std = (o.payStandard || 'hourly').toLowerCase(), rate = o.payRate;
+    var std = (o.payStandard || 'hourly').toLowerCase(), rate = o.ownWageRate || o.payRate; // v137: the user's own wage chain (fallback raw-sum path only)
 
     /* v105: income is priced by the SHARED per-day builder — the
        same function the invoice prints from and Revenue totals
@@ -430,7 +430,7 @@
 
     var dw = driverWages(m);
 
-    /* Detailed expense categories (Asjad's spreadsheet format) */
+    /* Detailed expense categories (the owner's spreadsheet format) */
     var miles = totalMiles(m);
     var det = detailAmounts(m, income, dw.total);
     var detTotal = 0;
@@ -469,7 +469,7 @@
   function money(v) { return '$' + v.toFixed(2); }
 
   var api = {
-    /* Account-type gate REMOVED (Asjad, Oct 13): Driver needs full access. */
+    /* Account-type gate REMOVED (owner, Oct 13): Driver needs full access. */
     _allowed: function () {
       return true;
     },
@@ -543,7 +543,7 @@
       h += '<div class="kv"><span><b>Total expenses</b></span><b>' + money(c.expenses) + '</b></div>';
       h += '<p class="note">Fuel costs pull automatically from Fuel &amp; Expense. Add other business costs below.</p></div>';
 
-      /* Detailed monthly analysis — Asjad's spreadsheet format:
+      /* Detailed monthly analysis — the owner's spreadsheet format:
          each line shows amount, $/mile, and % of revenue */
       h += '<div class="card"><h3>📊 Monthly analysis</h3>';
       h += '<div class="row"><div><label class="f">Total miles</label>' +

@@ -228,7 +228,7 @@
       var h = '<div class="card"><h3>🔎 Find people</h3>';
       if (CL) {
         h += '<div class="row"><div style="flex:1"><label class="f">Name or business</label>' +
-          '<input id="cn_q" placeholder="e.g. Asjad Kamal"></div>' +
+          '<input id="cn_q" placeholder="e.g. a person or business"></div>' +
           '<button class="btn primary" id="cn_search" style="align-self:flex-end">Search</button></div>' +
           '<div id="cn_results">' + resultsHtml() + '</div>';
       } else {

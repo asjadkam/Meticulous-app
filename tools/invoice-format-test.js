@@ -192,10 +192,14 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   ok('print: GST row label carries the rate + included wording (v122 totals block)',
     invSrc.indexOf("'GST (' + esc(rec.taxRate) + '%' + (rec.taxIncluded ? ', included in the rate' : '') + ')'") !== -1);
   ok('screen: draft lines use the hour-sheet label too', invSrc.indexOf('invCycLineLabel(l, revPlan.dayHours)') !== -1);
+  /* v137 deliberate pin move: the archived rate literal is now
+     the own-wage chain (psWageRate) — the universal payRate read
+     is gone from the invoice; the archived VALUE (29, proven by
+     the functional issue checks above) is unchanged. */
   ok('issue: day hours + cards + rate are archived with the record',
     invSrc.indexOf('dayHours: (revPlan && revPlan.dayHours) || null') !== -1 &&
     invSrc.indexOf('cardDays: invCycCardDays(') !== -1 &&
-    invSrc.indexOf('rate: parseFloat(o.payRate) || 0') !== -1);
+    invSrc.indexOf('rate: psWageRate(o)') !== -1);
   /* Blocker 1 — Invoice # field: empty value, Preferences fills it. */
   ok('blocker 1: # field renders EMPTY (placeholder only)', invSrc.indexOf("esc(draft.no || '')") !== -1);
   ok('blocker 1: empty draft # fills from Preferences', invSrc.indexOf('if (!draft.no && o.nextInvoiceNo)') !== -1);
@@ -212,10 +216,17 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   ok('bill-to: Preferences carries the contracting company address field', prefSrc.indexOf('id="pf_contaddr"') !== -1);
   ok('bill-to: Preferences saves it', prefSrc.indexOf("o.contractingAddr = g('pf_contaddr')") !== -1);
   ok('bill-to: the draft default composes name + address', invSrc.indexOf("o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '')") !== -1);
-  /* Owner-operator two-books rates live in Preferences too. */
-  ok('rates: billing + wage rate fields exist and save',
+  /* Owner-operator two-books rates live in Preferences too.
+     v137 deliberate pin move: the save is no longer the flat
+     g('pf_billrate')/g('pf_wagerate') line — Preferences renders
+     rate fields per role and writes only the ones it rendered
+     (guarded reads), and the universal g('pf_rate') write is
+     gone. The fields still exist (owner-operator face). */
+  ok('rates: billing + wage rate fields exist and save (v137: guarded per-role writes, no universal rate field)',
     prefSrc.indexOf('id="pf_billrate"') !== -1 && prefSrc.indexOf('id="pf_wagerate"') !== -1 &&
-    prefSrc.indexOf("o.billingRate = g('pf_billrate'); o.ownWageRate = g('pf_wagerate');") !== -1);
+    prefSrc.indexOf("if (pfBrEl) o.billingRate = pfBrEl.value.trim();") !== -1 &&
+    prefSrc.indexOf("if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();") !== -1 &&
+    prefSrc.indexOf('id="pf_rate"') === -1 && prefSrc.indexOf("g('pf_rate')") === -1);
 
   /* ---------- v118: Bill-to prints the SAVED value verbatim ----------
      The soak's invoice billed "Ai trucking" while Preferences

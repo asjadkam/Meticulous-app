@@ -71,18 +71,23 @@
      and the Month view, so every number on screen comes from the same math.
      Per day: base = entries priced by payFor + extras, plus the live
      tracker session (A1) described below.
-     NO travel bonus is applied anywhere in Revenue (Asjad, Oct 13, 2026):
+     NO travel bonus is applied anywhere in Revenue (owner, Oct 13, 2026):
      his recorded hours — tracker start-to-end spans and hours-sheet days —
      ALREADY include travel time, so adding the bonus here would
      double-count it. onboarding.travelBonus belongs only to the
      foreman-ticket path in Dispatch/Manifest, where the base hours are the
      foreman's shorter ticket hours. That path is untouched. */
 
+  /* v137: THE rate for the user's own books — his own wage chain
+     (ownWageRate || payRate). The universal Preferences "Rate"
+     field is gone; crew rates live in P&L entries, never here. */
+  function ownRate(o) { return parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0; }
+
   function payCtx() {
     var o = App._store.get('onboarding', {});
     return {
       std: (o.payStandard || 'hourly').toLowerCase(),
-      rate: parseFloat(o.payRate) || 0
+      rate: ownRate(o)
     };
   }
 
@@ -160,7 +165,7 @@
         if (!e.date) return;
         var s = slot(e.date);
         s.hasEntry = true;
-        s.base += payFor(e, ctx.std, o.payRate);
+        s.base += payFor(e, ctx.std, ownRate(o));
         s.hours += parseFloat(e.hours) || 0;
       });
       extras().forEach(function (x) {
@@ -243,7 +248,7 @@
         : (parseFloat(e && e.hours) || 0);
       var drip = (src === 'tracker' && q < 0.1);
       var money = !haveBuilt ? true
-        : (!drip && !!winSrc[e.date] && src === winSrc[e.date] && payFor(e, ctx.std, o.payRate) > 0);
+        : (!drip && !!winSrc[e.date] && src === winSrc[e.date] && payFor(e, ctx.std, ownRate(o)) > 0);
       return { src: src, drip: drip, money: money };
     });
   }
@@ -578,7 +583,7 @@
         hours: parseFloat(e.hours) || 0, miles: parseFloat(e.miles) || 0,
         tons: parseFloat(e.tons) || 0, trips: parseFloat(e.trips) || 0,
         loads: parseInt(e.loads, 10) || 0,
-        amount: payFor(e, ctx.std, o.payRate),
+        amount: payFor(e, ctx.std, ownRate(o)),
         note: e.note || '', auto: !!e.auto
       });
     });
@@ -721,7 +726,7 @@
   /* DAY-DETAIL-END */
 
   /* v47: Day Details — opened by tapping a day row in the Month view
-     (Asjad, Oct 14: "Why can I not click on a specific day and see the
+     (owner, Oct 14: "Why can I not click on a specific day and see the
      details of that day?"). Renders into the same module body; Back
      clears dayDetailDate and re-renders Revenue, and because view and
      month live in the store (rev_view, rev_monthCur), the driver
@@ -1066,7 +1071,7 @@
     onSession: function (session) {
       var o = App._store.get('onboarding', {});
       var std = (o.payStandard || 'hourly').toLowerCase();
-      var rate = parseFloat(o.payRate) || 0;
+      var rate = ownRate(o);
       var hrs = (session.seconds || 0) / 3600;
       var e = { date: session.date || App._today(), type: 'hourly', hours: hrs.toFixed(2), note: 'Auto from tracker', auto: true };
       var feed = 'Tracked session ' + hrs.toFixed(2) + 'h logged to Revenue.';
@@ -1230,7 +1235,7 @@
       }
 
       /* v36: tracker auto-start settings live in Revenue now (moved from
-         Preferences + the old sidebar page, Asjad: "still in preferences,
+         Preferences + the old sidebar page, the owner: "still in preferences,
          not in revenue"). The tracker feeds Revenue — onSession logs tracked
          hours as earnings — so its start-by-itself switch sits here, under
          the numbers it produces. Shared card + save from modules/autostart.js;
@@ -1316,7 +1321,7 @@
         (rvRows.length ? rvRows.map(function (r) {
           var e = r.e;
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
-          var amt = payFor(e, std, App._store.get('onboarding', {}).payRate);
+          var amt = payFor(e, std, ownRate(App._store.get('onboarding', {})));
           var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
           return '<div class="listitem" data-day-link="' + esc(e.date) + '" style="cursor:pointer"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
             '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
@@ -1429,7 +1434,7 @@
         rvTonsRow.style.display = isW ? '' : 'none';
         if (isW) {
           var o = App._store.get('onboarding', {});
-          var rate = parseFloat(o.payRate) || 0;
+          var rate = ownRate(o);
           var tons = parseFloat(rvTons.value) || 0;
           if (rate > 0 && tons > 0) rvAmt.value = (tons * rate).toFixed(2);
         }

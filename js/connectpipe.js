@@ -447,17 +447,17 @@
   };
 
   /* My prices for one driver's shared facts — read from MY OWN
-     books only: my client rate (Preferences: billingRate, the
-     plain rate as its standing fallback) and the pay terms I set
-     for this driver in P&L (the pnl_drivers entry carrying his
-     uid). Either may be unset — pricing then says so honestly
-     instead of inventing a number. */
+     books only: my client rate (my billingRate; v137 chain: my
+     wage rate, then the setup rate, as its standing fallbacks)
+     and the pay terms I set for this driver in P&L (the
+     pnl_drivers entry carrying his uid). Either may be unset —
+     pricing then says so honestly instead of inventing a number. */
   CP.pricingFor = function (driverUid) {
     var st = store();
     var out = { clientRate: 0, wage: null, entryId: '' };
     if (!st) return out;
     var o = st.get('onboarding', {}) || {};
-    out.clientRate = parseFloat(o.billingRate) || parseFloat(o.payRate) || 0;
+    out.clientRate = parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
     (st.get('pnl_drivers', []) || []).forEach(function (d) {
       if (d && d.uid && d.uid === driverUid && !out.wage) {
         out.wage = { payType: d.payType || 'hourly', rate: parseFloat(d.rate) || 0 };

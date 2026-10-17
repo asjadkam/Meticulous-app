@@ -212,7 +212,11 @@ console.log('— navigator preview —');
   const w = makeWorld('modules/navigator.js', {
     navigator: { serverUrl: '', profile: {}, muted: false, mode: 'truck' }
   });
-  eq('server deliberately cleared: routing off (v98)', w.Meticulous.modules.navigator.status(), 'Server not set — routing off');
+  /* v137 deliberate pin move: the v98 "cleared → routing off"
+     expectation is superseded — the address is baked in, so a
+     legacy cleared value is ignored and the profile line stands. */
+  eq('a legacy cleared address is ignored: profile line (v137)', w.Meticulous.modules.navigator.status(),
+    'Truck · 24 t · Calgary truck routes');
 }
 {
   const w = makeWorld('modules/navigator.js', {

@@ -337,7 +337,7 @@
   }
 
   var api = {
-    /* Account-type gate: REMOVED (Oct 13, 2026) — Asjad is a Driver and
+    /* Account-type gate: REMOVED (Oct 13, 2026) — the owner is a Driver and
        needs access to everything. Everyone sees Maintenance. Kept for API compat. */
     _allowed: function () { return true; },
     _dueItems: dueItems,
