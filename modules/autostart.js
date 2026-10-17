@@ -103,7 +103,7 @@
       DAY_NAMES.map(function (n, i) {
         return '<label class="daypill"><input type="checkbox" data-day="' + i + '"' + (sel.indexOf(i) !== -1 ? ' checked' : '') + '> ' + n + '</label>';
       }).join('') + '</div>' +
-      '<p class="note">Time-based only — no location tracking. If the app is open it starts by itself at this time; if it was closed, you\'ll be asked when you open it.</p>' +
+      '<p class="note">Time-based only — no location tracking. It starts by itself at this time; if the app was closed, it starts counting from this time when you open it.</p>' +
       '<div id="' + prefix + '_todaywrap">' + todayHTML(prefix) + '</div></div>';
   }
 

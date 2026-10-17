@@ -860,9 +860,18 @@
     // v28: show the effective start time + the Edit control
     var st = el('trkStartLabel');
     if (st) {
-      st.textContent = (t.status === 'idle')
-        ? (t.presetStart ? 'Will count from ' + fmtTimeAMPM(t.presetStart) : 'Starts from now')
-        : 'Counting from ' + fmtTimeAMPM(trackerSessionStartMs());
+      if (t.status !== 'idle') {
+        st.textContent = 'Counting from ' + fmtTimeAMPM(trackerSessionStartMs());
+      } else if (t.presetStart) {
+        st.textContent = 'Will count from ' + fmtTimeAMPM(t.presetStart);
+      } else {
+        /* v123: an armed plan (today's dispatch, a per-day override,
+           or the standing setting) shows on the card in plain words
+           — never a bare "Starts from now" while a plan exists. */
+        var armed = null;
+        try { if (App.autostartPlanLabel && App.autostartTodayInfo) armed = App.autostartPlanLabel(App.autostartTodayInfo()); } catch (e) {}
+        st.textContent = armed || 'Starts from now';
+      }
     }
     trackerTick();
   }
@@ -1454,15 +1463,29 @@
   /* ---------------- timed auto-start ---------------- */
   // v27: start the tracker by itself at a set time on chosen days.
   // Time-based ONLY — no location/GPS involved. Runs when the app is open
-  // (minute check + resume check); if the app was closed, it prompts on next open.
+  // (minute check + resume check); if the app was closed, the session
+  // starts backdated to the set time on next open (v123 — the old
+  // prompt-on-open is gone; see checkAutoStart).
   /* AUTOSTART-ENGINE-BEGIN
      v53: this whole region (prefs -> pure effective-time functions ->
      App.checkAutoStart + the Revenue-card helpers) is harness-extractable
      by design — tools/dispatch-autostart-test.js slices it out verbatim
      and drives it over an in-memory store. Keep it free of DOM access;
-     it may use: store, todayStr, App, confirm, resetAccum, trackerSave,
-     trackerPaint, maybePromptOdo, trackerSessionStartMs. */
-  var AUTOSTART_GRACE_MIN = 60; // start silently within 60 min of set time; prompt after that
+     it may use: store, todayStr, App, resetAccum, trackerSave,
+     trackerPaint, maybePromptOdo, trackerSessionStartMs.
+     v123: tools/movement-arm-test.js slices the same region and pins
+     the armed-plan label + the start-stamped-at-the-planned-time
+     rule over a fake clock. */
+  /* v123: no grace window and no prompt anymore. The owner's rule
+     (Oct 17, 2026, correcting his own looser phrasing the same
+     morning): the session start time is ALWAYS the planned time —
+     "Has to start on at 8 AM not earlier" — and when the app wakes
+     or is opened late, the session starts backdated to that time,
+     silently. The v27/v53 prompt ("Start the tracker now?") was
+     itself a way the tracker never came to life in the field:
+     Oct 17 the dispatch flipped ACTIVE at 07:22, he drove 15+ km,
+     and at 07:38 the dashboard still showed "Ready to work ·
+     00:00:00 · Starts from now". */
 
   function autoStartPrefs() {
     var o = store.get('onboarding', {});
@@ -1517,19 +1540,28 @@
     var m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/.exec(s);
     return m ? { date: m[1], time: m[2] + ':' + m[3] } : null;
   }
-  function autostartDispatchTimeFor(active, list, today) {
-    var best = null, seen = {};
+  /* The dispatch that supplies today's start: the earliest eligible
+     scheduled time (active considered first, dedup by id, completed /
+     cancelled have no claim). Returns { time, name } or null — the
+     name (jobSite, else pickup) is what the armed dashboard plan
+     shows, so the card can say WHICH dispatch starts the day. */
+  function autostartDispatchFor(active, list, today) {
+    var best = null, bestName = '', seen = {};
     function consider(d) {
       if (!d || typeof d !== 'object') return;
       if (d.status === 'completed' || d.status === 'cancelled') return;
       if (d.id) { if (seen[d.id]) return; seen[d.id] = 1; }
       var p = autostartParseSched(d.scheduledAt);
       if (!p || p.date !== today) return;
-      if (best === null || p.time < best) best = p.time;
+      if (best === null || p.time < best) { best = p.time; bestName = d.jobSite || d.pickup || ''; }
     }
     consider(active);
     if (Array.isArray(list)) for (var i = 0; i < list.length; i++) consider(list[i]);
-    return best; // 'HH:MM' or null
+    return best === null ? null : { time: best, name: bestName };
+  }
+  function autostartDispatchTimeFor(active, list, today) {
+    var w = autostartDispatchFor(active, list, today);
+    return w ? w.time : null; // 'HH:MM' or null
   }
   function autostartEffective(prefs, active, list, override, today) {
     if (override && override.date === today && typeof override.time === 'string' && /^\d{2}:\d{2}$/.test(override.time)) {
@@ -1570,56 +1602,57 @@
       if (autoStartFired(today)) return 'fired';
       var t = App.tracker || { status: 'idle' };
       if (t.status === 'running') { markAutoStartFired(today); return 'running'; }
+      /* v123: a day that already has a closed session never gets a
+         second, phantom auto-start. The once-a-day fired flag is the
+         primary guard; this catches the flows that ran entirely
+         between checks (start + stop inside one backgrounding). */
+      var sessions = store.get('sessions', []);
+      if (Array.isArray(sessions)) {
+        for (var si = 0; si < sessions.length; si++) {
+          if (sessions[si] && sessions[si].date === today) { markAutoStartFired(today); return 'done-today'; }
+        }
+      }
       var tp = String(plan.time).split(':');
       var startMins = (+tp[0] || 0) * 60 + (+tp[1] || 0);
       var nowMins = now.getHours() * 60 + now.getMinutes();
       if (nowMins < startMins) return 'not-yet';
+      /* v123: his pause is his — auto-start never force-resumes a
+         session he paused. The fired flag stays unset here: if he
+         resumes, the running branch consumes it; if he stops, the
+         done-today guard above does. */
+      if (t.status === 'paused') return 'paused';
+      /* v123 (owner, Oct 17, 2026): the plan time has arrived — START,
+         stamped with the planned time, at ANY lateness, with no
+         prompt. "Has to start on at 8 AM not earlier": the anchor is
+         the dispatch's scheduled time, a per-day override, or the
+         standing setting — the fallback behaves identically — never
+         the wake time, and never an earlier movement time (movement
+         only ARMS: yardstart flips the dispatch ACTIVE; it stamps
+         nothing). A late start announces itself by notification,
+         exactly like an on-time one. */
       var label = autoStartLabel(plan.time);
       markAutoStartFired(today);
-      /* v53: a today-specific time (dispatch or override) ANCHORS the
-         session to its scheduled time — the driver was working from
-         then; the app just woke up. The standing setting keeps the
-         long-standing behavior (count from now). */
-      var anchored = plan.source !== 'setting';
       var anchorMs = autostartTodayMs(today, plan.time);
-      if (t.status === 'idle' && (nowMins - startMins) <= AUTOSTART_GRACE_MIN) {
-        // Within grace window: start by itself, no questions.
-        App.tracker.status = 'running';
-        App.tracker.startTs = Date.now();
-        App.tracker.elapsed = anchored ? Math.max(0, Math.floor((Date.now() - anchorMs) / 1000)) : 0;
-        resetAccum(); // v41: fresh auto-started shift, fresh totals
-        trackerSave(); trackerPaint();
-        // v69: pin the session's stable record identity before the
-        // tracking hooks key anything by it (see trackerSessionKeyMs).
-        App.tracker.sessionId = trackerSessionStartMs();
-        trackerSave();
-        autoStartNotify('Tracker auto-started at ' + label +
-          (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
-        // v40: an auto-started shift tracks live miles like any other.
-        try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
-        try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
-        // v63: native background tracking rides an auto-started shift too
-        try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
-        // v39: auto-start is a shift start too — same by-mile odometer
-        // prompt as the manual play button (non-blocking).
-        try { maybePromptOdo('start'); } catch (e) {}
-        return 'started';
-      }
-      // Time passed long ago (app was closed), or tracker was paused mid-shift: ask.
-      var srcNote = plan.source === 'dispatch' ? ' from your dispatch' : plan.source === 'override' ? ' (changed for today)' : '';
-      var msg = t.status === 'paused'
-        ? 'Auto-start time (' + label + srcNote + ') has passed and your tracker is paused. Resume it now?'
-        : 'Auto-start time (' + label + srcNote + ') has passed. Start the tracker now?' +
-          (anchored ? ' It will count from ' + label + '.' : '');
-      if (confirm(msg)) {
-        /* v53: an accepted missed start counts from the scheduled time,
-           never silently from the tap — the v28 presetStart mechanism
-           (trackerToggle applies it) does the backdating. */
-        if (anchored && t.status === 'idle') App.tracker.presetStart = anchorMs;
-        App.trackerToggle(); // idle -> start fresh; paused -> resume
-        return 'prompted-started';
-      }
-      return 'prompted-declined';
+      App.tracker.status = 'running';
+      App.tracker.startTs = Date.now();
+      App.tracker.elapsed = Math.max(0, Math.floor((Date.now() - anchorMs) / 1000));
+      resetAccum(); // v41: fresh auto-started shift, fresh totals
+      trackerSave(); trackerPaint();
+      // v69: pin the session's stable record identity before the
+      // tracking hooks key anything by it (see trackerSessionKeyMs).
+      App.tracker.sessionId = trackerSessionStartMs();
+      trackerSave();
+      autoStartNotify('Tracker auto-started at ' + label +
+        (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
+      // v40: an auto-started shift tracks live miles like any other.
+      try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
+      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
+      // v63: native background tracking rides an auto-started shift too
+      try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
+      // v39: auto-start is a shift start too — same by-mile odometer
+      // prompt as the manual play button (non-blocking).
+      try { maybePromptOdo('start'); } catch (e) {}
+      return 'started';
     } catch (e) { return 'error'; }
   };
 
@@ -1636,6 +1669,7 @@
     var override = store.get('autostart_override', null);
     var plan = autostartPlan(p, active, list, override, today, now.getDay());
     var oTime = (override && override.date === today && typeof override.time === 'string' && /^\d{2}:\d{2}$/.test(override.time)) ? override.time : null;
+    var win = autostartDispatchFor(active, list, today);
     return {
       enabled: p.enabled,
       dayOk: Array.isArray(p.days) && p.days.indexOf(now.getDay()) !== -1,
@@ -1645,9 +1679,26 @@
       source: plan.source || 'setting',
       label: autoStartLabel(plan.time || p.time),
       settingTime: p.time,
-      dispatchTime: autostartDispatchTimeFor(active, list, today),
-      overrideTime: oTime
+      dispatchTime: win ? win.time : null,
+      dispatchName: win ? win.name : '',
+      overrideTime: oTime,
+      fired: autoStartFired(today)
     };
+  };
+  /* v123: the armed plan in plain words, for the dashboard tracker
+     card (trackerPaint). One read of the same plan checkAutoStart
+     runs on: while a plan exists and has not fired, the card says
+     when the day starts — "Starts 8:00 AM · Maple Ridge" — instead
+     of the bare "Starts from now" that showed at 07:38 on Oct 17
+     with an ACTIVE 8:00 dispatch already in hand. Returns null when
+     there is nothing armed to promise (no plan today, or the plan
+     already fired and the day is underway / done). */
+  App.autostartPlanLabel = function (info) {
+    if (!info || !info.willStart || info.fired) return null;
+    var s = 'Starts ' + info.label;
+    if (info.source === 'dispatch' && info.dispatchName) s += ' · ' + info.dispatchName;
+    else if (info.source === 'override') s += ' (changed for today)';
+    return s;
   };
   /* v53: the per-day override behind the card's Change affordance.
      Stored per date in the synced store ({date, time}); the date check

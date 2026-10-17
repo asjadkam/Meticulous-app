@@ -22,9 +22,12 @@
  *  - auto-start OFF / wrong day -> no start regardless of dispatch
  *    (dispatch changes the WHEN, never the WHETHER)
  *  - engine fires while open: session anchored to the dispatch time
- *  - missed start (app asleep past the time): prompt, and on accept the
- *    session counts from the dispatch time (presetStart), never a
- *    silent unbackdated start; on decline nothing starts
+ *  - missed start (app asleep past the time): starts on next open,
+ *    backdated to the dispatch time, with NO prompt (v123 — the
+ *    owner's Oct 17, 2026 rule supersedes the v53 prompt: "Has to
+ *    start on at 8 AM not earlier"; a start that waits for a tap is
+ *    a start that may never happen)
+ *  - the standing setting anchors identically (fallback equivalence)
  */
 'use strict';
 const fs = require('fs');
@@ -206,26 +209,31 @@ console.log('— checkAutoStart behavior —');
   ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
     'session anchored to dispatch time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
 
-  /* standing setting 30 min ago, no dispatch: starts as it always has —
-     counting from now, NOT backdated */
+  /* standing setting 30 min ago, no dispatch: v123 fallback
+     equivalence — the no-dispatch plan anchors to its time exactly
+     like a dispatch plan (before v123 it counted from the wake) */
   w = makeWorld({ onboarding: { autoStart: true, autoStartTime: hhmm(t30), autoStartDays: [0, 1, 2, 3, 4, 5, 6] } });
   eq(w.App.checkAutoStart(), 'started', 'standing time reached -> started');
-  ok(w.App.tracker.elapsed <= 120, 'standing-setting start still counts from now (elapsed ' + w.App.tracker.elapsed + 's)');
+  ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
+    'standing-setting start anchored to the setting time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
 
-  /* missed start: dispatch 3h ago, app was asleep -> prompt; accept ->
-     session counts from the dispatch time via presetStart */
+  /* missed start: dispatch 3h ago, app was asleep -> on open it starts
+     by itself, backdated to the dispatch time, and NO prompt is shown
+     (v123: the confirm gate is gone — a start that waits for a tap is
+     a start that may never happen) */
   const t3h = minsAgoTime(180);
   w = makeWorld({ active: dsp('a', TODAY, hhmm(t3h)), confirm: true });
-  eq(w.App.checkAutoStart(), 'prompted-started', 'missed dispatch start -> prompt -> started');
+  eq(w.App.checkAutoStart(), 'started', 'missed dispatch start -> started on open, no prompt');
   ok(w.App.tracker.elapsed >= 170 * 60 && w.App.tracker.elapsed <= 190 * 60,
     'missed start backdated to dispatch time (elapsed ~3h, got ' + w.App.tracker.elapsed + 's)');
-  ok(w._calls.confirms.length === 1 && w._calls.confirms[0].indexOf('dispatch') !== -1,
-    'missed-start prompt names the dispatch as the source');
+  eq(w._calls.confirms.length, 0, 'no confirmation prompt is shown for a missed start');
+  eq(w._calls.toggles, 0, 'missed start does not route through the manual toggle');
 
-  /* missed start declined -> nothing starts, no silent unbackdated start */
+  /* same world with a "declining" confirm: the answer is never asked,
+     so it cannot veto the start */
   w = makeWorld({ active: dsp('a', TODAY, hhmm(t3h)), confirm: false });
-  eq(w.App.checkAutoStart(), 'prompted-declined', 'missed dispatch start declined -> prompted-declined');
-  eq(w.App.tracker.status, 'idle', 'declined missed start leaves tracker idle');
+  eq(w.App.checkAutoStart(), 'started', 'missed start starts regardless of any would-be decline');
+  eq(w.App.tracker.status, 'running', 'missed start leaves the tracker running, anchored');
 
   /* override anchors too, and beats an even-later dispatch time */
   w = makeWorld({
