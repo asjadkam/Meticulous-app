@@ -167,6 +167,12 @@
     return 0;
   }
 
+  /* Hours the way the owner writes them: 11, 10.5. */
+  function fmtH(x) {
+    var n = Math.round((parseFloat(x) || 0) * 100) / 100;
+    return (n % 1 === 0) ? String(Math.round(n)) : String(n);
+  }
+
   function inMonth(ds, m) { return !!ds && ds.indexOf(m) === 0; }
 
   function bizExpenses() { return S('expenses', []); }
@@ -192,6 +198,20 @@
      their start month. */
   function driverWages(m) {
     var ds = drivers(), es = wageEntries(), cs = travelClaims();
+    /* v105: CARD WAGE POSTINGS (pnl_card_wages) — a closed haul
+       card posts the driver's FULL pay (foreman + travel) into
+       these books from the single completion record ("one ticket,
+       two books"). A v52 travel CLAIM whose dispatch now carries
+       a posting is superseded: the travel hour is inside the
+       posting, and counting the claim too would pay it twice.
+       Days a posting covers are likewise excluded from the
+       computed-travel component below. */
+    var cws = S('card_wages', []);
+    var cardDsp = {};
+    cws.forEach(function (p) { if (p && p.dspId) cardDsp[p.dspId] = true; });
+    cs = cs.filter(function (c) { return !(c && c.dispatchId && cardDsp[c.dispatchId]); });
+    var cardDays = {};
+    cws.forEach(function (p) { if (p && p.driverId && p.date) cardDays[p.driverId + '|' + p.date] = true; });
     var per = {}, total = 0;
     ds.forEach(function (d) {
       var w = 0, detail = '';
@@ -230,7 +250,7 @@
       });
       var th = parseFloat(d.travelHours) || 0, compDays = 0;
       if (d.payType !== 'salary' && th > 0) {
-        Object.keys(daysSeen).forEach(function (dt) { if (!claimDays[dt]) compDays++; });
+        Object.keys(daysSeen).forEach(function (dt) { if (!claimDays[dt] && !cardDays[d.id + '|' + dt]) compDays++; });
       }
       var compWage = th * compDays * dRate;
       var travelWage = Math.round((claimWage + compWage) * 100) / 100;
@@ -242,8 +262,26 @@
         travelDetail = parts.join(' · ');
       }
       w = Math.round((w + travelWage) * 100) / 100;
-      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail, travelWage: travelWage, travelDetail: travelDetail };
+      per[d.id] = { name: d.name, payType: d.payType, wage: w, detail: detail, travelWage: travelWage, travelDetail: travelDetail, cardWage: 0, cardDetail: '' };
       total += w;
+    });
+    /* v105: the card postings join the month's wages — attributed
+       to their driver (the owner-operator's own land under 'self',
+       named on the posting). Postings are keyed by dispatch at
+       write time (dspMergeCardWages), so one card can never put
+       two pay lines on the same day's books. */
+    cws.forEach(function (p) {
+      if (!p || !inMonth(p.date, m)) return;
+      var key = p.driverId || 'self';
+      if (!per[key]) {
+        per[key] = { name: p.driverName || (key === 'self' ? 'You (owner-operator)' : 'Driver'), payType: 'hourly', wage: 0, detail: '', travelWage: 0, travelDetail: '', cardWage: 0, cardDetail: '' };
+      }
+      var w = Math.round((parseFloat(p.wage) || 0) * 100) / 100;
+      per[key].wage = Math.round((per[key].wage + w) * 100) / 100;
+      per[key].cardWage = Math.round(((per[key].cardWage || 0) + w) * 100) / 100;
+      var seg = 'card pay ' + fmtH(p.hours) + 'h (foreman ' + fmtH(p.foremanHours) + 'h + travel ' + fmtH(p.travelHours) + 'h) = ' + money(w);
+      per[key].cardDetail = per[key].cardDetail ? per[key].cardDetail + ' · ' + seg : seg;
+      total = Math.round((total + w) * 100) / 100;
     });
     return { per: per, total: total };
   }
@@ -253,19 +291,42 @@
     var o = App._store.get('onboarding', {});
     var std = (o.payStandard || 'hourly').toLowerCase(), rate = o.payRate;
 
+    /* v105: income is priced by the SHARED per-day builder — the
+       same function the invoice prints from and Revenue totals
+       with. One line per day: a confirmed completion beats the
+       day's tracker entries, so a tracker session can NEVER stack
+       money on top of a closed dispatch in these books (the Oct 16
+       field defect: the raw sums on other screens showed $601.75 /
+       $608.87 for a $319.00 day). The raw payFor sum below remains
+       only as the fallback for a world where the shared builder
+       failed to load. */
+    var entAll = App._store.get('rev_entries', []) || [];
+    var extAll = App._store.get('rev_extras', []) || [];
     var income = 0, incomeByType = {}, extras = 0;
-    (App._store.get('rev_entries', []) || []).forEach(function (e) {
-      if (!inMonth(e.date, m)) return;
-      var a = payFor(e, std, rate);
-      income += a;
-      var t = e.type || 'load';
-      incomeByType[t] = (incomeByType[t] || 0) + a;
-    });
-    (App._store.get('rev_extras', []) || []).forEach(function (x) {
-      if (!inMonth(x.date, m)) return;
-      var a = parseFloat(x.amount) || 0;
-      income += a; extras += a;
-    });
+    extAll.forEach(function (x) { if (inMonth(x.date, m)) extras += parseFloat(x.amount) || 0; });
+    var grouped = null;
+    try {
+      if (typeof Meticulous !== 'undefined' && Meticulous.shared && typeof Meticulous.shared.buildRevenueLines === 'function') {
+        grouped = Meticulous.shared.buildRevenueLines(
+          entAll.filter(function (e) { return inMonth(e.date, m); }),
+          extAll.filter(function (x) { return inMonth(x.date, m); }),
+          parseFloat(rate) || 0, std);
+      }
+    } catch (e) { grouped = null; }
+    if (grouped) {
+      grouped.lines.forEach(function (l) { income += l.amt; });
+      income = Math.round(income * 100) / 100;
+      incomeByType = grouped.typeTotals || {};
+    } else {
+      entAll.forEach(function (e) {
+        if (!inMonth(e.date, m)) return;
+        var a = payFor(e, std, rate);
+        income += a;
+        var t = e.type || 'load';
+        incomeByType[t] = (incomeByType[t] || 0) + a;
+      });
+      income += extras;
+    }
 
     var fuel = 0;
     (App._store.get('fuel_fills', []) || []).forEach(function (f) {
@@ -469,6 +530,12 @@
              top of the ticket/logged hours, and it shows. */
           if (d.travelWage > 0) {
             h += '<div class="kv"><span style="padding-left:14px">↳ Travel pay <span class="note">(' + esc(d.travelDetail) + ')</span></span><b>' + money(d.travelWage) + '</b></div>';
+          }
+          /* v105: pay posted by closed haul cards is its own line —
+             the expense half of "one ticket, two books", visible
+             right under the driver's wage. */
+          if (d.cardWage > 0) {
+            h += '<div class="kv"><span style="padding-left:14px">↳ Haul-card pay <span class="note">(' + esc(d.cardDetail) + ')</span></span><b>' + money(d.cardWage) + '</b></div>';
           }
         });
         if (!anyW) h += '<div class="empty">No wages logged for this month yet.</div>';

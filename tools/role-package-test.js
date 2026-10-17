@@ -198,7 +198,11 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
 
 {
   const want = sharedFields(preV52Entry(octSum, 'hourly', 29, 1, 'Aecon Infrastructure', '2026-10-14', 1));
-  ['driver', 'both'].forEach(function (r) {
+  /* v105: 'driver' keeps the pre-v52 parity below. 'both' left this
+     loop deliberately — the owner-operator's card now posts BOTH
+     books (client billing + his own wage posting), pinned in the
+     dedicated block further down (owner order, Oct 16, 2026). */
+  ['driver'].forEach(function (r) {
     const p = plan(Object.assign({}, octBase, { role: r }));
     deepEq(sharedFields(p.entry), want, 'completion ' + r + ': entry identical to pre-v52 (dry-run parity)');
     eq(p.entry.amount, '333.50', 'completion ' + r + ': $333.50 — October math unchanged to the cent');
@@ -206,6 +210,7 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
     eq(p.entry.travelHours, 1, 'completion ' + r + ': travelHours split field stored');
     eq(p.entry.travelInIncome, true, 'completion ' + r + ': travelInIncome=true');
     eq(p.claim, null, 'completion ' + r + ': no wage claim (the driver keeps his bonus)');
+    eq(p.wagePosting, null, 'completion ' + r + ': no wage posting — the entry IS his income');
     eq(p.heldOut, 0, 'completion ' + r + ': nothing held out');
     eq(p.disclosure, '', 'completion ' + r + ': no disclosure needed');
   });
@@ -218,16 +223,24 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   eq(p.entry.foremanHours, 10.5, 'completion office+driver: foremanHours stored');
   eq(p.entry.travelHours, 1, 'completion office+driver: travelHours stored (held out, on record)');
   eq(p.entry.travelInIncome, false, 'completion office+driver: travelInIncome=false');
-  ok(p.claim && p.claim.driverId === 'd1', 'completion office+driver: claim routed to the matched driver');
-  eq(p.claim.hours, 1, 'completion office+driver: claim hours = travel bonus');
-  eq(p.claim.wage, 27, 'completion office+driver: claim wage at the DRIVER\u2019s rate (1h × $27)');
-  eq(p.claim.source, 'dispatch', 'completion office+driver: claim source tagged');
+  /* v105 (owner, Oct 16, 2026): the v52 travel-only claim is
+     superseded — the card posts the driver's FULL wage (foreman +
+     travel) to P&L from this one record. No claim is minted. */
+  eq(p.claim, null, 'completion office+driver: no travel-only claim anymore (v105)');
+  ok(p.wagePosting && p.wagePosting.driverId === 'd1', 'completion office+driver: wage posting routed to the matched driver');
+  eq(p.wagePosting.foremanHours, 10.5, 'completion office+driver: posting foreman hours');
+  eq(p.wagePosting.travelHours, 1, 'completion office+driver: posting travel hours');
+  eq(p.wagePosting.hours, 11.5, 'completion office+driver: posting hours = foreman + travel');
+  eq(p.wagePosting.rate, 27, 'completion office+driver: posting priced at the DRIVER\u2019s rate');
+  eq(p.wagePosting.wage, 310.50, 'completion office+driver: posting wage = 11.5h × $27 (travel INSIDE, not on top)');
+  eq(p.wagePosting.source, 'dispatch', 'completion office+driver: posting source tagged');
   eq(p.heldOut, 1, 'completion office+driver: heldOut reported');
-  eq(p.disclosure, 'Travel 1.0h not added to income — sent to Umar\u2019s wages in P&L.', 'completion office+driver: disclosure names the driver');
+  eq(p.disclosure, 'Travel 1.0h not added to income — the card\u2019s full wage (11.5h \u00d7 $27 = $310.50) was posted to Umar\u2019s pay in P&L.', 'completion office+driver: disclosure names the wage and the driver');
 }
 {
   const p = plan(Object.assign({}, octBase, { role: 'office', driver: null }));
   eq(p.claim, null, 'completion office, no driver: no claim');
+  eq(p.wagePosting, null, 'completion office, no driver: no wage posting (nobody identified to pay)');
   eq(p.entry.amount, '304.50', 'completion office, no driver: travel still excluded from income');
   eq(p.disclosure, 'Travel 1.0h not added to income — assign the driver in P&L to pay it.', 'completion office, no driver: disclosure says where to pay it');
 }
@@ -236,6 +249,41 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   const p = plan(Object.assign({}, octBase, { sum: zeroSum, role: 'office', travelBonusRaw: 0 }));
   eq(p.disclosure, '', 'completion office, zero travel bonus: no disclosure, nothing to hold out');
   eq(p.entry.amount, '304.50', 'completion office, zero travel bonus: entry = foreman math');
+  /* …and with a driver identified, the base wage still posts even
+     when there is no travel hour at all (v105). */
+  const pz = plan(Object.assign({}, octBase, { sum: zeroSum, role: 'office', travelBonusRaw: 0, driver: { id: 'd1', name: 'Umar', rate: 27 } }));
+  eq(pz.wagePosting.wage, 283.50, 'completion office+driver, zero travel: posting = foreman 10.5h × $27');
+  eq(pz.disclosure, '', 'completion office+driver, zero travel: nothing held out, no disclosure');
+}
+/* v105: 'both' — the owner-operator's card does DOUBLE DUTY
+   (owner order, Oct 16, 2026: one closed card posts as BOTH
+   revenue and expense, on the right books). Revenue = foreman
+   hours ONLY × billing rate; expense posting = (foreman +
+   travel) × wage rate. The travel hour appears in the expense,
+   never in the revenue. */
+{
+  const p = plan(Object.assign({}, octBase, { role: 'both' }));
+  eq(p.entry.amount, '304.50', 'completion both: revenue = foreman only × rate (10.5 × $29) — travel NOT billed');
+  eq(p.entry.hours, '10.50', 'completion both: revenue hours are foreman hours');
+  eq(p.entry.foremanHours, 10.5, 'completion both: foremanHours stored');
+  eq(p.entry.travelHours, 1, 'completion both: travelHours on record');
+  eq(p.entry.travelInIncome, false, 'completion both: travelInIncome=false (travel is a wage cost here)');
+  eq(p.claim, null, 'completion both: no claim');
+  eq(p.heldOut, 0, 'completion both: nothing held out — the travel lands in the wage posting');
+  eq(p.disclosure, '', 'completion both: no disclosure');
+  eq(p.mode, 'both-books', 'completion both: mode names the double duty');
+  ok(p.wagePosting && p.wagePosting.driverId === 'self', 'completion both: wage posting lands on his own books (self)');
+  eq(p.wagePosting.hours, 11.5, 'completion both: posting hours = foreman + travel');
+  eq(p.wagePosting.wage, 333.50, 'completion both: posting = 11.5h × $29 wage rate (same-rate default)');
+  /* Different rates per side (the owner's worked example):
+     foreman 10h, billing $40, wage $29, travel 1h → revenue
+     $400.00, expense $319.00, gross margin on the card $81.00. */
+  const exSum = { ticketCount: 1, totalForemanHours: 10, travelBonus: 1, totalPaidHours: 11, totalNetWeight: 0,
+    breakdown: [{ index: 1, label: 'Card #22729', type: 'haul_card', foremanHours: 10, paymentUnit: null, netWeight: null }] };
+  const px = plan({ sum: exSum, std: 'hourly', rate: 29, billingRate: 40, wageRate: 29, role: 'both', date: '2026-10-16', jobSite: 'Aecon Inf', ticketCount: 1, travelBonusRaw: 1, driver: null, legacyAmount: '', legacyNetWeight: '', loads: '1', ticketNo: '' });
+  eq(px.entry.amount, '400.00', 'completion both, split rates: revenue = 10h × $40 billing = $400.00');
+  eq(px.wagePosting.wage, 319, 'completion both, split rates: expense = 11h × $29 wage = $319.00');
+  eq(Math.round((parseFloat(px.entry.amount) - px.wagePosting.wage) * 100) / 100, 81, 'completion both, split rates: gross margin on the card = $81.00');
 }
 {
   const wSum = { ticketCount: 2, totalForemanHours: 0, travelBonus: 1, totalPaidHours: 1, totalNetWeight: 24.5, breakdown: [] };
@@ -244,6 +292,7 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
     const p = plan({ sum: wSum, std: 'weight', rate: 12, role: r, date: '2026-10-14', jobSite: 'Pit 9', ticketCount: 2, travelBonusRaw: 1, driver: { id: 'd1', name: 'Umar', rate: 27 }, legacyAmount: '', legacyNetWeight: '', loads: '2', ticketNo: '' });
     deepEq(sharedFields(p.entry), want, 'completion weight ' + r + ': tonnes entry identical to pre-v52, bonus cannot enter');
     eq(p.claim, null, 'completion weight ' + r + ': no travel claim on weight work');
+    eq(p.wagePosting, null, 'completion weight ' + r + ': no wage posting on weight work');
   });
 }
 {

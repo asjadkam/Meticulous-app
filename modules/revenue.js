@@ -804,7 +804,15 @@
     /* Cross-module: dispatch completion logs earnings here. */
     addEntry: function (e) {
       var list = entries();
-      list.push({
+      /* v105: a completion entry keyed by its dispatch REPLACES any
+         earlier entry for the same dispatch — re-completing or
+         correcting a card updates the day's money, never doubles it
+         (the never-twice rule). The completion's split fields —
+         foreman/travel hours, whether travel is inside the income,
+         the day's card numbers — ride along on the stored entry:
+         P&L and the invoice read them from here. */
+      if (e.dspId) list = list.filter(function (x) { return !x || x.dspId !== e.dspId; });
+      var entry = {
         date: e.date || App._today(),
         amount: e.amount || 0,
         type: e.type || 'load',
@@ -812,7 +820,13 @@
         tons: e.tons || null,   // v26: Pay by Weight — net tonnes for recalculation
         hours: e.hours || null,
         note: e.note || ''
-      });
+      };
+      if (e.dspId) entry.dspId = e.dspId;
+      if (e.foremanHours != null) entry.foremanHours = e.foremanHours;
+      if (e.travelHours != null) entry.travelHours = e.travelHours;
+      if (e.travelInIncome != null) entry.travelInIncome = e.travelInIncome;
+      if (e.ticketNos && e.ticketNos.length) entry.ticketNos = e.ticketNos.slice();
+      list.push(entry);
       saveEntries(list);
       return list;
     },

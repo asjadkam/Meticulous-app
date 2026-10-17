@@ -271,13 +271,36 @@
      routed to the identified driver's wages as a claim
      (pnl_travel_claims, consumed by P&L driverWages) — or, when no
      driver is identified, the disclosure says they were held out and
-     where to pay them. The money is never silently dropped. */
+     where to pay them. The money is never silently dropped.
+
+     v105 (owner, Oct 16, 2026 — "one ticket, two books" made
+     complete): the plan now also emits the card's WAGE POSTING for
+     the payer-side books, so a closed card posts BOTH sides from
+     the single record, each priced off its own rate:
+       - 'office' + identified driver: wagePosting = (foreman +
+         travel) × the DRIVER's rate, superseding the v52
+         travel-only claim (the claim plumbing stays for claims
+         already on file; no new claim is minted when a posting
+         exists, and P&L never counts both for one dispatch).
+       - 'both' (owner-operator): the entry becomes the CLIENT
+         billing — foreman hours ONLY × the billing rate (customers
+         never pay the travel hour) — and wagePosting = (foreman +
+         travel) × his own wage rate lands in his P&L as driver pay.
+         Revenue fh×billing, expense (fh+th)×wage: the travel hour
+         is the carrier's absorbed cost between the two.
+       - 'driver': unchanged — the entry IS his income, no posting
+         (nobody owes him a second copy of it in his own books).
+     Billing/wage rates arrive as x.billingRate / x.wageRate
+     (Preferences; each falls back to the plain rate). Postings are
+     keyed by dispatch id and applied with replace semantics
+     (dspMergeCardWages / revenue.addEntry), so re-completing or
+     editing a card UPDATES its postings — never duplicates them. */
   function dspFmtH(x) {
     var n = Math.round((parseFloat(x) || 0) * 100) / 100;
     return (n % 1 === 0) ? n.toFixed(1) : String(n);
   }
   function dspCompletionPlan(x) {
-    var entry = null, claim = null, heldOut = 0, disclosure = '', mode = 'none';
+    var entry = null, claim = null, wagePosting = null, heldOut = 0, disclosure = '', mode = 'none';
     var sum = x.sum || null;
     if (sum) {
       var brk = (sum.breakdown || []).map(function (b) {
@@ -316,24 +339,74 @@
           };
           heldOut = th;
           mode = 'office-held';
-          if (th > 0 && x.driver) {
+          if (x.driver) {
+            /* v105: the card's FULL wage posts to the driver's P&L
+               pay from this one record — foreman + travel at the
+               DRIVER's rate. (v52 routed only the travel hour, as a
+               claim, and left the base wage to be hand-logged.) */
             var dRate = parseFloat(x.driver.rate) || 0;
-            claim = {
+            var wHrs = Math.round((fh + th) * 100) / 100;
+            wagePosting = {
               date: x.date,
               driverId: x.driver.id,
-              hours: th,
+              driverName: x.driver.name || '',
+              foremanHours: fh,
+              travelHours: th,
+              hours: wHrs,
               rate: dRate,
-              wage: Math.round(th * dRate * 100) / 100,
+              wage: Math.round(wHrs * dRate * 100) / 100,
               source: 'dispatch',
               jobSite: x.jobSite || ''
             };
             mode = 'office-routed';
-            disclosure = 'Travel ' + dspFmtH(th) + 'h not added to income — sent to ' + (x.driver.name || 'the driver') + '\u2019s wages in P&L.';
+            if (th > 0) {
+              disclosure = 'Travel ' + dspFmtH(th) + 'h not added to income — the card\u2019s full wage (' +
+                dspFmtH(wHrs) + 'h \u00d7 $' + dRate + ' = $' + wagePosting.wage.toFixed(2) +
+                ') was posted to ' + (x.driver.name || 'the driver') + '\u2019s pay in P&L.';
+            }
           } else if (th > 0) {
             disclosure = 'Travel ' + dspFmtH(th) + 'h not added to income — assign the driver in P&L to pay it.';
           }
+        } else if (x.role === 'both') {
+          /* v105: the owner-operator's card does DOUBLE DUTY in his
+             own books. Revenue = foreman hours ONLY × the billing
+             rate (the customer never pays the travel hour); the
+             driver-pay expense = (foreman + travel) × his wage rate.
+             The two rates are his own Preferences values and may
+             differ — the margin between them is the card's gross. */
+          var bRate = parseFloat(x.billingRate) > 0 ? parseFloat(x.billingRate) : x.rate;
+          var wRate = parseFloat(x.wageRate) > 0 ? parseFloat(x.wageRate) : x.rate;
+          var bAmt = fh * bRate;
+          entry = {
+            date: x.date,
+            amount: bAmt.toFixed(2),
+            hours: fh.toFixed(2),
+            type: 'hourly',
+            loads: x.ticketCount,
+            foremanHours: fh,
+            travelHours: th,
+            travelInIncome: false,
+            note: 'Dispatch: ' + (x.jobSite || '') +
+              ' · foreman ' + fh + 'h billed @ $' + bRate + '/h' +
+              (brk ? ' (' + brk + ')' : '') +
+              ' · travel ' + dspFmtH(th) + 'h not billed — it is your wage cost'
+          };
+          var bwHrs = Math.round((fh + th) * 100) / 100;
+          wagePosting = {
+            date: x.date,
+            driverId: 'self',
+            driverName: 'You (owner-operator)',
+            foremanHours: fh,
+            travelHours: th,
+            hours: bwHrs,
+            rate: wRate,
+            wage: Math.round(bwHrs * wRate * 100) / 100,
+            source: 'dispatch',
+            jobSite: x.jobSite || ''
+          };
+          mode = 'both-books';
         } else {
-          /* driver / both: byte-identical to the pre-v52 entry, plus the
+          /* driver: byte-identical to the pre-v52 entry, plus the
              split fields foremanHours / travelHours. */
           var hAmt = sum.totalPaidHours * x.rate;
           entry = {
@@ -378,7 +451,19 @@
         mode = 'legacy-weight';
       }
     }
-    return { entry: entry, claim: claim, heldOut: heldOut, disclosure: disclosure, mode: mode };
+    return { entry: entry, claim: claim, wagePosting: wagePosting, heldOut: heldOut, disclosure: disclosure, mode: mode };
+  }
+  /* v105: card wage postings are keyed by dispatch — applying a
+     posting REPLACES any earlier posting for the same dispatch, so
+     re-completing or correcting a card updates its P&L pay line
+     instead of stacking a second one (the never-twice rule). */
+  function dspMergeCardWages(list, posting) {
+    var out = [];
+    (list || []).forEach(function (p) {
+      if (!p || !posting || p.dspId !== posting.dspId) out.push(p);
+    });
+    if (posting) out.push(posting);
+    return out;
   }
   /* ================= DSP-COMPLETE-END ================= */
 
@@ -473,9 +558,21 @@
       sum: sum, std: sett.std, rate: sett.rate, role: sett.role, date: sett.today,
       jobSite: (rec && rec.jobSite) || '', ticketCount: tickets.length,
       travelBonusRaw: sett.travelBonus, driver: sett.driver || null,
+      billingRate: sett.billingRate, wageRate: sett.wageRate,
       legacyAmount: rec ? rec.amount : null, legacyNetWeight: rec ? rec.netWeight : null,
       loads: rec ? rec.loads : null, ticketNo: rec ? rec.ticketNo : null
     });
+    /* v105: the entry carries the day's card numbers, so the
+       invoice's closing note can name them without re-reading the
+       dispatch record. */
+    if (plan.entry && tickets.length) {
+      var nums = [];
+      tickets.forEach(function (t) {
+        var n = t && (t.cardNumber || t.ticketNo);
+        if (n) nums.push(String(n));
+      });
+      if (nums.length) plan.entry.ticketNos = nums;
+    }
     return { tickets: tickets, sum: sum, plan: plan };
   }
   /* ================= DSP-CLOSE-END ================= */
@@ -1565,6 +1662,10 @@
           std: (o.payStandard || 'hourly').toLowerCase(),
           rate: parseFloat(o.payRate) || 0,
           travelBonus: parseFloat(o.travelBonus) || 0,
+          /* v105: the two-books rates (owner-operator). Each falls
+             back to the plain rate when the owner hasn't split them. */
+          billingRate: parseFloat(o.billingRate) || parseFloat(o.payRate) || 0,
+          wageRate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
           role: role, driver: matchedDriver, today: App._today()
         };
       }
@@ -1583,6 +1684,10 @@
         var revEntry = plan.entry;
         var amt = parseFloat(cur.amount);
         if (revEntry && Meticulous.modules.revenue && Meticulous.modules.revenue.addEntry) {
+          /* v105: keyed by dispatch — addEntry replaces any earlier
+             entry for THIS dispatch, so a re-completion updates the
+             day's money instead of doubling it. */
+          revEntry.dspId = cur.id;
           Meticulous.modules.revenue.addEntry(revEntry);
         }
         if (plan.claim) {
@@ -1592,6 +1697,15 @@
           claims.push(plan.claim);
           App._store.set('pnl_travel_claims', claims);
           if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_travel_claims', plan.claim.id, plan.claim); } catch (e) {} }
+        }
+        /* v105: the card's wage posting lands in P&L's books,
+           keyed by this dispatch (replace, never duplicate). */
+        if (plan.wagePosting) {
+          plan.wagePosting.dspId = cur.id;
+          plan.wagePosting.id = 'cw_' + String(cur.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+          var cws = dspMergeCardWages(App._store.get('pnl_card_wages', []) || [], plan.wagePosting);
+          App._store.set('pnl_card_wages', cws);
+          if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_card_wages', plan.wagePosting.id, plan.wagePosting); } catch (e) {} }
         }
         /* v41: dynamic tracker — a dispatch completed during a running
            session counts as one trip for the day, and its tickets' NET

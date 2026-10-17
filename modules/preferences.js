@@ -68,7 +68,12 @@
         ['Miles', 'Hourly', 'Trip', 'Weight'].map(function (x) { return '<option' + (o.payStandard === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
         '<label class="f">Rate ($)</label><input id="pf_rate" type="number" inputmode="decimal" value="' + esc(o.payRate || '') + '">' +
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
-        '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p></div>';
+        '<p class="note">Fixed daily bonus added to foreman ticket hours. Asjad: 1h, some drivers: 1.5h.</p>' +
+        /* v105: the two-books rates for an owner-operator whose card
+           posts BOTH sides of his own P&L. Blank = same as Rate. */
+        '<label class="f">Client billing rate ($/foreman hour) — owner-operators</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="Same as rate">' +
+        '<label class="f">My wage rate ($/hour) — owner-operators</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || '') + '" placeholder="Same as rate">' +
+        '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave blank to use your rate for both.</p></div>';
 
       /* v36: tracker auto-start settings live in Revenue (the tracker
          feeds Revenue). A pointer card sat here until v52 — removed at
@@ -91,6 +96,7 @@
         '<label class="f">GST/HST number</label><input id="pf_gst" value="' + esc(o.gst || '') + '">' +
         '<label class="f">Business address</label><input id="pf_caddr" value="' + esc(o.companyAddr || '') + '">' +
         '<label class="f">Contracting company</label><input id="pf_cont" value="' + esc(o.contractingCo || '') + '">' +
+        '<label class="f">Contracting company address</label><input id="pf_contaddr" value="' + esc(o.contractingAddr || '') + '" placeholder="Street, City, Province Postal">' +
         /* v79: invoice settings live with the business details — the
            user's own next invoice number (no silent counter) and the
            tax-inclusive rate switch. They save with Save preferences,
@@ -295,8 +301,9 @@
         var g = function (id) { return body.querySelector('#' + id).value.trim(); };
         o.accountType = g('pf_acct'); o.employment = g('pf_emp'); o.payStandard = g('pf_std');
         o.payRate = g('pf_rate'); o.travelBonus = g('pf_travel') || '1';
+        o.billingRate = g('pf_billrate'); o.ownWageRate = g('pf_wagerate');
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
-        o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont');
+        o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont'); o.contractingAddr = g('pf_contaddr');
         o.nextInvoiceNo = g('pf_nextinv');
         o.rateIncludesTax = body.querySelector('#pf_taxincl').checked;
         o.invoiceTaxRate = g('pf_invtax') || '5';

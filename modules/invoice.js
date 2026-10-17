@@ -230,18 +230,34 @@
        can show the chosen source's hours beside the chosen money:
        dayHours[date] = the hours of whichever group won the day. */
     var hoursByDateSrc = {};
+    /* v105: priced contributions per day/source/type in a SIDE map
+       (same discipline as dayHours) so P&L can break the grouped
+       income down by type without re-pricing anything itself. */
+    var typeByDateSrc = {};
     (entries || []).forEach(function (e) {
-      var amt = 0, desc = '';
-      if (std === 'hourly') { amt = (parseFloat(e.hours) || 0) * rate; desc = (e.hours || 0) + ' hrs @ $' + rate; }
-      else if (std === 'miles') { amt = (parseFloat(e.miles) || 0) * rate; desc = (e.miles || 0) + ' mi @ $' + rate; }
-      else if (std === 'trip') { amt = (parseFloat(e.trips) || 0) * rate; desc = (e.trips || 0) + ' trips @ $' + rate; }
-      else if (std === 'weight') { amt = (parseFloat(e.tons) || 0) * rate; desc = (e.tons || 0) + ' tons @ $' + rate; }
-      else { amt = parseFloat(e.amount) || 0; desc = e.note || e.date; }
+      /* v105 pricing: an explicit amount on the entry WINS — it is
+         the number that was true when the entry was logged or last
+         edited in Day Details (the payFor rule: an amount over 0
+         prices the entry). Quantity × current rate is only the
+         fallback for amount-less entries (imports, legacy rows), so
+         a later rate change can never rewrite money already agreed. */
+      var amt = parseFloat(e.amount) || 0, desc = '', qty = 0;
+      if (std === 'hourly') { qty = parseFloat(e.hours) || 0; desc = (e.hours || 0) + ' hrs @ $' + rate; }
+      else if (std === 'miles') { qty = parseFloat(e.miles) || 0; desc = (e.miles || 0) + ' mi @ $' + rate; }
+      else if (std === 'trip') { qty = parseFloat(e.trips) || 0; desc = (e.trips || 0) + ' trips @ $' + rate; }
+      else if (std === 'weight') { qty = parseFloat(e.tons) || 0; desc = (e.tons || 0) + ' tons @ $' + rate; }
+      else { desc = e.note || e.date; }
+      if (!(amt > 0)) amt = qty * rate;
+      if (amt > 0 && qty <= 0 && std && e.note) desc = e.note;
       if (amt > 0) {
         var src = invCycEntrySrc(e);
         raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: src });
         var hd = hoursByDateSrc[e.date] || (hoursByDateSrc[e.date] = {});
         hd[src] = (hd[src] || 0) + (parseFloat(e.hours) || 0);
+        var td = typeByDateSrc[e.date] || (typeByDateSrc[e.date] = {});
+        var tt = td[src] || (td[src] = {});
+        var et = e.type || (std === 'weight' ? 'weight' : std === 'trip' ? 'load' : 'hourly');
+        tt[et] = (tt[et] || 0) + amt;
       }
     });
     var byDate = {};
@@ -249,7 +265,7 @@
       var g = byDate[l.date] || (byDate[l.date] = { dispatch: [], tracker: [], entry: [] });
       if (g[l.src]) g[l.src].push(l); else g.entry.push(l);
     });
-    var lines = [], duplicateDates = [], unconfirmedDates = [], dayHours = {};
+    var lines = [], duplicateDates = [], unconfirmedDates = [], dayHours = {}, typeTotals = {};
     Object.keys(byDate).sort().forEach(function (date) {
       var g = byDate[date], chosen = null, chosenSrc = null;
       if (g.dispatch.length) {
@@ -270,13 +286,18 @@
         lines.push(chosen);
         var hd2 = hoursByDateSrc[date] || {};
         dayHours[date] = hd2[chosenSrc] || 0;
+        var tt2 = (typeByDateSrc[date] || {})[chosenSrc] || {};
+        Object.keys(tt2).forEach(function (t) { typeTotals[t] = invCycRound2((typeTotals[t] || 0) + tt2[t]); });
       }
     });
     (extras || []).forEach(function (x) {
       var v = parseFloat(x.amount) || 0;
-      if (v !== 0) lines.push({ desc: (x.type || 'Extra') + ' — ' + x.date, amt: v, date: x.date, src: 'extra' });
+      if (v !== 0) {
+        lines.push({ desc: (x.type || 'Extra') + ' — ' + x.date, amt: v, date: x.date, src: 'extra' });
+        typeTotals[x.type || 'Extra'] = invCycRound2((typeTotals[x.type || 'Extra'] || 0) + v);
+      }
     });
-    return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates, dayHours: dayHours };
+    return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates, dayHours: dayHours, typeTotals: typeTotals };
   }
   /* v81: the grouped per-day truth is shared — Revenue's screens
      and totals consume the SAME builder the invoice prints from, so
@@ -353,6 +374,13 @@
       revLines: x.revLines, items: (draft.items || []).slice(),
       taxRate: Number(draft.taxRate) || 0, taxIncluded: !!x.taxIncluded,
       sub: x.sub, tax: x.tax, total: x.total,
+      /* v105: everything the printed document needs to reproduce
+         the owner's hour-sheet format later — the winning hours per
+         day, the haul-card facts per day, and the rate in force —
+         stored ON the record so a reprint never depends on whatever
+         the live stores hold by then. */
+      dayHours: x.dayHours || null, cardDays: x.cardDays || null,
+      rate: parseFloat(x.rate) || 0,
       notes: draft.notes, company: x.company,
       province: x.province, country: x.country, at: x.today
     };
@@ -378,6 +406,110 @@
     invW('cycmsg', 'Invoice #' + no + ' saved for ' + invCycShort({ a: x.pa, b: x.pb }) +
       '. Next period: ' + invCycShort(next) + '.');
     return { ok: true, rec: rec, next: next, nextPrefNo: nextPrefNo };
+  }
+  /* ================= v105: THE SENT FORMAT =================
+     The printed invoice must read like the owner's own hour sheet —
+     the document he actually sent his boss (invoice #1151, Oct 15,
+     2026): one line per day as "Oct 16: 11h", and a closing note
+     that spells out the tax-inclusive rate, the foreman+travel
+     doctrine, each day's haul card, and the period's total hours.
+     Pure helpers; harness-pinned in tools/invoice-format-test.js. */
+  /* Hours the way his sheet writes them: 11, 10.5, 124.5. */
+  function invCycFmtH(x) {
+    var n = invCycRound2(parseFloat(x) || 0);
+    return (n % 1 === 0) ? String(Math.round(n)) : String(n);
+  }
+  /* The day line in hour-sheet shape: "Oct 16: 11h". Falls back to
+     the builder's own description when the day's hours are unknown
+     (extras, legacy records). */
+  function invCycLineLabel(line, dayHours) {
+    if (!line || !line.date || !dayHours) return '';
+    var h = parseFloat(dayHours[line.date]);
+    if (!isFinite(h) || !(h > 0)) return '';
+    return invCycDateShort(line.date) + ': ' + invCycFmtH(h) + 'h';
+  }
+  /* Haul-card facts per day, from the completed dispatch records:
+     { 'YYYY-MM-DD': {tickets: [{num, foreman}], foreman, travel} }.
+     Travel is what the day's PAID hours exceed the cards' foreman
+     hours by (driver-side books); on office books the paid hours
+     ARE the foreman hours, so travel stays 0 and no travel wording
+     is generated. Only days a dispatch entry actually won are
+     included — a card that never posted revenue is not invoiced. */
+  function invCycCardDays(entries, dspList, dayHours, pa, pb) {
+    var dspDates = {};
+    (entries || []).forEach(function (e) {
+      if (e && e.date && e.date >= pa && e.date <= pb && invCycEntrySrc(e) === 'dispatch') dspDates[e.date] = true;
+    });
+    var cards = {};
+    (dspList || []).forEach(function (rec) {
+      if (!rec || rec.status !== 'completed') return;
+      var d = (typeof rec.date === 'string' && rec.date) ? rec.date : String(rec.scheduledAt || '').slice(0, 10);
+      if (!d || !dspDates[d]) return;
+      var tk = rec.tickets || [];
+      if (!tk.length) return;
+      var c = cards[d] || (cards[d] = { tickets: [], foreman: 0, travel: 0 });
+      tk.forEach(function (t) {
+        var fh = parseFloat(t && t.foremanHours) || 0;
+        c.foreman = invCycRound2(c.foreman + fh);
+        c.tickets.push({ num: String((t && (t.cardNumber || t.ticketNo)) || ''), foreman: fh });
+      });
+    });
+    Object.keys(cards).forEach(function (d) {
+      var total = dayHours ? parseFloat(dayHours[d]) : NaN;
+      if (isFinite(total) && total > cards[d].foreman) cards[d].travel = invCycRound2(total - cards[d].foreman);
+    });
+    return cards;
+  }
+  /* The closing note, word-for-word in the shape of the sent #1151:
+     "Rate $29.00/hour, tax included (net rate $27.62/hour + 5% GST
+     of $1.38/hour). Hours are the foreman ticket hours for each day
+     plus 1 hour of travel per day worked. Oct 14: haul card #23177
+     (foreman 9.5h + 1h travel). … Total hours: 124.5."
+     Tax-inclusive invoices only; anything the facts don't support
+     (no rate, no travel, no cards) is simply not claimed. */
+  function invCycDocNote(lines, dayHours, cards, opt) {
+    opt = opt || {};
+    if (!opt.taxIncluded) return '';
+    var parts = [];
+    var rate = parseFloat(opt.rate) || 0, tr = parseFloat(opt.taxRate) || 0;
+    if (rate > 0 && tr > 0) {
+      var net = invCycRound2(rate / (1 + tr / 100));
+      var gst = invCycRound2(rate - net);
+      parts.push('Rate $' + rate.toFixed(2) + '/hour, tax included (net rate $' + net.toFixed(2) +
+        '/hour + ' + invCycFmtH(tr) + '% GST of $' + gst.toFixed(2) + '/hour).');
+    }
+    cards = cards || {};
+    var tv = null, uniform = true, anyTravel = false;
+    Object.keys(cards).forEach(function (d) {
+      var t = parseFloat(cards[d].travel) || 0;
+      if (t > 0) {
+        anyTravel = true;
+        if (tv === null) tv = t; else if (tv !== t) uniform = false;
+      }
+    });
+    if (anyTravel) {
+      parts.push('Hours are the foreman ticket hours for each day plus ' +
+        (uniform ? invCycFmtH(tv) + (tv === 1 ? ' hour' : ' hours') : 'the travel hours shown') +
+        ' of travel per day worked.');
+    }
+    (lines || []).forEach(function (l) {
+      var c = cards[l.date];
+      if (!c || l.src !== 'dispatch' || !c.tickets.length) return;
+      if (c.tickets.length === 1) {
+        var t1 = c.tickets[0];
+        if (!t1.num) return;
+        parts.push(invCycDateShort(l.date) + ': haul card #' + t1.num + ' (foreman ' +
+          invCycFmtH(t1.foreman) + 'h' + (c.travel > 0 ? ' + ' + invCycFmtH(c.travel) + 'h travel' : '') + ').');
+      } else {
+        var seg = [];
+        c.tickets.forEach(function (t) { if (t.num) seg.push('haul card #' + t.num + ' (foreman ' + invCycFmtH(t.foreman) + 'h)'); });
+        if (seg.length) parts.push(invCycDateShort(l.date) + ': ' + seg.join(', ') + (c.travel > 0 ? ' + ' + invCycFmtH(c.travel) + 'h travel.' : '.'));
+      }
+    });
+    var th = 0;
+    Object.keys(dayHours || {}).forEach(function (d) { th += parseFloat(dayHours[d]) || 0; });
+    if (th > 0) parts.push('Total hours: ' + invCycFmtH(th) + '.');
+    return parts.join(' ');
   }
   /* ================= INV-CYCLE-END ================= */
 
@@ -442,8 +574,17 @@
     var o = onb();
     var draft = S('draft', null) || {
       items: [], taxRate: defaultTaxRate(o),
-      billTo: o.contractingCo || '', no: null, date: App._today(), notes: ''
+      billTo: o.contractingCo ? (o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '')) : '',
+      no: null, date: App._today(), notes: ''
     };
+    /* v105: a draft still carrying the untouched default Bill-to
+       (just the contracting company's name) picks up the company's
+       address from Preferences, so the printed invoice bills the
+       full name + address the way the owner sends it. A Bill-to he
+       edited himself is never rewritten. */
+    if (o.contractingCo && o.contractingAddr && draft.billTo === o.contractingCo) {
+      draft.billTo = o.contractingCo + ', ' + o.contractingAddr;
+    }
     /* Legacy drafts (pre-v55) could hold the placeholder text as the
        # value — it is not a number; treat it as empty. */
     if (draft.no === '(auto on save)') draft.no = null;
@@ -499,7 +640,11 @@
       if (revLines.length) {
         h += '<p class="note">From revenue (' + esc(pa) + ' → ' + esc(pb) + '):</p>';
         revLines.forEach(function (l) {
-          h += '<div class="kv"><span>' + esc(l.desc) +
+          /* v105: revenue day lines read in the owner's hour-sheet
+             shape ("Oct 16: 11h") — the same words the printed
+             invoice carries. Extras keep their own descriptions. */
+          var lbl = l.src === 'extra' ? l.desc : (invCycLineLabel(l, revPlan.dayHours) || l.desc);
+          h += '<div class="kv"><span>' + esc(lbl) +
             (l.unconfirmed ? ' <span style="color:#b97a0f">— from tracker — unconfirmed</span>' : '') +
             '</span><b>$' + l.amt.toFixed(2) + '</b></div>';
         });
@@ -609,12 +754,20 @@
            region). A failed or refused save keeps the draft exactly as
            it is and prints nothing; only a verified save archives the
            invoice, clears the draft, advances the period, and prints. */
+        var paV = body.querySelector('#iv_a').value, pbV = body.querySelector('#iv_b').value;
         var res = invIssue({
           draft: draft, revLines: revLines, sub: t.sub, tax: t.tax, total: t.total,
-          pa: body.querySelector('#iv_a').value, pb: body.querySelector('#iv_b').value,
+          pa: paV, pb: pbV,
           today: App._today(),
           prefNo: o.nextInvoiceNo || '', taxIncluded: taxIncluded,
           duplicateDates: (revPlan && revPlan.duplicateDates) || [],
+          /* v105: the facts the printed document is built from —
+             winning hours per day, the period's haul cards, and
+             the rate in force — archived on the record itself. */
+          dayHours: (revPlan && revPlan.dayHours) || null,
+          cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
+            (revPlan && revPlan.dayHours) || {}, paV, pbV),
+          rate: parseFloat(o.payRate) || 0,
           setNextInvoiceNo: function (next) {
             try {
               var oo = App._store.get('onboarding', {});
@@ -655,15 +808,34 @@
     function printInvoice(rec) {
       var rows = '';
       (rec.revLines || []).forEach(function (l) {
-        rows += '<tr><td>' + esc(l.desc) + '</td><td class="tot">$' + l.amt.toFixed(2) + '</td></tr>';
+        /* v105: day lines print in the hour-sheet shape the owner
+           sends ("Oct 16: 11h"); extras and records without stored
+           day hours keep their stored descriptions. */
+        var label = l.src === 'extra' ? (l.desc || '') : (invCycLineLabel(l, rec.dayHours) || l.desc || '');
+        rows += '<tr><td>' + esc(label) + '</td><td class="tot">$' + (Number(l.amt) || 0).toFixed(2) + '</td></tr>';
       });
       (rec.items || []).forEach(function (it) {
         rows += '<tr><td>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</td>' +
           '<td class="tot">$' + ((Number(it.qty) || 0) * (Number(it.rate) || 0)).toFixed(2) + '</td></tr>';
       });
+      /* v105: the closing note is GENERATED from the record's own
+         facts (rate, tax mode, haul cards, total hours) in the
+         exact shape of the invoice the owner sent (#1151). Records
+         issued before v105 carry no cardDays — rebuild them from
+         the live stores on a best-effort basis. His own typed
+         notes, when he wrote any, follow the generated note. */
+      var cardDays = rec.cardDays;
+      if (!cardDays && rec.dayHours) {
+        try {
+          cardDays = invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []), rec.dayHours, rec.pa, rec.pb);
+        } catch (e) { cardDays = null; }
+      }
+      var genNote = invCycDocNote(rec.revLines || [], rec.dayHours, cardDays,
+        { rate: rec.rate, taxRate: rec.taxRate, taxIncluded: rec.taxIncluded });
+      var noteText = [genNote, String(rec.notes || '').trim()].filter(Boolean).join(' ');
       printDoc('Invoice ' + rec.no,
         '<h1>' + esc((rec.company && rec.company.name) || 'Invoice') + '</h1>' +
-        '<p class="muted">' + esc((rec.company && rec.company.addr) || '') +
+        '<p class="muted">' + esc((rec.company && rec.company.addr) || '').replace(/\n/g, '<br>') +
         (rec.company && rec.company.gst ? '<br>GST/HST: ' + esc(rec.company.gst) : '') + '</p>' +
         '<h2>INVOICE #' + esc(rec.no) + '</h2>' +
         '<div class="row"><span><b>Bill to:</b> ' + esc(rec.billTo || '—') + '</span><span><b>Date:</b> ' + esc(rec.date) + '</span></div>' +
@@ -673,7 +845,8 @@
           ? 'Tax (' + esc(rec.taxRate) + '% GST, included in the rate)'
           : 'Tax (' + esc(rec.taxRate) + '%)') + '</span><span>$' + rec.tax.toFixed(2) + '</span></div>' +
         '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + rec.total.toFixed(2) + '</b></span></div>' +
-        (rec.notes ? '<p class="muted">' + esc(rec.notes) + '</p>' : ''));
+        (noteText ? '<p class="muted">' + esc(noteText) + '</p>' : '') +
+        '<p class="muted">Invoice ' + esc(rec.no) + '</p>');
     }
 
     draw();

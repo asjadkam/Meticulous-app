@@ -227,7 +227,12 @@ function makeModuleWorld(recognize) {
   };
 }
 function expectedEntry(regionWorld, closedRec) {
-  return regionWorld.sb.dspCompletionFor(JSON.parse(JSON.stringify(closedRec)), SETT).plan.entry;
+  var e = regionWorld.sb.dspCompletionFor(JSON.parse(JSON.stringify(closedRec)), SETT).plan.entry;
+  /* v105: applyCompletion stamps the plan entry with the dispatch
+     id before logging it — the never-twice key revenue.addEntry
+     replaces on. The stored entry is the plan entry PLUS that key. */
+  if (e) e.dspId = closedRec.id;
+  return e;
 }
 
 /* drive the capture step: tap Close, pick the photo, land on confirm */
