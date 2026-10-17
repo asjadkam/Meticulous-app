@@ -6,6 +6,9 @@
    dataset migrate once into his work favorites (NAV-MIGRATION);
    and this screen carries the one quiet Yard pick that
    js/yardstart.js watches for dispatch auto-activation.
+   v130 (owner, Oct 17): the built-ins are now exactly the NINE
+   industry pits from his ship list (see NAV-BUILTIN) — his
+   personal places stay favorites-only, always.
    v87 (owner, Oct 15): THE CARD WALL IS GONE — "don't need 40
    different cards for each and every saved location. That should
    be all in a dropdown… 1 field to fill in the address." Places
@@ -68,31 +71,37 @@
      dataset was compiled from the OWNER'S OWN 2026 dispatch
      history — his pits, his job sites, his fuel stops — and it
      no longer ships (it now migrates into HIS work favorites,
-     NAV-MIGRATION below). What ships instead is a small set of
-     FAMOUS Calgary pits any driver would know, and each row
-     earned its place: the name, the street address AND the pin
-     all come from the SAME public listing, never from the
-     owner's dispatch pins:
-       - Stoney Pit — public listing "Stoney Trail Aggregate
-         Resource", 12411 85 St NW, Calgary, pin 51.165429,
-         -114.213202 (the listing's own website is
-         stoneytrailpit.ca; the pit's own documents name
-         12411–85th Street NW as its entrance/scale house).
-       - Volker Stevin — 7175 12 St SE, Calgary, pin 50.990329,
-         -114.037808 (the listing's own website is
-         volkerstevin.ca; the company's own site lists this
-         address).
-     Named by the owner but NOT publicly verifiable — no public
-     listing ties the name to a specific pin or address — so NOT
-     shipped, and flagged in the build report: Lafarge North,
-     Lafarge South, Lafarge Industrial, North Plant, South Plant.
-     A row ships the day a public source proves the place.
+     NAV-MIGRATION below).
+     v130 (owner, Oct 17, 2026): THE INDUSTRY-PIT SET IS HIS
+     LIST — "each one of these pits is rather important to
+     keep it safe in the directory… you should ship them with
+     the app." The nine rows below are transcribed from his
+     ship list (industry-pits-ship-list.json, prepared Oct 17
+     from his saved-pit screenshots matched to public
+     listings): name, street address AND pin per pit, from
+     that list and nothing else. His PERSONAL places and his
+     work-site pins are not here and never ship — they stay
+     his favorites only (the reconciliation he ruled Oct
+     16/17). The two v91 builder-picked listings are
+     subsumed: the Spy Hill STAR pit ships under its full
+     listing name from his list, and a pit that is not on
+     his list does not ship, however famous — the shipped
+     set is exactly his nine. Notes are kept free of the
+     list's internal commentary: the alternate candidate
+     pins it weighed appear nowhere in this data.
      Built-ins are not stored in nav_data: they cannot be deleted,
      do not sync, and are the same on every install. Personal
      favorites are untouched. */
   var BUILTIN_RAW = [
-    ['Stoney Pit', 51.165429, -114.213202, 'pit', 'Stoney Trail Aggregate Resource (STAR) · BLV Group pit at Spy Hill', '12411 85 St NW, Calgary'],
-    ['Volker Stevin', 50.990329, -114.037808, 'pit', 'Volker Stevin Calgary yard', '7175 12 St SE, Calgary']
+    ['BURNCO Indus Aggregate Pit', 50.852961, -113.841696, 'pit', 'BURNCO aggregate pit — Indus, Rocky View County', '284129 Township Rd 222, Rocky View County, AB'],
+    ['BURNCO Cochrane Aggregate Pit', 51.224722, -114.580872, 'pit', 'BURNCO aggregate pit — Cochrane, Rocky View County', '262236 Range Rd 51, Rocky View County, AB'],
+    ['Hillstone Aggregates', 51.263975, -114.437458, 'pit', 'Hillstone aggregate pit — Big Hill Springs Rd', '40217 Big Hill Springs Rd, Rocky View County, AB'],
+    ['Stoney Trail Aggregate Resource', 51.165429, -114.213202, 'pit', 'Stoney Trail Aggregate Resource (STAR) · BLV Group pit at Spy Hill', '12411 85 St NW, Calgary, AB'],
+    ['Amrize Spyhill', 51.179086, -114.190718, 'pit', 'Amrize pit — Spy Hill, NW Calgary', '13012 85 St NW, Calgary, AB'],
+    ['Standard General Calgary (Colas)', 50.9664, -113.89697, 'pit', 'Standard General (Colas) — SE Calgary', '9660 Enterprise Way SE, Calgary, AB T3S 0A1'],
+    ['Aecon Gravel Pit', 50.722818, -114.188562, 'pit', 'Aecon gravel pit — Foothills County', '354201 128 St W, Foothills County, AB'],
+    ['Amrize Industrial', 51.008548, -114.007485, 'pit', 'Amrize industrial plant — 50 Ave SE', '2213 50 Ave SE, Calgary, AB'],
+    ['Aecon Bradi Pit', 51.27206, -114.43179, 'pit', 'Aecon pickup pit — near Hillstone', '']
   ];
   var BUILTINS = BUILTIN_RAW.map(function (r) {
     return {
@@ -459,7 +468,7 @@
         '<button class="btn ghost" id="nv_addopen" style="margin-top:10px">＋ Add ' + (tab === 'work' ? 'favorite' : 'place') + '</button>' +
         /* the Add form lives behind that button — never the landing face */
         '<div id="nv_addwrap" style="display:' + (addOpen ? 'block' : 'none') + ';margin-top:10px">' +
-        '<label class="f">Name</label><input id="nv_name" placeholder="' + (tab === 'work' ? 'e.g. Burnco Shepard pit' : 'e.g. Walmart Deerfoot') + '">' +
+        '<label class="f">Name</label><input id="nv_name" placeholder="' + (tab === 'work' ? 'e.g. North gravel pit' : 'e.g. Walmart Deerfoot') + '">' +
         '<label class="f">Address</label><input id="nv_addr" placeholder="Street address or area">';
       if (tab === 'work') {
         h += '<label class="f">Type</label><select id="nv_type">' +

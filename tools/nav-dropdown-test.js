@@ -239,7 +239,7 @@ function favByName(mem, name) {
 
 (async function () {
   /* ================= FRESH: the product ships clean ================= */
-  console.log('— FRESH: a new install — famous pits only, nothing of his —');
+  console.log('— FRESH: a new install — the shipped nine only, nothing of his —');
   const memF = {};
   const wf = makeNavWorld(memF);
   const bf = makeNavBody();
@@ -276,37 +276,37 @@ function favByName(mem, name) {
   check('v103: the new (never visited) favorite does NOT join the default list — recents stay empty until a visit',
     rowCount(resF) === 0, 'got ' + rowCount(resF));
 
-  console.log('— FRESH: filter + navigate a famous built-in —');
+  console.log('— FRESH: filter + navigate a shipped built-in —');
   const qF = bf.querySelector('#nv_q');
   qF.value = 'pit'; qF.fire('input');
-  check('v103: typing renders the full list AS MATCHES — both famous pits (tagged Built-in) + his pit-typed favorite',
-    rowCount(resF) === 3 && (resF._html.match(/· Built-in/g) || []).length === 2 &&
-    resF._html.indexOf('Stoney Pit') >= 0 && resF._html.indexOf('Volker Stevin') >= 0 &&
-    resF._html.indexOf('My Test Yard') >= 0, 'got ' + rowCount(resF));
-  check('v103: unvisited matches order alphabetically (My Test Yard, then Stoney before Volker)',
-    firstPid(resF) === memF.nav_data.work[0].id &&
-    resF._html.indexOf('Stoney Pit') < resF._html.indexOf('Volker Stevin'));
+  check('v103: typing renders the full list AS MATCHES — all nine shipped pits (tagged Built-in) + his pit-typed favorite',
+    rowCount(resF) === 10 && (resF._html.match(/· Built-in/g) || []).length === 9 &&
+    resF._html.indexOf('BURNCO Indus Aggregate Pit') >= 0 && resF._html.indexOf('Stoney Trail Aggregate Resource') >= 0 &&
+    resF._html.indexOf('Aecon Bradi Pit') >= 0 && resF._html.indexOf('My Test Yard') >= 0, 'got ' + rowCount(resF));
+  check('v103: unvisited matches order alphabetically (Aecon Bradi Pit first; BURNCO before Stoney Trail)',
+    firstPid(resF) === 'bi-aecon-bradi-pit' &&
+    resF._html.indexOf('BURNCO Indus Aggregate Pit') < resF._html.indexOf('Stoney Trail Aggregate Resource'));
   qF.value = 'test yard'; qF.fire('input');
   check('v102: a partial word finds the favorite by its FULL name', rowCount(resF) === 1 && resF._html.indexOf('My Test Yard') >= 0);
   qF.value = ''; qF.fire('input');
   check('v103: clearing the filter returns to the RECENTS view (still empty — nothing visited yet)', rowCount(resF) === 0);
   qF.value = 'stoney'; qF.fire('input');
-  check('filter narrows to ONLY the matching famous pit', rowCount(resF) === 1 && resF._html.indexOf('Stoney Pit') >= 0 && resF._html.indexOf('Volker Stevin') < 0);
-  resF.pick('bi-stoney-pit');
-  check('the panel shows the place, tagged Built-in', detailF._html.indexOf('Stoney Pit') >= 0 && detailF._html.indexOf('Built-in') >= 0);
+  check('filter narrows to ONLY the matching shipped pit', rowCount(resF) === 1 && resF._html.indexOf('Stoney Trail Aggregate Resource') >= 0 && resF._html.indexOf('BURNCO') < 0);
+  resF.pick('bi-stoney-trail-aggregate-resource');
+  check('the panel shows the place, tagged Built-in', detailF._html.indexOf('Stoney Trail Aggregate Resource') >= 0 && detailF._html.indexOf('Built-in') >= 0);
   check('the panel offers the ONE primary action', !!detailF.querySelector('#nv_go').onclick);
   detailF.querySelector('#nv_go').click();
-  check('the hand-off carries the VERIFIED public pin', !!memF.nav_pending && memF.nav_pending.lat === 51.165429 && memF.nav_pending.lng === -114.213202,
+  check('the hand-off carries the SHIP-LIST pin', !!memF.nav_pending && memF.nav_pending.lat === 51.165429 && memF.nav_pending.lng === -114.213202,
     JSON.stringify(memF.nav_pending));
   check('the in-app Navigator opened', wf.opened[wf.opened.length - 1] === 'navigator');
   check('no external app was ever opened', wf.opens() === 0);
-  check('the visit hit the manifest feed (work)', (memF.manifest_feed || []).some(function (f) { return f.summary.indexOf('Navigated to work site: Stoney Pit') === 0; }),
+  check('the visit hit the manifest feed (work)', (memF.manifest_feed || []).some(function (f) { return f.summary.indexOf('Navigated to work site: Stoney Trail Aggregate Resource') === 0; }),
     JSON.stringify(memF.manifest_feed));
-  check('the recent entry keeps the pin', memF.nav_data.recent[0].name === 'Stoney Pit' && memF.nav_data.recent[0].lat === 51.165429);
+  check('the recent entry keeps the pin', memF.nav_data.recent[0].name === 'Stoney Trail Aggregate Resource' && memF.nav_data.recent[0].lat === 51.165429);
   wf.api.render(bf);
   qF.value = ''; qF.fire('input');
-  check('v103: after the visit, the default list IS the recents — Stoney, alone',
-    rowCount(resF) === 1 && firstPid(resF) === 'bi-stoney-pit', 'got ' + rowCount(resF));
+  check('v103: after the visit, the default list IS the recents — the STAR pit, alone',
+    rowCount(resF) === 1 && firstPid(resF) === 'bi-stoney-trail-aggregate-resource', 'got ' + rowCount(resF));
 
   /* ================= EXISTING: his 25 come home as favorites ================= */
   console.log('— EXISTING: the upgrade migration —');
@@ -317,14 +317,14 @@ function favByName(mem, name) {
   const res = body.querySelector('#nv_results');
   const detail = body.querySelector('#nv_detail');
   check('all 25 arrived as work favorites', mem.nav_data.work.length === 25, 'got ' + mem.nav_data.work.length);
-  check('v103: the default work list is the RECENTS view — none of the 27 is dumped on screen before typing',
+  check('v103: the default work list is the RECENTS view — none of the 34 is dumped on screen before typing',
     rowCount(res) === 0, 'got ' + rowCount(res));
   const qAll = body.querySelector('#nv_q');
   qAll.value = 'e'; qAll.fire('input');
-  check('v103: typing renders the FULL combined list as matches (2 built-ins + his 25)',
-    rowCount(res) === 27, 'got ' + rowCount(res));
+  check('v103: typing renders the FULL combined list as matches (9 built-ins + his 25)',
+    rowCount(res) === 34, 'got ' + rowCount(res));
   check('his 25 are tagged Yours', (res._html.match(/· Yours/g) || []).length === 25);
-  check('the famous two are tagged Built-in', (res._html.match(/· Built-in/g) || []).length === 2);
+  check('the shipped nine are tagged Built-in', (res._html.match(/· Built-in/g) || []).length === 9);
   qAll.value = ''; qAll.fire('input');
   const a2 = favByName(mem, 'A2-L20');
   check('A2-L20 kept its exact pin', !!a2 && a2.lat === 50.96649 && a2.lng === -114.03178, JSON.stringify(a2));
@@ -338,11 +338,16 @@ function favByName(mem, name) {
 
   console.log('— EXISTING: filter, navigate, log —');
   const q = body.querySelector('#nv_q');
-  q.value = 'bradi'; q.fire('input');
+  /* v130: “bradi” now matches TWO rows named Aecon Bradi Pit —
+     his migrated favorite AND the shipped built-in of the same
+     name/pin (his ship list names the pit independently). His
+     favorite is singled out by its own note (“80mm”), which no
+     built-in carries. */
+  q.value = '80mm'; q.fire('input');
   check('filter narrows to ONLY the migrated favorite', rowCount(res) === 1 && res._html.indexOf('Aecon Bradi Pit') >= 0 && res._html.indexOf('Yours') >= 0);
   q.value = ''; q.fire('input');
   check('v103: clearing the filter returns to the RECENTS view (empty until a visit)', rowCount(res) === 0);
-  q.value = 'bradi'; q.fire('input');
+  q.value = '80mm'; q.fire('input');
   res.pick(bradi.id);
   check('the panel shows the migrated place as Yours, with Remove', detail._html.indexOf('Aecon Bradi Pit') >= 0 &&
     detail._html.indexOf('Yours') >= 0 && detail._html.indexOf('Remove this place') >= 0);
@@ -353,8 +358,9 @@ function favByName(mem, name) {
   check('the visit counted on the favorite', favByName(mem, 'Aecon Bradi Pit').visits === 1);
   w.api.render(body);
   q.value = ''; q.fire('input');
-  check('v103: after a visit, the default list IS the recents — the visited place, alone in front',
-    rowCount(body.querySelector('#nv_results')) === 1 && firstPid(body.querySelector('#nv_results')) === bradi.id,
+  check('v103: after a visit, the default list IS the recents — the visited favorite in front; v130: its shipped name-twin rides behind it (the v118 name-merge counts the visit for both forms of the same pit)',
+    rowCount(body.querySelector('#nv_results')) === 2 && firstPid(body.querySelector('#nv_results')) === bradi.id &&
+    body.querySelector('#nv_results')._html.indexOf('bi-aecon-bradi-pit') >= 0,
     'rows=' + rowCount(body.querySelector('#nv_results')) + ' first=' + firstPid(body.querySelector('#nv_results')));
   q.value = 'westwinds'; q.fire('input');
   res.pick(mob.id);
@@ -372,8 +378,8 @@ function favByName(mem, name) {
   check('re-running the migration adds nothing back', w.api.migrateLegacyPlaces() === 0 && mem.nav_data.work.length === 24);
   w.api.render(body);
   q.value = 'e'; q.fire('input');
-  check('after a re-render it is still gone (26 matches, no Simply Stone)',
-    !favByName(mem, 'Simply Stone') && rowCount(body.querySelector('#nv_results')) === 26 &&
+  check('after a re-render it is still gone (33 matches, no Simply Stone)',
+    !favByName(mem, 'Simply Stone') && rowCount(body.querySelector('#nv_results')) === 33 &&
     body.querySelector('#nv_results')._html.indexOf('Simply Stone') < 0,
     'rows=' + rowCount(body.querySelector('#nv_results')));
   q.value = ''; q.fire('input');

@@ -25,19 +25,33 @@
  * South, Lafarge Industrial, North Plant, South Plant.
  *
  * This suite verifies, against the REAL module:
- *  A. The shipped built-in dataset is EXACTLY the verified famous
- *     set — type 'pit', exact pins/addresses, sources named in
- *     the code comment next to the data.
+ *  A. The shipped built-in dataset is EXACTLY the owner's nine
+ *     industry pits (v130) — type 'pit', names/pins/addresses
+ *     byte-equal to his ship list, and the list's DO-NOT-SHIP
+ *     items appear nowhere in the shipped built-in data.
  *  B. The owner's 25 survive ONLY inside the NAV-MIGRATION code
  *     path (this fixture is their other allowed home) — byte-exact
  *     names/pins/notes/addresses — and appear nowhere else in the
- *     module: the built-in dataset holds none of them.
+ *     module: the built-in dataset holds none of them (one name
+ *     twin excepted and cited: Aecon Bradi Pit, which the owner's
+ *     ship list names independently as an industry pit).
  *  C. The v87 wiring is untouched (one field, nav_pending hand-off,
  *     Add behind its button) and the v91 wiring exists (migration
  *     entry point + versioned flag, the Yard pick).
  * Migration BEHAVIOR (fresh vs existing, dedupe, delete-sticks)
  * is driven in tools/nav-dropdown-test.js.
  * Run: node tools/nav-places-test.js
+ *
+ * v130 (owner, Oct 17, 2026): the v91 builder-picked pair above
+ * was REPLACED by the owner's own ship list — nine named industry
+ * pits (industry-pits-ship-list.json, prepared from his saved-pit
+ * screenshots matched to public listings). "Each one of these
+ * pits is rather important to keep it safe in the directory…
+ * you should ship them with the app." His personal places and
+ * work-site pins stay favorites-only (the do-not-ship list in
+ * that file). The Spy Hill STAR pit from the v91 pair ships
+ * under its full listing name from his list; the other v91
+ * listing is not on his list and no longer ships.
  */
 'use strict';
 const fs = require('fs');
@@ -70,8 +84,8 @@ function regionBounds(src, beginMark, endMark) {
   return [a, b + 2];
 }
 
-/* ================= A: the shipped famous set ================= */
-console.log('\n— A: the shipped built-ins are the verified famous set —');
+/* ================= A: the shipped industry set (v130) ================= */
+console.log('\n— A: the shipped built-ins are exactly the owner’s nine industry pits —');
 const sb = {};
 vm.createContext(sb);
 vm.runInContext(extractCommentRegion(navSrc, 'NAV-BUILTIN-BEGIN', 'NAV-BUILTIN-END') +
@@ -80,19 +94,57 @@ const P = sb.__x.BUILTINS;
 const byName = {};
 P.forEach(p => { byName[p.name] = p; });
 
-eq('exactly 2 built-in places ship', P.length, 2);
+/* the ship list, transcribed from industry-pits-ship-list.json
+   (owner direction, Oct 17, 2026): [name, lat, lng, address] */
+const SHIP9 = [
+  ['BURNCO Indus Aggregate Pit', 50.852961, -113.841696, '284129 Township Rd 222, Rocky View County, AB'],
+  ['BURNCO Cochrane Aggregate Pit', 51.224722, -114.580872, '262236 Range Rd 51, Rocky View County, AB'],
+  ['Hillstone Aggregates', 51.263975, -114.437458, '40217 Big Hill Springs Rd, Rocky View County, AB'],
+  ['Stoney Trail Aggregate Resource', 51.165429, -114.213202, '12411 85 St NW, Calgary, AB'],
+  ['Amrize Spyhill', 51.179086, -114.190718, '13012 85 St NW, Calgary, AB'],
+  ['Standard General Calgary (Colas)', 50.9664, -113.89697, '9660 Enterprise Way SE, Calgary, AB T3S 0A1'],
+  ['Aecon Gravel Pit', 50.722818, -114.188562, '354201 128 St W, Foothills County, AB'],
+  ['Amrize Industrial', 51.008548, -114.007485, '2213 50 Ave SE, Calgary, AB'],
+  ['Aecon Bradi Pit', 51.27206, -114.43179, '']
+];
+eq('exactly 9 built-in places ship (the owner’s list — no more, no less)', P.length, 9);
 ok('every entry is marked builtin with a bi- id', P.every(p => p.builtin === true && p.id.indexOf('bi-') === 0));
 ok('ids and names are unique', new Set(P.map(p => p.id)).size === P.length && new Set(P.map(p => p.name)).size === P.length);
-ok('every famous entry is type pit (owner order)', P.every(p => p.type === 'pit'));
-ok('every famous entry carries BOTH a pin and a street address', P.every(p => p.lat && p.lng && p.address));
-eq('Stoney Pit pin (public listing: Stoney Trail Aggregate Resource)', byName['Stoney Pit'].lat + ',' + byName['Stoney Pit'].lng, '51.165429,-114.213202');
-eq('Stoney Pit address', byName['Stoney Pit'].address, '12411 85 St NW, Calgary');
-eq('Volker Stevin pin (public listing, volkerstevin.ca)', byName['Volker Stevin'].lat + ',' + byName['Volker Stevin'].lng, '50.990329,-114.037808');
-eq('Volker Stevin address', byName['Volker Stevin'].address, '7175 12 St SE, Calgary');
+ok('every shipped entry is type pit', P.every(p => p.type === 'pit'));
+ok('every shipped entry carries a pin', P.every(p => p.lat && p.lng));
+SHIP9.forEach(function (s) {
+  const p = byName[s[0]];
+  ok('ships: ' + s[0], !!p);
+  if (!p) return;
+  eq(s[0] + ' — pin byte-equal to the ship list', p.lat + ',' + p.lng, s[1] + ',' + s[2]);
+  eq(s[0] + ' — address byte-equal to the ship list', p.address, s[3]);
+});
+/* byte-equality against the source file itself, when the
+   workspace ship list is reachable from this checkout */
+try {
+  const listPath = path.resolve(ROOT, '..', 'goals', 'dump-truck-haul-ticket-app', 'hidden_files', 'industry-pits-ship-list.json');
+  const list = JSON.parse(fs.readFileSync(listPath, 'utf8'));
+  const fileSet = (list.ship_exact_pins || []).map(e => e.name + '|' + e.lat + ',' + e.lng + '|' + (e.address || '')).sort();
+  const shipSet = P.map(p => p.name + '|' + p.lat + ',' + p.lng + '|' + (p.address || '')).sort();
+  eq('the shipped set byte-equals industry-pits-ship-list.json', JSON.stringify(shipSet), JSON.stringify(fileSet));
+} catch (e) { console.log('  SKIP ship-list file cross-check (not reachable from this checkout)'); }
 const builtinRegion = navSrc.slice.apply(navSrc, regionBounds(navSrc, 'NAV-BUILTIN-BEGIN', 'NAV-BUILTIN-END'));
-ok('the dataset comment names its public sources', builtinRegion.includes('stoneytrailpit.ca') && builtinRegion.includes('volkerstevin.ca'));
-ok('the unverifiable five are named as NOT shipped in the comment',
-  ['Lafarge North', 'Lafarge South', 'Lafarge Industrial', 'North Plant', 'South Plant'].every(n => builtinRegion.includes(n)));
+ok('the dataset comment cites the owner’s ship list as its only source',
+  builtinRegion.includes('industry-pits-ship-list.json') && builtinRegion.includes('ship them with'));
+/* the ship list's DO-NOT-SHIP items appear NOWHERE in the
+   shipped built-in data: their names, his personal-pin
+   strings, his own pins, and the two alternate candidate
+   pins the list weighed and rejected. */
+const DNS = ['Shepard', 'Black diamond', 'Balzac', 'Glendale Rd', 'Aldersyde',
+  'Sarcee Trl', 'Old Banff Coach', 'Maple Ridge', 'Butterfly', 'Piegan', 'Greenline',
+  'Twins East', 'Remington', 'Simply Stone', 'Pier 3', 'Lillydale',
+  '50.991898', '-114.030508', '51.00602', '-114.06613',
+  '50.9942951', '-114.0334216', '50.96044', '-114.03176', '51.000861', '-114.033528'];
+ok('no do-not-ship name/string/pin anywhere in the built-in dataset or its comment',
+  DNS.every(s => !builtinRegion.includes(s)),
+  DNS.filter(s => builtinRegion.includes(s)).join(', '));
+ok('built-ins present as suggestions, not his records (tagged Built-in; favorites tagged Yours)',
+  navSrc.includes("e.src === 'builtin' ? ' · Built-in' : ' · Yours'") && navSrc.includes("src: 'builtin'"));
 
 /* ================= B: the owner's 25 live only in the migration ================= */
 console.log('\n— B: the owner’s 25 — byte-exact, migration-only —');
@@ -141,19 +193,25 @@ FIXTURE.forEach((f, i) => {
   if (!same) { allExact = false; firstBad = 'row ' + i + ' (' + f[0] + '): ' + JSON.stringify(r); }
 });
 ok('every migration row is byte-exact vs the v84/v87 fixture', allExact, firstBad);
-ok('none of the 25 is in the shipped built-in dataset', FIXTURE.every(f => !byName[f[0]]));
-/* confinement: outside the migration region, none of the 23
+ok('none of the 25 ships as a built-in from HIS dataset (Aecon Bradi Pit excepted — the owner’s ship list names it independently as an industry pit, same pin, different source)',
+  FIXTURE.every(f => f[0] === 'Aecon Bradi Pit' || !byName[f[0]]));
+/* confinement: outside the migration region, none of the
    distinctive names appears anywhere in the module (North Plant
-   / South Plant also live in the famous-set comment as NOT
-   shipped, so they are checked against the dataset above). */
+   / South Plant are excluded here — they are checked against
+   the dataset above; Aecon Bradi Pit is excluded as the cited
+   ship-list twin; “Amrize” is checked in its exact quoted form
+   below, since the company’s two pits now ship under their
+   full names, Amrize Spyhill / Amrize Industrial). */
 const migB = regionBounds(navSrc, 'NAV-MIGRATION-BEGIN', 'NAV-MIGRATION-END');
 const outsideMig = navSrc.slice(0, migB[0]) + navSrc.slice(migB[1]);
-const DISTINCT = FIXTURE.map(f => f[0]).filter(n => n !== 'North Plant' && n !== 'South Plant');
-ok('the other 23 names appear ONLY inside the migration region',
+const DISTINCT = FIXTURE.map(f => f[0]).filter(n => n !== 'North Plant' && n !== 'South Plant' && n !== 'Aecon Bradi Pit' && n !== 'Amrize');
+ok('the other 22 names appear ONLY inside the migration region',
   DISTINCT.every(n => !outsideMig.includes(n)),
   DISTINCT.filter(n => outsideMig.includes(n)).join(', '));
-ok('the built-in region itself holds none of the 25 names', FIXTURE.every(f => !builtinRegion.includes("'" + f[0] + "'")) ||
-  FIXTURE.every(f => !byName[f[0]]));
+ok('his “Amrize” haul-to site does not ship (no exact-name row; the company pits ship under full names)',
+  !outsideMig.includes("'Amrize',") && !byName['Amrize']);
+ok('the built-in region holds none of the 25 as quoted rows (Aecon Bradi Pit excepted, cited above)',
+  FIXTURE.every(f => f[0] === 'Aecon Bradi Pit' || !builtinRegion.includes("'" + f[0] + "'")));
 
 /* ================= C: wiring ================= */
 console.log('\n— C: wiring —');

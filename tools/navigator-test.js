@@ -717,12 +717,12 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('picker door: default view shows the visited favorite (recents)',
     wPk.reg.nv_presults.innerHTML.indexOf('Aecon Bradi Pit') >= 0, wPk.reg.nv_presults.innerHTML);
   check('picker door: default view does NOT show never-visited places (no wall)',
-    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Pit') < 0 && wPk.reg.nv_presults.innerHTML.indexOf('Volker Stevin') < 0,
+    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Trail Aggregate Resource') < 0 && wPk.reg.nv_presults.innerHTML.indexOf('BURNCO Indus Aggregate Pit') < 0,
     wPk.reg.nv_presults.innerHTML);
   wPk.reg.nv_pq.value = 'stoney';
   wPk.reg.nv_pq.fire('input');
-  check('picker door: typing renders the full list AS MATCHES (Stoney appears, Bradi filtered out)',
-    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Pit') >= 0 &&
+  check('picker door: typing renders the full list AS MATCHES (the STAR pit appears, Bradi filtered out)',
+    wPk.reg.nv_presults.innerHTML.indexOf('Stoney Trail Aggregate Resource') >= 0 &&
     wPk.reg.nv_presults.innerHTML.indexOf('Aecon Bradi Pit') < 0, wPk.reg.nv_presults.innerHTML);
   wPk.firePos(ORIGIN[0], ORIGIN[1]);
   await tick(); await tick(); // the hand-off's route lands (S.plan set)
@@ -732,20 +732,21 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
      driver ends that route first; then the pick's own auto-route
      is what fires. */
   wPk.reg.nv_end.onclick();
-  wPk.reg.nv_presults.pick('bi-stoney-pit');
+  wPk.reg.nv_presults.pick('bi-stoney-trail-aggregate-resource');
   await tick(); await tick();
   check('picker door: one tap set the destination on the place pin',
-    wPk.reg.nv_destnote.textContent.indexOf('Destination: Stoney Pit') >= 0, wPk.reg.nv_destnote.textContent);
+    wPk.reg.nv_destnote.textContent.indexOf('Destination: Stoney Trail Aggregate Resource') >= 0, wPk.reg.nv_destnote.textContent);
   const pkRoutes = wPk.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
   /* v119: the seeded hand-off may route to Bradi once position
-     lands; the PICK's own auto-route is the one targeting Stoney. */
+     lands; the PICK's own auto-route is the one targeting the
+     STAR pit. */
   const pkStoney = pkRoutes.filter(function (c) {
     try { const L = JSON.parse(c.opts.body).locations; return L && L[1] && L[1].lat === 51.165429 && L[1].lon === -114.213202; } catch (e) { return false; }
   });
-  check('picker door: the pick AUTO-ROUTED (no Route tap)', pkStoney.length === 1, pkRoutes.length + ' route fetches, ' + pkStoney.length + ' to Stoney');
+  check('picker door: the pick AUTO-ROUTED (no Route tap)', pkStoney.length === 1, pkRoutes.length + ' route fetches, ' + pkStoney.length + ' to the STAR pit');
   if (pkStoney.length) {
     const pkSent = JSON.parse(pkStoney[0].opts.body);
-    check('picker door: the route targets the VERIFIED Stoney pin',
+    check('picker door: the route targets the ship-list STAR pin',
       pkSent.locations[1].lat === 51.165429 && pkSent.locations[1].lon === -114.213202, JSON.stringify(pkSent.locations));
   }
   apiPk.teardown();
@@ -769,8 +770,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
       def.rows[0].place.id === 'v7' && def.rows.every(function (e) { return e.place.id !== 'u1'; }),
       def.rows.map(function (e) { return e.place.id; }).join(','));
     const filt = navApi.pickerEntries('work', 'pit');
-    check('pickerEntries typed: the FULL combined list renders as matches (9 favorites + 2 built-ins; the recents cap does not apply)',
-      filt.recents === false && filt.rows.length === 11, 'rows ' + filt.rows.length);
+    check('pickerEntries typed: the FULL combined list renders as matches (9 favorites + the 9 shipped built-ins; the recents cap does not apply)',
+      filt.recents === false && filt.rows.length === 18, 'rows ' + filt.rows.length);
   }
 
   console.log('— flow: auto-enter Drive on a go-now arm (v104) —');
