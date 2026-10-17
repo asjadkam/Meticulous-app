@@ -15,6 +15,32 @@
  *    cloud sync never blocks rendering.
  *
  * Internal bookkeeping lives in localStorage "mt___syncmeta" and never syncs.
+ *
+ * v136 — SYNC TRUTH ACCOUNTING. Oct 17 field evidence: during a working
+ * day the header dot NEVER turned green and the Preferences card sat on
+ * "Still syncing — give it a moment." Characterization (working-day
+ * replay against the v135 engine): the dot was green in 2 of 149 samples
+ * — the old settle rule ("no pushable key dirty at the instant the dot
+ * repaints") is unreachable by construction while the truck works,
+ * because the two live-tracking stores (livemiles, geoloads) rewrite
+ * themselves every <=10s all shift and every rewrite re-dirties the
+ * queue faster than a flush can drain it. A second path to eternal
+ * amber: when pushes can't run at all (Firebase auth object gone), the
+ * flusher early-returned silently — "Syncing…" forever, no error, ever.
+ * The fix is accounting only — no record content or data shape changes:
+ *  - DURABLE keys (everything user-owned: dispatches, invoices, fuel,
+ *    sessions, connections…) decide GREEN. Green = every durable key's
+ *    latest state confirmed in the cloud; the moment is remembered
+ *    (meta.lastSettledAt) and shown as "All synced · 12:41 PM".
+ *  - TELEMETRY keys (livemiles, geoloads — continuously rewritten live
+ *    snapshots) keep syncing through the very same flush, but a
+ *    telemetry snapshot a few seconds behind never holds the durable
+ *    truth hostage; status() reports telemetryBehind honestly instead.
+ *  - A store whose push fails REPEATEDLY becomes a NAMED failure (red
+ *    dot + the store named in plain words on the card), never eternal
+ *    amber. Dead transport with work waiting surfaces the same way
+ *    after a grace window (offline surfaces at once). A healthy PULL
+ *    no longer clears a PUSH failure — a pull pushes nothing.
  */
 (function () {
   'use strict';
@@ -27,6 +53,7 @@
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
   var PULL_TIMEOUT_MS = 25000;          // v32: never let a pull hang forever
   var PUSH_TIMEOUT_MS = 20000;          // v33: never let a single push hang the flush
+  var BLOCKED_GRACE_MS = 60000;         // v136: dead transport -> named failure after this long
 
   var S = {
     attached: false,
@@ -38,9 +65,29 @@
     flushTimer: null,
     online: true,
     lastError: null,
-    stats: { pushed: 0, pulled: 0, conflicts: 0 }
+    stats: { pushed: 0, pulled: 0, conflicts: 0 },
+    /* v136 truth accounting (see header): per-key repeated push
+       failures, pull failures, dead-transport bookkeeping, and the
+       listeners the Preferences card paints from. */
+    _keyFails: {},          // key -> { n: consecutive failed flushes, msg, at }
+    _pullFails: 0,          // consecutive failed pulls
+    _pullFailMsg: null,
+    _genFails: 0,           // consecutive unattributed sync failures
+    _genFailMsg: null,
+    _transportFail: null,   // sync service itself unreachable (firebase never ready)
+    _blockedSince: 0,       // when waiting work first found pushes unable to run
+    _flushDurable: false,   // the in-flight flush carries >=1 durable key
+    _truth: null,           // last computed syncTruth()
+    _statusListeners: []
   };
   window.CloudSync = S;
+  S._BLOCKED_GRACE_MS = BLOCKED_GRACE_MS; // exposed for the v136 suite
+
+  /* The Preferences card (and any future face) paints from the SAME
+     truth the dot does — one state machine, two faces. */
+  S.addStatusListener = function (fn) {
+    if (typeof fn === 'function') S._statusListeners.push(fn);
+  };
 
   /* ---------------- tiny helpers ---------------- */
 
@@ -105,6 +152,57 @@
     return (km.t || 0) > (km.s || 0);
   }
 
+  /* ---------------- v136: durable vs telemetry, plain names ----------------
+   * TELEMETRY keys hold continuously rewritten LIVE snapshots (the
+   * miles engine persists livemiles, the load counter persists
+   * geoloads — each at most every ~10s while a session runs). They
+   * sync through the same flush as everything else; only the SETTLE
+   * accounting differs (see the header note). Every other syncable
+   * key is DURABLE user data and decides green. */
+  var TELEMETRY_KEYS = { livemiles: true, geoloads: true };
+  function isTelemetryKey(key) { return !!TELEMETRY_KEYS[key]; }
+
+  /* Plain words for a store, for the named-failure face — a driver
+     should read "a fuel entry hasn't backed up", never a key name. */
+  var PLAIN_NAME_RULES = [
+    ['onboarding', 'your setup answers'], ['sessions', 'your shift records'],
+    ['navigator', 'your navigator settings'], ['nav', 'a saved place'],
+    ['dsp', 'a dispatch record'], ['inv', 'an invoice record'],
+    ['fuel', 'a fuel entry'], ['rev', 'a revenue record'],
+    ['pnl', 'a P&L record'], ['con_', 'a connection record'],
+    ['odo_readings', 'an odometer reading'], ['mt_odo', 'your odometer'],
+    ['rem_', 'a reminder'], ['mani', 'a manifest record'],
+    ['dmg', 'a damage report'], ['tracker', 'your tracker settings'],
+    ['livemiles', 'live miles tracking'], ['geoloads', 'load counting'],
+    ['feedback', 'a feedback note'], ['dayarm', 'shift tracking'],
+    ['autostart', 'your auto-start setting'], ['subscription', 'your subscription record']
+  ];
+  function plainKeyName(key) {
+    for (var i = 0; i < PLAIN_NAME_RULES.length; i++) {
+      if (String(key).indexOf(PLAIN_NAME_RULES[i][0]) === 0) return PLAIN_NAME_RULES[i][1];
+    }
+    return 'one of your records';
+  }
+  function fmtClock(ms) {
+    var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  /* The last moment the DURABLE ledger was observed fully confirmed
+     in the cloud, remembered across restarts (local meta only — this
+     bookkeeping never syncs). Scoped to the uid that earned it. */
+  function lastSettledAt() {
+    var m = getMeta();
+    return (m.lastSettledUid && m.lastSettledUid === S.uid) ? (m.lastSettledAt || 0) : 0;
+  }
+  function stampSettled() {
+    var m = getMeta();
+    m.lastSettledAt = Date.now();
+    m.lastSettledUid = S.uid;
+    saveMeta();
+  }
+
   /* ---------------- sync status dot ---------------- */
   var dotEl = null;
   function dot() {
@@ -126,23 +224,154 @@
   // pushed by this session — counting it here wedged the dot at amber
   // "syncing" forever even though everything of the current user's was
   // backed up. flush() already filters with canPush(); the dot now does too.
-  function hasPushableDirty() {
+  function pushableDirtyKeys() {
+    var out = [];
     try {
       var m = getMeta();
       for (var k in m.keys) {
-        if (m.keys.hasOwnProperty(k) && isSyncable(k) && isDirty(k) && canPush(k)) return true;
+        if (m.keys.hasOwnProperty(k) && isSyncable(k) && isDirty(k) && canPush(k)) out.push(k);
       }
     } catch (e) {}
-    return false;
+    return out;
   }
+  function hasPushableDirty() { return pushableDirtyKeys().length > 0; }
+  function durableDirtyKeys() {
+    return pushableDirtyKeys().filter(function (k) { return !isTelemetryKey(k); });
+  }
+  function telemetryDirtyKeys() {
+    return pushableDirtyKeys().filter(function (k) { return isTelemetryKey(k); });
+  }
+  function canRunPushes() {
+    try { return !!S.online && fbReady(); } catch (e) { return false; }
+  }
+
+  /* ------- v136 failure bookkeeping -------
+   * A failure PAINTS (red dot, named on the card) only once it is
+   * REPEATED — a single network blip retries quietly in amber instead
+   * of crying wolf. Records clear per key the moment that key pushes
+   * successfully; a pull never clears a push record (a pull pushes
+   * nothing — the v135 engine let a healthy pull wipe a standing push
+   * error, hiding a failing store inside eternal amber). */
+  function noteKeyFailure(key, msg) {
+    var rec = S._keyFails[key] || (S._keyFails[key] = { n: 0, msg: '', at: 0 });
+    rec.n++; rec.msg = msg; rec.at = Date.now();
+  }
+  function paintedPushFail() {
+    for (var k in S._keyFails) {
+      if (S._keyFails.hasOwnProperty(k)) {
+        var r = S._keyFails[k];
+        if (r && r.n >= 2) return { key: k, msg: r.msg, kind: 'push' };
+      }
+    }
+    return null;
+  }
+  function currentErrorString() {
+    for (var k in S._keyFails) {
+      if (S._keyFails.hasOwnProperty(k) && S._keyFails[k]) return S._keyFails[k].msg;
+    }
+    if (S._pullFails > 0 && S._pullFailMsg) return S._pullFailMsg;
+    if (S._genFails > 0 && S._genFailMsg) return S._genFailMsg;
+    if (S._transportFail) return S._transportFail;
+    return null;
+  }
+  /* Stamp the settle moment when the durable ledger stands fully
+     confirmed with no painted push failure behind it. */
+  function noteSettleMaybe() {
+    if (!S.uid) return;
+    if (durableDirtyKeys().length) return;
+    if (paintedPushFail()) return;
+    stampSettled();
+  }
+
+  /* ------- v136: THE one sync truth -------
+   * States the owner can read at a glance:
+   *   off     — signed out; nothing is backing up.
+   *   ok      — every DURABLE store's latest state is confirmed in
+   *             the cloud (lastSettledAt says when). Telemetry
+   *             snapshots a few seconds behind do not block this;
+   *             telemetryBehind reports them honestly instead.
+   *   syncing — work is genuinely in flight or next in line: a pull
+   *             is running, a flush carrying durable keys is running,
+   *             or durable edits are waiting out their flush debounce.
+   *   err     — a NAMED failure: a store that keeps failing to back
+   *             up, the sync service unreachable, or the phone
+   *             offline / cut off from the cloud with work waiting.
+   *             Never eternal amber: dead transport surfaces after
+   *             BLOCKED_GRACE_MS (offline surfaces at once — that is
+   *             a fact, not a guess).                        */
+  function syncTruth() {
+    var t = {
+      state: 'off', label: 'Sync off', failKey: null, failMsg: null,
+      failPlain: null, failKind: null, blocked: false,
+      lastSettledAt: 0, telemetryBehind: false,
+      durableDirty: [], telemetryDirty: []
+    };
+    if (!S.uid) { S._truth = t; return t; }
+    t.durableDirty = durableDirtyKeys();
+    t.telemetryDirty = telemetryDirtyKeys();
+    t.telemetryBehind = t.telemetryDirty.length > 0;
+    t.lastSettledAt = lastSettledAt();
+
+    var pf = paintedPushFail();
+    if (pf) {
+      t.state = 'err'; t.failKey = pf.key; t.failMsg = pf.msg;
+      t.failPlain = plainKeyName(pf.key); t.failKind = 'push';
+      S._truth = t; return t;
+    }
+    if (S._transportFail) {
+      t.state = 'err'; t.failMsg = S._transportFail; t.failKind = 'transport'; t.blocked = true;
+      S._truth = t; return t;
+    }
+    if (S._genFails >= 2) {
+      t.state = 'err'; t.failMsg = S._genFailMsg; t.failKind = 'error'; t.blocked = true;
+      S._truth = t; return t;
+    }
+    if (S._pullFails >= 2) {
+      t.state = 'err'; t.failMsg = S._pullFailMsg; t.failKind = 'pull'; t.blocked = true;
+      S._truth = t; return t;
+    }
+    if (t.durableDirty.length && !canRunPushes()) {
+      // Work is waiting and pushes cannot run at all.
+      if (!S.online) {
+        t.state = 'err'; t.failKind = 'offline'; t.blocked = true;
+        t.failMsg = 'Phone is offline';
+        S._truth = t; return t;
+      }
+      if (!S._blockedSince) S._blockedSince = Date.now();
+      if (Date.now() - S._blockedSince > (S._BLOCKED_GRACE_MS || BLOCKED_GRACE_MS)) {
+        t.state = 'err'; t.failKind = 'blocked'; t.blocked = true;
+        t.failMsg = "Can't reach the cloud";
+        S._truth = t; return t;
+      }
+      t.state = 'syncing'; t.label = 'Syncing…'; // grace window — auth may still be restoring
+      S._truth = t; return t;
+    }
+    if (canRunPushes() || !t.durableDirty.length) S._blockedSince = 0;
+    if (S._pulling) { t.state = 'syncing'; t.label = 'Syncing…'; S._truth = t; return t; }
+    if (S.flushing && S._flushDurable) { t.state = 'syncing'; t.label = 'Syncing…'; S._truth = t; return t; }
+    if (t.durableDirty.length) { t.state = 'syncing'; t.label = 'Syncing…'; S._truth = t; return t; }
+    t.state = 'ok';
+    t.label = 'All synced' + (t.lastSettledAt ? ' · ' + fmtClock(t.lastSettledAt) : '');
+    S._truth = t; return t;
+  }
+
   function refreshDot() {
-    if (!S.uid) { setDot('off', 'Sync off — sign in to back up your data'); return; }
-    // v32: show the actual error so a stuck sync is diagnosable on-device
-    if (S.lastError) { setDot('err', 'Sync error: ' + String(S.lastError).slice(0, 100)); return; }
-    if (S.flushing || S._pulling) { setDot('syncing', 'Syncing…'); return; }
-    // any dirty keys left that this session can actually push?
-    var dirty = hasPushableDirty();
-    setDot(dirty ? 'syncing' : 'ok', dirty ? 'Syncing…' : 'Backed up ✓');
+    var t = syncTruth();
+    S.lastError = currentErrorString();
+    if (!S.uid) { setDot('off', 'Sync off — sign in to back up your data'); }
+    else if (t.state === 'err') {
+      setDot('err', t.failKey
+        ? 'Sync problem — ' + t.failPlain + " hasn't backed up"
+        : t.failKind === 'offline' ? 'Offline — changes are waiting to back up'
+        : 'Sync error: ' + String(t.failMsg || 'sync failed').slice(0, 100));
+    }
+    else if (t.state === 'syncing') { setDot('syncing', 'Syncing…'); }
+    else {
+      setDot('ok', 'All synced' + (t.lastSettledAt ? ' · ' + fmtClock(t.lastSettledAt) : ''));
+    }
+    for (var i = 0; i < S._statusListeners.length; i++) {
+      try { S._statusListeners[i](t); } catch (e) {}
+    }
   }
 
   /* ---------------- attach: wrap the store ---------------- */
@@ -199,7 +428,7 @@
     }
 
     try {
-      window.addEventListener('online', function () { S.online = true; S.lastError = null; syncNow(); });
+      window.addEventListener('online', function () { S.online = true; S._blockedSince = 0; syncNow(); });
       window.addEventListener('offline', function () { S.online = false; refreshDot(); });
       document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') flush();
@@ -230,6 +459,11 @@
     S.uid = newUid;
     S.pulledUid = null;
     S.lastError = null;
+    // v136: a new session starts with clean failure books — the records
+    // describe the previous account's pushes, not this one's.
+    S._keyFails = {}; S._pullFails = 0; S._pullFailMsg = null;
+    S._genFails = 0; S._genFailMsg = null;
+    S._transportFail = null; S._blockedSince = 0; S._flushDurable = false;
     if (!newUid) { setDot('off', 'Sync off — sign in to back up your data'); return; }
     // New (or changed) user: pull first, then flush. Guard against FB not ready yet.
     ensureFbReady(function () { syncNow(); });
@@ -239,7 +473,7 @@
     var tries = 0;
     (function wait() {
       if (window.FB && FB.ready) { cb(); return; }
-      if (++tries > 40) { S.lastError = 'firebase-unavailable'; refreshDot(); return; }
+      if (++tries > 40) { S._transportFail = 'firebase-unavailable'; refreshDot(); return; }
       setTimeout(wait, 500);
     })();
   }
@@ -279,7 +513,7 @@
     });
     return Promise.race([pushP, timeoutP]).catch(function (e) {
       var msg = 'push ' + key + ': ' + String((e && e.message) || e);
-      try { (S._flushErrors = S._flushErrors || []).push(msg); } catch (e2) {}
+      try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
       try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
       return false;
     });
@@ -325,21 +559,38 @@
     // v32: collect per-key push errors. Previously failures were swallowed,
     // keys stayed dirty forever, and the dot pulsed yellow indefinitely with
     // no way to see why. Now the first error surfaces (red dot + message).
+    // v136: errors carry their key ({key, msg}) so the failure can be
+    // NAMED per store by the truth accounting.
     S._flushErrors = [];
+    // v136: a flush that is actually running ends any dead-transport
+    // episode, and the truth needs to know whether it carries durable
+    // work (a telemetry-only flush in flight must not paint amber over
+    // a settled durable ledger).
+    S._blockedSince = 0;
+    S._flushDurable = keys.some(function (k) { return !isTelemetryKey(k); });
     var chain = Promise.resolve();
     keys.forEach(function (k) { chain = chain.then(function () { return pushOneWithTimeout(k); }); });
     chain.then(function () {
       S.flushing = false;
+      S._flushDurable = false;
       if (S._flushErrors.length) {
-        S.lastError = S._flushErrors[0];
+        // one failure count per key per flush (a timed-out push whose
+        // late error also lands must not double-count one attempt)
+        var seen = {};
+        S._flushErrors.forEach(function (er) {
+          if (er && er.key && !seen[er.key]) { seen[er.key] = 1; noteKeyFailure(er.key, er.msg); }
+        });
         S._flushFails = (S._flushFails || 0) + 1;
       } else {
-        S.lastError = null;
         S._flushFails = 0;
+        S._genFails = 0; S._genFailMsg = null; // a clean flush proves the pipe works
       }
+      noteSettleMaybe();
       saveMeta(); refreshDot();
     }).catch(function (e) {
-      S.flushing = false; S.lastError = String((e && e.message) || e); saveMeta(); refreshDot();
+      S.flushing = false; S._flushDurable = false;
+      S._genFails++; S._genFailMsg = String((e && e.message) || e);
+      saveMeta(); refreshDot();
     });
   }
 
@@ -350,6 +601,7 @@
     var done = function (ok) {
       if (ok) {
         km.s = Date.now(); delete km.d; S.stats.pushed++;
+        delete S._keyFails[key]; // v136: a successful push clears the key's failure record
         var _dm = getMeta(); _dm.uid = S.uid; _dm.globallySynced = true;
       }
       saveMeta();
@@ -361,7 +613,7 @@
       try {
         return FB.deleteDoc(KV_COLLECTION, docId).then(function () { return done(true); })
           .catch(function (e) {
-            try { (S._flushErrors = S._flushErrors || []).push('delete ' + key + ': ' + String((e && e.message) || e)); } catch (e2) {}
+            try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'delete ' + key + ': ' + String((e && e.message) || e) }); } catch (e2) {}
             return done(false);
           });
       } catch (e) { return Promise.resolve(done(false)); }
@@ -374,6 +626,7 @@
       // case below: stop retrying, keep the local copy as the truth.
       try { console.warn('[cloudsync] skipping unparseable key (kept locally):', key); } catch (e) {}
       km.s = km.t;
+      delete S._keyFails[key]; // v136: handled by design — not a standing failure
       saveMeta();
       return Promise.resolve(done(false));
     }
@@ -382,6 +635,7 @@
     if (size > MAX_DOC_BYTES) {
       try { console.warn('[cloudsync] skipping oversized key (kept locally):', key, size); } catch (e) {}
       km.s = km.t; // don't retry forever; local copy remains the truth
+      delete S._keyFails[key]; // v136: handled by design — not a standing failure
       saveMeta();
       return Promise.resolve(false);
     }
@@ -389,12 +643,12 @@
     try {
       return FB.saveDoc(KV_COLLECTION, docId, { v: val }).then(function (res) {
         if (res === null) {
-          try { (S._flushErrors = S._flushErrors || []).push('push ' + key + ': not signed in'); } catch (e2) {}
+          try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
         }
         return done(res !== null); // saveDoc resolves null when not signed in
       }).catch(function (e) {
         var msg = 'push ' + key + ': ' + String((e && e.message) || e);
-        try { (S._flushErrors = S._flushErrors || []).push(msg); } catch (e2) {}
+        try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
         try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
         return done(false);
       });
@@ -605,8 +859,15 @@
       S.pulledUid = S.uid;
       S.lastPullAt = Date.now();
       S._pulling = false;
-      S.lastError = null; // v34: a healthy pull clears a stale earlier error
+      /* v136: a healthy pull clears only PULL failure state. The v34
+         rule ("a healthy pull clears a stale earlier error") also
+         wiped standing PUSH failures — but a pull pushes nothing, so
+         a store that could not back up looked fine again while its
+         data still sat unbacked-up on the phone. Push records now
+         clear only when that key actually pushes. */
+      S._pullFails = 0; S._pullFailMsg = null;
       S.stats.pulled += applied;
+      noteSettleMaybe();
       refreshDot();
 
       // If the pull changed anything the UI already rendered, re-render.
@@ -631,8 +892,12 @@
       return { applied: applied };
     }).catch(function (e) {
       S._pulling = false;
-      S.lastError = String((e && e.message) || e);
-      try { console.warn('[cloudsync] pull failed:', S.lastError); } catch (e2) {}
+      // v136: pull failures keep their own books (see noteKeyFailure) —
+      // repeated pull failures paint the named-failure state; a single
+      // blip just retries in amber.
+      S._pullFails++;
+      S._pullFailMsg = String((e && e.message) || e);
+      try { console.warn('[cloudsync] pull failed:', S._pullFailMsg); } catch (e2) {}
       refreshDot();
       drainPullWaiters(false);
       return { applied: 0 };
@@ -640,8 +905,15 @@
   }
   S.pull = pull;
 
-  /* ---------------- status for debugging ---------------- */
+  /* ---------------- status for debugging + the card face ----------------
+   * v136: status() evaluates the SAME syncTruth() the dot paints and
+   * repaints the dot first, so the header dot, this status, and the
+   * Preferences card can never disagree. `dot` keeps its old meaning
+   * ('ok' | 'syncing' | 'err' | 'off'); `state` mirrors it; the rest
+   * is the truth in owner-readable pieces. */
   S.status = function () {
+    refreshDot();
+    var t = S._truth || syncTruth();
     var m = getMeta(), dirty = [];
     try {
       for (var k in m.keys) {
@@ -652,7 +924,14 @@
     } catch (e) {}
     return {
       attached: S.attached, uid: S.uid, online: S.online,
-      dot: S._dotState || 'off', dirtyKeys: dirty, lastError: S.lastError, stats: S.stats
+      dot: S._dotState || 'off', state: t.state, label: t.label,
+      dirtyKeys: dirty, durableDirtyKeys: t.durableDirty, telemetryDirtyKeys: t.telemetryDirty,
+      telemetryBehind: t.telemetryBehind,
+      failKey: t.failKey, failMsg: t.failMsg, failPlain: t.failPlain, failKind: t.failKind,
+      blocked: t.blocked,
+      lastSettledAt: t.lastSettledAt,
+      lastSettledLabel: t.lastSettledAt ? fmtClock(t.lastSettledAt) : null,
+      lastError: S.lastError, stats: S.stats
     };
   };
 })();

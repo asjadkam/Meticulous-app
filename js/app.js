@@ -1800,6 +1800,12 @@
           : st.dot === 'err' ? 'Error' : 'Off';
         var lines = ['Cloud sync: ' + word];
         lines.push(who ? 'Signed in as: ' + who : 'Not signed in (local mode)');
+        /* v136: the truth in owner-readable pieces — when the last
+           full settle happened, which store is failing (plain words),
+           and whether only live tracking is still catching up. */
+        if (st.lastSettledLabel) lines.push('Last fully backed up: ' + st.lastSettledLabel);
+        if (st.failKey) lines.push('Not backing up: ' + (st.failPlain || st.failKey));
+        if (st.telemetryBehind) lines.push('Live tracking (miles + loads) is still catching up — your records are backed up.');
         if (st.dirtyKeys && st.dirtyKeys.length) lines.push('Waiting to upload: ' + st.dirtyKeys.join(', '));
         if (st.stats) lines.push('Uploaded: ' + (st.stats.pushed || 0) + ' · Downloaded: ' + (st.stats.pulled || 0));
         if (st.lastError) lines.push('Last error: ' + st.lastError);

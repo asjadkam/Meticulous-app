@@ -642,26 +642,41 @@
       } catch (e) {}
       /* v32: manual sync retry. v107: no standing status readout
          (owner: Advanced shouldn't show the app's skeleton) — the
-         note line starts EMPTY and reports only the result of a
-         Retry tap: feedback, not a readout. */
+         note line started EMPTY and reported only the result of a
+         Retry tap.
+         v136 (owner order, Oct 17 — "sync is not turning green
+         anymore"): the no-readout rule is superseded for THIS line.
+         The note is now a live face of the one sync truth — the same
+         state machine the header dot paints (CloudSync.status()) —
+         so the card and the dot can never disagree, and the owner can
+         see WHEN the last full settle happened. One line, kept plain:
+         status, not skeleton. */
       (function () {
         var note = body.querySelector('#pf_syncnote');
         var btn = body.querySelector('#pf_syncnow');
         if (!btn) return;
+        function paint() {
+          if (!note) return;
+          try { if (document && document.contains && !document.contains(note)) return; } catch (e) {}
+          try {
+            if (!window.CloudSync || !CloudSync.status) { note.textContent = 'Sync engine not loaded.'; return; }
+            var st = CloudSync.status();
+            note.textContent =
+              st.state === 'ok' ? '✓ All synced' + (st.lastSettledLabel ? ' · ' + st.lastSettledLabel : '') + '.'
+              : st.state === 'err' && st.failKey ? '⚠️ Sync problem — ' + (st.failPlain || 'one of your records') + " hasn't backed up. Tap “Retry sync now”."
+              : st.state === 'err' && st.failKind === 'offline' ? '⚠️ You are offline — changes back up when the connection returns.'
+              : st.state === 'err' ? '⚠️ Sync can\'t reach the cloud — check your connection, then tap “Retry sync now”.'
+              : st.state === 'syncing' ? 'Syncing…'
+              : 'Sync is off (not signed in).';
+          } catch (e) { if (note) note.textContent = 'Could not read the sync result.'; }
+        }
+        paint();
+        try { if (window.CloudSync && CloudSync.addStatusListener) CloudSync.addStatusListener(paint); } catch (e) {}
         btn.onclick = function () {
           if (note) note.textContent = 'Syncing…';
           try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
-          setTimeout(function () {
-            if (!note) return;
-            try {
-              if (!window.CloudSync) { note.textContent = 'Sync engine not loaded.'; return; }
-              var st = CloudSync.status();
-              note.textContent = st.dot === 'ok' ? '✓ Backed up.'
-                : st.dot === 'err' ? 'Sync hit an error' + (st.lastError ? ' — ' + String(st.lastError).slice(0, 140) : '') + '.'
-                : st.dot === 'syncing' ? 'Still syncing — give it a moment.'
-                : 'Sync is off (not signed in).';
-            } catch (e) { if (note) note.textContent = 'Could not read the sync result.'; }
-          }, 4000);
+          setTimeout(paint, 1500);
+          setTimeout(paint, 4500);
         };
       })();
       /* v59: the power-read switch persists on change (never via
