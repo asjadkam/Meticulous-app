@@ -363,7 +363,12 @@ label.chk input{width:18px;height:18px;}
    banner and bar were solid blocks in a flex column with the map
    squeezed in a frame between them. Only Drive changes; the
    planning screen keeps its own shell. */
-.nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);}
+/* v133: the chrome carries its OWN compositing promotion
+   (translateZ(0) + will-change) — banner and bar get their own
+   layer, so their raster is never shared with / starved by the
+   340% transformed plane beneath them (see the v133 note at
+   .nv-drive-tilt and in modules/navigator.js at driveText). */
+.nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;}
 .nv-drive-dist{font-size:44px;font-weight:800;line-height:1;}
 .nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 .nv-drive-road{font-size:15px;color:#D9E1F3;margin-top:4px;min-height:20px;}
@@ -376,7 +381,13 @@ label.chk input{width:18px;height:18px;}
    the top into horizon blue), so any residual sliver above the
    horizon reads as sky, not as a broken map. */
 .nv-drive-viewport{position:absolute;inset:0;overflow:hidden;perspective:1000px;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
-.nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;will-change:transform;backface-visibility:hidden;}
+/* v133: NO will-change here any more. The tilt's rotateX(52deg)
+   is set once at mount and NEVER changes — claiming will-change
+   on it held a permanent 340%-plane promoted layer open for the
+   whole drive, burning the GPU tile budget the chrome's own
+   raster needed (the blanking recordings). The spin below keeps
+   its claim: its transform genuinely animates on turns. */
+.nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;backface-visibility:hidden;}
 .nv-drive-spin{position:absolute;inset:0;transform-origin:50% 64%;transition:transform .45s linear;will-change:transform;backface-visibility:hidden;}
 /* v125: the plane grows to 340% — in LANDSCAPE (wide + short)
    the 300% plane's corners still fell short of the viewport
@@ -389,7 +400,7 @@ label.chk input{width:18px;height:18px;}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 .nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-100%);font-size:30px;color:#1F3764;text-shadow:0 0 6px #fff,0 0 3px #fff;z-index:5;pointer-events:none;}
 .nv-drive-reroute{position:absolute;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
-.nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);}
+.nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);transform:translateZ(0);will-change:transform;}
 /* v124 (owner, Oct 17 07:17 — "What's the arrival time?", asked
    over a Drive screen showing NO arrival info at all): the v107
    row below claimed the buttons "keep their natural width", but

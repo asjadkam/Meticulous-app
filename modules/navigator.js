@@ -1287,6 +1287,49 @@
         driveTick();
       }
 
+      /* v133: THE BLANKING FIX — one cached writer for ALL of the
+         drive chrome's text. Owner evidence (Oct 17, 11:39 MDT,
+         39 s recording): the banner and bar TEXT vanished for
+         seconds at a time on the v128 code — navy boxes painted,
+         content empty — while the guidance data stayed alive.
+         v128's instrumented pins (zero layer churn, zero innerHTML)
+         were all true and all beside the point: the meter nobody
+         had run is textContent. The old driveTick assigned
+         textContent on ALL FIVE text nodes on EVERY GPS fix —
+         measured by tools/navigator-v133-test.js on the real
+         module: 20 standstill re-fires = 100 assignments, every
+         one of them byte-identical to what was already there;
+         60 approach fixes = 300 assignments, 183 of them
+         same-value. EVERY assignment replaces the text node and
+         invalidates that element's paint; under the 340%
+         transformed plane the Android WebView compositor starves
+         exactly those re-rasters, so the (rarely invalidated)
+         navy boxes stay and their (constantly invalidated) text
+         empties. And one vector needed no compositor at all:
+         when the next maneuver's instruction string is empty,
+         the old tick wrote '' over a good instruction — measured
+         13 literal blank writes in the same 60 fixes.
+         The writer below makes blanking structurally impossible
+         from the DOM side: a value is assigned ONLY when it
+         changes (an unchanged node is never touched, its paint
+         never invalidated), and the guidance nodes go through
+         driveTextKeep — a momentarily empty computed value never
+         erases the last good text mid-drive; it simply isn't
+         written. The values are cached per render (S is the
+         render's state bag, the DOM is rebuilt with it), so the
+         cache can never disagree with the glass. */
+      function driveText(el, key, value) {
+        if (!el) return;
+        if (!S.driveTextCache) S.driveTextCache = {};
+        if (S.driveTextCache[key] === value) return;
+        S.driveTextCache[key] = value;
+        el.textContent = value;
+      }
+      function driveTextKeep(el, key, value) {
+        if (value === '' || value === null || value === undefined) return;
+        driveText(el, key, value);
+      }
+
       /* One drive paint per GPS fix, off the module's one watch.
          Returns the text spoken (if any) so startDrive can avoid
          double-announcing. */
@@ -1295,20 +1338,23 @@
         var pr = distToRouteM(S.pos, S.line);
         var dp = driveProgress(S.plan, pr.along);
         var showNext = !!dp.next;
+        /* v133: every write below goes through the cached writer
+           (see driveText) — on change only, and the guidance four
+           keep their last good value over a momentary empty. */
         var distEl = body.querySelector('#nvd_dist');
-        if (distEl) distEl.textContent = fmtDist(showNext ? dp.toTurnM : dp.leftM);
+        driveTextKeep(distEl, 'dist', fmtDist(showNext ? dp.toTurnM : dp.leftM));
         var instEl = body.querySelector('#nvd_inst');
-        if (instEl) instEl.textContent = showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : '');
+        driveTextKeep(instEl, 'inst', showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : ''));
         var roadEl = body.querySelector('#nvd_road');
-        if (roadEl) roadEl.textContent = dp.road ? 'On ' + dp.road : '';
+        driveText(roadEl, 'road', dp.road ? 'On ' + dp.road : '');
         var etaMain = body.querySelector('#nvd_eta_main');
-        if (etaMain) etaMain.textContent = fmtClock(driveEtaInfo(S.plan, pr.along, Date.now()).arriveAt);
+        driveTextKeep(etaMain, 'etaMain', fmtClock(driveEtaInfo(S.plan, pr.along, Date.now()).arriveAt));
         var etaSub = body.querySelector('#nvd_eta_sub');
-        if (etaSub) etaSub.textContent = 'Arrive · ' + fmtMin(dp.etaMin) + ' · ' + fmtDist(dp.leftM) + ' left' +
+        driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(dp.etaMin) + ' · ' + fmtDist(dp.leftM) + ' left' +
           /* v107: the bar shows the destination's first segment
              only — a full address would crowd the line (the CSS
              ellipsizes the sub-line; the main line never wraps). */
-          (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : '');
+          (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : ''));
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
           var showRr = S.rerouting || pr.dist > 60;
@@ -1387,11 +1433,15 @@
          the planning screen until the driver ends it). */
       function driveArrived() {
         if (!S.drive) return;
-        var instEl = body.querySelector('#nvd_inst'); if (instEl) instEl.textContent = 'You have arrived';
-        var distEl = body.querySelector('#nvd_dist'); if (distEl) distEl.textContent = '';
-        var roadEl = body.querySelector('#nvd_road'); if (roadEl) roadEl.textContent = S.destLabel || '';
-        var etaMain = body.querySelector('#nvd_eta_main'); if (etaMain) etaMain.textContent = 'Arrived';
-        var etaSub = body.querySelector('#nvd_eta_sub'); if (etaSub) etaSub.textContent = S.destLabel || '';
+        /* v133: arrival paints through the same cached writer —
+           these are real changes, written once; the distance
+           clearing is the arrival state's own deliberate paint
+           (driveText, not the keep-last guard). */
+        var instEl = body.querySelector('#nvd_inst'); driveText(instEl, 'inst', 'You have arrived');
+        var distEl = body.querySelector('#nvd_dist'); driveText(distEl, 'dist', '');
+        var roadEl = body.querySelector('#nvd_road'); driveText(roadEl, 'road', S.destLabel || '');
+        var etaMain = body.querySelector('#nvd_eta_main'); driveText(etaMain, 'etaMain', 'Arrived');
+        var etaSub = body.querySelector('#nvd_eta_sub'); driveText(etaSub, 'etaSub', S.destLabel || '');
         var rrEl = body.querySelector('#nvd_reroute'); if (rrEl) rrEl.classList.add('hidden');
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} }
         S.driveTimer = setTimeout(function () { exitDrive(); }, 3000);
@@ -1426,8 +1476,10 @@
          bar) — same settings.muted, same speak() gate. */
       function paintMute() {
         var label = S.settings.muted ? '🔇 Sound: off' : '🔊 Sound: on';
-        var b1 = body.querySelector('#nv_mute'); if (b1) b1.textContent = label;
-        var b2 = body.querySelector('#nvd_mute'); if (b2) b2.textContent = label;
+        /* v133: the bar's mute label is chrome text too — through
+           the cached writer like everything else on the face. */
+        driveText(body.querySelector('#nv_mute'), 'mutePlan', label);
+        driveText(body.querySelector('#nvd_mute'), 'muteDrive', label);
       }
       function toggleMute() {
         S.settings.muted = !S.settings.muted;
