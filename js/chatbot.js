@@ -334,6 +334,29 @@
        scale weights, the heavy group, the excess, the slide kind,
        the driver's own per-hole figure. The moment the numbers
        suffice, it computes — it never asks for what it has. */
+    /* v141: the axle-group words with a fuzzy matcher over them.
+       Speech-to-text and thumbs garble the group word itself —
+       the owner's spoken answer came back as "Drivea" and the old
+       exact-match conversation died on it, re-asking the identical
+       question. One edit away still counts as the word. */
+    var GROUP_LEX = { steer: 'steer', steers: 'steer', front: 'steer', drive: 'drives', drives: 'drives', tandem: 'trailer', tandems: 'trailer', trailer: 'trailer', tridem: 'trailer' };
+    var GROUP_CHOICES = ['The drives', 'The trailer tandems', 'The steer'];
+    function fuzzyGroup(text) {
+      var toks = String(text || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(function (w) {
+        return w && w !== 'the' && w !== 'my' && w !== 'on' && w !== 'is' && w !== 'are';
+      });
+      var keys = Object.keys(GROUP_LEX);
+      for (var i = toks.length - 1; i >= 0; i--) {
+        var w = toks[i];
+        if (GROUP_LEX[w]) return GROUP_LEX[w];
+        if (w.length >= 4) {
+          for (var j = 0; j < keys.length; j++) {
+            if (editLe1(w, keys[j])) return GROUP_LEX[keys[j]];
+          }
+        }
+      }
+      return null;
+    }
     function newMathState() {
       return { groups: {}, unit: null, heavy: null, excess: null, kind: null, perHole: null, wantCheck: false };
     }
@@ -365,6 +388,18 @@
       if (/heavy on (?:the |my )?(steer|front)/.test(t) || /(steer|front) is (?:heavy|over)/.test(t)) st.heavy = 'steer';
       else if (/heavy on (?:the |my )?(drives?|drive)/.test(t) || /drives? (?:are|is) (?:heavy|over)/.test(t)) st.heavy = 'drives';
       else if (/heavy on (?:the |my )?(trailer|tandems?|tridem)/.test(t) || /(trailer|tandems?|tridem) (?:are|is) (?:heavy|over)/.test(t)) st.heavy = 'trailer';
+      /* v141: the same shapes with a GARBLED group word —
+         "heavy on my drivea" must land as drives, not as a
+         re-ask. Also a short answer that is only a garbled
+         group word ("Drivea", "the trailor") is the answer. */
+      if (!st.heavy) {
+        var hom = /(?:heavy|over) on (?:the |my )?([a-z]+)/.exec(t) || /(?:the |my )?([a-z]+) (?:is|are) (?:heavy|over)/.exec(t);
+        if (hom) { var hg = fuzzyGroup(hom[1]); if (hg) st.heavy = hg; }
+      }
+      if (!st.heavy) {
+        var toksS = String(text || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+        if (toksS.length <= 4) { var fgBare = fuzzyGroup(text); if (fgBare) st.heavy = fgBare; }
+      }
       if (/(am i|are we|is it|check|legal|overweight)/.test(t) && /(legal|over|weight|check)/.test(t)) st.wantCheck = true;
       /* An over-limit group IS the heavy group when we can see it. */
       if (!st.heavy && st.groups) {
@@ -385,10 +420,23 @@
       return st;
     }
 
-    /* Returns { state, reply, done }. reply is null when the core
-       has nothing to say (caller falls through). */
+    /* Returns { state, reply, done, choices? }. reply is null when
+       the core has nothing to say (caller falls through).
+       v141: MISS BOOKKEEPING — an answer that lands nothing new
+       while a slot is awaited is a miss (st.misses, st.lastHeard).
+       A miss changes the next ask: it says what it heard, rewords,
+       and (for the group) offers tappable choices. The identical
+       question is never repeated, and a fact already given is
+       never re-asked. */
     function mathStep(st, text) {
+      var fresh = !st;
+      var before = fresh ? null : [st.heavy, st.excess, Object.keys(st.groups).length, st.perHole, st.kind].join('|');
       st = mathMerge(st || newMathState(), text);
+      if (!fresh && String(text || '').trim()) {
+        var after = [st.heavy, st.excess, Object.keys(st.groups).length, st.perHole, st.kind].join('|');
+        if (before === after) { st.misses = (st.misses || 0) + 1; st.lastHeard = String(text).trim().slice(0, 60); }
+        else st.misses = 0;
+      }
       var have = Object.keys(st.groups).length;
       /* A pure check request with the full picture: answer it,
          verdict first. */
@@ -403,9 +451,20 @@
           var over0 = chk0.rows.filter(function (r) { return r.overKg != null && r.overKg > 0; });
           if (!over0.length) return { state: st, done: true, reply: 'Good news — those weights are legal in Alberta.\n' + checkText(chk0) };
         }
+        if (st.misses >= 1) {
+          return { state: st, done: false, choices: GROUP_CHOICES.slice(), reply: 'I heard “' + (st.lastHeard || '') + '” — that didn\'t land as one of the groups. Which group is heavy? Tap one below, or say it again — the drives, the trailer tandems, or the steer.' };
+        }
+        /* v141: never re-ask a fact already given — the amount is
+           in hand here, so only the group is asked for. */
+        if (st.excess != null) {
+          return { state: st, done: false, reply: 'Which group is heavy — the drives, the trailer tandems, or the steer?' };
+        }
         return { state: st, done: false, reply: 'Which group is heavy — the drives, the trailer tandems, or the steer? And how much over are you, if you know it?' };
       }
       if (st.excess == null) {
+        if (st.misses >= 1) {
+          return { state: st, done: false, reply: 'I heard “' + (st.lastHeard || '') + '” — I\'ve got the ' + st.heavy + ', I just need how much you\'re over on them. A number is all I need — like “800” — or your scale weights (steer, drives, trailer) and I\'ll work it out.' };
+        }
         return { state: st, done: false, reply: 'How much are you over on the ' + st.heavy + '? A number is all I need — or give me your scale weights (steer, drives, trailer) and I\'ll work it out.' };
       }
       var calcIn = {
@@ -419,9 +478,32 @@
       };
       var calc = slideCalc(calcIn);
       if (!calc) {
+        if (st.misses >= 1) {
+          return { state: st, done: false, reply: 'I heard “' + (st.lastHeard || '') + '” — for moving the load itself I need its weight: your gross, or what you\'re carrying. How much is on?' };
+        }
         return { state: st, done: false, reply: 'To work out moving the load itself I need the load\'s weight — your gross, or what you\'re carrying. How much is on?' };
       }
       return { state: st, done: true, reply: slideText(calc, st.groups) };
+    }
+
+    /* v141: is this message an ANSWER to the pending weights
+       question — a group (exact or garbled), a number, a weight
+       fact, a short fragment — rather than a new topic? The glue
+       asks this BEFORE a pending conversation may absorb a
+       message: a complete new question ("Why is this app not
+       syncing?") is never a slot answer, so the pending flow is
+       abandoned and the new topic is answered instead. */
+    function isSlotAnswer(text, st) {
+      var raw = String(text || '');
+      if (!raw.trim()) return false;
+      if (parseExcess(raw) != null || parsePerHole(raw) != null) return true;
+      if (Object.keys(parseGroups(raw)).length) return true;
+      if (/^\s*\d[\d,]*\.?\d*\s*(kg|kgs|lb|lbs|pounds?|kilos?)?\s*[.!]?\s*$/i.test(raw)) return true;
+      var toks = raw.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+      if (!toks.length) return true; /* punctuation only — an answer attempt, not a topic */
+      if (toks.length <= 4 && fuzzyGroup(raw)) return true;
+      if (toks.length <= 3 && !/^(why|what|how|when|where|who|which|whose|is|are|do|does|can|could|should|would|will)\b/.test(toks.join(' '))) return true;
+      return false;
     }
 
     /* ---------------- Calgary street legality ---------------- */
@@ -547,6 +629,12 @@
       }
       var sq = streetQueryOf(raw);
       if (sq) return { layer: 'street', query: sq };
+      /* v141: the app itself — a sync question is a complete new
+         intent, answered from the app's real sync status; it must
+         never be swallowed as a pending conversation's answer. */
+      if (/\b(sync|syncing|synced)\b/.test(t) || /\bbacked up\b/.test(t) || /\bbacking up\b/.test(t)) {
+        return { layer: 'sync' };
+      }
       if (/\b(weather|forecast|raining|snowing|rain|snow|temperature|how cold|how hot|windy)\b/.test(t)) {
         var w = { layer: 'weather', target: 'here', place: null };
         var dm = /(?:weather|forecast)\s+(?:at|for)\s+(?:my\s+)?(drop|destination|dispatch|pickup|site|job)\b/.exec(t) ||
@@ -771,6 +859,39 @@
       return null;
     }
 
+    /* ---------------- the app's own sync status ----------------
+       v141: "Why is this app not syncing?" is answered from the
+       SAME truth machine the header dot paints (CloudSync
+       .status(), v136) — the glue hands the live status in and
+       this composer stays pure so the words are testable. No
+       status to read (sync not booted) → the honest line that
+       teaches him to read the dot himself. */
+    function syncText(s) {
+      if (!s || typeof s !== 'object') {
+        return 'I can\'t read the sync status from here — the dot at the top of the screen tells it: green means everything is backed up, amber means it\'s still sending, red means something is stuck.';
+      }
+      var state = s.state || (s.dot === 'ok' ? 'ok' : s.dot === 'err' ? 'err' : s.dot === 'off' ? 'off' : 'syncing');
+      if (state === 'ok') {
+        return 'Sync is working — everything on this phone is backed up' +
+          (s.lastSettledLabel ? ' (last confirmed ' + s.lastSettledLabel + ')' : '') + '.' +
+          (s.telemetryBehind ? ' Your live miles are still catching up in the background — nothing that matters is waiting.' : '');
+      }
+      if (state === 'syncing') {
+        return 'It\'s syncing right now — your latest work is on its way up. When the dot at the top of the screen turns green, everything is confirmed.' +
+          (s.lastSettledLabel ? ' Last fully synced ' + s.lastSettledLabel + '.' : '');
+      }
+      if (state === 'err') {
+        if (s.failKind === 'offline' || /offline/i.test(String(s.failMsg || ''))) {
+          return 'Sync is stuck because the phone is offline. Your work is safe on the phone — it backs up on its own the moment you have signal again.';
+        }
+        if (s.failPlain) {
+          return 'Sync has a problem: ' + s.failPlain + ' hasn\'t backed up yet. Your work is still safe on this phone — tap “Retry sync now” in Preferences and it will push again.';
+        }
+        return 'Sync can\'t reach the cloud right now, so your latest work hasn\'t backed up yet. It keeps retrying on its own — and “Retry sync now” in Preferences pushes it as soon as you\'re back in coverage. Your work is safe on this phone meanwhile.';
+      }
+      return 'Sync is off right now — you\'re not signed in, so nothing is backing up. Everything is still saved on this phone; sign in and it will sync again.';
+    }
+
     /* ---------------- copy ---------------- */
     var GREETING = 'Hey — I\'m your road hand. Ask me anything out here.\n' +
       'Something exact: “I\'m 800 pounds heavy on my drives — how many holes do I slide?”\n' +
@@ -804,6 +925,7 @@
       bridgeLb: bridgeLb, bridgeText: bridgeText,
       slideCalc: slideCalc, slideText: slideText,
       newMathState: newMathState, mathMerge: mathMerge, mathStep: mathStep,
+      fuzzyGroup: fuzzyGroup, isSlotAnswer: isSlotAnswer, syncText: syncText, GROUP_CHOICES: GROUP_CHOICES,
       expandStreet: expandStreet, normKey: normKey, buildStreetMap: buildStreetMap,
       streetLookup: streetLookup, restrActiveNow: restrActiveNow, legalText: legalText,
       route: route, streetQueryOf: streetQueryOf, isGarble: isGarble,
@@ -1032,10 +1154,21 @@
     var bodyHtml = '';
     if (opts.tag) bodyHtml += '<div class="chat-tag">' + esc(opts.tag) + '</div>';
     bodyHtml += '<div class="chat-text">' + esc(text).replace(/\n/g, '<br>') + '</div>';
+    /* v141: tappable guesses on a miss — the choices ride the
+       card itself, so a driver whose spoken answer garbled can
+       answer with one tap instead of fighting the recognizer. */
+    if (opts.choices && opts.choices.length && who !== 'me') {
+      bodyHtml += '<div class="chat-choices">' + opts.choices.map(function (c) {
+        return '<button class="chat-chip chat-choice">' + esc(c) + '</button>';
+      }).join('') + '</div>';
+    }
     if (who !== 'me') {
       bodyHtml += '<button class="chat-spk" title="Hear it" aria-label="Hear this answer">🔊</button>';
     }
     wrap.innerHTML = bodyHtml;
+    wrap.querySelectorAll('.chat-choice').forEach(function (b) {
+      b.onclick = function () { ask(b.textContent, { viaVoice: false }); };
+    });
     var spk = wrap.querySelector('.chat-spk');
     /* The tap IS the request for sound: a speaker tap speaks its
        card even when the sheet is toggled quiet. */
@@ -1069,6 +1202,15 @@
     botSay(CORE.recordsText(kind, f, todayStr()), { speak: viaVoice });
   }
 
+  /* v141: the sync answer comes from the app's REAL sync status
+     (CloudSync.status(), the v136 truth machine that paints the
+     header dot) — never a guess, never the general brain. */
+  function answerSync(viaVoice) {
+    var st = null;
+    try { if (window.CloudSync && CloudSync.status) st = CloudSync.status(); } catch (e) {}
+    botSay(CORE.syncText(st), { speak: viaVoice });
+  }
+
   function ask(text, opts) {
     opts = opts || {};
     text = String(text || '').trim();
@@ -1087,12 +1229,24 @@
 
     var r = CORE.route(text);
 
+    /* v141 (c): INTENT FIRST — intent detection runs on EVERY
+       message before any pending conversation may consume it.
+       A complete new question is not a slot answer: the pending
+       flow is abandoned instantly and the new topic is answered.
+       (His deliberate mid-flow test, Oct 17 12:37 MDT: "Why is
+       this app not syncing?" while the axle question was open —
+       the old flow swallowed it and re-asked the axle question
+       a third time.) */
+    if (pendingMath && r.layer !== 'math' && !CORE.isSlotAnswer(text, pendingMath)) {
+      pendingMath = null;
+    }
+
     /* An in-flight weights conversation absorbs math-shaped and
        bare-answer follow-ups ("800", "drives", "in pounds"). */
     if (pendingMath && (r.layer === 'math' || r.layer === 'general')) {
       var step = CORE.mathStep(pendingMath, text);
       pendingMath = step.done ? null : step.state;
-      botSay(step.reply, { speak: viaVoice });
+      botSay(step.reply, { speak: viaVoice, choices: step.choices });
       return;
     }
     if (r.layer === 'hello') {
@@ -1102,9 +1256,10 @@
     if (r.layer === 'math') {
       var st = CORE.mathStep(null, text);
       pendingMath = st.done ? null : st.state;
-      botSay(st.reply, { speak: viaVoice });
+      botSay(st.reply, { speak: viaVoice, choices: st.choices });
       return;
     }
+    if (r.layer === 'sync') { answerSync(viaVoice); return; }
     if (r.layer === 'records') { answerRecords(r.kind, viaVoice); return; }
     if (r.layer === 'street') {
       var think1 = botSay('Pulling up the Calgary truck-route map…');
@@ -1178,33 +1333,253 @@
     });
   }
 
-  /* ---------- voice in ---------- */
-  var recog = null;
-  function listen() {
-    var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Rec) {
-      botSay('Voice isn\'t available on this device — type your question below and I\'ll answer the same way.');
+  /* ---------- voice in ----------
+     v141 (owner's hands, Oct 17, 12:31 MDT: "Mic isn't working"
+     — tapping the mic did nothing). Why the old button was dead
+     on his phone: it knew ONE route, the web SpeechRecognition
+     API, which the Android WebView does not genuinely provide —
+     and its error handler swallowed every failure and silently
+     reset the icon, so a dead recognizer looked like a dead
+     button. The chain now, in order of preference:
+       1. a native speech plugin in the shell-facing bridge, if
+          one is ever present (Capacitor.Plugins
+          .SpeechRecognition) — none ships in APK v35 today;
+       2. record-and-transcribe through the server-side AI
+          machinery Power Read already uses: the mic records via
+          MediaRecorder/getUserMedia and the clip is transcribed
+          by the same Gemini chain the general brain's fallback
+          rides (the pre-existing Power Read setup — still NO
+          key field, prompt, or errand anywhere in this feature);
+       3. web SpeechRecognition where the platform genuinely
+          has it (desktop Chrome) — hardened: best alternative
+          wins, and a fatal recognizer error falls through to
+          the recorder instead of dying silently;
+       4. a spoken-style line that says plainly what happened
+          and leaves typing fully working.
+     The button is never dead and never silent about a failure.
+     RESIDUAL (honest): routes 1–2 cannot be proven from the
+     build environment — whether the v35 shell grants the
+     WebView's audio-capture request is a native-side fact, and
+     route 2 needs the pre-existing Power Read key on the phone.
+     His next tap is the verdict, as always. */
+  var recog = null, micListening = false;
+  var mediaRec = null, mediaStream = null, mediaTimer = null;
+
+  function resetMic() {
+    micListening = false;
+    if (els) { els.mic.classList.remove('listening'); els.mic.textContent = '🎤'; }
+  }
+  /* Every voice failure lands here: a clear spoken-style line,
+     the icon restored, typing untouched. */
+  function micSay(line) {
+    resetMic();
+    botSay(line, { speak: true });
+  }
+  function stopMedia() {
+    if (mediaTimer) { clearTimeout(mediaTimer); mediaTimer = null; }
+    try { if (mediaStream) mediaStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    mediaStream = null;
+  }
+  function stopListening() {
+    if (mediaTimer) { clearTimeout(mediaTimer); mediaTimer = null; }
+    try { if (mediaRec && mediaRec.state !== 'inactive') { mediaRec.stop(); return; } } catch (e) {}
+    try { if (recog) recog.stop(); } catch (e) {}
+    resetMic();
+  }
+
+  /* The transcription route exists exactly when the pre-existing
+     Power Read setup carries a key the Gemini chain can ride —
+     the same seam remoteAsk's fallback uses. No key, no route;
+     nothing is asked of the user. */
+  function transcribeKey() {
+    try {
+      if (window.PowerRead && PowerRead.getKey) {
+        var k = PowerRead.getKey();
+        if (k) return k;
+      }
+    } catch (e) {}
+    return '';
+  }
+  function transcribeAudio(blob, key) {
+    return new Promise(function (resolve) {
+      var models = (window.PowerRead && PowerRead.MODELS) || [];
+      var endpoint = (window.PowerRead && PowerRead.ENDPOINT) || '';
+      if (!models.length || !endpoint) return resolve(null);
+      var fr = new FileReader();
+      fr.onerror = function () { resolve(null); };
+      fr.onload = function () {
+        var dataUrl = String(fr.result || '');
+        var b64 = dataUrl.indexOf(',') !== -1 ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '';
+        if (!b64) return resolve(null);
+        (function tryModel(i) {
+          if (i >= models.length) return resolve(null);
+          fetch(endpoint + models[i] + ':generateContent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+            body: JSON.stringify({ contents: [{ parts: [
+              { text: 'Transcribe this truck driver\'s spoken question exactly as he said it. Return only the words he said — no quotes, no commentary.' },
+              { inline_data: { mime_type: blob.type || 'audio/webm', data: b64 } }
+            ] }] })
+          }).then(function (r) {
+            if (r.status === 404) { tryModel(i + 1); return null; }
+            if (!r.ok) return null;
+            return r.json();
+          }).then(function (j) {
+            if (!j) return;
+            try {
+              var parts = j.candidates[0].content.parts || [];
+              var out = parts.map(function (p) { return p.text || ''; }).join('').trim()
+                .replace(/^["“]/, '').replace(/["”]$/, '').trim();
+              resolve(out || null);
+            } catch (e) { resolve(null); }
+          }).catch(function () { resolve(null); });
+        })(0);
+      };
+      try { fr.readAsDataURL(blob); } catch (e) { resolve(null); }
+    });
+  }
+
+  function startRecorder(fellToSR) {
+    function unavailable() {
+      /* One cross-fallback: if the recorder can't run but a
+         platform recognizer exists, it gets its chance before
+         the graceful line. */
+      var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!fellToSR && Rec) { startWebSR(Rec, true); return; }
+      micSay('Voice isn\'t available in this app on this phone yet — type your question below and I\'ll answer the same way.');
+    }
+    var key = transcribeKey();
+    if (!key || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) {
+      unavailable();
       return;
     }
-    try { stopSpeak(); } catch (e) {}
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      mediaStream = stream;
+      var chunks = [];
+      try { mediaRec = new MediaRecorder(stream); } catch (e) {
+        stopMedia();
+        micSay('Voice didn\'t start on this phone — type your question below and I\'ll answer the same way.');
+        return;
+      }
+      micListening = true;
+      els.mic.classList.add('listening');
+      els.mic.textContent = '🔴';
+      mediaRec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+      mediaRec.onstop = function () {
+        var type = 'audio/webm';
+        try { type = mediaRec.mimeType || type; } catch (e) {}
+        stopMedia();
+        resetMic();
+        var blob = new Blob(chunks, { type: type });
+        if (!blob.size) { micSay('Didn\'t hear anything that time — tap the mic and speak right away, or type it below.'); return; }
+        transcribeAudio(blob, key).then(function (txt) {
+          if (txt) ask(txt, { viaVoice: true });
+          else micSay('Didn\'t catch that — try once more, or type it below and I\'ll answer the same way.');
+        });
+      };
+      try { mediaRec.start(); } catch (e) {
+        stopMedia();
+        micSay('Voice didn\'t start on this phone — type your question below and I\'ll answer the same way.');
+        return;
+      }
+      mediaTimer = setTimeout(function () { stopListening(); }, 15000);
+    }).catch(function () {
+      var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!fellToSR && Rec) { startWebSR(Rec, true); return; }
+      micSay('I can\'t reach the microphone on this phone — check the app\'s microphone permission, or type your question below and I\'ll answer the same way.');
+    });
+  }
+
+  function startWebSR(Rec, fellThrough) {
     try {
       recog = new Rec();
       recog.lang = 'en-CA';
       recog.interimResults = false;
-      recog.maxAlternatives = 1;
+      recog.maxAlternatives = 3;
+      micListening = true;
       els.mic.classList.add('listening');
       els.mic.textContent = '🔴';
       recog.onresult = function (ev) {
         var txt = '';
-        try { txt = ev.results[0][0].transcript || ''; } catch (e) {}
+        try {
+          var alts = ev.results[0];
+          for (var i = 0; i < alts.length; i++) {
+            if (alts[i] && alts[i].transcript) { txt = alts[i].transcript; break; }
+          }
+        } catch (e) {}
+        resetMic();
         if (txt) ask(txt, { viaVoice: true });
+        else micSay('Didn\'t catch that — try once more, or type it below.');
       };
-      recog.onend = function () { if (els) { els.mic.classList.remove('listening'); els.mic.textContent = '🎤'; } };
-      recog.onerror = function () { if (els) { els.mic.classList.remove('listening'); els.mic.textContent = '🎤'; } };
+      recog.onend = function () { if (micListening && !mediaRec) resetMic(); };
+      recog.onerror = function (ev) {
+        var code = (ev && ev.error) || '';
+        resetMic();
+        if (code === 'aborted') return;
+        if (code === 'no-speech') { micSay('Didn\'t hear anything that time — tap the mic and speak right away, or type it below.'); return; }
+        if (code === 'network') { micSay('Voice on this phone needs a connection — type your question below and I\'ll answer the same way.'); return; }
+        /* not-allowed / service-not-allowed / audio-capture /
+           anything else: the platform recognizer isn't really
+           there (the Android WebView case) — fall through to the
+           recorder ONCE instead of dying silently like before. */
+        if (!fellThrough) { startRecorder(true); return; }
+        micSay('Voice didn\'t start on this phone — type your question below and I\'ll answer the same way.');
+      };
       recog.start();
     } catch (e) {
-      botSay('Voice didn\'t start — type your question below and I\'ll answer the same way.');
+      resetMic();
+      if (!fellThrough) startRecorder(true);
+      else micSay('Voice didn\'t start on this phone — type your question below and I\'ll answer the same way.');
     }
+  }
+
+  function startNativeSR(cap) {
+    var done = false;
+    function fail() {
+      if (done) return;
+      done = true;
+      resetMic();
+      var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (Rec) startWebSR(Rec, true);
+      else startRecorder(true);
+    }
+    try {
+      micListening = true;
+      els.mic.classList.add('listening');
+      els.mic.textContent = '🔴';
+      var perm = null;
+      if (typeof cap.requestPermission === 'function') {
+        try { perm = cap.requestPermission(); } catch (e) {}
+      }
+      Promise.resolve(perm).then(function () {
+        return cap.startListening({ language: 'en-CA', maxResults: 1, partial: false, popup: false });
+      }).then(function (res) {
+        if (done) return;
+        done = true;
+        resetMic();
+        var m = res && (res.matches || res.value);
+        var txt = (m && m[0]) || (typeof res === 'string' ? res : '');
+        if (txt) ask(txt, { viaVoice: true });
+        else micSay('Didn\'t catch that — try once more, or type it below.');
+      }).catch(fail);
+    } catch (e) { fail(); }
+  }
+
+  function listen() {
+    if (micListening) { stopListening(); return; }
+    try { stopSpeak(); } catch (e) {}
+    /* 1. native bridge, when the shell ships one */
+    var capSR = null;
+    try { capSR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition; } catch (e) {}
+    if (capSR && typeof capSR.startListening === 'function') { startNativeSR(capSR); return; }
+    /* 2. the Power Read server machinery: record + transcribe,
+       whenever a transcription route exists on this phone */
+    if (transcribeKey()) { startRecorder(false); return; }
+    /* 3. the platform recognizer, where it genuinely exists */
+    var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (Rec) { startWebSR(Rec, false); return; }
+    /* 4. the graceful line (startRecorder speaks it) */
+    startRecorder(false);
   }
 
   /* ---------- build + boot ---------- */
@@ -1339,6 +1714,7 @@
   function closeSheet() {
     if (!els) return;
     stopSpeak();
+    try { stopListening(); } catch (e) {}
     try { if (recog) recog.stop(); } catch (e) {}
     els.sheet.classList.remove('open');
     els.scrim.classList.remove('show');
@@ -1353,6 +1729,8 @@
     close: closeSheet,
     ask: ask,
     _remoteAsk: remoteAsk,
-    _loadStreets: loadStreets
+    _loadStreets: loadStreets,
+    _listen: listen,
+    _stopListening: stopListening
   };
 })();
