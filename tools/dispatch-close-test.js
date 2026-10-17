@@ -416,7 +416,15 @@ async function driveToConfirm(w) {
     eq('d: nothing logged', w.revLog.length, 0);
   }
 
-  /* ---------------- (e) plain Complete regression ---------------- */
+  /* ---------------- (e) plain Complete regression ----------------
+     v143 PIN MOVE (owner, Oct 17 16:22 MDT — "there was no way to
+     choose a picture! And there was no confirmation before it
+     actually closed the shift!"): plain Complete no longer closes
+     on its own tap — it opens the shared confirm step and only
+     Confirm writes. The (e) assertions about WHAT the close logs
+     are unchanged; the drive gains the Confirm tap, plus the
+     new nothing-written-yet assertions (driven in full in
+     tools/close-confirm-v143-test.js). */
   {
     const w = makeModuleWorld(function () { return Promise.resolve(CARD_TEXT); });
     const d = activeDispatch();
@@ -425,6 +433,9 @@ async function driveToConfirm(w) {
     w.seedActive(d);
     w.render();
     w.body.querySelector('#dp_complete').click();
+    eq('e: the tap alone closes nothing (v143)', (w.store.get('dsp_list', [])[0] || {}).status, 'active');
+    eq('e: nothing logged before Confirm (v143)', w.revLog.length, 0);
+    w.flow().querySelector('#dp_cf_confirm').click();
     const rec = w.store.get('dsp_list', [])[0];
     eq('e: plain Complete completes the dispatch', rec.status, 'completed');
     eq('e: plain Complete clears active', w.store.get('dsp_active', null), null);

@@ -456,7 +456,13 @@ function makeModuleWorld(recognize) {
     w.store.set('dsp_list', [JSON.parse(JSON.stringify(act))]);
     w.store.set('dsp_active', JSON.parse(JSON.stringify(act)));
     w.render();
+    /* v143 PIN MOVE: plain Complete opens the shared confirm
+       step first (owner, Oct 17 16:22 MDT — no confirmation
+       before the close was the catch); the drive confirms, and
+       every (f) assertion about the close itself is unchanged. */
     w.body.querySelector('#dp_complete').click();
+    eq('f: the tap alone completes nothing yet (v143)', (w.store.get('dsp_list', [])[0] || {}).status, 'active');
+    w.body.querySelector('#dp_closeflow').querySelector('#dp_cf_confirm').click();
     const rec = w.store.get('dsp_list', [])[0];
     eq('f: manual Complete completes the record', rec.status, 'completed');
     eq('f: manual Complete stamps the ticket # mined from the read', rec.ticketNo, '9981');

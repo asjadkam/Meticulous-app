@@ -195,9 +195,15 @@ function eq(name, got, want) {
 
 /* 9 — the End shift sheet itself: markup, placement and wiring.
  * The snap actions live INSIDE #trkEndSheet, are quiet secondaries,
- * and the sheet's primary (Stop & save) stays last — the owner's
- * button-safety law. The end-sheet flow must NOT consult the v46
- * prompt gating (pay mode / toggle): it is offered to every driver. */
+ * and the sheet's primary stays last — the owner's button-safety
+ * law. The end-sheet flow must NOT consult the v46 prompt gating
+ * (pay mode / toggle): it is offered to every driver.
+ * v143: the primary's label moved on purpose — it no longer
+ * saves; it opens the close review (owner, Oct 17 16:22 MDT:
+ * "there was no confirmation before it actually closed the
+ * shift!"). The stop itself now lives behind the review's
+ * Confirm (App.trackerConfirmEnd) — driven in
+ * tools/close-confirm-v143-test.js. */
 (function () {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const mani = fs.readFileSync(path.join(ROOT, 'modules', 'manifest.js'), 'utf8');
@@ -215,7 +221,8 @@ function eq(name, got, want) {
   ok('camera input captures from the camera', camInAt !== -1 && sheet.slice(camInAt, camInAt + 120).indexOf('capture="environment"') !== -1);
   ok('odo controls sit above the primary button', sheet.indexOf('id="trkEndOdoCam"') !== -1 &&
     sheet.indexOf('id="trkEndOdoCam"') < sheet.indexOf('id="trkEndSave"'));
-  ok('primary label intact (Stop & save)', sheet.indexOf('Stop &amp; save') !== -1);
+  ok('primary label intact (Review the close — v143: it opens the close review, the stop is the review\u2019s Confirm)',
+    sheet.indexOf('Review the close') !== -1 && sheet.indexOf('Stop &amp; save') === -1);
 
   ok('app wires the camera button', src.indexOf("el('trkEndOdoCam').onclick") !== -1);
   ok('app wires the file button', src.indexOf("el('trkEndOdoPick').onclick") !== -1);

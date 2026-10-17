@@ -243,6 +243,13 @@ function makeChainWorld() {
     'function stopSessionAt'
   ];
   let code = fns.map(m => extractFn(appSrc, m)).join('\n');
+  /* v143: stopSessionAt now reads the _endTicketPhoto hand-in
+     vars declared directly above it in app.js — extract the
+     declaration block too, or the read throws in this world
+     (the same sloppy-global accident that used to cover
+     _stopViaDispatch no longer covers a READ before write). */
+  code = appSrc.slice(appSrc.indexOf('var _stopViaDispatch = false;'),
+    appSrc.indexOf('function stopSessionAt')) + '\n' + code;
   code += '\n' + extractRegion(appSrc, 'ODO-MASTER-BEGIN', 'ODO-MASTER-END');
   code += '\n' + extractFn(appSrc, 'App.stopSessionOnDispatchClose = function ()');
   vm.runInContext(code, sb);
@@ -287,6 +294,9 @@ console.log('\n— D2/D5/D4b: 2 taps, plain Complete, manifest (no confirmed tim
   const body = new FakeEl('body');
   w.sb.Meticulous.modules.dispatch.render(body);
   body.querySelector('#dp_complete').click();
+  /* v143 PIN MOVE: plain Complete opens the shared confirm step —
+     the drive confirms it (owner, Oct 17 16:22 MDT). */
+  body.querySelector('#dp_closeflow').querySelector('#dp_cf_confirm').click();
   const sessions = w.store.get('sessions', []);
   eq('one session record landed', sessions.length, 1);
   eq('the session record carries manualLoads = 2', sessions[0] && sessions[0].manualLoads, 2);
@@ -317,6 +327,9 @@ console.log('\n— D5: Complete with NO running session —');
   const body = new FakeEl('body');
   w.sb.Meticulous.modules.dispatch.render(body);
   body.querySelector('#dp_complete').click();
+  /* v143 PIN MOVE: plain Complete opens the shared confirm step —
+     the drive confirms it (owner, Oct 17 16:22 MDT). */
+  body.querySelector('#dp_closeflow').querySelector('#dp_cf_confirm').click();
   eq('the plain completion alert fires', w.alerts[0], 'Dispatch completed.');
 }
 
@@ -329,6 +342,9 @@ console.log('\n— D4b: dispatch scheduled 08:00 + plain Complete → manifest S
   const body = new FakeEl('body');
   w.sb.Meticulous.modules.dispatch.render(body);
   body.querySelector('#dp_complete').click();
+  /* v143 PIN MOVE: plain Complete opens the shared confirm step —
+     the drive confirms it (owner, Oct 17 16:22 MDT). */
+  body.querySelector('#dp_closeflow').querySelector('#dp_cf_confirm').click();
   const c = w.collect(TODAY);
   eq('manifest Start is the SCHEDULED 8:00 AM (not the session time)', c.startT, '8:00 AM');
   eq('manifest Start source is the dispatch', c.startSrc, 'dispatch');

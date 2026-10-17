@@ -138,9 +138,10 @@ console.log('— 1. the wiring (static) —');
     navSrc.indexOf("youEl.innerHTML = avatarGlyph(S.settings.avatar, 'm')") >= 0 &&
     navSrc.indexOf("avatarGlyph(k, 'p')") >= 0);
   /* v142 pin move (the standing convention): the OTA number only
-     moves forward, so the pin follows the live version 143 -> 144. */
-  check('ships as webVersion 144, and index.html loads the navigator at the 144 pin',
-    ver.webVersion === 144 && idxSrc.indexOf('src="modules/navigator.js?v=144"') >= 0,
+     moves forward, so the pin follows the live version 143 -> 144.
+     v143 pin move: 144 -> 145, same convention. */
+  check('ships as webVersion 145, and index.html loads the navigator at the 145 pin',
+    ver.webVersion === 145 && idxSrc.indexOf('src="modules/navigator.js?v=145"') >= 0,
     'webVersion=' + ver.webVersion);
   check('version.json carries all three render assets in the OTA manifest',
     ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

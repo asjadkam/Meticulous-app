@@ -1,7 +1,7 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 144,
+  "webVersion": 145,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
@@ -17,8 +17,8 @@
     "css/style.css": "ad9e8d9210a74c3d06f904254370b71f13038a22281ab5ab986e4030554ddea5",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "3fca72275ccb670ad53030b2e6d36a8b32bd51f2e938232d4c1ff3aa516e9db4",
-    "js/app.js": "f999925700789d85a989bc954c272252dff4d9ae5509fce24f8a18d055ab07f8",
+    "index.html": "833ad6388fb7ab5bf3a8baa71f8e60ae4b01119d2e82afe1083d4962e8b39e9b",
+    "js/app.js": "9248219f9af94368c54faffba26ee1c7c36c41175fa10e5a1946d586aa8fc5f7",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",
     "js/cloudsync.js": "1bf856d522da5c8cf9989ea8690b61b2b75e7815a03a5bd9e49ec35fac127469",
@@ -40,7 +40,7 @@
     "modules/autostart.js": "6e751e87252fb430cb2f03634fccb4f9652b0a0d5bf2af8cf313f0b96d2bdb02",
     "modules/connect.js": "71e8258b1d555e34ec4753b53e2db26075708150f79b0101422619771efe5bfd",
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
-    "modules/dispatch.js": "33b2e8bccfa91b5b9b12d5f0cd4126c4492019e7021bebad4e03aa677424dc22",
+    "modules/dispatch.js": "14e5566833046b24b5e1ce8b29805fbf0dabad920deeba6c9b097971f1feabee",
     "modules/fuel.js": "6a5dc05e2bae878df5256b9a6e7bd6c21f44a9a36f1aa2e1a2f0bdb6210a0be9",
     "modules/invoice.js": "684577edfbc66fdb8aa1e0b4e37ec63e5ebe75cf91175ae1718ba6857e4203d0",
     "modules/maintenance.js": "d778108ae2ad6fa4ec08da17e2d009de7fb747605a2895c83c70dd982358b8f2",

@@ -1026,8 +1026,20 @@
      already holds (see inside stopSessionAt); a tracker Stop
      never does (its end prompt follows, as always). */
   var _stopViaDispatch = false;
+  /* v143: the End shift sheet's ticket photo (owner, Oct 17
+     16:22 MDT — closing the shift offered "no way to choose a
+     picture"). Chosen on the sheet, held in memory through the
+     close review, and handed to the stop through
+     _endTicketPhoto: stopSessionAt consumes it (reads + clears)
+     and stamps it on the session entry it saves — the closed
+     record of the shift. Any stop consumes it, so a photo can
+     never ride into a later day's close. */
+  var _endTicketPhoto = null;
+  var _endTicketChosen = null;
+  var _endClosePending = null; // { end: Date|null, endOdoVal } awaiting the review's Confirm
   function stopSessionAt(endMs, endOdoVal) {
     var viaDispatch = _stopViaDispatch; _stopViaDispatch = false;
+    var ticketPhoto = _endTicketPhoto; _endTicketPhoto = null;
     var sec = trackedSecondsAt(endMs);
     // v40: close out live-miles tracking first (watcher off, final
     // crumb + total persisted) so the finished entry can carry the day.
@@ -1052,6 +1064,9 @@
       // before the reconcile below and before the entry is handed to
       // FB.saveDoc / Revenue, so every consumer sees the whole entry.
       applyEndOdoToEntry(entry, endOdoVal);
+      // v143: the sheet's ticket photo, when one was chosen and
+      // confirmed, lands on the same entry the same way.
+      if (ticketPhoto) entry.ticketPhoto = ticketPhoto;
       /* v122: a DISPATCH-CLOSE stop (the path the owner actually
          uses — he closes the day by completing the dispatch, then
          saves the dash reading at night on the Maintenance card)
@@ -1136,6 +1151,13 @@
     _endOdoToken++;
     var eoIn = el('trkEndOdo'); if (eoIn) eoIn.value = '';
     var eoSt = el('trkEndOdoStatus'); if (eoSt) eoSt.innerHTML = '';
+    // v143: the close starts on the form step every time — no
+    // ticket photo and no pending close may ride in from a
+    // previous open (same rule as the odometer field above).
+    _endTicketChosen = null; _endClosePending = null;
+    var tpv = el('trkEndTicketPreview'); if (tpv) tpv.innerHTML = '';
+    var eform = el('trkEndForm'); if (eform) eform.style.display = '';
+    var erev = el('trkEndReview'); if (erev) { erev.style.display = 'none'; erev.innerHTML = ''; }
     // Owner refinement (Oct 14): the sheet leads with the APP'S OWN
     // count for the shift — closing the day is never the extra job of
     // snapping the odometer. The counted line shows only when the app
@@ -1160,7 +1182,19 @@
     // Blank = skipped — the stop saves exactly as it always has.
     var eoEl = el('trkEndOdo');
     var endOdoVal = eoEl ? eoEl.value : '';
-    if (!v) { closeTrackerEndSheet(); stopSessionAt(Date.now(), endOdoVal); return; }
+    /* v143 (owner, Oct 17 16:22 MDT — "there was no confirmation
+       before it actually closed the shift!"): NOTHING stops
+       here any more. The values are validated exactly as before,
+       held in _endClosePending, and the sheet moves to the close
+       review (paintEndReview) — the summary the driver reads,
+       with the ticket photo or its absence stated plainly. Only
+       the review's Confirm (App.trackerConfirmEnd) runs the
+       stop; Back from the review writes nothing. */
+    if (!v) {
+      _endClosePending = { end: null, endOdoVal: endOdoVal };
+      paintEndReview(Date.now());
+      return;
+    }
     var parts = v.split(':'), startMs = trackerSessionStartMs(), sd = new Date(startMs);
     var end = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(),
       parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
@@ -1169,9 +1203,144 @@
     var secs = trackedSecondsAt(end.getTime());
     if (secs <= 0) { alert('That end time is not after the start. Check the times and try again.'); return; }
     if (secs > 12 * 3600 && !confirm('That makes a ' + fmtClock(secs) + ' shift. Is that right?')) { return; }
-    closeTrackerEndSheet();
-    stopSessionAt(end.getTime(), endOdoVal);
+    _endClosePending = { end: end, endOdoVal: endOdoVal };
+    paintEndReview(end.getTime());
   };
+  /* v143: the close review's figures — the same inputs the stop
+     and Revenue's onSession price from: the hours are the
+     tracker's own count at the chosen end, the quantities are
+     the session accumulators, and the amount mirrors onSession's
+     arithmetic (pay standard × the driver's own rate chain,
+     v137) so what the review promises is what Confirm logs. */
+  function endCloseSummary(endMs) {
+    var secs = trackedSecondsAt(endMs);
+    var acc = trkAccum();
+    var o = store.get('onboarding', {});
+    var std = String(o.payStandard || 'hourly').toLowerCase();
+    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    var km = liveKmNow();
+    var amount = null;
+    if (std === 'miles') {
+      if (typeof km === 'number' && km > 0 && rate > 0) amount = km * rate;
+    } else if (std === 'weight') {
+      var kg = parseFloat(acc.weightKg) || 0;
+      if (kg > 0 && rate > 0) amount = (Math.round(kg / 10) / 100) * rate;
+    } else if (std === 'trip') {
+      var trips = parseInt(acc.tripCount, 10) || 0;
+      if (trips > 0 && rate > 0) amount = trips * rate;
+    } else if (rate > 0) {
+      amount = (secs / 3600) * rate;
+    }
+    return {
+      secs: secs, std: std, km: (typeof km === 'number' ? km : null), amount: amount,
+      loads: (parseInt(acc.loadCount, 10) || 0) + (parseInt(acc.manualLoads, 10) || 0),
+      trips: parseInt(acc.tripCount, 10) || 0,
+      weightKg: parseFloat(acc.weightKg) || 0
+    };
+  }
+  function paintEndReview(endMs) {
+    var rev = el('trkEndReview');
+    var form = el('trkEndForm');
+    if (!rev) {
+      /* No review surface (a shell without the v143 sheet):
+         never strand a validated close — run the stop the
+         pre-v143 way, with the photo handed in. */
+      var p0 = _endClosePending; _endClosePending = null;
+      _endTicketPhoto = _endTicketChosen; _endTicketChosen = null;
+      closeTrackerEndSheet();
+      if (p0 && p0.end) { var end0 = p0.end; stopSessionAt(end0.getTime(), p0.endOdoVal); }
+      else stopSessionAt(Date.now(), p0 ? p0.endOdoVal : '');
+      return;
+    }
+    var s = endCloseSummary(endMs);
+    var startMs = trackerSessionStartMs();
+    var p = _endClosePending || {};
+    var h = '<p class="note" style="margin:0 0 8px">Check the close — nothing is saved until you confirm.</p>';
+    h += '<div class="kv"><span>Date</span><b>' + esc(new Date(startMs).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })) + '</b></div>';
+    h += '<div class="kv"><span>Shift</span><b>' + esc(fmtTimeAMPM(startMs)) + ' → ' + esc(fmtTimeAMPM(endMs)) + ' · ' + esc(fmtClock(s.secs)) + '</b></div>';
+    if (s.loads > 0) h += '<div class="kv"><span>Loads</span><b>' + s.loads + '</b></div>';
+    if (s.trips > 0) h += '<div class="kv"><span>Trips</span><b>' + s.trips + '</b></div>';
+    if (s.weightKg > 0) h += '<div class="kv"><span>Weight</span><b>' + (Math.round(s.weightKg / 10) / 100) + ' t</b></div>';
+    if (typeof s.km === 'number' && s.km > 0) h += '<div class="kv"><span>Distance</span><b>' + (Math.round(s.km * 10) / 10).toLocaleString('en-CA') + ' km</b></div>';
+    if (p.endOdoVal) h += '<div class="kv"><span>End odometer</span><b>' + esc(p.endOdoVal) + ' km</b></div>';
+    if (s.amount !== null) h += '<div class="kv"><span>Logs to Revenue</span><b>$' + s.amount.toFixed(2) + '</b></div>';
+    if (_endTicketChosen) {
+      h += '<img src="' + _endTicketChosen + '" style="width:100%;border-radius:10px;margin:8px 0" alt="Ticket photo">' +
+        '<div class="b">📸 Ticket photo — it saves on this close.</div>';
+    } else {
+      h += '<div class="b" style="color:var(--orange)">No ticket photo — the shift still closes. Go back to add one.</div>';
+    }
+    var dspA = store.get('dsp_active', null);
+    if (dspA) h += '<div class="b">Your dispatch is still open — ending the shift does not close it. Close it from the Dispatch card to log its ticket and pay.</div>';
+    h += '<div class="row" style="margin-top:10px">' +
+      '<button class="btn ghost" id="trkEndBack">← Back</button>' +
+      '<button class="btn primary" id="trkEndConfirm">✅ Confirm — end shift</button></div>';
+    rev.innerHTML = h;
+    if (form) form.style.display = 'none';
+    rev.style.display = '';
+    el('trkEndBack').onclick = function () { App.trackerBackEnd(); };
+    el('trkEndConfirm').onclick = function () { App.trackerConfirmEnd(); };
+  }
+  /* v143: Back from the close review — the form returns with
+     every value as it was; nothing was written. */
+  App.trackerBackEnd = function () {
+    var rev = el('trkEndReview');
+    var form = el('trkEndForm');
+    if (rev) { rev.style.display = 'none'; rev.innerHTML = ''; }
+    if (form) form.style.display = '';
+  };
+  /* v143: the review's Confirm — the ONLY tracker stop that
+     comes out of the End shift sheet. Runs the stop with the
+     values trackerSaveEnd validated, the sheet's ticket photo
+     handed in through _endTicketPhoto. */
+  App.trackerConfirmEnd = function () {
+    var p = _endClosePending; if (!p) return;
+    _endClosePending = null;
+    var endOdoVal = p.endOdoVal;
+    _endTicketPhoto = _endTicketChosen; _endTicketChosen = null;
+    closeTrackerEndSheet();
+    var end = p.end;
+    if (end) stopSessionAt(end.getTime(), endOdoVal);
+    else stopSessionAt(Date.now(), endOdoVal);
+  };
+  /* v143: the End shift sheet's ticket photo — the 640px thumb
+     convention of the dispatch tickets. The choice is held in
+     memory and previewed on the form; replacing is tapping
+     Take photo / Choose file again. Nothing persists until the
+     review's Confirm hands it to the stop. */
+  function endTicketThumb(file, cb) {
+    var r = new FileReader();
+    r.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var max = 640, w = img.width, h = img.height;
+        if (w > max || h > max) {
+          var sc = Math.min(max / w, max / h);
+          w = Math.round(w * sc); h = Math.round(h * sc);
+        }
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        cb(c.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = function () { cb(r.result); };
+      img.src = r.result;
+    };
+    r.readAsDataURL(file);
+  }
+  function endSheetTicketHandleFile(file) {
+    if (!file) return;
+    endTicketThumb(file, function (url) {
+      if (!url) return;
+      /* the sheet may have closed while the photo was read in */
+      var sheet = el('trkEndSheet');
+      if (!sheet || !sheet.classList.contains('open')) return;
+      _endTicketChosen = url;
+      var pv = el('trkEndTicketPreview');
+      if (pv) pv.innerHTML = '<img src="' + url + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
+        '<p class="note" style="margin:6px 0 0">That photo closes with the shift. Tap Take photo / Choose file again to replace it.</p>';
+    });
+  }
 
   /* End-sheet odometer photo: the End shift sheet's own camera/file
      actions — present for EVERY pay mode, unlike the v46 odo prompt
@@ -1181,7 +1350,7 @@
      the v63 plausibility gate (a below-master read counts as failed,
      never filled) -> the v59 power-read escalation on a local miss.
      A read only FILLS the editable field — nothing persists until
-     "Stop & save", and the field may stay blank. Callbacks re-check
+     "Review the close", and the field may stay blank. Callbacks re-check
      the token + the sheet is still open, so a late answer never
      hijacks a later close. */
   var _endOdoToken = 0;
@@ -1235,10 +1404,10 @@
                holds it; the local read speaks in the status line
                only — first confident answer is never displaced
                silently. Save stays the confirm either way. */
-            endOdoSetStatus('⚡ Power read: <b>' + Number(race.cloudVal).toLocaleString('en-CA') + ' km</b> is in the field. The on-device read got <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — type that instead if it\'s right, then tap Stop & save.');
+            endOdoSetStatus('⚡ Power read: <b>' + Number(race.cloudVal).toLocaleString('en-CA') + ' km</b> is in the field. The on-device read got <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — type that instead if it\'s right, then tap Review the close.');
           } else {
             if (inp) inp.value = km;
-            endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+            endOdoSetStatus('✓ Read: <b>' + Number(km).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Review the close.');
           }
         } else {
           if (km && odoImplausible(km) === 'jump') endOdoSetStatus('⚠️ That read (<b>' + Number(km).toLocaleString('en-CA') + ' km</b>) is way past your current odometer (<b>' + Number(odoMasterNow()).toLocaleString('en-CA') + ' km</b>) — it can\'t be right; it\'s likely another number in the photo. Trying the power read…');
@@ -1267,24 +1436,24 @@
       if (inp && !inp.value) {
         inp.value = v;
         race.delivered = true;
-        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Review the close.');
       }
       return;
     }
     if (String(v) === String(race.km)) {
-      endOdoSetStatus('✓ Power read agrees: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+      endOdoSetStatus('✓ Power read agrees: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Review the close.');
       return;
     }
     if (inp && String(inp.value) === String(race.km)) {
       inp.value = v;
-      endOdoSetStatus('⚡ Power read corrected it: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+      endOdoSetStatus('⚡ Power read corrected it: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Review the close.');
     } else {
       endOdoSetStatus('⚡ Power read got <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — type it above if that\'s the right one, otherwise keep yours.');
     }
   }
   /* Power-read escalation for the end sheet — mirrors the odo
      sheet's: the cloud value fills this same field, and the sheet's
-     Stop & save stays the confirm. A skip (off / no key) is reported
+     Review the close leads to the confirm. A skip (off / no key) is reported
      in the sheet, never silent. */
   function endSheetOdoPowerRead(ocrUrl, token, race) {
     if (!window.PowerRead || !PowerRead.escalate) return;
@@ -1310,7 +1479,7 @@
         }
         var inp = el('trkEndOdo');
         if (inp) inp.value = v;
-        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Stop & save.');
+        endOdoSetStatus('⚡ Power read: <b>' + Number(v).toLocaleString('en-CA') + ' km</b> — check the number, fix it if wrong, then tap Review the close.');
       }
     });
   }
@@ -3598,6 +3767,11 @@
     el('odoSheetIn').onchange = function () { odoSheetHandleFile(el('odoSheetIn').files[0]); el('odoSheetIn').value = ''; };
     el('trkEndOdoCam').onclick = function () { el('trkEndOdoCamIn').click(); };
     el('trkEndOdoPick').onclick = function () { el('trkEndOdoIn').click(); };
+    // v143: the end sheet's ticket-photo door (same two-button pattern)
+    el('trkEndTicketCam').onclick = function () { el('trkEndTicketCamIn').click(); };
+    el('trkEndTicketPick').onclick = function () { el('trkEndTicketIn').click(); };
+    el('trkEndTicketCamIn').onchange = function () { endSheetTicketHandleFile(el('trkEndTicketCamIn').files[0]); el('trkEndTicketCamIn').value = ''; };
+    el('trkEndTicketIn').onchange = function () { endSheetTicketHandleFile(el('trkEndTicketIn').files[0]); el('trkEndTicketIn').value = ''; };
     el('trkEndOdoCamIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoCamIn').files[0]); el('trkEndOdoCamIn').value = ''; };
     el('trkEndOdoIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoIn').files[0]); el('trkEndOdoIn').value = ''; };
     el('odoSheetSave').onclick = function () { App.odoSheetSave(); }; // v46: confirm the reading in the sheet

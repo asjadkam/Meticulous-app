@@ -619,7 +619,16 @@
        - an unfinished EDIT draft on this very dispatch blocks the
          close (dspCloseBlocked): the close never silently discards
          an edit — it says so plainly and sends him back to the
-         form to save or cancel it first (the v65 busy-form rule). */
+         form to save or cancel it first (the v65 busy-form rule).
+     v143 (owner, Oct 17 16:22 MDT — "there was no way to choose a
+     picture! And there was no confirmation before it actually
+     closed the shift!"): EVERY driver close ends on the confirm
+     step now. Plain Complete opens it in mode 'plain' (summary +
+     photo door + one Confirm; the write is the v129 construction
+     through dspCloseRecord above), and picking a photo there
+     becomes the closing ticket through the same reader, so the
+     two buttons differ only in where they START, never in how
+     the close is confirmed or written. */
   function dspBuildClosed(orig, ticket, endedAt) {
     var d = {};
     for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) d[k] = orig[k]; }
@@ -2544,20 +2553,26 @@
       var doneBtn = body.querySelector('#dp_complete');
       if (doneBtn) doneBtn.onclick = function () {
         var cur = active(); if (!cur) return;
-        /* v129: the closed record is built the same way the
-           ticket-photo close builds it (identity pinned by
-           dspBuildClosed, ticket loads totalled) and the close
-           facts are stamped from the ONE plan assembly BEFORE
-           the write — the record itself carries its closed
-           truth, and applyCompletion logs that same plan. */
-        var doneRec = dspBuildClosed(cur, null, Date.now());
-        var planRes = dspCompletionFor(doneRec, completionSettings(doneRec));
-        doneRec = dspApplyCloseFacts(doneRec, planRes.plan);
-        var l = list();
-        for (var i = 0; i < l.length; i++) if (l[i].id === doneRec.id) { l[i] = doneRec; break; }
-        W('list', l); W('active', null); fbSave(doneRec);
-        applyCompletion(doneRec, planRes);
-        api.render(body);
+        /* v143 (owner, Oct 17 16:22 MDT: "I think I closed the
+           shift wrong, I didn't upload my ticket, because there
+           was no way to choose a picture! And there was no
+           confirmation before it actually closed the shift!"):
+           plain Complete NO LONGER closes on this tap. It opens
+           the SAME confirm step the ticket-photo close ends on
+           (mode 'plain') — the summary first (date, hours split,
+           loads, amount, the ticket photo or its absence in plain
+           words), a photo door right there for a dispatch that
+           has none yet, and one explicit Confirm that writes.
+           The write itself (confirmClose's plain arm) is the
+           v129 construction — dspBuildClosed + the ONE plan
+           assembly + dspApplyCloseFacts — now through the
+           verified dspCloseRecord transaction like the ticket
+           close, instead of the old unverified direct writes. */
+        var blocked = dspCloseBlocked(dspLoadDraft(), cur.id);
+        if (blocked) { paintCloseNote(blocked); return; }
+        paintCloseNote('');
+        closeState = { targetId: cur.id, step: 'confirm', mode: 'plain', ticket: null, readFail: false };
+        paintCloseFlow();
       };
 
       /* ---- v73: CLOSE WITH TICKET PHOTO ----
@@ -2572,7 +2587,7 @@
          photo still goes on the record. An unfinished edit on this
          dispatch blocks the open (dspCloseBlocked) — resolve the
          form first. */
-      var closeState = null; // { targetId, step:'capture'|'confirm', ticket, readFail }
+      var closeState = null; // { targetId, step:'capture'|'confirm', mode:'ticket'|'plain', ticket, readFail }
       function closeFlowEl() { return body.querySelector('#dp_closeflow'); }
       function paintCloseNote(msg) {
         var e = body.querySelector('#dp_close_note');
@@ -2630,6 +2645,11 @@
           fileIn.onchange = handleClosePhoto;
           return;
         }
+        /* ---- v143: plain Complete lands on this SAME confirm
+           step (mode 'plain') — the summary, the photo door and
+           one Confirm; nothing is written until Confirm
+           (confirmClose's plain arm). ---- */
+        if (closeState.mode === 'plain') { paintPlainConfirm(wrap); return; }
         /* ---- confirm step ---- */
         var readLines = '';
         if (t.manual) {
@@ -2699,6 +2719,12 @@
         wrap.innerHTML =
           '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
           (t.photo ? '<img src="' + t.photo + '" style="width:100%;border-radius:10px;margin-bottom:8px" alt="Ticket photo">' : '') +
+          /* v143: the photo stays replaceable until Confirm — a
+             wrong snap (or a hand-typed close that turns out to
+             have the card after all) goes back to the capture
+             step and picks again; nothing has been written. */
+          '<div style="margin-bottom:8px;"><button type="button" class="btn ghost small" id="dp_cf_replace">' +
+          (t.photo ? '↩ Use a different photo' : '📷 Add the ticket photo instead') + '</button></div>' +
           '<div class="kv"><span>Ticket</span><b>' + esc(closeTicketDesc(t) + ' ' + closeTicketNum(t)) + '</b></div>' +
           readLines +
           inputs +
@@ -2713,7 +2739,85 @@
         });
         wrap.querySelector('#dp_cf_back').onclick = function () { closeState = null; paintCloseFlow(); };
         wrap.querySelector('#dp_cf_confirm').onclick = confirmClose;
+        var repBtn = wrap.querySelector('#dp_cf_replace');
+        if (repBtn) repBtn.onclick = function () {
+          closeState.step = 'capture'; closeState.ticket = null; closeState.readFail = false;
+          paintCloseFlow();
+        };
         paintClosePlan();
+      }
+      /* ---- v143: the PLAIN confirm (plain Complete's landing) ----
+         The same "Check the close" card with no new ticket: the
+         record's own photo is shown, or its absence is stated
+         plainly WITH the photo door right there (Take photo /
+         Choose file / type it instead — picking one runs the
+         shared reader and lands on the ticket confirm above, so
+         the photo becomes the closing ticket exactly as if he
+         had tapped "Close with ticket photo" first). The plan
+         block below is the same assembly Confirm will log with.
+         Cancel writes nothing; Confirm is confirmClose's plain
+         arm. */
+      function paintPlainConfirm(wrap) {
+        var cur = active();
+        if (!cur || cur.id !== closeState.targetId) { wrap.innerHTML = ''; return; }
+        var photo = dspPhotoFor(cur);
+        var photoBlock;
+        if (photo) {
+          photoBlock =
+            '<img src="' + photo + '" style="width:100%;border-radius:10px;margin-bottom:8px" alt="Ticket photo">' +
+            '<div class="b">📸 Ticket photo already on this dispatch — it closes with it.</div>';
+        } else {
+          photoBlock =
+            '<div class="b" style="color:var(--orange)">No ticket photo on this dispatch yet.</div>' +
+            '<div style="display:flex;gap:10px;margin:8px 0;">' +
+            '<button type="button" class="btn secondary" id="dp_pl_cam" style="flex:1;">📷 Take photo</button>' +
+            '<button type="button" class="btn secondary" id="dp_pl_pick" style="flex:1;">📁 Choose file</button></div>' +
+            '<button type="button" class="btn navy" id="dp_pl_manual" style="width:100%;margin-bottom:8px;">✍️ Type the ticket instead — no photo</button>' +
+            '<input type="file" id="dp_pl_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+            '<input type="file" id="dp_pl_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+            '<div id="dp_pl_status" style="font-size:14px;margin:6px 0;"></div><div id="dp_pl_preview"></div>';
+        }
+        wrap.innerHTML =
+          '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
+          photoBlock +
+          '<div id="dp_cf_plan" style="margin-top:8px"></div>' +
+          '<div id="dp_cf_err"></div>' +
+          '<div class="row" style="margin-top:10px">' +
+          '<button type="button" class="btn primary" id="dp_cf_confirm">✅ Confirm — close this dispatch</button>' +
+          '<button type="button" class="btn ghost" id="dp_cf_back">Cancel</button></div></div>';
+        if (!photo) {
+          var camIn = wrap.querySelector('#dp_pl_img_cam');
+          var fileIn = wrap.querySelector('#dp_pl_img');
+          wrap.querySelector('#dp_pl_cam').onclick = function () { camIn.click(); };
+          wrap.querySelector('#dp_pl_pick').onclick = function () { fileIn.click(); };
+          wrap.querySelector('#dp_pl_manual').onclick = function () {
+            closeState.mode = 'ticket';
+            closeToConfirm({ id: ticketId(), photo: null, ocrType: 'haul_card', manual: true, date: App._today() }, false);
+          };
+          camIn.onchange = handlePlainPhoto;
+          fileIn.onchange = handlePlainPhoto;
+        }
+        wrap.querySelector('#dp_cf_back').onclick = function () { closeState = null; paintCloseFlow(); };
+        wrap.querySelector('#dp_cf_confirm').onclick = confirmClose;
+        paintClosePlan();
+      }
+      /* a photo picked on the PLAIN confirm: it becomes the
+         closing ticket — the shared reader runs and the ticket
+         confirm replaces this view (closeToConfirm). */
+      function handlePlainPhoto(ev) {
+        var f = ev.target.files[0]; if (!f) return;
+        var wrap = closeFlowEl();
+        var statusEl = wrap ? wrap.querySelector('#dp_pl_status') : null;
+        if (statusEl) statusEl.textContent = 'Reading ticket…';
+        fileToThumb(f, function (thumbUrl) {
+          var pv = wrap ? wrap.querySelector('#dp_pl_preview') : null;
+          if (pv) pv.innerHTML = '<img src="' + thumbUrl + '" style="width:100%;border-radius:10px;margin-top:10px" alt="Ticket preview">';
+          fileToOCRImage(f, function (ocrUrl) {
+            if (!closeState) return; // cancelled while the photo was being prepared
+            closeState.mode = 'ticket';
+            runCloseOCR(ocrUrl || thumbUrl, thumbUrl);
+          });
+        });
       }
       /* the ticket as it stands in the confirm view, typed values in */
       function currentCloseTicket() {
@@ -2747,9 +2851,17 @@
         if (!el || !closeState || closeState.step !== 'confirm') return;
         var cur = active();
         if (!cur || cur.id !== closeState.targetId) { el.innerHTML = ''; return; }
-        var preview = dspBuildClosed(cur, currentCloseTicket(), Date.now());
+        /* v143: the preview is built the way THIS confirm will
+           close — plain mode carries no new ticket (the record as
+           it stands), ticket mode carries the ticket being
+           confirmed. Same one money assembly either way. */
+        var preview = closeState.mode === 'plain'
+          ? dspBuildClosed(cur, null, Date.now())
+          : dspBuildClosed(cur, currentCloseTicket(), Date.now());
         var plan = dspCompletionFor(preview, completionSettings(preview)).plan;
-        var h = '<div class="kv"><span>Dispatch</span><b>' + esc(cur.jobSite || cur.pickup || '—') + '</b></div>';
+        var h = '<div class="kv"><span>Date</span><b>' + esc(dspRecordDate(cur) || '') + '</b></div>' +
+          '<div class="kv"><span>Dispatch</span><b>' + esc(cur.jobSite || cur.pickup || '—') + '</b></div>' +
+          '<div class="kv"><span>Loads</span><b>' + esc(preview.loads != null && preview.loads !== '' ? String(preview.loads) : '—') + '</b></div>';
         if (plan.entry) {
           h += '<div class="kv"><span>Logs to Revenue</span><b>$' + esc(plan.entry.amount) + '</b></div>' +
                '<div class="b">' + esc(plan.entry.note) + '</div>';
@@ -2772,6 +2884,27 @@
         }
         var blocked = dspCloseBlocked(dspLoadDraft(), cur.id);
         if (blocked) { showCloseError(blocked); return; }
+        if (closeState.mode === 'plain') {
+          /* v143: plain Complete's Confirm — the v129 write,
+             unchanged in construction (dspBuildClosed with no new
+             ticket, the ONE plan assembly, close facts stamped
+             from it), now through the verified dspCloseRecord
+             transaction the ticket close has always used, so a
+             failed write closes nothing and says so right here. */
+          var doneRec = dspBuildClosed(cur, null, Date.now());
+          var planRes = dspCompletionFor(doneRec, completionSettings(doneRec));
+          doneRec = dspApplyCloseFacts(doneRec, planRes.plan);
+          var resP = dspCloseRecord(doneRec);
+          if (!resP.ok) {
+            showCloseError('⚠️ That close did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was closed and nothing was logged. Your dispatch is still active. Free up some phone space, then tap Confirm again.');
+            return;
+          }
+          fbSave(doneRec);
+          applyCompletion(doneRec, planRes);
+          closeState = null;
+          api.render(body);
+          return;
+        }
         var t = currentCloseTicket();
         closeState.ticket = t;
         var doneRec = dspBuildClosed(cur, t, Date.now());
@@ -2885,7 +3018,7 @@
         var blocked = dspCloseBlocked(dspLoadDraft(), cur.id);
         if (blocked) { paintCloseNote(blocked); return; }
         paintCloseNote('');
-        closeState = { targetId: cur.id, step: 'capture', ticket: null, readFail: false };
+        closeState = { targetId: cur.id, step: 'capture', mode: 'ticket', ticket: null, readFail: false };
         paintCloseFlow();
       };
       var cancelBtn = body.querySelector('#dp_cancel');
