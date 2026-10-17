@@ -2053,12 +2053,32 @@
       if (y < 100) y += 2000;
     } else {
       var m2 = t.match(/\b(0?[1-9]|1[0-2])[\/\-](20\d{2})\b/);
-      if (!m2) return null;
-      mo = parseInt(m2[1], 10) - 1;
-      y = parseInt(m2[2], 10);
+      if (m2) {
+        mo = parseInt(m2[1], 10) - 1;
+        y = parseInt(m2[2], 10);
+      } else {
+        /* v107: separated month + year — a transcription of a
+           PUNCHED sticker names the punches in words, often apart
+           ("Month punched: MAY / Year: 2027"), which neither
+           pattern above can see. A month name anywhere plus a
+           plausible year anywhere is the same fact stated loosely;
+           the result is always confirm-first, like every read. */
+        var mName = t.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\b/);
+        var mYear = t.match(/\b(20\d{2})\b/);
+        if (!mName || !mYear) return null;
+        mo = _ONB_MONTHS[mName[1].slice(0, 3).toLowerCase()];
+        y = parseInt(mYear[1], 10);
+      }
     }
+    return stickerExpiryISO(mo, y);
+  }
+  /* v107 (Stage 5): the ONE composition of a sticker expiry from
+     its month + year — a punched sticker expires on the LAST day
+     of the month shown. parseStickerExpiry uses it, and so do the
+     manual month/year steppers the safety flow falls back to when
+     no reader can read the punches. */
+  function stickerExpiryISO(mo, y) {
     if (mo === null || mo === undefined || !(y >= 2020 && y <= 2045)) return null;
-    // sticker expires at end of the printed month
     var last = new Date(y, mo + 1, 0).getDate();
     return y + '-' + ('0' + (mo + 1)).slice(-2) + '-' + ('0' + last).slice(-2);
   }
@@ -2174,12 +2194,26 @@
               persist(kind, iso);
               onbSetStatus(prefix, '✓ We read expiry <b>' + iso + '</b> — fix it below if that is wrong.');
             } else {
-              onbSetStatus(prefix, '⚠️ Could not read the expiry date — pick it manually below.');
+              /* v107 (Stage 5): a failed sticker read used to end
+                 at this status line with a dead manual path — the
+                 punched-hole CVIP sticker defeats the local reader
+                 AND the vision model (proven on the owner's own
+                 sticker, Oct 16). Now the failure does two things:
+                 escalate to the power read (its transcription is
+                 re-parsed by the same parseStickerExpiry), and
+                 present MONTH/YEAR STEPPERS as the manual path —
+                 the driver taps the punched month and year, the
+                 expiry composes as the last day of that month,
+                 and the photo stays attached above. */
+              onbSetStatus(prefix, '⚠️ Could not read the expiry date from the photo — asking the power read to try. You can also set the sticker\'s month and year below: it expires on the last day of that month.');
+              showSafetySteppers(prefix);
+              safetyPowerRead(prefix, file, token);
             }
           }
         }).catch(function () {
           if (token !== _onbOcrToken) return;
           onbSetStatus(prefix, '⚠️ Photo reader needs internet the first time — enter it manually below.');
+          if (kind === 'safety') showSafetySteppers(prefix);
         });
       };
       try { rd.readAsDataURL(file); } catch (e) {
@@ -2298,6 +2332,139 @@
           /* v63: a rendition failure used to end the flow in total
              silence — say so, with the manual fallback. */
           if (token === _onbOcrToken) onbSetStatus(prefix, '⚡ Power read didn\'t run — that photo couldn\'t be prepared for it. You can still enter the mileage below.');
+        });
+      }
+    }
+
+    /* v107 (Stage 5): the safety sticker's manual path — MONTH/YEAR
+       STEPPERS. A punched sticker (his CVIP: year 2027, month May)
+       is two facts a driver can tap in seconds; the expiry is
+       always the last day of the tapped month (stickerExpiryISO).
+       Shown the moment a read fails, whatever the power read
+       later returns; a power-read hit arrives as a tap-to-use
+       chip and never overrides a stepper choice already made. */
+    function showSafetySteppers(prefix) {
+      var statusEl = el(prefix + '_status');
+      if (!statusEl || !statusEl.parentNode) return;
+      var box = document.getElementById(prefix + '_steppers');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = prefix + '_steppers';
+        statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
+      }
+      var now = new Date();
+      var st = { mo: now.getMonth(), y: now.getFullYear() };
+      if (fieldEl && /^\d{4}-\d{2}-\d{2}$/.test(fieldEl.value || '')) {
+        st.y = parseInt(fieldEl.value.slice(0, 4), 10);
+        st.mo = parseInt(fieldEl.value.slice(5, 7), 10) - 1;
+      }
+      var NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      function stepBtn(label, fn) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn small ghost';
+        b.style.cssText = 'min-width:40px;margin:0 2px;';
+        b.textContent = label;
+        b.onclick = fn;
+        return b;
+      }
+      function paint() {
+        box.innerHTML = '';
+        var head = document.createElement('div');
+        head.style.cssText = 'font-size:13px;color:#555;margin:6px 0 2px';
+        head.textContent = 'Which month and year are punched on the sticker?';
+        box.appendChild(head);
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:2px;';
+        row.appendChild(stepBtn('‹', function () { st.mo = (st.mo + 11) % 12; paint(); }));
+        var moLbl = document.createElement('b');
+        moLbl.style.cssText = 'min-width:86px;text-align:center;';
+        moLbl.textContent = NAMES[st.mo];
+        row.appendChild(moLbl);
+        row.appendChild(stepBtn('›', function () { st.mo = (st.mo + 1) % 12; paint(); }));
+        row.appendChild(stepBtn('‹', function () { if (st.y > 2020) { st.y--; paint(); } }));
+        var yLbl = document.createElement('b');
+        yLbl.style.cssText = 'min-width:52px;text-align:center;';
+        yLbl.textContent = String(st.y);
+        row.appendChild(yLbl);
+        row.appendChild(stepBtn('›', function () { if (st.y < 2045) { st.y++; paint(); } }));
+        box.appendChild(row);
+        var use = document.createElement('button');
+        use.type = 'button';
+        use.className = 'btn small';
+        use.style.marginTop = '6px';
+        var iso = stickerExpiryISO(st.mo, st.y);
+        use.textContent = 'Use ' + NAMES[st.mo] + ' ' + st.y + (iso ? ' — expires ' + iso : '');
+        use.onclick = function () {
+          var v = stickerExpiryISO(st.mo, st.y);
+          if (!v) return;
+          if (fieldEl) fieldEl.value = v;
+          persist(kind, v);
+          box.innerHTML = '';
+          onbSetStatus(prefix, '✓ Expiry set to <b>' + v + '</b> — the last day of ' + NAMES[st.mo] + ' ' + st.y + ', as punched on the sticker.');
+        };
+        box.appendChild(use);
+      }
+      paint();
+    }
+
+    /* v107 (Stage 5): the safety sticker's power-read escalation —
+       the mirror of odoPowerRead for the safety branch, which
+       never escalated at all before tonight. The transcription
+       reader ('text') fits a punched sticker: the model describes
+       the punches in words, and the SAME local parseStickerExpiry
+       that reads printed stickers extracts the month/year from
+       the transcription. A hit lands as a tap-to-use chip, never
+       auto-applied; the steppers stay available either way. */
+    function safetyPowerRead(prefix, file, token) {
+      if (!window.PowerRead || !PowerRead.escalate) return;
+      function go(img) {
+        if (token !== _onbOcrToken) return;
+        PowerRead.escalate({
+          reader: 'text', image: img, origin: (opts && opts.origin) || { module: 'preferences', label: 'Preferences' },
+          onStatus: function (s) {
+            if (token !== _onbOcrToken) return;
+            if (s.state === 'working') onbSetStatus(prefix, '⚡ Asking the power read to try…');
+            else if (s.state === 'waiting') onbSetStatus(prefix, '⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. Meanwhile, the month/year steppers below always work.');
+            else if (s.state === 'unavailable' || s.state === 'error') onbSetStatus(prefix, s.message + ' The month/year steppers below always work.');
+          },
+          onResult: function (res) {
+            if (token !== _onbOcrToken) return;
+            var iso = parseStickerExpiry(res && res.fields && res.fields.rawText);
+            if (!iso) { onbSetStatus(prefix, '⚡ Power read couldn\'t read the sticker either — set the punched month and year with the steppers below.'); return; }
+            var statusEl = el(prefix + '_status');
+            if (!statusEl || !statusEl.parentNode) return;
+            var box = document.getElementById(prefix + '_chips');
+            if (!box) {
+              box = document.createElement('div');
+              box.id = prefix + '_chips';
+              statusEl.parentNode.insertBefore(box, statusEl.nextSibling);
+            }
+            box.innerHTML = '';
+            var lbl = document.createElement('div');
+            lbl.style.cssText = 'font-size:13px;color:#555;margin:4px 0 2px';
+            lbl.textContent = '⚡ Power read — check before using:';
+            box.appendChild(lbl);
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn small';
+            b.style.margin = '2px 4px 2px 0';
+            b.textContent = 'Expiry ' + iso;
+            b.onclick = function () {
+              if (fieldEl) fieldEl.value = iso;
+              persist(kind, iso);
+              box.innerHTML = '';
+              onbSetStatus(prefix, '⚡ Power read: using expiry <b>' + iso + '</b> — thanks for confirming.');
+            };
+            box.appendChild(b);
+            onbSetStatus(prefix, '⚡ Power read found an expiry — tap it below if it looks right, or use the steppers.');
+          }
+        });
+      }
+      if (window.TicketOCR && TicketOCR.fileToOCRImage && file) {
+        TicketOCR.fileToOCRImage(file, function (u) {
+          if (u) { go(u); return; }
+          if (token === _onbOcrToken) onbSetStatus(prefix, '⚡ Power read didn\'t run — that photo couldn\'t be prepared for it. The month/year steppers below always work.');
         });
       }
     }
@@ -2824,6 +2991,8 @@
 
   App._store = store; App._esc = esc; App._today = todayStr; App._fmtClock = fmtClock;
   App._wirePhotoOCR = onbWirePhoto; // v31: reused by Preferences for odometer/safety retakes
+  App._stickerExpiryISO = stickerExpiryISO; // v107: the steppers' composition, pinned by test
+  App._parseStickerExpiry = parseStickerExpiry;
   App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
