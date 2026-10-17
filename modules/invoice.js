@@ -299,6 +299,55 @@
     });
     return { lines: lines, duplicateDates: duplicateDates, unconfirmedDates: unconfirmedDates, dayHours: dayHours, typeTotals: typeTotals };
   }
+  /* v107 (Stage 2 foundation): ONE loads truth, shared the same
+     way. A day's load count comes from the FIRST source that
+     actually knows it — the sources are overlapping records of
+     the SAME loads, so they are never summed:
+       1. loads carried on the day's tickets (confirmed at close);
+       2. the dispatch record's own loads, when deliberately
+          recorded (loadsSet — the untouched form default '1' is
+          NOT a recording and never counts);
+       3. the day's +1 load taps (sessions + the live taps the
+          caller hands in);
+       4. a Weight day's counted loads (session loadCount);
+       5. the learned-site count (geo) — the movement-derived
+          count, last resort, always overridable by any source
+          above it on a later close.
+     Pure: the caller passes the day's records in. */
+  function invCycDayLoads(dateStr, src) {
+    src = src || {};
+    var loads = 0, source = '';
+    var tk = 0;
+    (src.dispatches || []).forEach(function (x) {
+      ((x && x.tickets) || []).forEach(function (t) {
+        var v = parseFloat(t && t.loads);
+        if (v > 0) tk += v;
+      });
+    });
+    if (tk > 0) { loads = Math.round(tk); source = 'tickets'; }
+    if (!loads) {
+      var rec = 0;
+      (src.dispatches || []).forEach(function (x) {
+        if (x && x.loadsSet) { var v = parseFloat(x.loads); if (v > 0) rec += v; }
+      });
+      if (rec > 0) { loads = Math.round(rec); source = 'recorded'; }
+    }
+    if (!loads) {
+      var taps = parseInt(src.liveTaps, 10) || 0;
+      (src.sessions || []).forEach(function (s) { taps += parseInt(s && s.manualLoads, 10) || 0; });
+      if (taps > 0) { loads = taps; source = 'taps'; }
+    }
+    if (!loads) {
+      var w = 0;
+      (src.sessions || []).forEach(function (s) { w += parseInt(s && s.loadCount, 10) || 0; });
+      if (w > 0) { loads = w; source = 'weight'; }
+    }
+    if (!loads) {
+      var g = parseInt(src.geoLoads, 10) || 0;
+      if (g > 0) { loads = g; source = 'sites'; }
+    }
+    return { loads: loads, source: source };
+  }
   /* v81: the grouped per-day truth is shared — Revenue's screens
      and totals consume the SAME builder the invoice prints from, so
      a day can never total one way in Revenue and another on the
@@ -309,6 +358,7 @@
     Meticulous.shared = Meticulous.shared || {};
     Meticulous.shared.buildRevenueLines = invCycBuildRevenueLines;
     Meticulous.shared.revenueEntrySource = invCycEntrySrc;
+    Meticulous.shared.dayLoads = invCycDayLoads;
   } catch (e) {}
   /* Dates whose invoice lines come from BOTH a dispatch completion
      and the tracker — the classic double count. Lines carry
@@ -527,9 +577,23 @@
   /* lines from revenue entries + extras inside a period, using pay standard */
   function revenueLines(a, b) { return revenueLinePlan(a, b).lines; }
 
-  function jurisdictionBanner() {
+  /* v107 fold-in (invoice fact-check, Oct 16): the banner's job is
+     to stop the app GUESSING at tax. When saved Preferences already
+     determine the tax treatment outright — the rate-includes-tax
+     switch is ON and a tax rate is set — the invoice's tax is not
+     a guess, and demanding a location for it is a false warning
+     that can never clear (the owner's province sat unset in the
+     cloud while his invoice correctly carried 5% inside $319.00).
+     The invoice form passes forInvoice=true and is excused in that
+     case; payroll keeps the strict rule (pay rules genuinely do
+     depend on jurisdiction). */
+  function taxDeterminedByPrefs(o) {
+    return !!(o && o.rateIncludesTax && parseFloat(o.invoiceTaxRate) > 0);
+  }
+  function jurisdictionBanner(forInvoice) {
     var o = onb();
     if (o.country && o.province) return '';
+    if (forInvoice && taxDeterminedByPrefs(o)) return '';
     return '<div class="card" style="border-left:4px solid #d23b3b">' +
       '<h3>⚠️ Set your location first</h3>' +
       '<p class="note">Tax and payroll rules depend on your country and province/state. ' +
@@ -618,7 +682,7 @@
       var revPlan = revenueLinePlan(pa, pb);
       var revLines = revPlan.lines;
       var t = totals(revLines);
-      var h = jurisdictionBanner();
+      var h = jurisdictionBanner(true);
       var cycMsg = S('cycmsg', ''); if (cycMsg) W('cycmsg', '');
       var errMsg = S('err', ''); if (errMsg) W('err', '');
       if (cycMsg) h += '<div class="card" style="border-left:4px solid #2e9e5b"><p class="note" style="margin:0">✅ ' + esc(cycMsg) + '</p></div>';

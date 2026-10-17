@@ -1,7 +1,7 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 106,
+  "webVersion": 107,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -14,7 +14,7 @@
     "css/style.css": "5cb6917e680001e00b31044f7fcf6c16caade0ecf0257e462f48e605384a084d",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "b7b92aaf3b20a777a156d8c1fef560cbfee6d314006fa47df406db17d08612be",
+    "index.html": "82c82ad64521c82cb687f1fdce3057c4ae30c987a973f91791ca75b2ce89cb42",
     "js/app.js": "4645df7a7d038200fa2d3dc5caca32feef752d2adc1de5960f8befaeed0bd6d3",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "fe162471c016590076aca34317167dde10ab5d969fb20029e741cba1bbb8572d",
@@ -37,15 +37,15 @@
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
     "modules/dispatch.js": "0aba620361fc95db13b200e6b7db66643be8aed29ef79c8b16312ac8bf2ecb87",
     "modules/fuel.js": "e8b3663823420b12f8d5edd7e8e7f56e6f9805c6162c2bc7a6e2835c604eb882",
-    "modules/invoice.js": "8af408a465699f213c4847765a2fdcb7297cea1e352192da1ffa3516d1831125",
+    "modules/invoice.js": "b41b3f0f3bf80a489083d37aa57c6eebec46d29d5d1134b266f5afe0a11cd7bf",
     "modules/maintenance.js": "ba1b1be8753932eec485f69ddc92b4c23ebecfd00d93f1ee452ea5959bb163e0",
-    "modules/manifest.js": "9ff8c19d52b1e6ee2a5b314daa53487cf3ae6867d25fbdccd2599cae8ad565a2",
+    "modules/manifest.js": "0fa684f4238400d1c62b0d0ae1d5695456ee30383904f15270b6fd5b4c4b4fe8",
     "modules/navigation.js": "7438d32baf9546160a329d5ab59f1322889ff7e1d33b5aeae73edecaffbf599f",
     "modules/navigator.js": "2996b9d4ac70e2d8b9efd33402f58eb6dd25be7126dcb917f38640b481e45895",
     "modules/pnl.js": "3a668611db42f4c9f0ca83fa835f34cc203644dd5cc255f23820e8bd9d729543",
     "modules/preferences.js": "91511140169b91ee803ddcd128ee3fbd025c689a5777a3a3582cf1791296a752",
     "modules/reminders.js": "0c2370efeb5b3eec67a0928cb2bacc5ab3024ebb4e5c3a1b1ccea36be1348461",
-    "modules/revenue.js": "4b8f3f11a2892e143099315a8393f975c5d96d86e0f1e796d7f66fcbac012b7c",
+    "modules/revenue.js": "4788f8a48c6e15a7e04969a1cf49d31c246243bb35fd4946af8703c30f85d52f",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

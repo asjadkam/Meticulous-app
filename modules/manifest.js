@@ -100,13 +100,13 @@
     var extras = (G('rev_extras', [])).filter(function (x) { return x.date === d; });
     var o = G('onboarding', {});
     var rate = parseFloat(o.payRate) || 0, earned = 0;
-    revEntries.forEach(function (e) {
-      if (o.payStandard === 'Hourly') earned += (parseFloat(e.hours) || 0) * rate;
-      else if (o.payStandard === 'Miles') earned += (parseFloat(e.miles) || 0) * rate;
-      else if (o.payStandard === 'Trip') earned += (parseFloat(e.trips) || 0) * rate;
-      else if (o.payStandard === 'Weight') earned += (parseFloat(e.tons) || 0) * rate;
-    });
-    extras.forEach(function (x) { earned += parseFloat(x.amount) || 0; });
+    /* v107 — ONE MONEY TRUTH: the day's earned is priced by the
+       SAME shared per-day builder the invoice and Revenue use
+       (Meticulous.shared.buildRevenueLines), computed below once
+       the day's records are assembled. The raw sum that stood here
+       priced every entry at qty × rate and stacked Oct 16's
+       tracker session ($282.75) on top of its closed dispatch
+       ($319.00), printing $601.75 for a $319.00 day. */
     var startT = sessions.length ? fmtStartOf(sessions[0]) : '—';
     var endT = sessions.length ? fmtStamp(sessions[sessions.length - 1].endedAt) : '—';
     /* v40: the day's odometer readings live on the session entries
@@ -158,6 +158,7 @@
       if (!sessions.length) startT = fmtStamp(live.startMs);
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
+      live.hours = lsec / 3600;
     }
     /* v87: with no session start reading, the day's earliest
        odo-bearing record stands in for the start (a fuel fill's
@@ -227,53 +228,130 @@
        "Still working" stands; confirmed ends apply to closed days */
     if (!live) {
       if (tkEndMs !== null) { endT = fmtClock(tkEndMs); endSrc = 'card'; }
-      else if (anyCompleted && dspStartMs !== null && window.TicketOCR && TicketOCR.summarizeTickets) {
-        var fh = 0;
-        dayDsp.forEach(function (x) {
-          if (x.status === 'completed') fh += TicketOCR.summarizeTickets(x.tickets || [], 0).totalForemanHours || 0;
+      else {
+        /* v107: the card finish DERIVED from start + foreman hours
+           and the SESSION's real end now compete — the LATER one
+           is the day's end. Oct 15 pins the card side: derived
+           6:30 PM beat the session's 6:02 PM. Oct 16 pins the
+           session side: he closed the dispatch at ~5:47 PM and
+           derived finish said 6:00 PM, but he kept driving and
+           stopped the tracker at 7:00 PM at home — "My end time
+           was 7 pm." The dispatch record's endedAt (the close tap
+           itself) remains only the fallback for a completed day
+           with neither a derivable card end nor a session end. */
+        var sessEndMs = null;
+        sessions.forEach(function (s) {
+          var m2 = stampMs(s.endedAt);
+          if (m2 !== null && (sessEndMs === null || m2 > sessEndMs)) sessEndMs = m2;
         });
-        if (fh > 0) { cardEndMs = dspStartMs + fh * 3600000; endT = fmtClock(cardEndMs); endSrc = 'card'; }
+        var derivedEndMs = null;
+        if (anyCompleted && dspStartMs !== null && window.TicketOCR && TicketOCR.summarizeTickets) {
+          var fh = 0;
+          dayDsp.forEach(function (x) {
+            if (x.status === 'completed') fh += TicketOCR.summarizeTickets(x.tickets || [], 0).totalForemanHours || 0;
+          });
+          if (fh > 0) derivedEndMs = dspStartMs + fh * 3600000;
+        }
+        if (derivedEndMs !== null) {
+          /* a card end exists: it and the session's end compete,
+             later wins (the two pinned days above) — the close
+             tap's stamp does not compete here (Oct 15's record
+             carried a 7:04 PM endedAt beside the card's 6:30 PM
+             finish, and 6:30 PM is what he demanded). */
+          if (sessEndMs !== null && sessEndMs > derivedEndMs) {
+            endT = fmtClock(sessEndMs); endSrc = 'tracker';
+          } else {
+            cardEndMs = derivedEndMs; endT = fmtClock(cardEndMs); endSrc = 'card';
+          }
+        } else if (dspEndMs !== null) {
+          /* no card end to derive: his own close tap is the most
+             deliberate end stamp the day has (v83 priority). */
+          endT = fmtClock(dspEndMs); endSrc = 'dispatch';
+        }
+        /* else: the session end already sits in endT/endSrc. */
       }
-      if (endSrc === 'tracker' && dspEndMs !== null) { endT = fmtClock(dspEndMs); endSrc = 'dispatch'; }
     }
+
+    /* v107: earned, from the shared builder (see the note at the
+       top of collect). The live session mirrors Revenue's rule
+       exactly: it adds only on a day no confirmed line speaks
+       for, and never on a duplicate-flagged day. Without the
+       builder (a partial load), fall back to the legacy raw sum. */
+    (function () {
+      var built = null;
+      try {
+        if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
+          built = Meticulous.shared.buildRevenueLines(revEntries, extras, rate, String(o.payStandard || '').toLowerCase());
+        }
+      } catch (e) { built = null; }
+      if (built) {
+        var confirmedDay = false;
+        built.lines.forEach(function (l) {
+          earned += Number(l.amt) || 0;
+          if (l.src === 'dispatch' || l.src === 'entry') confirmedDay = true;
+        });
+        var dupDay = (built.duplicateDates || []).indexOf(d) >= 0;
+        if (live && !confirmedDay && !dupDay && String(o.payStandard || '').toLowerCase() === 'hourly') {
+          earned += (live.hours || 0) * rate;
+        }
+        earned = Math.round(earned * 100) / 100;
+      } else {
+        revEntries.forEach(function (e) {
+          if (o.payStandard === 'Hourly') earned += (parseFloat(e.hours) || 0) * rate;
+          else if (o.payStandard === 'Miles') earned += (parseFloat(e.miles) || 0) * rate;
+          else if (o.payStandard === 'Trip') earned += (parseFloat(e.trips) || 0) * rate;
+          else if (o.payStandard === 'Weight') earned += (parseFloat(e.tons) || 0) * rate;
+        });
+        extras.forEach(function (x) { earned += parseFloat(x.amount) || 0; });
+      }
+    })();
 
     /* v82 (item 3b): the day's LOADS — the count the driver himself
        confirmed, which the manifest never had (its only loads line
        was the GPS cross-check, and the GPS counter cannot run when
        the dump site is given out loud on site — so a full day of
-       hauling printed Loads 0). Priority, never a sum — the sources
-       are overlapping records of the SAME loads:
-         1. counts carried on the day's tickets (confirmed in the
-            close flow — the haul card itself carries no count);
-         2. the session's +1 load taps (app.js manualLoads), plus
-            a still-running day's live taps;
-         3. a Weight day's counted loads (session loadCount).
-       The dispatch record's own loads field is NOT a source: the
-       form defaults it to '1', so it cannot prove a count. */
+       hauling printed Loads 0).
+       v107: the priority itself now lives in ONE shared place —
+       Meticulous.shared.dayLoads (modules/invoice.js) — so the
+       manifest and Revenue can never disagree about a day's
+       loads: tickets → deliberately recorded dispatch loads
+       (loadsSet; the form's untouched default '1' still cannot
+       prove a count) → +1 taps (saved + live) → Weight count →
+       learned-site count. The v82 inline ladder remains as the
+       fallback for a build where the shared helper didn't load. */
     var loads = 0, loadsSrc = '';
-    var tkLoads = 0;
-    dayDsp.forEach(function (x) {
-      (x.tickets || []).forEach(function (tk) {
-        var v = parseFloat(tk && tk.loads);
-        if (v > 0) tkLoads += v;
+    var liveTapLoads = 0;
+    try {
+      var trk2 = (window.App && App.tracker) || G('tracker', null);
+      if (d === App._today() && trk2 && trk2.accum && (trk2.status === 'running' || trk2.status === 'paused')) {
+        liveTapLoads = parseInt(trk2.accum.manualLoads, 10) || 0;
+      }
+    } catch (e) {}
+    if (window.Meticulous && Meticulous.shared && Meticulous.shared.dayLoads) {
+      var dl = Meticulous.shared.dayLoads(d, {
+        dispatches: dayDsp, sessions: sessions, liveTaps: liveTapLoads,
+        geoLoads: geoDay ? geoDay.count : 0
       });
-    });
-    if (tkLoads > 0) { loads = tkLoads; loadsSrc = 'tickets'; }
-    if (!loads) {
-      var tapLoads = 0;
-      sessions.forEach(function (s) { tapLoads += parseInt(s.manualLoads, 10) || 0; });
-      try {
-        var trk2 = (window.App && App.tracker) || G('tracker', null);
-        if (d === App._today() && trk2 && trk2.accum && (trk2.status === 'running' || trk2.status === 'paused')) {
-          tapLoads += parseInt(trk2.accum.manualLoads, 10) || 0;
-        }
-      } catch (e) {}
-      if (tapLoads > 0) { loads = tapLoads; loadsSrc = 'taps'; }
-    }
-    if (!loads) {
-      var wLoads = 0;
-      sessions.forEach(function (s) { wLoads += parseInt(s.loadCount, 10) || 0; });
-      if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
+      loads = dl.loads; loadsSrc = dl.source;
+    } else {
+      var tkLoads = 0;
+      dayDsp.forEach(function (x) {
+        (x.tickets || []).forEach(function (tk) {
+          var v = parseFloat(tk && tk.loads);
+          if (v > 0) tkLoads += v;
+        });
+      });
+      if (tkLoads > 0) { loads = tkLoads; loadsSrc = 'tickets'; }
+      if (!loads) {
+        var tapLoads = liveTapLoads;
+        sessions.forEach(function (s) { tapLoads += parseInt(s.manualLoads, 10) || 0; });
+        if (tapLoads > 0) { loads = tapLoads; loadsSrc = 'taps'; }
+      }
+      if (!loads) {
+        var wLoads = 0;
+        sessions.forEach(function (s) { wLoads += parseInt(s.loadCount, 10) || 0; });
+        if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
+      }
     }
     return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
   }
@@ -395,6 +473,8 @@
          as well as on the Loads line, so the two can never be seen
          apart. */
       if (c.loadsSrc === 'taps') L.push({ k: 'note', a: 'Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
+      if (c.loadsSrc === 'recorded') L.push({ k: 'note', a: 'Loads recorded on the day\'s dispatch — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
+      if (c.loadsSrc === 'sites') L.push({ k: 'note', a: 'Counted from the truck\'s pit and dump-site visits — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
     }
     if (t.geoloads && c.geoDay && c.geoDay.sites) {
       L.push({ k: 'kv', a: 'Loads counted by GPS', b: String(c.geoDay.count || 0) });
@@ -558,6 +638,8 @@
       if (t.loads && c.loads > 0) {
         h += '<div class="kv"><span>🚛 Loads</span><b>' + c.loads + '</b></div>';
         if (c.loadsSrc === 'taps') h += '<div class="note" style="margin:2px 0 6px">Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
+        if (c.loadsSrc === 'recorded') h += '<div class="note" style="margin:2px 0 6px">Loads recorded on the day\'s dispatch — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
+        if (c.loadsSrc === 'sites') h += '<div class="note" style="margin:2px 0 6px">Counted from the truck\'s pit and dump-site visits — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
       }
       /* v50: GPS-counted loads — counted from the truck's GPS cycling
          between the active dispatch's load-site and dump-site pins

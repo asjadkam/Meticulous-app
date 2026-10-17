@@ -55,11 +55,16 @@
     var p = S('period', '30');
     if (p === 'custom') {
       var a = S('customA', ''), b = S('customB', '');
-      if (!a || !b) return true;
-      return dateStr >= a && dateStr <= b;
+      if (a && b && b >= a) return dateStr >= a && dateStr <= b;
+      /* v107: Custom with missing/invalid bounds used to return
+         TRUE for every date ever recorded — an all-time sum wearing
+         a "30 days" label (owner's phone, Oct 16: 62 "days" inside
+         a 30-day window). Fall through to the rolling window that
+         periodDays() already falls back to, so the label and the
+         sum can never disagree again. */
     }
     var d = new Date(dateStr + 'T12:00:00'), now = new Date();
-    return (now - d) / 86400000 <= (parseInt(p, 10) || 30);
+    return (now - d) / 86400000 <= (p === 'custom' ? periodDays() : (parseInt(p, 10) || 30));
   }
 
   /* ---- v38: one per-day aggregation feeds the period summary, the chart
@@ -128,6 +133,10 @@
         built = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std);
       }
     } catch (e) { built = null; }
+    /* v107: which dates a CONFIRMED line (dispatch completion or
+       manual entry) already speaks for — the live session below
+       must never stack on top of one (see the live block). */
+    var confirmedDay = {}, dupDay = {};
     if (built) {
       built.lines.forEach(function (l) {
         if (!l.date) return;
@@ -136,11 +145,13 @@
         s.base += Number(l.amt) || 0;
         s.hasEntry = true;
         if (l.unconfirmed) s.unconfirmed = true;
+        if (l.src === 'dispatch' || l.src === 'entry') confirmedDay[l.date] = true;
       });
       (built.duplicateDates || []).forEach(function (ds) {
         var s = slot(ds);
         s.hasEntry = true;
         s.duplicate = true;
+        dupDay[ds] = true;
       });
       var dh = built.dayHours || {};
       Object.keys(dh).forEach(function (ds) { slot(ds).hours += dh[ds] || 0; });
@@ -160,9 +171,22 @@
     var live = liveSession();
     if (live) {
       var s = slot(live.date);
-      s.hasEntry = true; s.live = true;
-      s.hours += live.hours;
-      if (ctx.std === 'hourly') s.base += live.hours * ctx.rate;
+      s.live = true;
+      /* v107 — ONE MONEY TRUTH: a closed dispatch (or a confirmed
+         manual entry) IS the day's truth; the still-running
+         session's hours and value are NEVER added on top of it
+         (Oct 16: the day's $319.00 dispatch plus its own tracker
+         session stacked into $601.75 on the manifest and inflated
+         every Revenue window the same way). The live session only
+         counts on a day no confirmed line speaks for — and never
+         on a duplicate-flagged day, which counts nothing until
+         the driver resolves it. Its flag still paints, so the
+         screen keeps showing the day is in progress. */
+      if (!confirmedDay[live.date] && !dupDay[live.date]) {
+        s.hasEntry = true;
+        s.hours += live.hours;
+        if (ctx.std === 'hourly') s.base += live.hours * ctx.rate;
+      }
     }
     Object.keys(map).forEach(function (ds) {
       var s = map[ds];
@@ -177,13 +201,58 @@
     entries().forEach(function (e) {
       if (!inPeriod(e.date)) return;
       n++;
-      if ((e.type || 'load') === 'load') loads += parseInt(e.loads, 10) || 1;
     });
     Object.keys(map).forEach(function (ds) {
       if (!inPeriod(ds)) return;
       total += map[ds].amount;
       if (map[ds].hasEntry) worked++;
     });
+    /* v107: the Loads total comes from the SHARED per-day loads
+       truth (Meticulous.shared.dayLoads — tickets → recorded
+       dispatch loads → taps → weight count → learned-site count),
+       summed over the days in the window. The old loop counted
+       only raw entries of type 'load' — dispatch completions are
+       'hourly', so Loads read 0 against a month of recorded work
+       (owner's phone, Oct 16). Day sources are grouped once,
+       filed the way the rest of the app files a dispatch
+       (scheduledAt's date wins). */
+    try {
+      var dayLoadsFn = (window.Meticulous && Meticulous.shared && Meticulous.shared.dayLoads) || null;
+      if (dayLoadsFn) {
+        var dspByDate = {}, sessByDate = {}, geoDays = {}, seenDates = {};
+        (App._store.get('dsp_list', []) || []).forEach(function (x) {
+          if (!x) return;
+          var sd = '';
+          if (typeof x.scheduledAt === 'string') {
+            var mm = /^(\d{4}-\d{2}-\d{2})/.exec(x.scheduledAt);
+            if (mm) sd = mm[1];
+          }
+          var dsx = sd || x.date;
+          if (dsx) { (dspByDate[dsx] = dspByDate[dsx] || []).push(x); seenDates[dsx] = true; }
+        });
+        (App._store.get('sessions', []) || []).forEach(function (s2) {
+          if (s2 && s2.date) { (sessByDate[s2.date] = sessByDate[s2.date] || []).push(s2); seenDates[s2.date] = true; }
+        });
+        try { geoDays = (App._store.get('geoloads', { days: {} }).days) || {}; } catch (e2) { geoDays = {}; }
+        Object.keys(map).forEach(function (ds) { seenDates[ds] = true; });
+        var liveTaps = 0;
+        try {
+          var trkL = (window.App && App.tracker) || App._store.get('tracker', null);
+          if (trkL && trkL.accum && (trkL.status === 'running' || trkL.status === 'paused')) {
+            liveTaps = parseInt(trkL.accum.manualLoads, 10) || 0;
+          }
+        } catch (e3) { liveTaps = 0; }
+        Object.keys(seenDates).forEach(function (ds) {
+          if (!inPeriod(ds)) return;
+          loads += dayLoadsFn(ds, {
+            dispatches: dspByDate[ds] || [],
+            sessions: sessByDate[ds] || [],
+            liveTaps: ds === App._today() ? liveTaps : 0,
+            geoLoads: geoDays[ds] ? geoDays[ds].count : 0
+          }).loads;
+        });
+      }
+    } catch (e) { loads = 0; }
     /* A3: average is per day actually WORKED in the period (a day with any
        counted entry / the live session), not per calendar day. */
     return { total: total, avg: worked ? total / worked : 0, loads: loads, count: n, days: periodDays(), workedDays: worked };
