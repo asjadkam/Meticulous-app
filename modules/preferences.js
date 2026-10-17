@@ -36,32 +36,12 @@
         '<label class="f">Employment</label><select id="pf_emp">' +
         ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div>';
 
-      /* v34: in-app password change — distinct from "Forgot password?" (the
-         email reset on the sign-in screen). Signed-in users only: Firebase
-         needs a current user for updatePassword, and re-authenticates with
-         the current password when it demands a recent login.
-         v52 placement (owner, Oct 14): the Security card renders LAST on
-         the page — it is built into a variable here and appended at the
-         bottom, just above the final Save preferences button. */
-      var signedIn = !!(window.FB && FB.user);
-      var securityCard = '<div class="card"><h3>🔒 Security</h3>';
-      if (signedIn) {
-        securityCard += '<p class="note">Signed in as ' + esc(FB.user.email || '') + '</p>' +
-          '<label class="f">Current password</label><input id="pf_pw_cur" type="password" autocomplete="current-password">' +
-          '<label class="f">New password</label><input id="pf_pw_new" type="password" autocomplete="new-password">' +
-          '<label class="f">Confirm new password</label><input id="pf_pw_conf" type="password" autocomplete="new-password">' +
-          '<button class="btn ghost" id="pf_pw_btn" style="margin-top:10px;">Change password</button>' +
-          '<p class="note" id="pf_pw_note"></p>';
-      } else {
-        /* v95: THE SIGN-IN DOOR (Preferences spot) — at the top of the
-           Security card, in the open, never behind the Advanced drawer:
-           a signed-out user sees it the moment Preferences opens. One
-           tap routes to the app's sign-in form (App.goSignIn); local
-           data is untouched. */
-        securityCard += '<button class="btn primary" id="pf_signin">Sign in</button>' +
-          '<p class="note">You are not signed in — this device is in Local mode, so your data lives only here. Sign in to back it up, sync your devices, and change your password.</p>';
-      }
-      securityCard += '</div>';
+      /* v106 (owner directive, Oct 16, 2026 19:49 MDT): "Give login its
+         own page!" The Security card (v34 change-password + the v95
+         sign-in door) is GONE from Preferences — it lives on the
+         dedicated Account & login screen (modules/account.js), same
+         ids, same wiring. This page now carries NO password inputs,
+         which also unblocks assisted browsing of Preferences. */
 
       h += '<div class="card"><h3>💵 Pay</h3>' +
         '<label class="f">Payment standard</label><select id="pf_std">' +
@@ -190,7 +170,7 @@
          mid-list, above a crowd of similar big navy buttons — "a user
          will press the wrong button." It now lives at the very BOTTOM of
          the page as the one solid primary button; every utility action
-         (push, updates, sync, password) is a quiet ghost button, and
+         (push, updates, sync) is a quiet ghost button, and
          Reset onboarding questions is fenced off at the bottom of
          Advanced in danger colours. Layout only — no save behaviour
          changed. */
@@ -285,12 +265,12 @@
          retry wiring below is unchanged and works on the same ids. */
       // v24: removed "Erase all local data" — developer tool, not for users
 
-      /* v52 (owner, Oct 14): the Security / change-password card is the
-         LAST card on the page (built as `securityCard` up top), and the
-         role control lives in the Account card next to Account type —
-         an earlier end-of-list placement for the role question was a
-         misread and was withdrawn. */
-      h += securityCard;
+      /* v52 (owner, Oct 14): the role control lives in the Account
+         card next to Account type — an earlier end-of-list placement
+         for the role question was a misread and was withdrawn.
+         v106: the Security card that used to close the list moved to
+         the Account & login screen (modules/account.js); the Advanced
+         drawer card is now the last card above Save. */
 
       /* v52: THE button — one solid primary, full width, at the very
          bottom of the page, under the last card. */
@@ -476,10 +456,8 @@
           App._store.set('onboarding', ob);
         };
       } catch (e) {}
-      /* v95: Preferences sign-in door (Security card, signed-out
-         renders only — the button exists only in that render) */
-      var signInBtn = body.querySelector('#pf_signin');
-      if (signInBtn) signInBtn.onclick = function () { if (window.App && App.goSignIn) App.goSignIn(); };
+      /* v106: the sign-in door + change-password wiring moved with
+         the Security card to modules/account.js. */
       /* v95: the Advanced drawer toggle — flips the container only;
          every control inside keeps its own wiring below, untouched. */
       body.querySelector('#pf_adv_toggle').onclick = function () {
@@ -488,47 +466,6 @@
         this.setAttribute('aria-expanded', advOpen ? 'true' : 'false');
         var advCaret = body.querySelector('#pf_adv_caret');
         if (advCaret) advCaret.textContent = advOpen ? '▾' : '▸';
-      };
-      /* v34: change-password handler (Security card, signed-in only) */
-      var pwBtn = body.querySelector('#pf_pw_btn');
-      if (pwBtn) pwBtn.onclick = function () {
-        var note = body.querySelector('#pf_pw_note');
-        // same cleaning as sign-in (invisible-char strip + v45 trim), so
-        // the passwords agree — a stray trailing space must not fail reauth
-        var clean = function (p) { return String(p || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD\u2060]/g, '').trim(); };
-        var cur = clean(body.querySelector('#pf_pw_cur').value);
-        var nw = clean(body.querySelector('#pf_pw_new').value);
-        var conf = clean(body.querySelector('#pf_pw_conf').value);
-        if (!cur) { note.textContent = 'Enter your current password.'; return; }
-        if (!nw || nw.length < 6) { note.textContent = 'New password must be at least 6 characters.'; return; }
-        if (nw !== conf) { note.textContent = 'New passwords do not match.'; return; }
-        if (!window.FB || !FB.changePassword) { note.textContent = 'Password change is unavailable right now.'; return; }
-        pwBtn.disabled = true; note.textContent = 'Changing…';
-        function ok() {
-          pwBtn.disabled = false;
-          note.textContent = '✓ Password changed.';
-          body.querySelector('#pf_pw_cur').value = '';
-          body.querySelector('#pf_pw_new').value = '';
-          body.querySelector('#pf_pw_conf').value = '';
-        }
-        function fail(e) {
-          pwBtn.disabled = false;
-          /* v45: plain English only — never show the raw Firebase message */
-          var code = (e && e.code) || '';
-          note.textContent = (code === 'auth/wrong-password' || code === 'auth/invalid-credential')
-            ? 'Current password is wrong.'
-            : code === 'auth/weak-password' ? 'New password is too weak — use at least 6 characters.'
-            : code === 'auth/requires-recent-login' ? 'For security, sign out and sign back in, then change your password right after signing in.'
-            : code === 'auth/too-many-requests' ? 'Too many tries. Wait about 10 minutes and try again.'
-            : code === 'auth/network-request-failed' ? 'Could not reach the server. Check your internet and try again.'
-            : 'Could not change password. Please try again.';
-        }
-        FB.changePassword(nw).then(ok).catch(function (e) {
-          if (e && e.code === 'auth/requires-recent-login') {
-            note.textContent = 'Confirming it is you…';
-            FB.reauthenticate(cur).then(function () { return FB.changePassword(nw); }).then(ok).catch(fail);
-          } else fail(e);
-        });
       };
       body.querySelector('#pf_push').onclick = function () {
         if (window.FB && FB.enablePush) {

@@ -424,6 +424,12 @@
     ['reminders', '🔔', 'Reminders'],
     ['preferences', '⚙️', 'Preferences'],
     ['subscription', '💳', 'Subscription'],
+    /* v106: Account & login — the Security / change-password screen
+       that left Preferences (owner: "Give login its own page!").
+       Quiet placement near the bottom of the menu: it is a
+       rarely-used plumbing destination, not a feature card, so it
+       gets NO dashboard card (not in MODULE_META / role orders). */
+    ['account', '🔑', 'Account & login'],
     ['feedback', '💬', 'Feedback'],
     ['logout', '🚪', 'Logout']
   ];
@@ -475,7 +481,7 @@
 
   App.openModule = function (key) {
     var meta = MODULE_META[key];
-    var special = { reminders: 1, preferences: 1, subscription: 1 };
+    var special = { reminders: 1, preferences: 1, subscription: 1, account: 1 };
     /* P&L + Maintenance gates removed Oct 13, 2026 — Asjad (Driver) gets full access. */
     if (meta && !App.tierAllows(meta.tier)) {
       // locked -> go to subscription
@@ -487,7 +493,7 @@
     App._modKey = key;
     el('dashView').classList.add('hidden');
     el('modView').classList.remove('hidden');
-    var title = meta ? meta.title : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription' }[key] || key);
+    var title = meta ? meta.title : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription', account: 'Account & login' }[key] || key);
     el('modTitle').textContent = title;
     var body = el('modBody');
     body.innerHTML = '';

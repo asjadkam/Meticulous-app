@@ -8,7 +8,8 @@
  * vm sandboxes; modules/pnl.js is loaded whole over an in-memory store
  * and exercised via its own _driverWages / _calc test hooks. Source
  * assertions cover the Preferences layout (stub card removed, cloud
- * sync in Advanced, Security last card, one bottom Save, role control
+ * sync in Advanced, NO Security card since v106 — login has its own
+ * page, tools/account-login-test.js — one bottom Save, role control
  * in the Account card) and onboarding step placement. v54 extended the
  * layout assertions: standalone Notifications card removed, its push
  * button a row inside Advanced (updates → notifications → sync →
@@ -363,7 +364,6 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   eq((pref.match(/id="pf_save"/g) || []).length, 1, 'prefs: exactly one Save preferences button');
   const iAcct = pref.indexOf('id="pf_acct"');
   const iRole = pref.indexOf('id="pf_role"');
-  const iSec = pref.indexOf('h += securityCard'); // append site = render order (the card string is built earlier)
   const iSave = pref.indexOf('id="pf_save"');
   ok(iRole > iAcct, 'prefs: role control sits next to Account type (same card)');
   const iAdv = pref.indexOf('⚙️ Advanced');
@@ -377,11 +377,17 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(iReset > iSyncRow, 'prefs Advanced order: cloud sync … then Reset onboarding (fenced danger, last)');
   ok(iSyncRow > iAdv, 'prefs: sync troubleshooting row is inside Advanced');
   ok(iReset > iUpd, 'prefs: Reset onboarding fenced below Check for updates');
-  ok(iSec > iSyncRow, 'prefs order: … Advanced (incl. sync troubleshooting) … then Security');
-  ok(iSave > iSec, 'prefs order: Security is the LAST card, Save preferences the final button beneath it');
+  /* v106 (owner directive, Oct 16, 2026): the Security card LEFT
+     Preferences — login has its own page (modules/account.js, pinned
+     in tools/account-login-test.js). The v52 "Security last card"
+     order pins are replaced by absence pins: Save preferences now
+     follows the Advanced drawer card directly. */
+  ok(iSave > iSyncRow, 'prefs order: … Advanced (incl. sync troubleshooting) … then Save preferences');
+  ok(pref.indexOf('securityCard') === -1, 'v106 prefs: no Security card is built or appended anymore');
+  ok(pref.indexOf('type="password"') === -1, 'v106 prefs: NO password input anywhere in Preferences');
+  ok(pref.indexOf('id="pf_pw_btn"') === -1 && pref.indexOf('id="pf_pw_cur"') === -1 && pref.indexOf('id="pf_pw_new"') === -1 && pref.indexOf('id="pf_pw_conf"') === -1, 'v106 prefs: no change-password fields remain');
   ok(pref.indexOf('btn primary big') >= 0 && pref.indexOf('id="pf_save"') > pref.indexOf('btn primary big') - 60, 'prefs: Save is the solid primary (big) button');
   ok(pref.indexOf('id="pf_syncnow"') > 0 && /btn ghost" id="pf_syncnow"/.test(pref), 'prefs: Retry sync uses quiet secondary (ghost) styling');
-  ok(/btn ghost" id="pf_pw_btn"/.test(pref), 'prefs: Change password button de-crowded to ghost');
   /* v94 (owner ruling, Oct 16, 2026 — keys move server-side; the
      owner screenshotted the nag in disgust): NO key UI anywhere in
      Preferences, and the Advanced explainers are trimmed to short
@@ -402,18 +408,19 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   /* v95 (owner, Oct 16, 2026): TWO rulings from his screenshots.
      (1) THE SIGN-IN DOOR: a Local-mode user had no reachable sign-in
      (the only route was Advanced → Reset onboarding questions, whose
-     confirm() automation auto-cancels). Preferences carries ONE
+     confirm() automation auto-cancels). Preferences carried ONE
      primary "Sign in" at the top of the Security card in the
      signed-out render — in the open, never inside Advanced.
+     v106 SUPERSEDES the door's ADDRESS, not the ruling: the door
+     moved WITH the Security card to the Account & login screen
+     (modules/account.js), where it still sits at the top of the
+     card, primary-styled, wired to App.goSignIn — pinned in
+     tools/account-login-test.js. Preferences keeps NO door.
      (2) THE ADVANCED DRAWER: "Put the entire advanced drawer in a
      button somewhere, not in the wide open like that" — the whole
      Advanced area sits behind ONE quiet toggle, closed by default,
      its contents byte-identical in ids/order/behaviour. */
-  eq((pref.match(/id="pf_signin"/g) || []).length, 1, 'v95 prefs: exactly one Sign in door (Security card, signed-out render)');
-  ok(pref.indexOf('id="pf_signin"') > pref.indexOf('var signedIn'), 'v95 prefs: the door is built with the Security card');
-  ok(pref.indexOf('id="pf_signin"') < pref.indexOf('id="pf_adv_body"'), 'v95 prefs: the door is NOT inside the Advanced drawer markup');
-  ok(pref.indexOf('btn primary" id="pf_signin"') >= 0, 'v95 prefs: the door is primary-styled (one unmissable action)');
-  ok(pref.indexOf("querySelector('#pf_signin')") >= 0 && pref.indexOf('App.goSignIn') >= 0, 'v95 prefs: the door is wired to App.goSignIn');
+  ok(pref.indexOf('id="pf_signin"') === -1, 'v106 prefs: the Sign in door moved to Account & login (no door left in Preferences)');
   ok(pref.indexOf('Sign in to change your password.') === -1, 'v95 prefs: the old dead-end note (a sign-in with no door) is gone');
   eq((pref.match(/id="pf_adv_toggle"/g) || []).length, 1, 'v95 prefs: exactly one Advanced toggle button');
   eq((pref.match(/id="pf_adv_body"/g) || []).length, 1, 'v95 prefs: exactly one Advanced container');
@@ -426,7 +433,7 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
     eq((pref.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'v95 prefs: Advanced control #' + id + ' survives exactly once');
     ok(pref.indexOf('id="' + id + '"') > iAdvBody, 'v95 prefs: #' + id + ' renders INSIDE the collapsed container');
   });
-  ok(pref.indexOf('h += securityCard') > pref.indexOf('id="pf_resetonb"'), 'v95 prefs: Security stays OUTSIDE Advanced (appended after the drawer, last card)');
+  ok(pref.indexOf('🔒 Security') === -1, 'v106 prefs: no Security heading anywhere on the page (it lives on Account & login)');
   ok(pref.indexOf("querySelector('#pf_adv_toggle')") >= 0 && pref.indexOf("classList.toggle('hidden')") >= 0 && pref.indexOf('aria-expanded') >= 0, 'v95 prefs: the toggle is wired (flips the container, reports its state)');
   ok(pref.indexOf("confirm('Show the setup questions again") >= 0, 'v95 prefs: Reset onboarding keeps its own confirm + purpose, unchanged');
 }

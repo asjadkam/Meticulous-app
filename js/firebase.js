@@ -56,8 +56,10 @@
   FB.sendReset = function (email) {
     return FB.auth.sendPasswordResetEmail(normEmail(email));
   };
-  /* v34: in-app password change (Preferences > Security). updatePassword
-     can reject with auth/requires-recent-login; reauthenticate covers it. */
+  /* v34: in-app password change (the Security card; since v106 it
+     lives on the Account & login screen, modules/account.js).
+     updatePassword can reject with auth/requires-recent-login;
+     reauthenticate covers it. */
   FB.changePassword = function (newPassword) {
     if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
     return FB.auth.currentUser.updatePassword(normPw(newPassword));
