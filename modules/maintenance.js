@@ -356,13 +356,17 @@
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +
         '<div class="row"><div><label class="f">Update odometer (km)</label><input id="mt_odo" type="number" inputmode="decimal" placeholder="' + (d.odo > 0 ? Math.round(d.odo) : '') + '"></div>' +
         '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_odo_save">Save</button></div></div>' +
-        /* v86: the correction door for THIS card — the same one
-           Preferences and Fuel have. Hidden until the typed reading
-           trips the two-sided gate against the master; the Save
-           below refuses an unarmed gated value (see its handler). */
+        /* v86: the correction door for THIS card. v107 (Stage 4):
+           the door is no longer a checkbox — when a Save trips the
+           two-sided gate, this row asks ONCE, right here, whether
+           the SAVED value is the wrong one (see the Save handler);
+           the correction button runs the audited correction path.
+           Hidden while the typed reading is an ordinary one. */
         '<div id="mt_odo_fixrow" style="display:none;margin-top:6px;">' +
         '<p class="note" id="mt_odo_fixnote" style="color:#c2410c;font-weight:600"></p>' +
-        '<label class="chk"><input type="checkbox" id="mt_odo_fix"> This corrects a wrong odometer reading</label></div>' +
+        '<div id="mt_odo_ask" class="row" style="display:none;margin-top:6px;">' +
+        '<button type="button" class="btn navy" id="mt_odo_correct" style="flex:1;">Save as correction</button>' +
+        '<button type="button" class="btn ghost" id="mt_odo_keep" style="flex:1;">Keep the saved one</button></div></div>' +
         /* v61: snap the dash instead of typing — two small quiet
            buttons (camera / file, owner's standing two-button rule)
            wired to the shared odometer photo pipeline below. The
@@ -375,23 +379,12 @@
         '<div id="mt_odo_prev"></div><div id="mt_odo_status" class="note"></div>' +
         '</div>';
 
-      /* v97: the verified correction card — clearly separate from the
-         everyday Update odometer above. This is the one place the
-         odometer can move DOWN: snap the dash, check the read, save
-         the correction; it is written into the service history. The
-         field id doubles as the photo-pipeline prefix (mt_fix_cam /
-         mt_fix_pick / mt_fix_cam_in / mt_fix_in / mt_fix_status),
-         wired fill-only below exactly like the v61 card. */
-      h += '<div class="card"><h3>🛠️ Correct odometer from dash photo</h3>' +
-        '<p class="note">Only for when the odometer saved in the app is itself wrong — a bad photo read, or a number that was never an odometer (a receipt\'s invoice number, say). Snap the dash, check the reading, then save the correction. Every correction is written into the service history below, with the old and new readings, so it can always be checked.</p>' +
-        '<div class="row"><div><label class="f">Correct odometer (km)</label><input id="mt_fix" type="number" inputmode="decimal" placeholder="e.g. 168940"></div>' +
-        '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_fix_save">Save correction</button></div></div>' +
-        '<input type="file" id="mt_fix_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<input type="file" id="mt_fix_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<div class="row"><button type="button" class="btn small ghost" id="mt_fix_cam" style="flex:1;">📷 Take photo</button>' +
-        '<button type="button" class="btn small ghost" id="mt_fix_pick" style="flex:1;">📁 Choose file</button></div>' +
-        '<div id="mt_fix_prev"></div><div id="mt_fix_status" class="note"></div>' +
-        '</div>';
+      /* v107 (Stage 4): the separate v97 "Correct odometer from
+         dash photo" card is GONE — the owner's rule (Oct 16 19:29)
+         is ONE odometer card: one field, one photo pair, one Save,
+         and the correction question asked inside this same card
+         (the mt_odo_fixrow ask above). Two cards doing one job
+         made him look twice. */
 
       /* --- Upcoming --- */
       h += '<div class="card"><h3>⏰ Upcoming service</h3>';
@@ -714,7 +707,9 @@
 
       /* v86: paint the correction door live — shown only while the
          typed reading trips the two-sided gate against the master
-         (App._odoImplausible), worded per direction. */
+         (App._odoImplausible), worded per direction.
+         v107: no checkbox any more — the note just says what Save
+         will do: ask. The ask itself lives in the Save handler. */
       (function () {
         var odoEl = body.querySelector('#mt_odo');
         var row = body.querySelector('#mt_odo_fixrow');
@@ -724,14 +719,16 @@
           var master = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
           var v = parseFloat(odoEl.value);
           var why = (v > 0 && master !== null && window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
+          var ask = body.querySelector('#mt_odo_ask');
           if (why === 'jump') {
             row.style.display = '';
-            if (note) note.textContent = 'That\'s way past the odometer now (' + kmStr(master) + ') — it can\'t be right; it\'s likely another number (a receipt\'s invoice number, say). Saving keeps ' + kmStr(master) + ' unless you tick the box to say the saved reading is wrong.';
+            if (note) note.textContent = 'That\'s way past the odometer now (' + kmStr(master) + ') — it can\'t be right; it\'s likely another number (a receipt\'s invoice number, say). Tap Save and the card will ask before anything changes.';
           } else if (why === 'below') {
             row.style.display = '';
-            if (note) note.textContent = 'That\'s lower than the odometer now (' + kmStr(master) + '). Odometers only move up — saving keeps ' + kmStr(master) + ' unless you tick the box to say the saved reading is wrong.';
+            if (note) note.textContent = 'That\'s lower than the odometer now (' + kmStr(master) + '). Odometers only move up — tap Save and the card will ask before anything changes.';
           } else {
             row.style.display = 'none';
+            if (ask) ask.style.display = 'none';
           }
         }
         odoEl.addEventListener('input', paintFix);
@@ -741,55 +738,49 @@
       body.querySelector('#mt_odo_save').onclick = function () {
         var v = parseFloat(body.querySelector('#mt_odo').value);
         if (!(v > 0)) { alert('Enter a valid odometer reading.'); return; }
-        /* v86: this Save writes the ONE master odometer (mt_odo) —
-           it now goes through the same two-sided supervised
-           decision as Preferences and Fuel. Before v86 it wrote
-           the typed number straight over the master — any value,
-           either direction, not even upward-only. */
+        /* The Save writes the ONE master odometer (mt_odo) through
+           the two-sided supervised decision, UNARMED: an ordinary
+           reading sets it; a gated one (below the master, or past
+           the jump gate) is NOT written and NOT silently refused —
+           v107 asks ONCE, in this card, in the owner's framing:
+           the saved number is the suspect, the new one is the
+           candidate correction. Confirming runs the audited
+           correction path (applyOdoCorrection: armed decision +
+           master write + service-history entry); declining keeps
+           the saved value, untouched. */
         var master = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
-        var fixEl = body.querySelector('#mt_odo_fix');
         var dec = (window.App && App._odoSaveDecision)
-          ? App._odoSaveDecision(v, master, !!(fixEl && fixEl.checked))
+          ? App._odoSaveDecision(v, master, false)
           : { action: 'set', value: v };
-        if (dec.action === 'keep') {
-          var why = (window.App && App._odoImplausible) ? App._odoImplausible(v) : null;
-          alert(why === 'jump'
-            ? 'Odometer kept at ' + kmStr(master) + ' — ' + kmStr(v) + ' is way past it, so it can\'t be right (it\'s likely another number, like a receipt\'s invoice number). If the saved reading itself is wrong, tick “This corrects a wrong odometer reading” and tap Save again.'
-            : 'Odometer kept at ' + kmStr(master) + ' — odometers only move up. If the saved reading itself is wrong, tick “This corrects a wrong odometer reading” and tap Save again.');
+        if (dec.action === 'ignore') { alert('Enter a valid odometer reading.'); return; }
+        if (dec.action === 'set') {
+          W('odo', dec.value);
+          api.render(body);
           return;
         }
-        if (dec.action === 'ignore') { alert('Enter a valid odometer reading.'); return; }
-        W('odo', dec.value);
-        /* v97: a correction through this door is audited too — same
-           service-history entry the dash-photo flow writes. */
-        if (dec.action === 'correct' && master !== null && master !== undefined && dec.value !== master) {
-          try { logOdoCorrection(master, dec.value, 'typed reading'); } catch (e) {}
-        }
-        api.render(body);
-        if (dec.action === 'correct') alert('Odometer corrected to ' + kmStr(dec.value) + '.');
-      };
-
-      /* v97: the dash-photo correction card. The photo pipeline is
-         wired FILL-ONLY (no-op persist, same as the v61 card): every
-         read path only fills #mt_fix — nothing writes the master
-         until Save correction is tapped, and that save runs the
-         armed supervised decision via applyOdoCorrection, which
-         also writes the audit entry. */
-      try {
-        if (App._wirePhotoOCR) {
-          App._wirePhotoOCR('mt_fix', 'odometer', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
-        }
-      } catch (e) {}
-      var fixSaveBtn = body.querySelector('#mt_fix_save');
-      if (fixSaveBtn) fixSaveBtn.onclick = function () {
-        var fv = parseFloat(body.querySelector('#mt_fix').value);
-        if (!(fv > 0)) { alert('Snap the dash or type the real odometer reading first.'); return; }
-        var res = applyOdoCorrection(fv, 'dash photo');
-        if (res.action === 'ignore' || res.action === 'keep') { alert('Enter a valid odometer reading.'); return; }
-        api.render(body);
-        alert(res.logged
-          ? 'Odometer corrected to ' + kmStr(res.value) + ' — the correction is written into the service history below.'
-          : 'Odometer saved at ' + kmStr(res.value) + '.');
+        /* dec.action === 'keep' — gated and unarmed: ask. */
+        var row = body.querySelector('#mt_odo_fixrow');
+        var note = body.querySelector('#mt_odo_fixnote');
+        var ask = body.querySelector('#mt_odo_ask');
+        var corrBtn = body.querySelector('#mt_odo_correct');
+        var keepBtn = body.querySelector('#mt_odo_keep');
+        if (!row || !ask || !corrBtn || !keepBtn) { alert('Odometer kept at ' + kmStr(master) + '.'); return; }
+        row.style.display = '';
+        ask.style.display = '';
+        if (note) note.textContent = 'The saved odometer (' + kmStr(master) + ') looks wrong — save ' + kmStr(v) + ' as a correction? The correction is written into the service history.';
+        corrBtn.textContent = 'Save ' + kmStr(v) + ' as a correction';
+        corrBtn.onclick = function () {
+          var res = applyOdoCorrection(v, 'odometer card');
+          if (res.action === 'ignore' || res.action === 'keep') { alert('Enter a valid odometer reading.'); return; }
+          api.render(body);
+          alert(res.logged
+            ? 'Odometer corrected to ' + kmStr(res.value) + ' — the correction is written into the service history below.'
+            : 'Odometer saved at ' + kmStr(res.value) + '.');
+        };
+        keepBtn.onclick = function () {
+          ask.style.display = 'none';
+          if (note) note.textContent = 'Kept ' + kmStr(master) + ' — nothing was changed.';
+        };
       };
 
       body.querySelector('#mt_add').onclick = function () {

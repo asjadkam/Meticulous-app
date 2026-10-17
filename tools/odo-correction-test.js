@@ -267,25 +267,38 @@ console.log('\n— C: maintenance odometer math + correction flow —');
 }
 
 /* ==================================================================
-   D. Correction card statics
+   D. ONE odometer card statics
+   v107 PIN MOVE (Stage 4, owner Oct 16 19:29 — two odometer cards
+   are a look-twice violation): the separate v97 dash-photo card
+   (mt_fix*) is DELETED. The correction now lives inside the ONE
+   Update-odometer card: one field, one photo pair (the fill-only
+   mt_odo pipeline), one Save; a gated Save shows the in-card ask
+   (mt_odo_correct / mt_odo_keep), and the correction button runs
+   the same applyOdoCorrection this suite drives above.
    ================================================================== */
-console.log('\n— D: correction card markup and wiring —');
+console.log('\n— D: one odometer card markup and wiring —');
 {
-  ok('D1 card is clearly marked', mtSrc.indexOf('Correct odometer from dash photo') >= 0);
-  ['mt_fix', 'mt_fix_save', 'mt_fix_cam', 'mt_fix_pick', 'mt_fix_cam_in', 'mt_fix_in', 'mt_fix_status']
+  ok('D1 the second card is gone', mtSrc.indexOf('Correct odometer from dash photo') === -1);
+  ['mt_fix', 'mt_fix_save', 'mt_fix_cam', 'mt_fix_pick', 'mt_fix_cam_in', 'mt_fix_in', 'mt_fix_status', 'mt_odo_fix']
     .forEach(function (id) {
-      ok('D correction element #' + id, mtSrc.indexOf('id="' + id + '"') >= 0);
+      ok('D deleted element #' + id + ' absent', mtSrc.indexOf('id="' + id + '"') === -1);
     });
-  ok('D2 camera input carries capture=environment',
-    /id="mt_fix_cam_in"[^>]*capture="environment"/.test(mtSrc));
+  ok('D2 the one card keeps its field + save + photo pair',
+    mtSrc.indexOf('id="mt_odo"') >= 0 && mtSrc.indexOf('id="mt_odo_save"') >= 0 &&
+    /id="mt_odo_cam_in"[^>]*capture="environment"/.test(mtSrc));
   ok('D3 photo wiring is fill-only via the shared pipeline',
-    mtSrc.indexOf("App._wirePhotoOCR('mt_fix', 'odometer', function () {}") >= 0);
-  ok('D4 save runs applyOdoCorrection',
-    mtSrc.indexOf("applyOdoCorrection(fv, 'dash photo')") >= 0);
-  ok('D5 history labels the audit type',
+    mtSrc.indexOf("App._wirePhotoOCR('mt_odo', 'odometer', function () {}") >= 0);
+  ok('D4 the ask exists with its two answers',
+    mtSrc.indexOf('id="mt_odo_correct"') >= 0 && mtSrc.indexOf('id="mt_odo_keep"') >= 0 &&
+    mtSrc.indexOf('looks wrong — save') >= 0);
+  ok('D5 the correction button runs applyOdoCorrection',
+    mtSrc.indexOf("applyOdoCorrection(v, 'odometer card')") >= 0);
+  ok('D6 history labels the audit type',
     mtSrc.indexOf("name: 'Odometer correction'") >= 0);
-  ok('D6 correction region markers present',
+  ok('D7 correction region markers present',
     mtSrc.indexOf('ODO-CORRECTION-BEGIN') >= 0 && mtSrc.indexOf('ODO-CORRECTION-END') >= 0);
+  ok('D8 a gated save is decided UNARMED first (the ask arms it)',
+    mtSrc.indexOf('App._odoSaveDecision(v, master, false)') >= 0);
 }
 
 console.log('\nodo-correction test: ' + pass + ' passed, ' + fail + ' failed');
