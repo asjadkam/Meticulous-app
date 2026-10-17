@@ -159,6 +159,52 @@
     return best;
   }
 
+  /* v125: the DRIVE basemap spec. The v124 drive map drew the
+     standard OSM Carto raster under a contrast(1.16) /
+     saturate(1.42) CSS lift; OSM Carto colours motorways salmon
+     pink natively, and the lift pushed them to the garish HOT
+     PINK of the owner's Oct 17 recording (parallel carriageways
+     rendered as wide pink dashed bands). CARTO Voyager is a
+     calm, muted navigation-style raster — roads read as roads
+     (white/grey with a soft amber motorway tint), nothing on it
+     can saturate into pink, and the drive map ships it with NO
+     CSS filter at all. The planning map keeps the OSM source +
+     its gentler lift. {r} resolves to @2x tiles on retina
+     displays. */
+  function driveTileSpec() {
+    return {
+      url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      subdomains: 'abcd',
+      attribution: '© OpenStreetMap contributors © CARTO'
+    };
+  }
+
+  /* v125 (owner spec, Oct 17): the direction line RETRACTS as
+     travelled — only the route AHEAD of the truck stays drawn.
+     Returns the not-yet-travelled part of `line` from the point
+     nearest `pos`: { points, seg, along, dist }. points[0] is
+     the projected position on the line; the last point is the
+     route's end. A fully-travelled line collapses to the final
+     point (padded so a polyline can still draw it). */
+  function routeRemainder(line, pos) {
+    if (!line || line.length < 2 || !pos) return null;
+    var best = { dist: Infinity, seg: 0, t: 0, along: 0 }, cum = 0, i, seg, segLen, t;
+    for (i = 0; i + 1 < line.length; i++) {
+      seg = pointSegM(pos, line[i], line[i + 1]);
+      if (seg.dist < best.dist) {
+        segLen = haversineM(line[i], line[i + 1]);
+        t = segLen ? Math.max(0, Math.min(1, seg.along / segLen)) : 0;
+        best = { dist: seg.dist, seg: i, t: t, along: cum + seg.along };
+      }
+      cum += haversineM(line[i], line[i + 1]);
+    }
+    var a = line[best.seg], b = line[best.seg + 1];
+    var pts = [[a[0] + (b[0] - a[0]) * best.t, a[1] + (b[1] - a[1]) * best.t]];
+    for (i = best.seg + 1; i < line.length; i++) pts.push(line[i]);
+    if (pts.length < 2) pts.push(line[line.length - 1]);
+    return { points: pts, seg: best.seg, along: best.along, dist: best.dist };
+  }
+
   /* Flatten a Valhalla trip into a banner-ready plan: every maneuver
      with cumulative start/end distances (km) and its spoken lines. */
   function maneuverPlan(trip) {
@@ -557,8 +603,9 @@
       h += '<div id="nv_drive_screen" class="nv-drive hidden">' +
         '<div class="nv-drive-top">' +
         '<div class="nv-drive-dist" id="nvd_dist"></div>' +
+        '<div class="nv-drive-toptext">' +
         '<div class="nv-drive-inst" id="nvd_inst"></div>' +
-        '<div class="nv-drive-road" id="nvd_road"></div></div>' +
+        '<div class="nv-drive-road" id="nvd_road"></div></div></div>' +
         '<div class="nv-drive-viewport">' +
         '<div class="nv-drive-tilt"><div class="nv-drive-spin" id="nvd_spin">' +
         '<div class="nv-drive-mapbox"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
@@ -566,8 +613,14 @@
         '<div class="nv-drive-you">▲</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div></div>' +
         '<div class="nv-drive-bar">' +
-        '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main"></div>' +
-        '<div class="nv-drive-eta-sub" id="nvd_eta_sub"></div></div>' +
+        /* v125: the ETA stack is NEVER blank — it renders with a
+           visible placeholder from the moment Drive opens, and
+           the first drive tick (which runs synchronously in
+           startDrive) replaces it with the live arrival clock.
+           A bar whose arrival stack only exists after a
+           successful tick is a bar that can show nothing. */
+        '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main">--:--</div>' +
+        '<div class="nv-drive-eta-sub" id="nvd_eta_sub">Getting your arrival time…</div></div>' +
         '<button class="btn ghost" id="nvd_mute">🔊 Sound: on</button>' +
         '<button class="btn primary" id="nvd_exit">End drive</button>' +
         '</div></div></div>';
@@ -1107,12 +1160,15 @@
       /* v124: the route line is the DOMINANT element on the drive
          map — a white casing under a heavy coloured core, so the
          road ahead reads at a glance against any tile. Before, a
-         lone 6px line (grey in car mode) washed into the map. */
+         lone 6px line (grey in car mode) washed into the map.
+         v125 (owner spec, Oct 17): the core is a deep BLUE —
+         a colour no basemap road uses, so the direction line can
+         never be mistaken for a road (the v124 orange core sat
+         one shade from the basemap's own road colours). */
       function makeDriveLine() {
-        var col = S.settings.mode === 'car' ? '#2b7de0' : '#e67e00';
         return L.layerGroup([
           L.polyline(S.line, { color: '#ffffff', weight: 17, opacity: 0.9 }),
-          L.polyline(S.line, { color: col, weight: 11, opacity: 1 })
+          L.polyline(S.line, { color: '#1a56db', weight: 12, opacity: 1 })
         ]);
       }
 
@@ -1120,7 +1176,12 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
-        S.drive = { said: {}, headingApplied: null };
+        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0 };
+        /* v125: while Drive is open the shell's chat FAB is
+           hidden — measured on the live v124 build it sat ON the
+           bar (over End drive in portrait, over Sound in
+           landscape). Nothing may cover the bar. */
+        try { document.body.classList.add('mt-driving'); } catch (e) {}
         var scr = body.querySelector('#nv_drive_screen');
         if (scr) scr.classList.remove('hidden');
         if (window.L && body.querySelector('#nv_drive_map')) {
@@ -1128,9 +1189,16 @@
             S.driveMap = L.map('nv_drive_map', {
               zoomControl: false, attributionControl: false, dragging: false,
               scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
-              keyboard: false, touchZoom: false
+              keyboard: false, touchZoom: false,
+              /* v125 flicker fix (owner's headline defect): no
+                 tile fade-in on the drive map — Leaflet's fade
+                 re-paints every fresh tile from opacity 0 on
+                 every recenter, which over a continuous drive
+                 reads as constant flicker. Tiles now land whole. */
+              fadeAnimation: false
             }).setView(S.pos || S.line[0], 17);
-            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(S.driveMap);
+            var tspec = driveTileSpec();
+            L.tileLayer(tspec.url, { maxZoom: 19, subdomains: tspec.subdomains, keepBuffer: 4 }).addTo(S.driveMap);
             S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v104: the position marker joins the settle pass
                below, not this first paint — the same un-settled-
@@ -1171,6 +1239,7 @@
            this destination will auto-enter again. */
         S.driveAutoSpent = true;
         S.drive = null;
+        try { document.body.classList.remove('mt-driving'); } catch (e) {}
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
         try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
         S.driveMap = null; S.driveLine = null; S.driveMarker = null;
@@ -1192,6 +1261,7 @@
         if (!S.drive) return;
         S.drive.said = {};
         S.drive.headingApplied = null;
+        S.drive.remSeg = -1; S.drive.remAlong = 0;
         if (S.driveMap && S.line) {
           try {
             if (S.driveLine) S.driveMap.removeLayer(S.driveLine);
@@ -1235,6 +1305,21 @@
           try {
             S.driveMap.setView(S.pos, 17);
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
+          } catch (e) {}
+        }
+        /* v125: retract the route line as travelled (owner spec)
+           — casing + core are redrawn from the truck's projected
+           position forward, so only the road AHEAD stays drawn.
+           Redraws at most every ~10 m of progress or on a segment
+           change, not on every fix. */
+        if (S.driveMap && S.driveLine && S.line) {
+          try {
+            var rem = routeRemainder(S.line, S.pos);
+            if (rem && (S.drive.remSeg !== rem.seg || Math.abs(rem.along - (S.drive.remAlong || 0)) >= 10)) {
+              S.drive.remSeg = rem.seg; S.drive.remAlong = rem.along;
+              var layers = S.driveLine.getLayers();
+              for (var li = 0; li < layers.length; li++) layers[li].setLatLngs(rem.points);
+            }
           } catch (e) {}
         }
         /* Heading-up: the spin wrapper rotates by −heading around

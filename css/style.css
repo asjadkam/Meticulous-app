@@ -360,7 +360,7 @@ label.chk input{width:18px;height:18px;}
    planning screen keeps its own shell. */
 .nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);}
 .nv-drive-dist{font-size:44px;font-weight:800;line-height:1;}
-.nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;}
+.nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 .nv-drive-road{font-size:15px;color:#D9E1F3;margin-top:4px;min-height:20px;}
 /* v107 (Stage 7): the dead gray band is dead. At 210% the tilted
    plane's far edge projected ~a third short of the viewport top
@@ -373,7 +373,14 @@ label.chk input{width:18px;height:18px;}
 .nv-drive-viewport{position:absolute;inset:0;overflow:hidden;perspective:1000px;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
 .nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;will-change:transform;backface-visibility:hidden;}
 .nv-drive-spin{position:absolute;inset:0;transform-origin:50% 64%;transition:transform .45s linear;will-change:transform;backface-visibility:hidden;}
-.nv-drive-mapbox{position:absolute;width:300%;height:300%;left:50%;top:64%;transform:translate(-50%,-50%);}
+/* v125: the plane grows to 340% — in LANDSCAPE (wide + short)
+   the 300% plane's corners still fell short of the viewport
+   corners under the 52° tilt, leaving the dark sky-gradient
+   wedge the owner photographed at the top-right. 340% pushes
+   the tilted plane's edges past every corner in both
+   orientations, so the map (or its own background) always
+   covers the screen. */
+.nv-drive-mapbox{position:absolute;width:340%;height:340%;left:50%;top:64%;transform:translate(-50%,-50%);}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 .nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-100%);font-size:30px;color:#1F3764;text-shadow:0 0 6px #fff,0 0 3px #fff;z-index:5;pointer-events:none;}
 .nv-drive-reroute{position:absolute;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
@@ -389,16 +396,49 @@ label.chk input{width:18px;height:18px;}
    ETA is a two-line stack that cannot be crushed: the arrival
    CLOCK time on top (bold, never wraps), the remaining
    minutes + distance under it (ellipsized if long). */
-.nv-drive-eta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;}
+/* v125 (owner's Oct 17 recording + landscape shot): three
+   more bar defects measured in a real engine on the v124 tree.
+   (1) The ETA column sized by content lost the flex fight to
+   the buttons' max-content, landing at ~105 px in portrait —
+   the sub-line ellipsized to "Arrive · 4 min · …", so the
+   arrival answer was technically rendered and practically
+   unreadable. The column now takes ALL leftover space
+   (flex-basis 0) and the sub-line WRAPS to two lines instead
+   of truncating. (2) The Sound button shrinks a step (13 px,
+   tighter padding) so the column gets the room. (3) While
+   Drive is open the shell chat FAB is hidden (rule below) —
+   it sat on End drive in portrait and on Sound in landscape. */
+.nv-drive-eta{flex:1 1 0%;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;}
 .nv-drive-eta-main{font-size:20px;font-weight:800;line-height:1.15;white-space:nowrap;}
-.nv-drive-eta-sub{font-size:13px;color:#D9E1F3;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.nv-drive-bar .btn{flex:none;width:auto;margin:0;min-height:48px;padding:10px 14px;font-size:15px;}
+.nv-drive-eta-sub{font-size:12.5px;color:#D9E1F3;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.nv-drive-bar .btn{flex:none;width:auto;margin:0;min-height:48px;padding:10px 12px;font-size:15px;}
+.nv-drive-bar #nvd_mute{font-size:13px;padding:10px;}
+body.mt-driving #fbFab{display:none!important;}
+/* v125 landscape: on a short wide screen the portrait banner
+   ate ~a third of the display (measured 124 of 390 px) and the
+   map shrank to a strip. In landscape the banner goes compact
+   and horizontal — distance left, instruction + road stacked
+   beside it — and the bar tightens, so the map keeps the
+   middle of the screen. */
+@media (orientation:landscape) and (max-height:500px){
+.nv-drive-top{display:flex;align-items:center;gap:16px;padding:8px 14px;top:calc(6px + env(safe-area-inset-top));left:8px;right:8px;}
+.nv-drive-toptext{flex:1;min-width:0;}
+.nv-drive-dist{font-size:30px;}
+.nv-drive-inst{font-size:16px;-webkit-line-clamp:2;margin-top:0;}
+.nv-drive-road{font-size:12.5px;min-height:0;margin-top:2px;}
+.nv-drive-bar{left:8px;right:8px;bottom:calc(6px + env(safe-area-inset-bottom));padding:8px 12px;}
+.nv-drive-reroute{bottom:calc(78px + env(safe-area-inset-bottom));}
+}
 /* v107: tile readability — a contrast/saturation lift on the map
-   tiles themselves (the lever the OSM tile source leaves us), on
-   the drive map and the planning map alike.
-   v124: the DRIVE map gets a stronger lift of its own — deeper
-   contrast + saturation so roads and land read as a navigation
-   display instead of a washed diagram; the planning map keeps
-   the gentler shared lift. */
+   tiles themselves (the lever the OSM tile source leaves us).
+   v124: the DRIVE map got a stronger lift of its own.
+   v125: that lift is GONE from the drive map, and the drive
+   basemap changed with it (CARTO Voyager, see driveTileSpec in
+   navigator.js). OSM Carto colours motorways salmon pink; at
+   saturate(1.42) they rendered as the garish HOT PINK of the
+   owner's Oct 17 recording, and the filter additionally forced
+   a full tile repaint on every composite — half the flicker.
+   Voyager ships calm and is drawn exactly as served: NO filter
+   on drive tiles. The planning map is unchanged (OSM source +
+   the gentler shared lift). */
 .nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
-.nv-drive-map .leaflet-tile{filter:contrast(1.16) saturate(1.42);}

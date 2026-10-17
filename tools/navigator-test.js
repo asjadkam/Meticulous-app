@@ -124,6 +124,30 @@ console.log('— pure: request building —');
   const off = sb.distToRouteM(offPt, line);
   check('a point 220 m north reads >150 m off-route', off.dist > 150 && off.dist < 300, off.dist.toFixed(0) + ' m');
 
+  console.log('— pure: v125 drive spec (calm basemap + retracting line) —');
+  const spec = sb.driveTileSpec();
+  check('v125: drive basemap is CARTO Voyager (calm raster, no hot-pink source)',
+    spec.url.indexOf('basemaps.cartocdn.com/rastertiles/voyager') >= 0 && spec.subdomains === 'abcd');
+  check('v125: drive basemap is NOT the OSM Carto source (whose salmon motorways went hot pink under the old lift)',
+    spec.url.indexOf('tile.openstreetmap.org') === -1);
+  /* A straight east-west line [lat, lng]: segments of ~1 degree lng. */
+  const rLine = [[50, -114], [50, -113], [50, -112]];
+  const rem0 = sb.routeRemainder(rLine, [50, -114]);
+  check('v125 retract: at the origin the remainder is the WHOLE line',
+    rem0 && rem0.points.length === 3 && Math.abs(rem0.points[0][1] - -114) < 1e-9 && rem0.along === 0);
+  const remMid = sb.routeRemainder(rLine, [50, -112.6]);
+  check('v125 retract: past the midpoint the drawn line starts AT the truck, not the origin',
+    remMid && remMid.points.length === 2 && Math.abs(remMid.points[0][1] - -112.6) < 0.01 &&
+    Math.abs(remMid.points[1][1] - -112) < 1e-9 && remMid.seg === 1);
+  const remEnd = sb.routeRemainder(rLine, [50, -111.99]);
+  check('v125 retract: at the destination the remainder collapses to the final point (still drawable)',
+    remEnd && remEnd.points.length === 2 && sb.haversineM(remEnd.points[remEnd.points.length - 1], [50, -112]) < 1);
+  check('v125 retract: remainder shrinks monotonically as the truck advances',
+    sb.routeRemainder(rLine, [50, -113.8]).along < sb.routeRemainder(rLine, [50, -113.2]).along &&
+    sb.routeRemainder(rLine, [50, -113.2]).along < remMid.along);
+  check('v125 retract: degenerate inputs stay null (no line / no fix)',
+    sb.routeRemainder(null, [50, -114]) === null && sb.routeRemainder(rLine, null) === null);
+
   console.log('— pure: maneuver plan —');
   const plan = sb.maneuverPlan(fixture.trip);
   check('plan flattens all 10 Test B maneuvers', plan.maneuvers.length === 10, 'got ' + plan.maneuvers.length);

@@ -29,6 +29,17 @@
  *      under it), the bar buttons are scoped to natural width,
  *      and the drive tiles get a stronger lift of their own;
  *  (c) tiles get the contrast/saturation lift;
+ *      v125 MOVED THE (b)/(c) PINS DELIBERATELY (owner recording
+ *      + landscape shot, Oct 17 08:56-09:04 MDT): the drive lift
+ *      is REMOVED (OSM Carto's salmon motorways at saturate(1.42)
+ *      rendered HOT PINK) and the drive basemap is CARTO Voyager
+ *      drawn unfiltered; the ETA column takes all leftover space
+ *      with a WRAPPING sub (measured 105px + truncated on v124);
+ *      the route core is deep blue #1a56db and RETRACTS as
+ *      travelled; tile fade-in is disabled (the flicker fix);
+ *      the chat FAB hides while Drive is open (it covered the
+ *      bar in both orientations); landscape compacts the banner
+ *      and the tilt plane grows to 340% (dark-wedge fix).
  *  (d) BOTH pickers obey the tap rule (the tap writes the place
  *      into the search box), and the Places card moves its ✓ in
  *      place instead of repainting/re-sorting the list.
@@ -50,7 +61,8 @@ const nav = fs.readFileSync(path.join(ROOT, 'modules', 'navigator.js'), 'utf8');
 const navi = fs.readFileSync(path.join(ROOT, 'modules', 'navigation.js'), 'utf8');
 
 console.log('\n— (a) the map fills its area —');
-ok('mapbox is 300% (was 210%)', /\.nv-drive-mapbox\{[^}]*width:300%;height:300%/.test(css));
+ok('mapbox is 340% (v125: was 300% at v107-v124; in landscape the 300% plane corners fell short under the tilt, leaving the dark wedge of the owner\'s Oct 17 landscape shot)',
+  /\.nv-drive-mapbox\{[^}]*width:340%;height:340%/.test(css));
 ok('perspective deepened to 1000px', /\.nv-drive-viewport\{[^}]*perspective:1000px/.test(css));
 ok('the viewport backstop is a sky gradient, not flat gray',
   /\.nv-drive-viewport\{[^}]*linear-gradient\(180deg,#0b1424/.test(css));
@@ -59,21 +71,40 @@ ok('a second settle invalidateSize pass exists (+650ms)',
   nav.indexOf('}, 650);') >= 0 && (nav.match(/invalidateSize\(\)/g) || []).length >= 3);
 
 console.log('\n— (b)+(c) the bottom bar: arrival visible, buttons whole; tiles readable —');
-ok('v124: the ETA is a two-line stack (arrival main + remaining sub)',
-  /\.nv-drive-eta\{[^}]*flex-direction:column/.test(css) &&
+ok('v125: the ETA stack takes ALL leftover bar space and the sub WRAPS (was: v124 two-line stack, sub nowrap+ellipsis — measured 105px wide in a real engine, sub truncated to "Arrive · 4 min · …")',
+  /\.nv-drive-eta\{[^}]*flex:1 1 0%;[^}]*flex-direction:column/.test(css) &&
   /\.nv-drive-eta-main\{[^}]*font-weight:800[^}]*white-space:nowrap/.test(css) &&
-  /\.nv-drive-eta-sub\{[^}]*white-space:nowrap[^}]*text-overflow:ellipsis/.test(css));
+  /\.nv-drive-eta-sub\{[^}]*-webkit-line-clamp:2/.test(css) &&
+  !/\.nv-drive-eta-sub\{[^}]*text-overflow:ellipsis/.test(css));
 ok('v124: bar buttons keep their NATURAL width (the 0px-ETA crush fix)',
   /\.nv-drive-bar \.btn\{flex:none;width:auto;margin:0;/.test(css));
 ok('the ETA text carries the first destination segment only',
   nav.indexOf("S.destLabel.split(',')[0]") >= 0);
-ok('v124: the drive route line is cased + heavy (17 white under 11 colour)',
-  nav.indexOf('weight: 17') >= 0 && nav.indexOf('weight: 11') >= 0 &&
+ok('v125: the ETA stack renders a visible placeholder from Drive open (never blank)',
+  nav.indexOf('id="nvd_eta_main">--:--</div>') >= 0 &&
+  nav.indexOf('Getting your arrival time…') >= 0);
+ok('v125: the drive route line is cased white 17 under a deep BLUE core 12 (owner spec: bold, a colour no road uses — was orange #e67e00 at 11)',
+  nav.indexOf("color: '#1a56db', weight: 12") >= 0 && nav.indexOf('weight: 17') >= 0 &&
   nav.indexOf('function makeDriveLine()') >= 0);
+ok('v125: the route line RETRACTS as travelled (driveTick redraws from the projected position)',
+  nav.indexOf('routeRemainder(S.line, S.pos)') >= 0 &&
+  nav.indexOf('layers[li].setLatLngs(rem.points)') >= 0);
 ok('tiles: the planning map keeps the shared lift',
   /\.nv-mapzone \.leaflet-tile\{filter:contrast\(1\.08\) saturate\(1\.18\);\}/.test(css));
-ok('v124: the DRIVE map gets a stronger lift of its own',
-  /\.nv-drive-map \.leaflet-tile\{filter:contrast\(1\.16\) saturate\(1\.42\);\}/.test(css));
+ok('v125: NO filter on drive tiles (the 1.16/1.42 lift made OSM Carto\'s salmon motorways HOT PINK — owner recording, Oct 17) and no leftover drive-tile filter rule',
+  !/\.nv-drive-map \.leaflet-tile\{filter:/.test(css) && !/filter:contrast\(1\.16\) saturate\(1\.42\)/.test(css));
+ok('v125: the drive basemap is CARTO Voyager via driveTileSpec; the drive map no longer loads OSM tiles',
+  nav.indexOf('basemaps.cartocdn.com/rastertiles/voyager') >= 0 &&
+  nav.indexOf('L.tileLayer(tspec.url') >= 0 &&
+  nav.indexOf("L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(S.driveMap)") === -1);
+ok('v125 flicker fix: the drive map disables Leaflet tile fade-in and keeps a deeper tile buffer',
+  nav.indexOf('fadeAnimation: false') >= 0 && nav.indexOf('keepBuffer: 4') >= 0);
+ok('v125: while Drive is open the shell chat FAB is hidden (it sat on End drive / Sound in engine measurements)',
+  /body\.mt-driving #fbFab\{display:none!important;\}/.test(css) &&
+  nav.indexOf("classList.add('mt-driving')") >= 0 && nav.indexOf("classList.remove('mt-driving')") >= 0);
+ok('v125 landscape: the banner compacts (horizontal, smaller) under a short landscape viewport',
+  /@media \(orientation:landscape\) and \(max-height:500px\)\{[^}]*\.nv-drive-top\{display:flex/.test(css.replace(/\n/g, ' ')) &&
+  /\.nv-drive-dist\{font-size:30px;\}/.test(css));
 
 console.log('\n— (a2) v124: Drive is full-bleed, chrome floats —');
 ok('v124: the drive viewport covers the whole screen (absolute, inset 0)',

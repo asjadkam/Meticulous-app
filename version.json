@@ -1,7 +1,7 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 124,
+  "webVersion": 125,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -11,7 +11,7 @@
     "assets/logo.svg": "ff9022a015da20fe2142d2f70e4c99c3e48f10457adebf681eefb1f840cdec70",
     "assets/manifest.json": "92e467fa45e8df0bb326cfeb23aa83d2fad42876abc58b3935c2ba2bb3ca05bd",
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
-    "css/style.css": "aa27ae372cebf1cd3115b7a77dc0ac2329a91d4e611a2f472c23033075c85e1b",
+    "css/style.css": "73b901ecc6a69b246966e4b82dbc2d8f0dcfdd520a505d756774c1d71b591da8",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
     "index.html": "1f29ac9713940ca6461d3d8ffb4b4bd0b05de53b04dc1aa08e88e2777f94ecba",
@@ -41,7 +41,7 @@
     "modules/maintenance.js": "ebeff7d302bbd7eba1477c9a4886534ee5babc8463d6fe22ddae3aae28317a46",
     "modules/manifest.js": "0f80e114443d2db96dddf899d4b3f83612c57dde28b4027c00a1ce9bb6afb741",
     "modules/navigation.js": "9c46757e21870ae6fc108c6a0693172e16337cd072ebe9f7153d883975cab984",
-    "modules/navigator.js": "87e7b9c574fb9646574b46e20c783410fb4a75f9d62120185598406f8e086812",
+    "modules/navigator.js": "7ba2c7dc1551884988734f3b9ca5eab32c941a604168ce2bd7fd9561d6ef0a48",
     "modules/pnl.js": "2c74ff51862e6509f286b020a5f886de334a681b19fbb22b6ec0cd9851abe65d",
     "modules/preferences.js": "84da366b06a7397e8c905af6dfd8e2379461e3bd79ca7d1f1445f26d7ac07f3f",
     "modules/reminders.js": "80d3d3a2183aec785382ed33941e1f3dc200cfac0c7627439faaccbc0fb427e0",
