@@ -140,6 +140,16 @@
       </div>
       <!-- v74: park-place nudge card (js/parkplace.js) — "Start your shift?" / "Close your day?" at the learned park place; filled and wired by parkplace.js, hidden otherwise -->
       <div class="parkcard hidden" id="parkCard"></div>
+      <!-- v107: "Where I park" lives HERE now — it moved out of Preferences → Advanced (owner, Stage 6: setting where you park is a feature, not plumbing). Painted + wired by wireParkHome in js/app.js; hidden for office roles with the tracker. -->
+      <div class="card hidden" id="parkHome" style="margin:12px 0 0;">
+        <h3 style="margin-top:0;">📍 Where I park</h3>
+        <p class="note" id="dash_park_note">Checking…</p>
+        <div class="row" style="gap:6px;">
+          <button type="button" class="btn ghost" id="dash_park_set" style="flex:1;">📍 Set where I park (use my location now)</button>
+          <button type="button" class="btn ghost hidden" id="dash_park_nn" style="flex:1;">Allow notifications</button>
+          <button type="button" class="btn ghost hidden" id="dash_park_forget" style="flex:1;">Forget this place</button>
+        </div>
+      </div>
       <div class="modgrid" id="modGrid"></div>
     </div>
 
@@ -232,38 +242,38 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="js/firebase.js?v=111"></script>
+<script src="js/firebase.js?v=112"></script>
 <script src="js/cloudsync.js?v=96"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/ticket-ocr.js?v=111"></script>
+<script src="js/ticket-ocr.js?v=112"></script>
 <script src="js/powerread.js?v=102"></script>
 <script src="js/dispatch-ingest.js?v=96"></script>
 <script src="js/pdfexport.js?v=96"></script>
-<script src="modules/revenue.js?v=111"></script>
-<script src="modules/dispatch.js?v=111"></script>
+<script src="modules/revenue.js?v=112"></script>
+<script src="modules/dispatch.js?v=112"></script>
 <script src="modules/navigation.js?v=103"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="modules/navigator.js?v=111"></script>
-<script src="modules/fuel.js?v=111"></script>
-<script src="modules/pnl.js?v=111"></script>
-<script src="modules/maintenance.js?v=111"></script>
+<script src="modules/navigator.js?v=112"></script>
+<script src="modules/fuel.js?v=112"></script>
+<script src="modules/pnl.js?v=112"></script>
+<script src="modules/maintenance.js?v=112"></script>
 <script src="modules/damage.js?v=96"></script>
-<script src="modules/manifest.js?v=111"></script>
-<script src="modules/invoice.js?v=111"></script>
-<script src="modules/connect.js?v=111"></script>
+<script src="modules/manifest.js?v=112"></script>
+<script src="modules/invoice.js?v=112"></script>
+<script src="modules/connect.js?v=112"></script>
 <script src="modules/reminders.js?v=96"></script>
 <script src="modules/autostart.js?v=96"></script>
-<script src="modules/preferences.js?v=111"></script>
-<script src="modules/account.js?v=111"></script>
+<script src="modules/preferences.js?v=112"></script>
+<script src="modules/account.js?v=112"></script>
 <script src="modules/subscription.js?v=96"></script>
-<script src="js/app.js?v=111"></script>
+<script src="js/app.js?v=112"></script>
 <script src="js/geo.js?v=96"></script>
 <script src="js/miles.js?v=96"></script>
 <script src="js/geoloads.js?v=96"></script>
 <script src="js/shifttrack.js?v=96"></script>
-<script src="js/parkplace.js?v=111"></script>
+<script src="js/parkplace.js?v=112"></script>
 <script src="js/yardstart.js?v=96"></script>
-<script src="js/chatbot.js?v=111"></script>
+<script src="js/chatbot.js?v=112"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

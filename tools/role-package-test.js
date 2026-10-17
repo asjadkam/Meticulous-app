@@ -380,9 +380,12 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   /* v106 (owner directive, Oct 16, 2026): the Security card LEFT
      Preferences — login has its own page (modules/account.js, pinned
      in tools/account-login-test.js). The v52 "Security last card"
-     order pins are replaced by absence pins: Save preferences now
-     follows the Advanced drawer card directly. */
-  ok(iSave > iSyncRow, 'prefs order: … Advanced (incl. sync troubleshooting) … then Save preferences');
+     order pins are replaced by absence pins.
+     v107 PIN MOVE: the page-order pin ("Advanced … then Save")
+     described ONE scrolling page. With the tab strip, the two
+     views are siblings: Save closes the SETTINGS view, and the
+     Advanced view follows as its own container. */
+  ok(iSave > 0 && pref.indexOf('id="pf_view_advanced"') > iSave, 'v107 prefs order: Save preferences closes the Settings view; the Advanced view is its own sibling container');
   ok(pref.indexOf('securityCard') === -1, 'v106 prefs: no Security card is built or appended anymore');
   ok(pref.indexOf('type="password"') === -1, 'v106 prefs: NO password input anywhere in Preferences');
   ok(pref.indexOf('id="pf_pw_btn"') === -1 && pref.indexOf('id="pf_pw_cur"') === -1 && pref.indexOf('id="pf_pw_new"') === -1 && pref.indexOf('id="pf_pw_conf"') === -1, 'v106 prefs: no change-password fields remain');
@@ -397,7 +400,7 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
   ok(pref.indexOf('pf_pr_key') === -1, 'v94 prefs: NO key input rendered anywhere in Preferences');
   ok(!/Paste your key|Google AI Studio|Get API key|key not set/i.test(pref), 'v94 prefs: no key-instruction strings in Preferences');
   eq((pref.match(/id="pf_pr_on"/g) || []).length, 1, 'v94 prefs: the Power read toggle survives, exactly once');
-  ok(pref.indexOf('Meticulous\\\'s cloud reader') >= 0 && pref.indexOf('Nothing to set up') >= 0, 'v94 prefs: Power read copy states the server shape (nothing to set up)');
+  ok(pref.indexOf('A second, cloud look at photos') >= 0 && pref.indexOf('Nothing to set up') === -1, 'v107 prefs: Power read copy is one short line now (the v94 essay was skeleton prose; the no-key ruling stands via the pins around this one)');
   ok(pref.indexOf('Honest limit: an ask can only appear') === -1, 'v94 prefs: park-place "honest limit" essay is gone');
   ok(pref.indexOf('or set it now while you are parked there') === -1, 'v94 prefs: park-place explainer trimmed (old essay wording absent)');
   ok(pref.indexOf('The Navigator routes trucks on Calgary') === -1, 'v94 prefs: Navigator server explainer trimmed (old essay wording absent)');
@@ -416,25 +419,33 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
      (modules/account.js), where it still sits at the top of the
      card, primary-styled, wired to App.goSignIn — pinned in
      tools/account-login-test.js. Preferences keeps NO door.
-     (2) THE ADVANCED DRAWER: "Put the entire advanced drawer in a
-     button somewhere, not in the wide open like that" — the whole
-     Advanced area sits behind ONE quiet toggle, closed by default,
-     its contents byte-identical in ids/order/behaviour. */
+     (2) ADVANCED: v95 made it a drawer behind one toggle; v107
+     (owner, Oct 16 19:39-19:43) SUPERSEDES the drawer: "advanced
+     should open in a different window of its own... move advanced
+     as a smaller tab on the top of the entire preferences tab" —
+     a [Settings | Advanced] tab strip at the TOP swaps two views;
+     Advanced holds plumbing only, slimmed: the background-tracking
+     block, the power-read counter prose, the standing sync
+     readout, and the park-place block are GONE from Preferences
+     (park-place re-homed to the dashboard — park-place-test). */
   ok(pref.indexOf('id="pf_signin"') === -1, 'v106 prefs: the Sign in door moved to Account & login (no door left in Preferences)');
   ok(pref.indexOf('Sign in to change your password.') === -1, 'v95 prefs: the old dead-end note (a sign-in with no door) is gone');
-  eq((pref.match(/id="pf_adv_toggle"/g) || []).length, 1, 'v95 prefs: exactly one Advanced toggle button');
-  eq((pref.match(/id="pf_adv_body"/g) || []).length, 1, 'v95 prefs: exactly one Advanced container');
-  ok(/id="pf_adv_body" class="hidden"/.test(pref), 'v95 prefs: Advanced renders CLOSED by default');
-  ok(pref.indexOf('<h3>⚙️ Advanced</h3>') === -1, 'v95 prefs: the old wide-open Advanced header is gone');
-  const iTgl = pref.indexOf('id="pf_adv_toggle"');
-  const iAdvBody = pref.indexOf('id="pf_adv_body"');
-  ok(iTgl >= 0 && iAdvBody > iTgl, 'v95 prefs: the toggle sits above its container');
-  ['pf_checkupd', 'pf_push', 'pf_syncnow', 'pf_pr_on', 'pf_bgallow', 'pf_bgbatt', 'pf_parkset', 'pf_nav_url', 'pf_resetonb'].forEach(function (id) {
-    eq((pref.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'v95 prefs: Advanced control #' + id + ' survives exactly once');
-    ok(pref.indexOf('id="' + id + '"') > iAdvBody, 'v95 prefs: #' + id + ' renders INSIDE the collapsed container');
+  eq((pref.match(/id="pf_tab_settings"/g) || []).length, 1, 'v107 prefs: exactly one Settings tab');
+  eq((pref.match(/id="pf_tab_advanced"/g) || []).length, 1, 'v107 prefs: exactly one Advanced tab');
+  ok(pref.indexOf('id="pf_adv_toggle"') === -1 && pref.indexOf('id="pf_adv_body"') === -1, 'v107 prefs: the drawer is gone (no toggle, no expanding body)');
+  ok(/id="pf_view_advanced" class="hidden"/.test(pref), 'v107 prefs: the Advanced view renders hidden (Settings is the opening view)');
+  ok(pref.indexOf('id="pf_tab_advanced"') < pref.indexOf('id="pf_acct"'), 'v107 prefs: the tab strip sits at the TOP, above the first settings card');
+  const iAdvView = pref.indexOf('id="pf_view_advanced"');
+  ['pf_checkupd', 'pf_push', 'pf_syncnow', 'pf_pr_on', 'pf_nav_url', 'pf_resetonb'].forEach(function (id) {
+    eq((pref.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'v107 prefs: Advanced control #' + id + ' survives exactly once');
+    ok(pref.indexOf('id="' + id + '"') > iAdvView, 'v107 prefs: #' + id + ' renders INSIDE the Advanced view');
   });
+  ['pf_bgtrack', 'pf_bgallow', 'pf_bgbatt', 'pf_pr_note', 'pf_parknote', 'pf_parkset', 'pf_parkforget'].forEach(function (id) {
+    eq(pref.indexOf('id="' + id + '"'), -1, 'v107 prefs: removed skeleton/feature element #' + id + ' is absent from Preferences');
+  });
+  ok(pref.indexOf('id="pf_save"') > pref.indexOf('id="pf_view_settings"') && pref.indexOf('id="pf_save"') < iAdvView, 'v107 prefs: Save preferences lives in the Settings view');
   ok(pref.indexOf('🔒 Security') === -1, 'v106 prefs: no Security heading anywhere on the page (it lives on Account & login)');
-  ok(pref.indexOf("querySelector('#pf_adv_toggle')") >= 0 && pref.indexOf("classList.toggle('hidden')") >= 0 && pref.indexOf('aria-expanded') >= 0, 'v95 prefs: the toggle is wired (flips the container, reports its state)');
+  ok(pref.indexOf("querySelector('#pf_tab_advanced')") >= 0 && pref.indexOf('function showTab(adv)') >= 0, 'v107 prefs: the tabs are wired (showTab swaps the two views)');
   ok(pref.indexOf("confirm('Show the setup questions again") >= 0, 'v95 prefs: Reset onboarding keeps its own confirm + purpose, unchanged');
 }
 

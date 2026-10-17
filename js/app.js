@@ -381,6 +381,81 @@
     return '';
   }
 
+  /* v107 (Stage 6): "Where I park" — re-homed from Preferences →
+     Advanced to the dashboard, under the tracker, where the
+     park-place nudges themselves appear. Same ParkPlace engine,
+     same words, same behavior as the v74 Preferences block; this
+     card is its only home now. Painted on every dashboard build;
+     a learned-place change repaints it live (registered once). */
+  var _parkHomeWired = false;
+  function wireParkHome(role) {
+    var card = el('parkHome');
+    if (!card) return;
+    var showCard = roleShowsTracker(role);
+    card.classList.toggle('hidden', !showCard);
+    if (!showCard) return;
+    var note = el('dash_park_note');
+    if (!note) return;
+    var setBtn = el('dash_park_set'), nnBtn = el('dash_park_nn'), forgetBtn = el('dash_park_forget');
+    function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
+    function paint() {
+      var PP = window.ParkPlace;
+      if (!PP) {
+        note.textContent = 'Park-place nudges are not in this build.';
+        show(setBtn, false); show(nnBtn, false); show(forgetBtn, false);
+        return;
+      }
+      var info = PP.info();
+      var lines = [];
+      if (info.place) {
+        lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
+          (info.place.source === 'manual' ? 'you set it.' : 'learned from your shifts.'));
+      } else {
+        lines.push('No park place yet — the app learns it from a few shifts, or set it now while you\'re parked there.');
+      }
+      lines.push('Asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
+      if (!info.notificationsAvailable) {
+        lines.push('Notifications aren\'t in this build — the asks show as a card in the app.');
+        show(nnBtn, false);
+      } else if (info.notificationsGranted) {
+        lines.push('Notifications: allowed ✓.');
+        show(nnBtn, false);
+      } else if (info.notificationsGranted === false) {
+        lines.push('Notifications: not allowed — the asks show as a card in the app instead.');
+        show(nnBtn, true);
+      } else {
+        lines.push('Notifications: checking…');
+        show(nnBtn, false);
+        PP.refreshNotifications().then(function () { paint(); }).catch(function () {});
+      }
+      note.textContent = lines.join(' ');
+      show(forgetBtn, !!info.place);
+    }
+    if (!_parkHomeWired) {
+      _parkHomeWired = true;
+      if (setBtn) setBtn.onclick = function () {
+        var PP = window.ParkPlace;
+        if (!PP) return;
+        note.textContent = 'Getting your location…';
+        PP.setPlaceHere().then(function () { paint(); }).catch(function () {
+          note.textContent = 'Could not get your location. Location may be off for Meticulous, or this build has no location. Nothing was set.';
+        });
+      };
+      if (nnBtn) nnBtn.onclick = function () {
+        var PP = window.ParkPlace;
+        if (!PP) return;
+        PP.requestNotifications().then(function () { setTimeout(paint, 400); });
+      };
+      if (forgetBtn) forgetBtn.onclick = function () {
+        var PP = window.ParkPlace;
+        if (PP) PP.forgetPlace();
+        paint();
+      };
+      try { if (window.ParkPlace) ParkPlace.onPlaceChange(paint); } catch (e) {}
+    }
+    paint();
+  }
+
   function buildDashboard() {
     var g = el('modGrid');
     var html = '';
@@ -392,6 +467,7 @@
     var role = App.userRole();
     var tc = el('trkCard');
     if (tc) tc.style.display = roleShowsTracker(role) ? '' : 'none';
+    try { wireParkHome(role); } catch (e) {}
     roleModuleOrder(role).forEach(function (key) {
       if (key === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
       if (key === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance

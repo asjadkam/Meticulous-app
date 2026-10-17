@@ -321,9 +321,15 @@ function flush() { return new Promise(function (r) { setTimeout(r, 10); }); }
   ok(!!pinM, 'C: index.html loads js/parkplace.js with a version pin');
   const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
   ok(!!pinM && +pinM[1] === vj.webVersion, 'C: parkplace pin == version.json webVersion (' + vj.webVersion + ')');
+  /* v107 PIN MOVE (Stage 6): the park-place controls left
+     Preferences — "Set where I park" is a feature, re-homed to the
+     dashboard under the tracker (wireParkHome in js/app.js, card
+     in index.html). The ask-only law's copy moved with it. */
   const prefs = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
-  ok(prefs.indexOf('pf_parknote') >= 0 && prefs.indexOf('pf_parkset') >= 0 && prefs.indexOf('pf_parkforget') >= 0, 'C: Preferences → Advanced carries the park-place block');
-  ok(prefs.indexOf('never starts or stops anything by itself') >= 0, 'C: prefs copy states the ask-only law');
+  ok(prefs.indexOf('pf_parkset') === -1 && prefs.indexOf('pf_parknote') === -1, 'C: Preferences no longer carries the park-place block');
+  const appJs6 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
+  ok(appJs6.indexOf('dash_park_note') >= 0 && appJs6.indexOf('function wireParkHome(role)') >= 0 && idx.indexOf('id="dash_park_set"') >= 0 && idx.indexOf('id="parkHome"') >= 0, 'C: the dashboard carries the park-place block (Where I park card)');
+  ok(appJs6.indexOf('never starts or stops anything by itself') >= 0, 'C: home copy states the ask-only law');
   const shift = fs.readFileSync(path.join(ROOT, 'js', 'shifttrack.js'), 'utf8');
   ok(shift.indexOf('ParkPlace.ingestCrumbs') >= 0, 'C: the native drain feeds ParkPlace beside GeoLoads');
   const cs = fs.readFileSync(path.join(ROOT, 'js', 'cloudsync.js'), 'utf8');

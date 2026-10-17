@@ -144,8 +144,8 @@ async function main() {
     eq((html.match(/type="password"/g) || []).length, 0, 'prefs RENDER: password input count is exactly 0');
     ok(html.indexOf('pf_pw') === -1 && html.indexOf('pf_signin') === -1, 'prefs RENDER: no password/door ids rendered');
     ok(html.indexOf('Security') === -1, 'prefs RENDER: no Security card rendered');
-    ok(html.indexOf('id="pf_save"') >= 0 && html.indexOf('id="pf_acct"') >= 0 && html.indexOf('id="pf_adv_toggle"') >= 0,
-      'prefs RENDER: the rest of the page is intact (Account card, Advanced drawer, Save)');
+    ok(html.indexOf('id="pf_save"') >= 0 && html.indexOf('id="pf_acct"') >= 0 && html.indexOf('id="pf_tab_advanced"') >= 0,
+      'prefs RENDER: the rest of the page is intact (Account card, Advanced tab, Save)');
   }
 
   /* ================= 2. Account & login: the moved card ================= */

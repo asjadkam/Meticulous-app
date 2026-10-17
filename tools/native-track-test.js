@@ -256,8 +256,13 @@ console.log('glue: static checks');
   const gl = fs.readFileSync(path.join(ROOT, 'js', 'geoloads.js'), 'utf8');
   ok(/ingestNativeCrumbs: function/.test(gl), '(j) GeoLoads exposes the native crumb path');
   const pref = fs.readFileSync(path.join(ROOT, 'modules', 'preferences.js'), 'utf8');
-  ok(/id=\\"pf_bgtrack\\"|pf_bgtrack/.test(pref) && /pf_bgallow/.test(pref) && /pf_bgbatt/.test(pref),
-    '(j) Preferences carries the background-tracking status block');
+  /* v107 PIN MOVE (Stage 6, owner: Advanced shows no skeleton):
+     the background-tracking STATUS BLOCK left Preferences
+     entirely. The actionable surface that remains is the tracker
+     ask banner (trkBgAsk, pinned just below) plus the native
+     machinery itself, which the rest of this section pins. */
+  ok(!/pf_bgtrack|pf_bgallow|pf_bgbatt/.test(pref),
+    '(j) v107: Preferences no longer carries the background-tracking status block (removed per the Advanced slimming spec)');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   ok(parseInt((html.match(/js\/shifttrack\.js\?v=(\d+)/) || [])[1] || '0', 10) >= 69 && /id="trkBgAsk"/.test(html),
     '(j) index.html loads shifttrack.js and hosts the ask banner');

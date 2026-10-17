@@ -23,7 +23,17 @@
          master — a silent rewind on every save.) */
       var odoMaster = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
       var ROLE_LABEL = { driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' };
-      var h = '<div class="card"><h3>👤 Account</h3>' +
+      /* v107 (Stage 6, owner Oct 16 19:39-19:43): Advanced is a
+         TAB at the top of Preferences — its own swapped view, never
+         an expanding drawer in the scroll. Settings is the default
+         view and owns the Save button; Advanced holds plumbing
+         only (updates, sync retry, power read switch, navigator
+         server, reset) and its controls persist as they change. */
+      var h = '<div class="card" style="padding:10px 12px;"><div class="row" style="gap:6px;margin:0;">' +
+        '<button type="button" class="btn navy" id="pf_tab_settings" style="flex:1;">Settings</button>' +
+        '<button type="button" class="btn ghost" id="pf_tab_advanced" style="flex:1;">⚙️ Advanced</button></div></div>' +
+        '<div id="pf_view_settings">' +
+        '<div class="card"><h3>👤 Account</h3>' +
         '<label class="f">Account type</label><select id="pf_acct">' +
         ['Driver', 'Owner-Operator', 'Fleet Manager'].map(function (x) { return '<option' + (o.accountType === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
         '<label class="f">Do you drive a truck yourself?</label><select id="pf_role">' +
@@ -182,9 +192,26 @@
          ids, order and behaviour, v94 copy standing. The wiring below
          queries the same ids (elements in a hidden container are still
          in the DOM), so nothing about how the rows work changes. */
-      h += '<div class="card">' +
-        '<button class="btn ghost" id="pf_adv_toggle" aria-expanded="false" style="width:100%;text-align:left;">⚙️ Advanced <span id="pf_adv_caret" style="float:right;">▸</span></button>' +
-        '<div id="pf_adv_body" class="hidden">' +
+
+      /* v32: cloud-sync diagnostics used to be their own card here;
+         v52 moved them into Advanced as a troubleshooting row (owner:
+         "you only need this as a troubleshooting tool"). The status +
+         retry wiring below is unchanged and works on the same ids. */
+      // v24: removed "Erase all local data" — developer tool, not for users
+
+      /* v52 (owner, Oct 14): the role control lives in the Account
+         card next to Account type — an earlier end-of-list placement
+         for the role question was a misread and was withdrawn.
+         v106: the Security card that used to close the list moved to
+         the Account & login screen (modules/account.js); the Advanced
+         drawer card is now the last card above Save. */
+
+      /* v52: THE button — one solid primary, full width, at the very
+         bottom of the page, under the last card. */
+      h += '<button class="btn primary big" id="pf_save" style="margin-top:2px;">Save preferences</button>';
+      h += '</div>';
+      h += '<div id="pf_view_advanced" class="hidden">';
+      h += '<div class="card"><h3>⚙️ Advanced</h3>' +
         '<button class="btn ghost" id="pf_checkupd" style="margin-top:14px;">Check for updates</button>' +
         '<p class="note" id="pf_updnote"></p>' +
         /* v54 (owner, Oct 14): Notifications row — plumbing a user
@@ -202,7 +229,7 @@
            pf_syncnote / pf_syncnow ids.) */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
-        '<p class="note" id="pf_syncnote">Checking…</p>' +
+        '<p class="note" id="pf_syncnote"></p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
         /* v59 (owner, Oct 14): Power read is plumbing too — it lives
            here in Advanced, not as a feature card. The switch persists
@@ -214,35 +241,8 @@
            set up, so the card carries only the switch. */
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">⚡ Power read — cloud help for hard photos</p>' +
-        '<p class="note">When a photo is too hard for the built-in reader, Power read sends just that photo to Meticulous\'s cloud reader for a second look. Nothing to set up — and the answer always waits for your check.</p>' +
-        '<label class="chk"><input type="checkbox" id="pf_pr_on"> Power read on</label>' +
-        '<p class="note" id="pf_pr_note"></p></div>' +
-        /* v63 (native v34): Background tracking status — plumbing like
-           the rows above, not a feature card. On the new Android shell
-           it reports, in plain words, whether miles keep counting with
-           the app closed ("Allow all the time" location) and whether
-           battery saver can stop the tracker mid-shift, with one-tap
-           fixes. On any other build it says so in one quiet line.
-           Status is READ live at render; nothing nags anywhere else. */
-        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
-        '<p class="note" style="margin-top:0">🛰️ Background tracking</p>' +
-        '<p class="note" id="pf_bgtrack">Checking…</p>' +
-        '<button class="btn ghost hidden" id="pf_bgallow">Allow location all the time</button>' +
-        '<button class="btn ghost hidden" id="pf_bgbatt">Open battery settings</button></div>' +
-        /* v74 (owner, Oct 14): Park-place nudges — plumbing like the
-           rows above. The app learns where the truck sleeps (from
-           shift starts/ends) and ASKS once each way: "Start your
-           shift?" in the morning, "Close your day?" in the evening.
-           It never starts or stops anything by itself. Status +
-           manual set/forget live here; the asks themselves appear
-           as a card under the tracker (and as real notifications
-           on the Android app when allowed). */
-        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
-        '<p class="note" style="margin-top:0">📍 Park-place nudges</p>' +
-        '<p class="note" id="pf_parknote">Checking…</p>' +
-        '<button class="btn ghost" id="pf_parkset">📍 Set where I park (use my location now)</button>' +
-        '<button class="btn ghost hidden" id="pf_parknn">Allow notifications</button>' +
-        '<button class="btn ghost hidden" id="pf_parkforget">Forget this place</button></div>' +
+        '<p class="note">A second, cloud look at photos the built-in reader can\'t read. The answer always waits for your check.</p>' +
+        '<label class="chk"><input type="checkbox" id="pf_pr_on"> Power read on</label></div>' +
         /* v77 (Navigator): the routing server URL is plumbing — a user
            sets it once (or never) — so it lives here in Advanced, not
            on the Navigator card. v98: the field shows the effective
@@ -259,22 +259,7 @@
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<button class="btn ghost" id="pf_resetonb" style="color:#c0392b;border:1px solid #c0392b;">Reset onboarding questions</button>' +
         '<p class="note">Shows the setup questions again on next sign-in. Your saved answers stay until you finish the questions again.</p></div></div></div>';
-      /* v32: cloud-sync diagnostics used to be their own card here;
-         v52 moved them into Advanced as a troubleshooting row (owner:
-         "you only need this as a troubleshooting tool"). The status +
-         retry wiring below is unchanged and works on the same ids. */
-      // v24: removed "Erase all local data" — developer tool, not for users
-
-      /* v52 (owner, Oct 14): the role control lives in the Account
-         card next to Account type — an earlier end-of-list placement
-         for the role question was a misread and was withdrawn.
-         v106: the Security card that used to close the list moved to
-         the Account & login screen (modules/account.js); the Advanced
-         drawer card is now the last card above Save. */
-
-      /* v52: THE button — one solid primary, full width, at the very
-         bottom of the page, under the last card. */
-      h += '<button class="btn primary big" id="pf_save" style="margin-top:2px;">Save preferences</button>';
+      h += '</div>';
 
       body.innerHTML = h;
       body.querySelector('#pf_save').onclick = function () {
@@ -458,15 +443,24 @@
       } catch (e) {}
       /* v106: the sign-in door + change-password wiring moved with
          the Security card to modules/account.js. */
-      /* v95: the Advanced drawer toggle — flips the container only;
-         every control inside keeps its own wiring below, untouched. */
-      body.querySelector('#pf_adv_toggle').onclick = function () {
-        var advBody = body.querySelector('#pf_adv_body');
-        var advOpen = advBody.classList.toggle('hidden') === false;
-        this.setAttribute('aria-expanded', advOpen ? 'true' : 'false');
-        var advCaret = body.querySelector('#pf_adv_caret');
-        if (advCaret) advCaret.textContent = advOpen ? '▾' : '▸';
-      };
+      /* v107: the tab strip — swaps the two top-level views; every
+         control inside keeps its own wiring below, untouched. The
+         Settings view (with Save) is the default; Advanced never
+         expands inside the Settings scroll. */
+      (function () {
+        var sBtn = body.querySelector('#pf_tab_settings');
+        var aBtn = body.querySelector('#pf_tab_advanced');
+        var sView = body.querySelector('#pf_view_settings');
+        var aView = body.querySelector('#pf_view_advanced');
+        function showTab(adv) {
+          if (sView) sView.classList.toggle('hidden', adv);
+          if (aView) aView.classList.toggle('hidden', !adv);
+          if (sBtn) sBtn.className = 'btn ' + (adv ? 'ghost' : 'navy');
+          if (aBtn) aBtn.className = 'btn ' + (adv ? 'navy' : 'ghost');
+        }
+        if (sBtn) sBtn.onclick = function () { showTab(false); };
+        if (aBtn) aBtn.onclick = function () { showTab(true); };
+      })();
       body.querySelector('#pf_push').onclick = function () {
         if (window.FB && FB.enablePush) {
           FB.enablePush().then(function (r) {
@@ -513,180 +507,50 @@
           if (!n.textContent) n.textContent = 'App web version: v' + v.active + (v.inOtaCopy ? ' (updated copy)' : ' (installed copy)');
         });
       } catch (e) {}
-      /* v32: cloud-sync status + manual retry */
+      /* v32: manual sync retry. v107: no standing status readout
+         (owner: Advanced shouldn't show the app's skeleton) — the
+         note line starts EMPTY and reports only the result of a
+         Retry tap: feedback, not a readout. */
       (function () {
         var note = body.querySelector('#pf_syncnote');
         var btn = body.querySelector('#pf_syncnow');
-        if (!note || !btn) return;
-        function paint() {
-          try {
-            if (!window.CloudSync) { note.textContent = 'Sync engine not loaded.'; return; }
-            var st = CloudSync.status();
-            var word = st.dot === 'ok' ? 'Backed up ✓'
-              : st.dot === 'syncing' ? 'Syncing…'
-              : st.dot === 'err' ? 'Error' : 'Off (not signed in)';
-            var t = 'Status: ' + word;
-            if (st.lastError) t += ' — ' + String(st.lastError).slice(0, 140);
-            if (st.dirtyKeys && st.dirtyKeys.length) t += ' — ' + st.dirtyKeys.length + ' change(s) waiting to upload.';
-            note.textContent = t;
-          } catch (e) { note.textContent = 'Could not read sync status.'; }
-        }
-        paint();
+        if (!btn) return;
         btn.onclick = function () {
-          note.textContent = 'Sync requested — watch the top-bar dot…';
+          if (note) note.textContent = 'Syncing…';
           try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
-          setTimeout(paint, 4000);
+          setTimeout(function () {
+            if (!note) return;
+            try {
+              if (!window.CloudSync) { note.textContent = 'Sync engine not loaded.'; return; }
+              var st = CloudSync.status();
+              note.textContent = st.dot === 'ok' ? '✓ Backed up.'
+                : st.dot === 'err' ? 'Sync hit an error' + (st.lastError ? ' — ' + String(st.lastError).slice(0, 140) : '') + '.'
+                : st.dot === 'syncing' ? 'Still syncing — give it a moment.'
+                : 'Sync is off (not signed in).';
+            } catch (e) { if (note) note.textContent = 'Could not read the sync result.'; }
+          }, 4000);
         };
       })();
       /* v59: the power-read switch persists on change (never via
-         Save preferences); the note shows the month's read count.
-         v94: no key control exists here anymore (owner ruling,
-         Oct 16) — nothing on this card reads, writes, or mentions
-         a key. A key saved on the device before v94 stays where it
-         is and PowerRead still uses it silently. */
+         Save preferences). v94: no key control exists here (owner
+         ruling, Oct 16). v107: the monthly counter / queue prose
+         is GONE (owner: no skeleton in Advanced) — the switch is
+         the whole row now. */
       (function () {
         var onEl = body.querySelector('#pf_pr_on');
-        var note = body.querySelector('#pf_pr_note');
-        if (!note) return;
-        function paint(extra) {
-          if (!window.PowerRead) { note.textContent = 'Power read is not loaded in this version.'; return; }
-          var bits = [];
-          bits.push('Power reads this month: ' + PowerRead.monthCount() + '.');
-          var q = 0;
-          try { q = PowerRead.queueLength(); } catch (e) {}
-          if (q) bits.push(q + ' power read' + (q === 1 ? '' : 's') + ' waiting for signal.');
-          if (extra) bits.push(extra);
-          note.textContent = bits.join(' ');
-        }
-        if (window.PowerRead) {
-          if (onEl) onEl.checked = PowerRead.isOn();
-        }
-        if (onEl) onEl.onchange = function () {
+        if (!onEl) return;
+        if (window.PowerRead) onEl.checked = PowerRead.isOn();
+        onEl.onchange = function () {
           if (window.PowerRead) PowerRead.setOn(!!onEl.checked);
-          paint(onEl.checked ? 'Power read is on.' : 'Power read is off — hard photos get the built-in reader only.');
         };
-        paint();
       })();
-      /* v63: background-tracking status (native v34 shell). Reads the
-         live plugin status at render and re-reads after a fix tap.
-         Inert everywhere else — one honest line, no dead buttons. */
-      (function () {
-        var note = body.querySelector('#pf_bgtrack');
-        if (!note) return;
-        var allowBtn = body.querySelector('#pf_bgallow');
-        var battBtn = body.querySelector('#pf_bgbatt');
-        function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
-        function paint() {
-          var ST = window.ShiftTrack;
-          if (!ST || !ST.available()) {
-            note.textContent = 'Not in this build — miles count only while the app is open. The newest Android app counts in the background.';
-            show(allowBtn, false); show(battBtn, false);
-            return;
-          }
-          ST.status(true).then(function (s) {
-            if (!s) { note.textContent = 'Could not read tracking status.'; return; }
-            var lines = [];
-            if (!s.fineLocation) {
-              lines.push('Location is off for Meticulous — miles can\'t be counted. Turn it on, then allow it below.');
-            } else if (s.backgroundLocation) {
-              lines.push('Background location: allowed — miles keep counting with the app closed. ✓');
-            } else {
-              lines.push('Background location: not allowed — counting stops when the app closes.');
-            }
-            lines.push(s.batteryExempt
-              ? 'Battery: unrestricted — saver can\'t stop tracking mid-shift. ✓'
-              : 'Battery: saver can stop tracking mid-shift — set Meticulous battery to “Unrestricted”.');
-            if (s.sessionActive) lines.push('Right now: a shift is being tracked in the background.');
-            /* v92: the armed day, in plain words — counting that
-               starts by itself, before the app is ever opened. */
-            if (s.armStarted && s.sessionActive) {
-              lines.push('Today\'s counting started by itself.');
-            } else if (s.armed && s.armFireMs) {
-              var armWhen = new Date(s.armFireMs).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
-              var armDay = new Date(s.armFireMs).toDateString() === new Date().toDateString() ? 'today' : 'tomorrow';
-              lines.push('Next shift: counting starts by itself ' + armDay + ' at ' + armWhen + '.');
-            }
-            note.textContent = lines.join(' ');
-            show(allowBtn, !s.backgroundLocation);
-            show(battBtn, !s.batteryExempt);
-          }).catch(function () { note.textContent = 'Could not read tracking status.'; });
-        }
-        if (allowBtn) allowBtn.onclick = function () {
-          var ST = window.ShiftTrack;
-          if (!ST) return;
-          ST.requestBackground().then(function () { setTimeout(paint, 600); });
-        };
-        if (battBtn) battBtn.onclick = function () {
-          var ST = window.ShiftTrack;
-          if (ST) ST.openBatterySettings();
-          setTimeout(paint, 1500);
-        };
-        paint();
-      })();
-      /* v74: park-place nudges status + manual set/forget + the
-         notifications permission (js/parkplace.js). Reads live state
-         at render; learning a place repaints via onPlaceChange. */
-      (function () {
-        var note = body.querySelector('#pf_parknote');
-        if (!note) return;
-        var setBtn = body.querySelector('#pf_parkset');
-        var nnBtn = body.querySelector('#pf_parknn');
-        var forgetBtn = body.querySelector('#pf_parkforget');
-        function show(btn, on) { if (btn) btn.classList.toggle('hidden', !on); }
-        function paint() {
-          var PP = window.ParkPlace;
-          if (!PP) {
-            note.textContent = 'Park-place nudges are not in this build.';
-            show(setBtn, false); show(nnBtn, false); show(forgetBtn, false);
-            return;
-          }
-          var info = PP.info();
-          var lines = [];
-          if (info.place) {
-            lines.push('Park place: set (' + info.place.lat.toFixed(4) + ', ' + info.place.lng.toFixed(4) + ') — ' +
-              (info.place.source === 'manual' ? 'you set it.' : 'learned from your shifts.'));
-          } else {
-            lines.push('No park place yet — the app learns it from a few shifts, or set it now while you\'re parked there.');
-          }
-          lines.push('Asks at most twice a day — “Start your shift?” in the morning, “Close your day?” in the evening — and never starts or stops anything by itself.');
-          if (!info.notificationsAvailable) {
-            lines.push('Notifications aren\'t in this build — the asks show as a card in the app.');
-            show(nnBtn, false);
-          } else if (info.notificationsGranted) {
-            lines.push('Notifications: allowed ✓.');
-            show(nnBtn, false);
-          } else if (info.notificationsGranted === false) {
-            lines.push('Notifications: not allowed — the asks show as a card in the app instead.');
-            show(nnBtn, true);
-          } else {
-            lines.push('Notifications: checking…');
-            show(nnBtn, false);
-            PP.refreshNotifications().then(function () { paint(); }).catch(function () {});
-          }
-          note.textContent = lines.join(' ');
-          show(forgetBtn, !!info.place);
-        }
-        if (setBtn) setBtn.onclick = function () {
-          var PP = window.ParkPlace;
-          if (!PP) return;
-          note.textContent = 'Getting your location…';
-          PP.setPlaceHere().then(function () { paint(); }).catch(function () {
-            note.textContent = 'Could not get your location. Location may be off for Meticulous, or this build has no location. Nothing was set.';
-          });
-        };
-        if (nnBtn) nnBtn.onclick = function () {
-          var PP = window.ParkPlace;
-          if (!PP) return;
-          PP.requestNotifications().then(function () { setTimeout(paint, 400); });
-        };
-        if (forgetBtn) forgetBtn.onclick = function () {
-          var PP = window.ParkPlace;
-          if (PP) PP.forgetPlace();
-          paint();
-        };
-        try { if (window.ParkPlace) ParkPlace.onPlaceChange(paint); } catch (e) {}
-        paint();
-      })();
+      /* v107: the background-tracking status block is GONE from
+         Preferences (owner, Stage 6: no skeleton prose in Advanced).
+         The native ask banner on the tracker (trkBgAsk) still
+         carries the one actionable fix, where it happens. */
+      /* v107: the park-place controls MOVED to the dashboard
+         (wireParkHome in js/app.js) — setting where you park is a
+         feature of the workday surface, not Preferences plumbing. */
       /* v77: Navigator profile + server URL — persist the moment they
          change (the power-read pattern), through the shared
          MeticulousNav store helpers the Navigator module reads. If the
