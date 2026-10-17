@@ -403,6 +403,50 @@
 
   /* ---------------- pull (cloud -> local) ---------------- */
 
+  /* v107 (Stage 8) — CONVERGENCE HELPERS.
+     Oct 16's divergence, proven: a fresh local copy materializes
+     DEFAULT values (first-run onboarding writes, tracker defaults)
+     stamped km.t = NOW — newer than the cloud's real values — so
+     "both changed, latest wins" kept the defaults and the flush
+     then PUSHED them up over the cloud. The phone showed Revenue
+     $0, auto-start OFF/6 AM and default Preferences while the
+     cloud held everything; only a cloud-side write with a newer
+     timestamp + an OTA healed it. Two rules fix the class:
+       (1) 'onboarding' merges FIELD BY FIELD on every pull: a SET
+           field beats an UNSET one on the other copy (a set value
+           is data; an unset one is just a default that was never
+           chosen); fields set on both sides keep the whole-key
+           winner. If the merge holds anything the cloud lacks,
+           the key stays dirty so it pushes UP — neither copy can
+           silently lose a set value (his phone held Alberta while
+           the cloud held nothing; the cloud held his company
+           details while the phone held blanks — both survive).
+       (2) On a uid's FIRST pull, a local value that is EMPTY
+           ([], {}, '', null) never beats a non-empty cloud value,
+           whatever the timestamps say (generic empty-default rule).
+     The guard stands untouched: where both sides genuinely hold
+     set values, the newer timestamp still wins. */
+  function valueIsEmpty(v) {
+    if (v === null || v === undefined || v === '') return true;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === 'object') { try { return Object.keys(v).length === 0; } catch (e) { return false; } }
+    return false;
+  }
+  function fieldIsSet(v) { return !(v === null || v === undefined || v === ''); }
+  function mergeOnboardingFields(localV, cloudV, winner) {
+    var out = {}, k, seen = {};
+    var a = localV || {}, b = cloudV || {}, s;
+    for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) seen[k] = true;
+    for (k in b) if (Object.prototype.hasOwnProperty.call(b, k)) seen[k] = true;
+    for (k in seen) {
+      var lv = a[k], cv = b[k];
+      if (fieldIsSet(lv) && !fieldIsSet(cv)) out[k] = lv;
+      else if (fieldIsSet(cv) && !fieldIsSet(lv)) out[k] = cv;
+      else out[k] = (winner === 'cloud') ? cv : lv;
+    }
+    return out;
+  }
+
   function syncNow() {
     // v34: self-heal a desync where Firebase HAS a signed-in user but this
     // engine never got (or lost) that sign-in — on device the dot then sat
@@ -473,6 +517,38 @@
         var raw = lsGetRaw(key);
         var localDirty = (km.t || 0) > (km.s || 0);
         var cloudChanged = cloudTs > (km.s || 0);
+
+        /* v107 (Stage 8): the two convergence rules (see the
+           helpers above) run BEFORE the whole-key rules below. */
+        if (raw !== null) {
+          var localVal = parseJson(raw, undefined);
+          if (key === 'onboarding' && localVal && typeof localVal === 'object' && !Array.isArray(localVal) &&
+              d.v && typeof d.v === 'object' && !Array.isArray(d.v)) {
+            var obWinner = (localDirty && cloudChanged)
+              ? (cloudTs > (km.t || 0) ? 'cloud' : 'local')
+              : (cloudChanged ? 'cloud' : 'local');
+            var merged = mergeOnboardingFields(localVal, d.v, obWinner);
+            if (JSON.stringify(merged) !== JSON.stringify(localVal)) {
+              lsSetRaw(key, JSON.stringify(merged));
+              applied++;
+            }
+            if (JSON.stringify(merged) !== JSON.stringify(d.v)) {
+              /* the merge holds set values the cloud lacks — keep
+                 the key dirty (t ahead of the cloud's stamp) so
+                 the flush pushes the union UP. */
+              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+            } else {
+              meta.keys[key] = { t: cloudTs, s: cloudTs };
+            }
+            return;
+          }
+          if (firstSyncForUid && valueIsEmpty(localVal) && !valueIsEmpty(d.v)) {
+            lsSetRaw(key, JSON.stringify(d.v));
+            meta.keys[key] = { t: cloudTs, s: cloudTs };
+            applied++;
+            return;
+          }
+        }
 
         if (raw === null) {
           // Not on this device.

@@ -1,7 +1,7 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 113,
+  "webVersion": 114,
   "notes": "OTA: web assets update in-app; native reinstall only when apkUrl points at a newer APK.",
   "files": {
     "assets/hero-truck.jpg": "3f19f3f74b0aa78e73c342b14bccb0e714c9d51b0552b803d843000958d8574c",
@@ -14,11 +14,11 @@
     "css/style.css": "b8a3466487396fce0c175cfce8d0f51d069bcc08783da3c83a1aa3d85be6ad4b",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "1048b67de0201e702dde397a10721cb03c02165da7213c50ed8a0cae38975d63",
+    "index.html": "ffb13055de07c320b0af7d68bb9b34c12b405d788fc852c7d3b2db9ee7e6d42a",
     "js/app.js": "8261f2ecd08af18a46683b4651e094765bfd4d7e520cba0c200540438c01bab8",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "fe162471c016590076aca34317167dde10ab5d969fb20029e741cba1bbb8572d",
-    "js/cloudsync.js": "75da8d638aecdb6e2a93fd8af0963e782110863b1b91c7c551906b5469f777b3",
+    "js/cloudsync.js": "cf387b84abd00c5705645cd2260642b20c832ed2a98a086e8b24562e98e198df",
     "js/dispatch-ingest.js": "49defbc38d3f268db050b2ce7b285f78836961547edeb1bb09c8f6895d850555",
     "js/firebase.js": "af7bc2822244cef8eb4fdf8c429d79cd211eba63dcba3688e660d9dcb551f34f",
     "js/geo.js": "07be8d4377e8ca027d6dd09576bd3f6cc3febcd9de0fe0137c4f22b8dc1cf8ce",
