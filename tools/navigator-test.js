@@ -149,6 +149,27 @@ console.log('— pure: request building —');
     dp0.idx === 0 && Math.abs(dp0.toTurnM - 90) < 2 && Math.abs(dp0.leftM - 4886) < 2 &&
     Math.abs(dp0.etaMin - 7.02) < 0.05 && dp0.next === plan.maneuvers[1]);
   check('driveProgress road at 0 m = Norquay Heights NW', dp0.road === 'Norquay Heights NW', dp0.road);
+  /* v124: the arrival answer — a clock time, computed from the
+     same proportional ETA driveProgress already carried. */
+  check('v124 fmtClock: morning, midnight, noon, late night',
+    sb.fmtClock(new Date(2026, 9, 17, 8, 2)) === '8:02 AM' &&
+    sb.fmtClock(new Date(2026, 9, 17, 0, 5)) === '12:05 AM' &&
+    sb.fmtClock(new Date(2026, 9, 17, 12, 0)) === '12:00 PM' &&
+    sb.fmtClock(new Date(2026, 9, 17, 23, 59)) === '11:59 PM');
+  const T0 = new Date(2026, 9, 17, 7, 38, 0).getTime();
+  const ei0 = sb.driveEtaInfo(plan, 0, T0);
+  check('v124 driveEtaInfo at 0 m: arrival = now + the full ETA, full trip left',
+    Math.abs(ei0.arriveAt.getTime() - T0 - plan.totalMin * 60000) <= 1 &&
+    Math.abs(ei0.leftM - plan.totalKm * 1000) < 2 && Math.abs(ei0.etaMin - plan.totalMin) < 0.01,
+    ei0.arriveAt + ' / ' + ei0.etaMin);
+  const eiHalf = sb.driveEtaInfo(plan, plan.totalKm * 500, T0);
+  check('v124 driveEtaInfo half-way: ETA halves with the distance left',
+    Math.abs(eiHalf.etaMin - plan.totalMin / 2) < 0.05 && Math.abs(eiHalf.leftM - plan.totalKm * 500) < 2);
+  check('v124 bearingDeg: N / E / S / W from a Calgary fix',
+    sb.bearingDeg([51.05, -114.06], [51.06, -114.06]) === 0 &&
+    sb.bearingDeg([51.05, -114.06], [51.04, -114.06]) === 180 &&
+    sb.bearingDeg([51.05, -114.06], [51.05, -114.05]) > 85 && sb.bearingDeg([51.05, -114.06], [51.05, -114.05]) < 95 &&
+    sb.bearingDeg([51.05, -114.06], [51.05, -114.07]) > 265 && sb.bearingDeg([51.05, -114.06], [51.05, -114.07]) < 275);
   const saidBag = {};
   check('drivePrompt: 700 m out says nothing', sb.drivePrompt(plan, 0, 700, saidBag) === null);
   check('drivePrompt: 550 m out speaks the far (pre-transition) line once',
@@ -250,7 +271,7 @@ function makeWorld(storeData, withNavModule, fetchMode) {
     'nv_pq', 'nv_presults',
     /* v101: full-screen shell + drive screen */
     'nv_back', 'nv_drive', 'nv_drive_screen', 'nv_drive_map',
-    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
+    'nvd_dist', 'nvd_inst', 'nvd_road', 'nvd_eta_main', 'nvd_eta_sub', 'nvd_reroute', 'nvd_spin', 'nvd_mute', 'nvd_exit'];
   const reg = {};
   ids.forEach(function (id) { reg[id] = el(); });
   reg.nv_presults = resultsEl();
@@ -371,7 +392,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   console.log('— flow: off-route re-route (hysteresis) —');
   const realNow = Date.now;
   let fakeNow = realNow();
-  w.world.Date = { now: function () { return fakeNow; } };
+  w.world.Date = (function () { var RD = Date; function FD() { return new RD(fakeNow); } FD.now = function () { return fakeNow; }; return FD; })();
   w.firePos(51.1155, -114.0915); // ~700 m off the line
   await tick();
   check('first off-route fix does NOT re-route yet (hysteresis)', w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
@@ -528,14 +549,28 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('drive screen paints the next instruction + distance',
     wD.reg.nvd_inst.textContent.length > 0 && wD.reg.nvd_dist.textContent.length > 0,
     wD.reg.nvd_inst.textContent + ' / ' + wD.reg.nvd_dist.textContent);
-  check('drive screen paints remaining distance + ETA', /left/.test(wD.reg.nvd_eta.textContent), wD.reg.nvd_eta.textContent);
+  check('v124: drive bar MAIN line is the arrival CLOCK time, big and bare',
+    /^\d{1,2}:\d{2} [AP]M$/.test(wD.reg.nvd_eta_main.textContent), wD.reg.nvd_eta_main.textContent);
+  check('v124: drive bar sub line carries Arrive + minutes + distance left',
+    /^Arrive ·/.test(wD.reg.nvd_eta_sub.textContent) && /left/.test(wD.reg.nvd_eta_sub.textContent) && /min/.test(wD.reg.nvd_eta_sub.textContent), wD.reg.nvd_eta_sub.textContent);
   check('heading-up: the map spins by −heading around the driver anchor',
     wD.reg.nvd_spin.style.transform === 'rotate(-90deg)', String(wD.reg.nvd_spin.style.transform));
+  /* v124: a GPS stream that reports NO heading (some devices
+     never send one) — movement itself becomes the heading once a
+     fix travels ≥10 m, so heading-up still engages. From midPt a
+     ~200 m hop north-east reads as a bearing near 32°. */
+  wD.firePos(midPt[0] + 0.0015, midPt[1] + 0.0015, null);
+  const spinDeg = parseFloat((/rotate\((-?\d+(?:\.\d+)?)deg\)/.exec(String(wD.reg.nvd_spin.style.transform)) || [])[1]);
+  check('v124: no GPS heading → the spin follows the movement bearing',
+    isFinite(spinDeg) && spinDeg < -20 && spinDeg > -45, String(wD.reg.nvd_spin.style.transform));
   /* off-route while driving: hysteresis, then a re-route request
      and the rerouting pill on the drive screen */
   const realNowD = Date.now;
   let fakeNowD = realNowD();
-  wD.world.Date = { now: function () { return fakeNowD; } };
+  /* v124: the double must survive `new Date(...)` — driveTick
+     builds the arrival Date every tick (driveEtaInfo), and a
+     plain {now} object throws "Date is not a constructor". */
+  wD.world.Date = (function () { var RD = Date; function FD() { return new RD(fakeNowD); } FD.now = function () { return fakeNowD; }; return FD; })();
   wD.firePos(51.1155, -114.0915, 90);
   await tick();
   check('driving: first off-route fix does NOT re-route yet',
@@ -662,7 +697,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('v104: End drive returns to the plan view', wG.reg.nv_drive_screen.classList.contains('hidden'));
   const realNowG = Date.now;
   let fakeNowG = realNowG();
-  wG.world.Date = { now: function () { return fakeNowG; } };
+  wG.world.Date = (function () { var RD = Date; function FD() { return new RD(fakeNowG); } FD.now = function () { return fakeNowG; }; return FD; })();
   wG.firePos(51.1155, -114.0915);
   await tick();
   check('v104: after exit, first off-route fix does not re-route yet', gRoutes() === 1);

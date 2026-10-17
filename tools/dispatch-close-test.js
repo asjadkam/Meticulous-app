@@ -283,6 +283,22 @@ async function driveToConfirm(w) {
       w.body.innerHTML.indexOf('id="dp_close_ticket"') >= 0 &&
       w.body.innerHTML.indexOf('📸 Close with ticket photo') >= 0);
     check('a: plain Complete still on the card', w.body.innerHTML.indexOf('id="dp_complete"') >= 0);
+    /* v124: BUTTON SAFETY layout — ONE primary on the card
+       (Close with ticket photo, full-width big); the other three
+       actions share ONE uniform secondary row (.dsp-actions) at
+       quiet styling. The old row mixed a primary, a navy block
+       and two ghosts at ragged heights. */
+    check('v124: Close with ticket photo is the card\u2019s ONE primary (primary big)',
+      w.body.innerHTML.indexOf('class="btn primary big" id="dp_close_ticket"') >= 0);
+    check('v124: Complete/Edit/Cancel form ONE uniform secondary row',
+      w.body.innerHTML.indexOf('class="row dsp-actions"') >= 0 &&
+      w.body.innerHTML.indexOf('class="btn ghost small" id="dp_complete"') >= 0 &&
+      w.body.innerHTML.indexOf('class="btn ghost small" id="dp_edit_active"') >= 0 &&
+      w.body.innerHTML.indexOf('class="btn ghost small" id="dp_cancel"') >= 0);
+    check('v124: neither secondary action wears a loud style',
+      w.body.innerHTML.indexOf('btn navy" id="dp_close_ticket"') === -1 &&
+      w.body.innerHTML.indexOf('btn primary" id="dp_complete"') === -1 &&
+      w.body.innerHTML.indexOf('btn navy" id="dp_complete"') === -1);
     const listBefore = JSON.stringify(w.store.get('dsp_list', []));
     const flow = await driveToConfirm(w);
     check('a: confirm view reached after the read', flow.innerHTML.indexOf('id="dp_cf_confirm"') >= 0);

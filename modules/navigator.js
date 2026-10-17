@@ -218,6 +218,43 @@
     };
   }
 
+  /* v124: the arrival answer, as data — the Drive bar's main line
+     is a CLOCK time ("8:02 AM", big and bare so it fits beside
+     the buttons at a glance), not only a duration. The
+     owner asked "What's the arrival time?" at 07:17 with the old
+     bar showing nothing at all (see the bar CSS note in style.css
+     — the ETA element was crushed to 0 px wide); even had it
+     rendered, "24 min left" never answered his question. */
+  function fmtClock(d) {
+    var h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + ('0' + m).slice(-2) + ' ' + ap;
+  }
+
+  function driveEtaInfo(plan, alongM, nowMs) {
+    var dp = driveProgress(plan, alongM);
+    return {
+      arriveAt: new Date(nowMs + dp.etaMin * 60000),
+      etaMin: dp.etaMin, leftM: dp.leftM
+    };
+  }
+
+  /* v124: compass bearing from fix A to fix B (degrees, 0 = N).
+     The fallback heading when the GPS stream reports no heading
+     of its own — some devices leave coords.heading null at any
+     speed, and without a heading the drive map never spins
+     heading-up (one half of why the owner's Drive looked like a
+     flat north-up map). Movement IS a heading; derive it. */
+  function bearingDeg(a, b) {
+    var rad = Math.PI / 180;
+    var dLon = (b[1] - a[1]) * rad;
+    var y = Math.sin(dLon) * Math.cos(b[0] * rad);
+    var x = Math.cos(a[0] * rad) * Math.sin(b[0] * rad) -
+      Math.sin(a[0] * rad) * Math.cos(b[0] * rad) * Math.cos(dLon);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+
   /* Spoken advance prompts for drive mode: each upcoming maneuver
      is announced ONCE far out (its verbal pre-transition line) and
      ONCE close in (its crisp instruction). `said` is a caller-owned
@@ -529,7 +566,8 @@
         '<div class="nv-drive-you">▲</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div></div>' +
         '<div class="nv-drive-bar">' +
-        '<div class="nv-drive-eta" id="nvd_eta"></div>' +
+        '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main"></div>' +
+        '<div class="nv-drive-eta-sub" id="nvd_eta_sub"></div></div>' +
         '<button class="btn ghost" id="nvd_mute">🔊 Sound: on</button>' +
         '<button class="btn primary" id="nvd_exit">End drive</button>' +
         '</div></div></div>';
@@ -841,8 +879,15 @@
       }
       function onPos(lat, lon, heading, speed) {
         var first = !S.pos;
+        var prevPos = S.pos;
         S.pos = [lat, lon];
         if (heading !== null && heading !== undefined && isFinite(heading)) S.heading = heading;
+        /* v124: no heading from the GPS stream (some devices never
+           send one) — derive it from the movement itself once the
+           fix has travelled ≥10 m, so heading-up still engages.
+           A shorter hop is jitter, not a direction: keep the last
+           real heading, exactly as the stationary rule does. */
+        else if (prevPos && haversineM(prevPos, S.pos) >= 10) S.heading = bearingDeg(prevPos, S.pos);
         if (speed !== null && speed !== undefined && isFinite(speed)) S.speed = speed;
         /* v104: before the settle pass, the position is recorded
            but NOT painted (the gate in the map init paints it
@@ -1059,6 +1104,18 @@
         }
       }
 
+      /* v124: the route line is the DOMINANT element on the drive
+         map — a white casing under a heavy coloured core, so the
+         road ahead reads at a glance against any tile. Before, a
+         lone 6px line (grey in car mode) washed into the map. */
+      function makeDriveLine() {
+        var col = S.settings.mode === 'car' ? '#2b7de0' : '#e67e00';
+        return L.layerGroup([
+          L.polyline(S.line, { color: '#ffffff', weight: 17, opacity: 0.9 }),
+          L.polyline(S.line, { color: col, weight: 11, opacity: 1 })
+        ]);
+      }
+
       /* ---------- v101 drive screen ---------- */
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
@@ -1074,9 +1131,7 @@
               keyboard: false, touchZoom: false
             }).setView(S.pos || S.line[0], 17);
             L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(S.driveMap);
-            S.driveLine = L.polyline(S.line, {
-              color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 6, opacity: 0.95
-            }).addTo(S.driveMap);
+            S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v104: the position marker joins the settle pass
                below, not this first paint — the same un-settled-
                size balloon the planning map grew (see the map
@@ -1087,7 +1142,7 @@
                 if (!S || !S.driveMap) return;
                 S.driveMap.invalidateSize();
                 if (S.drive && S.pos && !S.driveMarker) {
-                  S.driveMarker = L.circleMarker(S.pos, { radius: 9, color: '#1F3764', weight: 2, fillColor: '#3f7de0', fillOpacity: 0.95 }).addTo(S.driveMap);
+                  S.driveMarker = L.circleMarker(S.pos, { radius: 11, color: '#ffffff', weight: 3, fillColor: '#2b7de0', fillOpacity: 1 }).addTo(S.driveMap);
                 }
               } catch (e) {}
             }, 120);
@@ -1140,9 +1195,7 @@
         if (S.driveMap && S.line) {
           try {
             if (S.driveLine) S.driveMap.removeLayer(S.driveLine);
-            S.driveLine = L.polyline(S.line, {
-              color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 6, opacity: 0.95
-            }).addTo(S.driveMap);
+            S.driveLine = makeDriveLine().addTo(S.driveMap);
           } catch (e) {}
         }
         driveTick();
@@ -1162,12 +1215,13 @@
         if (instEl) instEl.textContent = showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : '');
         var roadEl = body.querySelector('#nvd_road');
         if (roadEl) roadEl.textContent = dp.road ? 'On ' + dp.road : '';
-        var etaEl = body.querySelector('#nvd_eta');
-        if (etaEl) etaEl.textContent = fmtDist(dp.leftM) + ' · ' + fmtMin(dp.etaMin) + ' left' +
+        var etaMain = body.querySelector('#nvd_eta_main');
+        if (etaMain) etaMain.textContent = fmtClock(driveEtaInfo(S.plan, pr.along, Date.now()).arriveAt);
+        var etaSub = body.querySelector('#nvd_eta_sub');
+        if (etaSub) etaSub.textContent = 'Arrive · ' + fmtMin(dp.etaMin) + ' · ' + fmtDist(dp.leftM) + ' left' +
           /* v107: the bar shows the destination's first segment
-             only — a full address wrapped the ETA into a column
-             and crushed the buttons (the CSS now also enforces
-             the single line; this keeps the text itself short). */
+             only — a full address would crowd the line (the CSS
+             ellipsizes the sub-line; the main line never wraps). */
           (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : '');
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
@@ -1202,7 +1256,8 @@
         var instEl = body.querySelector('#nvd_inst'); if (instEl) instEl.textContent = 'You have arrived';
         var distEl = body.querySelector('#nvd_dist'); if (distEl) distEl.textContent = '';
         var roadEl = body.querySelector('#nvd_road'); if (roadEl) roadEl.textContent = S.destLabel || '';
-        var etaEl = body.querySelector('#nvd_eta'); if (etaEl) etaEl.textContent = 'Trip complete';
+        var etaMain = body.querySelector('#nvd_eta_main'); if (etaMain) etaMain.textContent = 'Arrived';
+        var etaSub = body.querySelector('#nvd_eta_sub'); if (etaSub) etaSub.textContent = S.destLabel || '';
         var rrEl = body.querySelector('#nvd_reroute'); if (rrEl) rrEl.classList.add('hidden');
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} }
         S.driveTimer = setTimeout(function () { exitDrive(); }, 3000);

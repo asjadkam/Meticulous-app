@@ -19,6 +19,15 @@
  *  (b) the ETA is one line (nowrap + ellipsis + min-width:0),
  *      the bar buttons keep their width, and the ETA text itself
  *      carries only the destination's first segment;
+ *      v124 MOVED THIS PIN DELIBERATELY (owner, Oct 17 07:17 —
+ *      "What's the arrival time?", over a Drive screen whose bar
+ *      showed no arrival info at all): measured in a real engine,
+ *      the v107 row crushed the ETA to 0 px wide — the global
+ *      .btn{width:100%} defeated flex:none, each button claimed
+ *      the whole bar, and End drive sat off-screen. The ETA is
+ *      now a two-line stack (arrival CLOCK time on top, remaining
+ *      under it), the bar buttons are scoped to natural width,
+ *      and the drive tiles get a stronger lift of their own;
  *  (c) tiles get the contrast/saturation lift;
  *  (d) BOTH pickers obey the tap rule (the tap writes the place
  *      into the search box), and the Places card moves its ✓ in
@@ -49,13 +58,32 @@ ok('the 52° standard tilt is unchanged', css.indexOf('rotateX(52deg)') >= 0);
 ok('a second settle invalidateSize pass exists (+650ms)',
   nav.indexOf('}, 650);') >= 0 && (nav.match(/invalidateSize\(\)/g) || []).length >= 3);
 
-console.log('\n— (b)+(c) the bottom bar is one readable row; tiles readable —');
-ok('ETA is a single ellipsized line', /\.nv-drive-eta\{[^}]*min-width:0[^}]*white-space:nowrap[^}]*text-overflow:ellipsis/.test(css));
-ok('bar buttons never shrink', /\.nv-drive-bar \.btn\{flex:none;\}/.test(css));
+console.log('\n— (b)+(c) the bottom bar: arrival visible, buttons whole; tiles readable —');
+ok('v124: the ETA is a two-line stack (arrival main + remaining sub)',
+  /\.nv-drive-eta\{[^}]*flex-direction:column/.test(css) &&
+  /\.nv-drive-eta-main\{[^}]*font-weight:800[^}]*white-space:nowrap/.test(css) &&
+  /\.nv-drive-eta-sub\{[^}]*white-space:nowrap[^}]*text-overflow:ellipsis/.test(css));
+ok('v124: bar buttons keep their NATURAL width (the 0px-ETA crush fix)',
+  /\.nv-drive-bar \.btn\{flex:none;width:auto;margin:0;/.test(css));
 ok('the ETA text carries the first destination segment only',
   nav.indexOf("S.destLabel.split(',')[0]") >= 0);
-ok('tiles get the contrast/saturation lift on both maps',
-  /\.nv-drive-map \.leaflet-tile,\.nv-mapzone \.leaflet-tile\{filter:contrast\(1\.08\) saturate\(1\.18\);\}/.test(css));
+ok('v124: the drive route line is cased + heavy (17 white under 11 colour)',
+  nav.indexOf('weight: 17') >= 0 && nav.indexOf('weight: 11') >= 0 &&
+  nav.indexOf('function makeDriveLine()') >= 0);
+ok('tiles: the planning map keeps the shared lift',
+  /\.nv-mapzone \.leaflet-tile\{filter:contrast\(1\.08\) saturate\(1\.18\);\}/.test(css));
+ok('v124: the DRIVE map gets a stronger lift of its own',
+  /\.nv-drive-map \.leaflet-tile\{filter:contrast\(1\.16\) saturate\(1\.42\);\}/.test(css));
+
+console.log('\n— (a2) v124: Drive is full-bleed, chrome floats —');
+ok('v124: the drive viewport covers the whole screen (absolute, inset 0)',
+  /\.nv-drive-viewport\{position:absolute;inset:0;/.test(css));
+ok('v124: the maneuver banner floats over the map as a card',
+  /\.nv-drive-top\{position:absolute;[^}]*border-radius:16px/.test(css));
+ok('v124: the ETA bar floats over the map as a card',
+  /\.nv-drive-bar\{position:absolute;[^}]*border-radius:16px/.test(css));
+ok('v124: the dispatch secondary action row is uniform (one height, zeroed margins)',
+  /\.dsp-actions \.btn\{margin:0;min-height:48px;/.test(css));
 
 console.log('\n— (d) the tap rule, both pickers —');
 {

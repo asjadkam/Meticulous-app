@@ -962,11 +962,22 @@
           (isOffice ? '' : '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>') +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' : '') +
           '<div id="dp_close_note"></div>' +
-          '<div class="row" style="margin-top:10px">' +
-          '<button class="btn primary" id="dp_complete">✅ Complete dispatch</button>' +
-          '<button class="btn navy" id="dp_close_ticket">📸 Close with ticket photo</button>' +
-          '<button class="btn ghost" id="dp_edit_active">✏️ Edit</button>' +
-          '<button class="btn ghost" id="dp_cancel">Cancel</button></div>' +
+          /* v124 (owner, Oct 17 07:47 — "why are they so mismatched,
+             why is it not consistent"): ONE primary on this card —
+             Close with ticket photo, his daily close path, full
+             width. The old row put four .btn (each width:100% by
+             the global rule) in one .row whose align-items:center
+             let every button keep its own wrapped height: a big
+             orange block, a TALLER navy block, two small pale
+             ones. The rest are now ONE uniform secondary row —
+             same height, same radius, same quiet styling. The
+             handlers and the v52 completion routing are untouched;
+             this is presentation only. */
+          '<button class="btn primary big" id="dp_close_ticket" style="margin-top:10px">📸 Close with ticket photo</button>' +
+          '<div class="row dsp-actions">' +
+          '<button class="btn ghost small" id="dp_complete">✅ Complete dispatch</button>' +
+          '<button class="btn ghost small" id="dp_edit_active">✏️ Edit</button>' +
+          '<button class="btn ghost small" id="dp_cancel">Cancel</button></div>' +
           '<div id="dp_closeflow"></div></div>';
       }
 
@@ -1014,8 +1025,14 @@
         '<div id="dp_ocr_prompt"></div>' +
         '<div id="dp_preview"></div>' +
         (editingId ?
-          '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_saveedit">💾 Save changes</button>' +
-          '<button class="btn ghost" id="dp_canceledit">Cancel edit</button></div></div>' :
+          /* v124: the same unification as the active card — Save
+             changes is the ONE primary (full width); Cancel edit
+             is a quiet full-width ghost under it, same 52px height
+             as every stacked form button. They used to share a
+             .row, a loud primary shoulder-to-shoulder with a
+             ghost at equal width. */
+          '<button class="btn primary" id="dp_saveedit" style="margin-top:10px">💾 Save changes</button>' +
+          '<button class="btn ghost" id="dp_canceledit">Cancel edit</button></div>' :
           isOffice ?
             /* v76 (F3): office Save is a PLAIN Save — no "& start",
                no started semantics; the honest local-only line sits

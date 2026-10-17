@@ -270,6 +270,12 @@ function eq(name, got, want) {
   ok('i: history entries have an Edit button', dspSrc.includes('data-edit="'));
   ok('i: form renders a Save changes button in edit mode', dspSrc.includes('id="dp_saveedit"'));
   ok('i: form renders a Cancel edit button in edit mode', dspSrc.includes('id="dp_canceledit"'));
+  /* v124: the edit row joins the same unification — Save changes
+     is a full-width primary, Cancel edit a full-width ghost under
+     it; they no longer share a .row at equal loudness. */
+  ok('v124: edit Save/Cancel are stacked full-width, not row siblings',
+    dspSrc.includes('class="btn primary" id="dp_saveedit"') &&
+    !dspSrc.includes('<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_saveedit">'));
   ok('i: the draft carries editId from the form', dspSrc.includes('editId: editingId || null'));
   ok('i: edit entry loads the record through the draft', dspSrc.includes('editId: d.id'));
   const dialogs = (dspSrc.match(/[^a-zA-Z](alert|confirm)\(/g) || []).length;

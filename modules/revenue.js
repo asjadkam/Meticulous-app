@@ -1026,25 +1026,32 @@
   var lastBody = null;
 
   var api = {
-    /* v118: the dashboard preview is a FIXED "Last 30d" glance —
-       it used to mirror whatever window was last selected inside
-       Revenue (the soak caught "Last 16d: $319" after pay-period
-       use and "Last 30d: $7308" after 30d use on the same day),
-       which reads as the number changing its mind. The module's
-       selected window is the module's own business; the card
-       always quotes the same trailing 30 days. */
+    /* v124: the dashboard card quotes the SAME period the owner
+       selected inside Revenue — his catch, Oct 17 07:45: "why is
+       it not showing me what I have selected inside as my
+       period". The v118 fixed "Last 30d" below was a repair that
+       outlived its day: it stopped the number changing its mind
+       by ignoring his selection altogether. Now the card reads
+       summary() — the module's own aggregation over inPeriod(),
+       no second math path — and NAMES the selected window, so
+       the number can never wear the wrong label. The default
+       (30 days) reads exactly as it did under v118. */
     status: function () {
-      var map = dayAgg();
-      var today = App._today();
-      var lo = today, probe = new Date(today + 'T12:00:00');
-      probe.setDate(probe.getDate() - 29);
-      lo = probe.getFullYear() + '-' + ('0' + (probe.getMonth() + 1)).slice(-2) + '-' + ('0' + probe.getDate()).slice(-2);
-      var total = 0, any = false;
-      Object.keys(map).forEach(function (ds) {
-        if (ds < lo || ds > today) return;
-        if (map[ds].hasEntry) { any = true; total += map[ds].amount; }
-      });
-      return any ? 'Last 30d: $' + total.toFixed(0) : 'No entries yet';
+      var s = summary();
+      if (!s.count) return 'No entries yet';
+      var p = S('period', '30');
+      if (p === 'custom') {
+        var a = S('customA', ''), b = S('customB', '');
+        if (a && b && b >= a) {
+          var f = function (ds) {
+            return new Date(ds + 'T12:00:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
+          };
+          return f(a) + ' – ' + f(b) + ': $' + s.total.toFixed(0);
+        }
+        /* invalid custom bounds: inPeriod()/periodDays() fall back
+           to the rolling 30 days, and so does the label. */
+      }
+      return 'Last ' + s.days + 'd: $' + s.total.toFixed(0);
     },
     /* Tracker hook — called by app.js when a work session stops.
        v41: the session entry carries the dynamic tracker's tracked

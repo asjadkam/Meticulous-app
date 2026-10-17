@@ -100,6 +100,13 @@ body{
 .card h3{margin:0 0 12px;font-size:15px;color:var(--navy);}
 .row{display:flex;gap:12px;align-items:center;}
 .row>*{flex:1;}
+/* v124: the dispatch action row — three secondary actions at ONE
+   height/radius/voice under the card's single primary. The .btn
+   base margins are zeroed (they are what let row siblings sit at
+   ragged heights) and each button centers its label so a wrapped
+   two-line label and a one-line label land at the same height. */
+.dsp-actions{gap:8px;margin-top:8px;align-items:stretch;}
+.dsp-actions .btn{margin:0;min-height:48px;display:flex;align-items:center;justify-content:center;text-align:center;}
 /* v121: flex/grid children may shrink BELOW their content's
    min-content size. Without this, a child's floor is its longest
    unbreakable content — when the floors in a row summed past the
@@ -342,8 +349,16 @@ label.chk input{width:18px;height:18px;}
    the view. The you-arrow is an
    overlay OUTSIDE the transforms, pinned at the anchor, always
    pointing up — heading-up means the world moves, not the driver. */
-.nv-drive{position:fixed;inset:0;z-index:2000;background:#0d1526;display:flex;flex-direction:column;}
-.nv-drive-top{background:#1F3764;color:#fff;padding:14px 16px 10px;z-index:3;box-shadow:0 2px 10px rgba(0,0,0,.4);}
+.nv-drive{position:fixed;inset:0;z-index:2000;background:#0d1526;}
+/* v124 (owner, Oct 17 08:09 — the Drive screen "looks like an
+   afterthought", thick bezels around a boxed map window): the
+   map is now FULL-BLEED — the viewport covers the whole screen
+   edge to edge, and the chrome (maneuver banner, ETA bar) FLOATS
+   over it as cards, the purpose-built-navigator pattern. Before,
+   banner and bar were solid blocks in a flex column with the map
+   squeezed in a frame between them. Only Drive changes; the
+   planning screen keeps its own shell. */
+.nv-drive-top{position:absolute;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;background:#1F3764;color:#fff;padding:14px 16px 12px;border-radius:16px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);}
 .nv-drive-dist{font-size:44px;font-weight:800;line-height:1;}
 .nv-drive-inst{font-size:21px;font-weight:700;line-height:1.25;margin-top:4px;}
 .nv-drive-road{font-size:15px;color:#D9E1F3;margin-top:4px;min-height:20px;}
@@ -355,22 +370,35 @@ label.chk input{width:18px;height:18px;}
    and the viewport background is a SKY gradient (deep navy at
    the top into horizon blue), so any residual sliver above the
    horizon reads as sky, not as a broken map. */
-.nv-drive-viewport{flex:1;position:relative;overflow:hidden;perspective:1000px;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
-.nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;}
-.nv-drive-spin{position:absolute;inset:0;transform-origin:50% 64%;transition:transform .45s linear;}
+.nv-drive-viewport{position:absolute;inset:0;overflow:hidden;perspective:1000px;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
+.nv-drive-tilt{position:absolute;inset:0;transform:rotateX(52deg);transform-origin:50% 64%;will-change:transform;backface-visibility:hidden;}
+.nv-drive-spin{position:absolute;inset:0;transform-origin:50% 64%;transition:transform .45s linear;will-change:transform;backface-visibility:hidden;}
 .nv-drive-mapbox{position:absolute;width:300%;height:300%;left:50%;top:64%;transform:translate(-50%,-50%);}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 .nv-drive-you{position:absolute;left:50%;top:64%;transform:translate(-50%,-100%);font-size:30px;color:#1F3764;text-shadow:0 0 6px #fff,0 0 3px #fff;z-index:5;pointer-events:none;}
-.nv-drive-reroute{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);}
-.nv-drive-bar{background:#1F3764;color:#fff;padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:8px;z-index:3;}
-/* v107: ONE readable row — the ETA text takes the free space on a
-   single line (ellipsis, never a wrapped column) and the buttons
-   keep their natural width. Before this, a long destination
-   wrapped the ETA into a tall narrow column and crushed the
-   Sound / End drive buttons beside it. */
-.nv-drive-eta{flex:1;min-width:0;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.nv-drive-bar .btn{flex:none;}
+.nv-drive-reroute{position:absolute;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
+.nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);}
+/* v124 (owner, Oct 17 07:17 — "What's the arrival time?", asked
+   over a Drive screen showing NO arrival info at all): the v107
+   row below claimed the buttons "keep their natural width", but
+   the global .btn rule is width:100% and flex:none takes flex-basis
+   from that width — so EACH button claimed the whole bar, the ETA
+   (flex:1, min-width:0) was crushed to a measured 0 px wide, and
+   End drive sat entirely off-screen. The bar now scopes its
+   buttons to natural width with the .btn margins zeroed, and the
+   ETA is a two-line stack that cannot be crushed: the arrival
+   CLOCK time on top (bold, never wraps), the remaining
+   minutes + distance under it (ellipsized if long). */
+.nv-drive-eta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px;}
+.nv-drive-eta-main{font-size:20px;font-weight:800;line-height:1.15;white-space:nowrap;}
+.nv-drive-eta-sub{font-size:13px;color:#D9E1F3;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nv-drive-bar .btn{flex:none;width:auto;margin:0;min-height:48px;padding:10px 14px;font-size:15px;}
 /* v107: tile readability — a contrast/saturation lift on the map
    tiles themselves (the lever the OSM tile source leaves us), on
-   the drive map and the planning map alike. */
-.nv-drive-map .leaflet-tile,.nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
+   the drive map and the planning map alike.
+   v124: the DRIVE map gets a stronger lift of its own — deeper
+   contrast + saturation so roads and land read as a navigation
+   display instead of a washed diagram; the planning map keeps
+   the gentler shared lift. */
+.nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
+.nv-drive-map .leaflet-tile{filter:contrast(1.16) saturate(1.42);}
