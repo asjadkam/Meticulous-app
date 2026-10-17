@@ -149,13 +149,15 @@ console.log('(b) office order — the boss five lead, Connect first (F4)');
 {
   const w = roleWorld({});
   /* v77: 'navigator' rides right after 'navigation' in every order —
-     the boss five still lead the office home; nothing is removed. */
-  deepEq('office module order: five lead, same eleven modules', w.sb.roleModuleOrder('office'),
-    ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigation', 'navigator']);
-  deepEq('driver module order: pre-v77 order + navigator', w.sb.roleModuleOrder('driver'),
-    ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'navigator', 'damage', 'pnl', 'invoice', 'connect']);
-  deepEq('both module order: pre-v77 order + navigator', w.sb.roleModuleOrder('both'),
-    ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']);
+     the boss five still lead the office home; nothing is removed.
+     v119: MERGED — one Navigator door; 'navigation' is gone from
+     every order (ten modules). */
+  deepEq('office module order: five lead, same ten modules (v119 merge)', w.sb.roleModuleOrder('office'),
+    ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator']);
+  deepEq('driver module order: merged order', w.sb.roleModuleOrder('driver'),
+    ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']);
+  deepEq('both module order: merged order', w.sb.roleModuleOrder('both'),
+    ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']);
   const items = [['dashboard'], ['dispatch'], ['revenue'], ['fuel'], ['pnl'], ['maintenance'], ['damage'],
     ['manifest'], ['invoice'], ['reminders'], ['navigation'], ['connect'], ['preferences'], ['subscription']];
   const off = w.sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });

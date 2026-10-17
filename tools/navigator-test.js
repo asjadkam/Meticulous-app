@@ -560,10 +560,16 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   /* The Navigator's door 1 renders through the Navigation
      module's shared picker: recents-only by default, the full
      list only as filter matches, one tap sets the destination
-     on the pin — and auto-route fires from the pick. */
+     on the pin — and auto-route fires from the pick.
+     v119: the modules are MERGED — the drive face opens through
+     a pending hand-off (the places face's Navigate, a dispatch,
+     the chatbot), so this world seeds nav_pending for the Bradi
+     favorite, exactly as the app's own hand-off would. The door
+     itself is unchanged inside the drive face. */
   const wPk = makeWorld({
     navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' },
     nav_places_migrated: 91,
+    nav_pending: { name: 'Aecon Bradi Pit', lat: 51.27206, lng: -114.43179, ts: Date.now() },
     nav_data: {
       work: [{ id: 'fav-bradi', name: 'Aecon Bradi Pit', address: '', type: 'pit',
                lat: 51.27206, lng: -114.43179, visits: 2, lastVisit: 1792000000000 }],
@@ -583,14 +589,26 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     wPk.reg.nv_presults.innerHTML.indexOf('Stoney Pit') >= 0 &&
     wPk.reg.nv_presults.innerHTML.indexOf('Aecon Bradi Pit') < 0, wPk.reg.nv_presults.innerHTML);
   wPk.firePos(ORIGIN[0], ORIGIN[1]);
+  await tick(); await tick(); // the hand-off's route lands (S.plan set)
+  /* v119: the seeded hand-off routed to Bradi once position
+     landed, so a plan exists — and a plan blocks auto-routing a
+     fresh pick (the standing v103 rule in ANY session). The
+     driver ends that route first; then the pick's own auto-route
+     is what fires. */
+  wPk.reg.nv_end.onclick();
   wPk.reg.nv_presults.pick('bi-stoney-pit');
   await tick(); await tick();
   check('picker door: one tap set the destination on the place pin',
     wPk.reg.nv_destnote.textContent.indexOf('Destination: Stoney Pit') >= 0, wPk.reg.nv_destnote.textContent);
   const pkRoutes = wPk.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
-  check('picker door: the pick AUTO-ROUTED (no Route tap)', pkRoutes.length === 1, pkRoutes.length + ' route fetches');
-  if (pkRoutes.length) {
-    const pkSent = JSON.parse(pkRoutes[0].opts.body);
+  /* v119: the seeded hand-off may route to Bradi once position
+     lands; the PICK's own auto-route is the one targeting Stoney. */
+  const pkStoney = pkRoutes.filter(function (c) {
+    try { const L = JSON.parse(c.opts.body).locations; return L && L[1] && L[1].lat === 51.165429 && L[1].lon === -114.213202; } catch (e) { return false; }
+  });
+  check('picker door: the pick AUTO-ROUTED (no Route tap)', pkStoney.length === 1, pkRoutes.length + ' route fetches, ' + pkStoney.length + ' to Stoney');
+  if (pkStoney.length) {
+    const pkSent = JSON.parse(pkStoney[0].opts.body);
     check('picker door: the route targets the VERIFIED Stoney pin',
       pkSent.locations[1].lat === 51.165429 && pkSent.locations[1].lon === -114.213202, JSON.stringify(pkSent.locations));
   }

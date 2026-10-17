@@ -271,11 +271,15 @@
   };
 
   /* ---------------- module registry / dashboard ---------------- */
-  var MODULE_ORDER = ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  /* v119 (owner, Oct 16 22:00 MDT: "Why are there 2 modules?
+     Navigation and navigator?"): ONE door — Navigator 🧭. The
+     Navigation module survives only as the merged module's
+     places component (its file still loads; the Navigator's
+     front face renders it). No card, no drawer entry, no meta. */
+  var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
     dispatch:   { title: 'Dispatch',          icon: '📋', tier: 'basic' },
-    navigation: { title: 'Navigation',        icon: '🗺️', tier: 'basic' },
     navigator:  { title: 'Navigator',         icon: '🧭', tier: 'basic' },
     fuel:       { title: 'Fuel & Expense',    icon: '⛽', tier: 'basic' },
     pnl:        { title: 'P&L',               icon: '📈', tier: 'basic' },
@@ -299,19 +303,19 @@
   var USER_ROLES = ['driver', 'both', 'office'];
   var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
   var ROLE_MODULE_ORDER = {
-    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigation', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
+    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
     /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
        five tools IN BLUEPRINT ORDER — Connect first (his #1: his
        connection to his drivers), then Dispatch, Invoice, Maintenance,
        P&L. Everything else follows; nothing is removed. */
-    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigation', 'navigator'],
-    both: ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
+    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator'],
+    both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
      other sidebar item keeps its current place after them. Nothing is
      removed — tuning is emphasis only. */
   var ROLE_SIDEBAR_LEAD = {
-    driver: ['dashboard', 'revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'maintenance', 'damage', 'manifest'],
+    driver: ['dashboard', 'revenue', 'dispatch', 'navigator', 'fuel', 'maintenance', 'damage', 'manifest'],
     office: ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'],
     both: ['dashboard']
   };
@@ -424,7 +428,6 @@
     ['dashboard', '🏠', 'Dashboard'],
     ['revenue', '📊', 'Revenue'],
     ['dispatch', '📋', 'Dispatch'],
-    ['navigation', '🗺️', 'Navigation'],
     ['navigator', '🧭', 'Navigator'],
     ['fuel', '⛽', 'Fuel & Expense'],
     ['pnl', '📈', 'P&L'],
@@ -513,6 +516,10 @@
   };
 
   App.openModule = function (key) {
+    /* v119: the retired 'navigation' door routes into the merged
+       Navigator — on its front (places) face, which is where the
+       Navigator's resetView lands it. */
+    if (key === 'navigation') key = 'navigator';
     var meta = MODULE_META[key];
     var special = { reminders: 1, preferences: 1, subscription: 1, account: 1 };
     /* P&L + Maintenance gates removed Oct 13, 2026 — Asjad (Driver) gets full access. */

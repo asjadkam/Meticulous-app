@@ -227,5 +227,41 @@ ok('no routing-server config touched (no serverUrl writes in either module)', !/
   ok('v118: the Navigator picker tap resolves through the shared resolver', torSrc.includes('navPicker.displayPlaceName(p)'));
 }
 
+/* ---------- v119: ONE door — Navigation merged into Navigator ----------
+   Owner (Oct 16 22:00 MDT): "Why are there 2 modules? Navigation
+   and navigator?" The Navigation card + drawer entry are gone;
+   the merged Navigator's front face IS the old Navigation face
+   (rendered by that module as a component); the old module id
+   routes into it; storage keys and the places data are
+   untouched; the Yard pick still arms dispatch auto-activation
+   (yardstart reads nav_yard, written by the places face). */
+{
+  const appSrc119 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
+  ok('v119: exactly ONE of the two cards exists — no Navigation meta entry',
+    appSrc119.indexOf("navigation: { title: 'Navigation'") === -1 &&
+    appSrc119.indexOf("navigator:  { title: 'Navigator',         icon: '🧭', tier: 'basic' }") !== -1);
+  ok('v119: no Navigation drawer entry', appSrc119.indexOf("['navigation', '🗺️', 'Navigation']") === -1);
+  ok('v119: role orders carry the Navigator only (no navigation id in any order list)',
+    !/ROLE_MODULE_ORDER = \{[^}]*'navigation'/.test(appSrc119) &&
+    !/var MODULE_ORDER = \[[^\]]*'navigation'/.test(appSrc119));
+  ok("v119: the retired id routes into the merged module (openModule alias)",
+    appSrc119.indexOf("if (key === 'navigation') key = 'navigator';") !== -1);
+  ok('v119: the merged front face renders the places component',
+    torSrc.includes("Meticulous.modules.navigation") && torSrc.includes('navMod.render(body); return;'));
+  ok('v119: a pending destination promotes the render to the drive face (in-module hand-off)',
+    torSrc.includes("if (hasPending) nvFace = 'drive';") && torSrc.includes("App._store.get('nav_pending', null)"));
+  ok('v119: fresh entry lands on the front face (resetView)',
+    torSrc.includes("resetView: function () { nvFace = 'places'; },"));
+  ok('v119: the back staircase — plan root returns to the places face',
+    torSrc.includes("nvFace = 'places';") && torSrc.includes('if (nvBody) api.render(nvBody);'));
+  ok('v119: picking a favorite still arms Navigate through the same hand-off',
+    navSrc.includes("App._store.set('nav_pending', pend);") && navSrc.includes("App.openModule('navigator');"));
+  ok('v119: the Yard pick is intact on the front face (yardstart unchanged)',
+    navSrc.includes("W('yard', { kind: v.slice(0, i), id: v.slice(i + 1) });") &&
+    fs.readFileSync(path.join(ROOT, 'js', 'yardstart.js'), 'utf8').includes("get('nav_yard', null)"));
+  ok('v119: places data keys untouched (the same nav_data store shape)',
+    navSrc.includes("return S('data', { work: [], personal: [], recent: [] });"));
+}
+
 console.log('\nnav-places test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -121,9 +121,12 @@ function roleSandbox(store) {
   eq(sb.roleShowsTracker('both'), true, 'dashboard: both ⇒ tracker');
 
   /* v77: 'navigator' joins every role order right after 'navigation'
-     (eleven modules now — the set grows, nothing is removed). */
-  const ALL = ['revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
-  deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the pre-v52 order + navigator after navigation');
+     (eleven modules now — the set grows, nothing is removed).
+     v119: MERGED — 'navigation' is GONE as a door (owner: "Why
+     are there 2 modules?"); the Navigator is the one door and
+     the set is ten. */
+  const ALL = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the merged order (one Navigator door, no Navigation)');
   /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
      blueprint — the office home leads with the boss's five tools,
      Connect FIRST, then Dispatch, Invoice, Maintenance, P&L. */
@@ -131,7 +134,7 @@ function roleSandbox(store) {
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
-    eq(ord.length, 11, 'dashboard ' + r + ': all 11 modules present (nothing removed)');
+    eq(ord.length, 10, 'dashboard ' + r + ': all 10 modules present (v119 merge: Navigation folded into Navigator)');
     deepEq(ord.slice().sort(), ALL.slice().sort(), 'dashboard ' + r + ': same module set, reordered only');
   });
 

@@ -314,6 +314,19 @@
 
   /* ---- live session state (one navigation at a time) ---- */
   var S = null; // built fresh on every render; torn down on exit
+  /* v119: THE MERGE (owner, Oct 16 22:00 MDT: "Why are there 2
+     modules? Navigation and navigator?") — this module is the
+     ONE door. Its front face ('places') is the old Navigation
+     face, rendered by that module as a component (tabs, picker,
+     favorites, built-ins, Yard pick — storage keys untouched);
+     its 'drive' face is this module's own plan/Drive screen.
+     Picking a place there arms the big Navigate action, whose
+     hand-off (nav_pending + openModule('navigator')) now lands
+     INSIDE this module: render sees the pending destination and
+     opens the drive face — the v104 auto-enter rules inside the
+     drive face are unchanged. */
+  var nvFace = 'places';
+  var nvBody = null;
 
   /* v78: the last destination a route was actually built for in
      this app session — the dashboard card's preview fact. It lives
@@ -359,14 +372,37 @@
 
     /* v116: shell back contract — the Drive screen is this
        module's sub-view, reached through the hook render installs
-       on S. Fresh entry needs no resetView: render rebuilds S
-       from scratch, so Drive always starts closed. */
+       on S. v119: the merged module's staircase is Drive → plan →
+       PLACES (the front face) → home: Back in Drive exits to
+       plan (S.backFn), Back at the plan root returns to the
+       places face, Back on the places face exits the module.
+       resetView lands fresh entry on the front face — unless a
+       pending destination is waiting, which render promotes to
+       the drive face (the in-module hand-off). */
     back: function () {
-      if (S && S.drive && typeof S.backFn === 'function') return !!S.backFn();
+      if (nvFace === 'drive') {
+        if (S && S.drive && typeof S.backFn === 'function' && S.backFn()) return true;
+        nvFace = 'places';
+        if (nvBody) api.render(nvBody);
+        return true;
+      }
       return false;
     },
+    resetView: function () { nvFace = 'places'; },
 
     render: function (body) {
+      nvBody = body;
+      var hasPending = false;
+      try { hasPending = !!App._store.get('nav_pending', null); } catch (e) {}
+      if (hasPending) nvFace = 'drive';
+      if (nvFace === 'places') {
+        teardown();
+        var navMod = (window.Meticulous && Meticulous.modules.navigation) || null;
+        if (navMod && typeof navMod.render === 'function') { navMod.render(body); return; }
+        /* places component missing (partial load): fall through
+           to the drive face rather than a dead screen. */
+        nvFace = 'drive';
+      }
       teardown();
       var settings = loadSettings();
       S = {
