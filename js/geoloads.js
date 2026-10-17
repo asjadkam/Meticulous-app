@@ -55,7 +55,7 @@
  *    (owner, Oct 14). So when a dispatch has a load pin but no dump
  *    pin, a pure learner (createDumpLearner, in the engine below)
  *    learns the dump site from the driving itself: the first full
- *    load-visit -> departure -> ~3 min dwell >= 300 m away teaches
+ *    load-visit -> departure -> ~2 min dwell >= 300 m away teaches
  *    the site, the teaching cycle is credited as load #1, and the
  *    pair is remembered in the synced key 'geoload_pairs' (keyed by
  *    the load site) so later days with the same load site start
@@ -65,6 +65,50 @@
  *    on the day (altDump) but never overwrites the pair. The user
  *    is never asked for the dump location — figuring it out is the
  *    app's job, not his (invisible-complexity rule).
+ *
+ * v140 (Oct 17, 2026 — LOAD AUTO-COUNT): the owner did 3–4+ loads
+ * before noon while the app showed none of them: the only load
+ * number on his dashboard was his own +1 taps. Characterization
+ * (the real pair replayed through this glue — Maple Ridge load
+ * pin 50.96044,-114.03176 <-> Ivor East Pond, dispatch carrying
+ * ONLY the load pin, as saved that day): counting worked in clean
+ * traces with tip dwells >= ~150 s and silently recorded ZERO all
+ * day below that (the day stayed 'learning'), and three
+ * structural gaps sat behind it, all proven in code:
+ *   (1) The dashboard never displayed this count at all — the
+ *       tracker card showed manualLoads only (js/app.js), and
+ *       the shared dayLoads ladder ranked the GPS count LAST,
+ *       behind the driver's own taps, so even a perfect count
+ *       was invisible where he looks and outranked by any tap.
+ *   (2) The dump fence could only come from the dispatch's own
+ *       dumpLat/dumpLng — a field nothing in the app populates
+ *       for real dispatches (only this file's one-shot geocode
+ *       of a street-address dropoff, which site-name dropoffs
+ *       never pass) — or from a remembered pair, or from same-day
+ *       teaching. Yet the app already KNEW both sites: Maple
+ *       Ridge and Ivor East Pond sit in his own work favorites
+ *       (v91 migration) and the 9 built-in pits exist — and this
+ *       file never consulted the places data at all.
+ *   (3) Teaching was fragile at real tip behaviour: a fixed
+ *       first-fix cluster anchor let GPS wander restart the
+ *       3-minute dwell clock mid-stop.
+ * The build: dump resolution gains the NAVIGATED hand-off — a
+ * work place the driver himself navigated to today (nav_data
+ * recents, recorded at the Navigate tap, before arrival) that
+ * forms a valid pair with the load site is adopted as the day's
+ * dump (src 'navigated'), the counter arms BEFORE he arrives,
+ * and the pair is remembered once a cycle is proven there. A
+ * dispatch whose pin never landed can still resolve its load
+ * site by NAME against the known places (unique match only —
+ * a fence is never placed on a guess). Teaching stays as the
+ * last resort, hardened: the cluster rides its running centroid
+ * and the dwell bar is a real tip's 2 minutes. And the count
+ * becomes the count of record: GeoLoads.today() feeds the
+ * dashboard, the shared dayLoads ladder ranks the movement
+ * count above taps (taps are the driver's correction, used
+ * when the machine has nothing), and the dispatch close
+ * pre-fills from it first. Tickets and deliberately recorded
+ * counts still outrank it — paperwork is paperwork.
  */
 (function () {
   'use strict';
@@ -252,7 +296,7 @@
      visit discipline as the counter:
        confirmed load-site visit (45 s dwell in the 120 m fence)
        -> confirmed departure (30 s out)
-       -> a stationary dwell of ~3 min (LEARN_DWELL_MS) at one place
+       -> a stationary dwell of ~2 min (LEARN_DWELL_MS) at one place
           (fixes staying within LEARN_CLUSTER_M) that is >= 300 m
           (LEARN_MIN_SEP_M) from the load site = a dump candidate.
      Modes, set by cfg.dump:
@@ -271,9 +315,19 @@
      taught site. The learner never counts anything itself, and bad
      fixes (accuracy/stale/teleport) are ignored exactly as in the
      counter. */
-  var LEARN_DWELL_MS = 3 * 60 * 1000; // stationary dwell that makes a candidate
+  var LEARN_DWELL_MS = 2 * 60 * 1000; // stationary dwell that makes a candidate
+                                      // (v140: was 3 min — characterization on the
+                                      // owner's Oct 17 pair showed real tip stops
+                                      // teach at ~150 s of clustered presence in
+                                      // clean traces and never below it; the bar
+                                      // is now a real tip: position + raise +
+                                      // lower, with the contest rule still
+                                      // guarding false teachings)
   var LEARN_MIN_SEP_M = 300;          // candidate must be this far from load
-  var LEARN_CLUSTER_M = 75;           // a "place": fixes stay within this
+  var LEARN_CLUSTER_M = 100;          // a "place": fixes stay within this of
+                                      // the cluster's running centroid (v140:
+                                      // was 75 m of the FIRST fix — GPS wander
+                                      // restarted the dwell clock mid-stop)
   var CONTEST_SEP_M = MIN_SITE_SEP_M; // 250 m: closer = the SAME place
 
   function createDumpLearner(cfg) {
@@ -377,7 +431,7 @@
           var cl = S.cluster;
           if (!cl) {
             S.cluster = { lat: +fix.latitude, lng: +fix.longitude, sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t };
-          } else if (haversineM(cl.lat, cl.lng, +fix.latitude, +fix.longitude) <= clusterM) {
+          } else if (haversineM(cl.sumLat / cl.n, cl.sumLng / cl.n, +fix.latitude, +fix.longitude) <= clusterM) {
             cl.sumLat += +fix.latitude; cl.sumLng += +fix.longitude; cl.n++;
             if (t - cl.since >= learnDwellMs) {
               var cand = { lat: cl.sumLat / cl.n, lng: cl.sumLng / cl.n, t: t };
@@ -440,6 +494,10 @@
                                  learn: <learner snapshot>,
                                  learnedDump: { lat, lng, learnedAt,
                                                 source: 'learned' } (v68),
+                                 navDump: { lat, lng, t } (v140 — the
+                                          dump adopted from the
+                                          driver's own navigation
+                                          today; see the v140 note),
                                  altDump: { lat, lng, t } (v68 — a rival
                                           candidate seen on a day whose
                                           dump site was already known;
@@ -477,6 +535,7 @@
   var learnMode = null;          // 'teach' | 'observe' | null
   var curLoad = null;            // today's load site (survives curSites resets)
   var taughtOutstanding = false; // taught today; first cycle not closed yet
+  var navArmDone = false; // v140: the navigated counter's lazy arm (see onFix)
   var wasDumpSinceTeach = false; // counter confirmed the dump zone since then
 
   function store() {
@@ -561,6 +620,141 @@
     var d = loadPairs();
     delete d.pairs[found.key];
     try { s.set(PAIRS_KEY, d); } catch (e) {}
+  }
+
+  /* ----- v140: the places the app already knows -----
+     Work favorites live in the store key 'nav_data' (the same
+     substrate js/yardstart.js reads); the built-in pits come from
+     the Navigation module's API. Until v140 this file never
+     consulted either: on Oct 17 both of the day's sites were
+     sitting in the owner's own favorites while the counter tried
+     to re-derive the dump from driving alone. */
+
+  function normName(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function knownPlaces() {
+    var out = [];
+    var s = store();
+    if (s) {
+      var nd = null;
+      try { nd = s.get('nav_data', null); } catch (e) {}
+      var work = (nd && nd.work) || [];
+      for (var i = 0; i < work.length; i++) {
+        var f = work[i];
+        if (!f) continue;
+        var c = { lat: parseFloat(f.lat), lng: parseFloat(f.lng) };
+        if (ENGINE.isCoord(c)) out.push({ lat: c.lat, lng: c.lng, label: f.name || '', type: f.type || '', src: 'fav' });
+      }
+    }
+    try {
+      var nav = window.Meticulous && Meticulous.modules && Meticulous.modules.navigation;
+      if (nav && typeof nav.builtinPlaces === 'function') {
+        nav.builtinPlaces().forEach(function (p) {
+          var c = { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
+          if (ENGINE.isCoord(c)) out.push({ lat: c.lat, lng: c.lng, label: p.name || '', type: p.type || '', src: 'builtin' });
+        });
+      }
+    } catch (e) {}
+    return out;
+  }
+  /* A dispatch whose pin never landed can still NAME its load
+     site ("Go Empty To Maple Ridge"): match the name against the
+     known places. Only a UNIQUE match resolves — two places
+     answering to the name is a guess, and a fence is never
+     placed on a guess. */
+  function placeByName(text) {
+    var q = normName(text);
+    if (!q) return null;
+    var exact = [], partial = [];
+    knownPlaces().forEach(function (p) {
+      var n = normName(p.label);
+      if (!n) return;
+      if (n === q) exact.push(p);
+      else if (n.indexOf(q) >= 0 || q.indexOf(n) >= 0) partial.push(p);
+    });
+    var hit = exact.length ? exact : partial;
+    if (hit.length !== 1) return null;
+    return { lat: hit[0].lat, lng: hit[0].lng, label: hit[0].label || String(text || ''), src: 'places' };
+  }
+
+  /* ----- v140: the navigated hand-off -----
+     When the driver taps Navigate to a work place, the
+     Navigation module records it in nav_data.recent AT THE TAP —
+     before he drives. A work place he navigated to TODAY, while
+     a load site is known and no dump is resolved, that forms a
+     valid pair with the load site IS the day's dump signal: he
+     is driving there loaded, on purpose. Adopting it arms the
+     counter before he arrives, so even a short tip counts — no
+     teaching dwell needed. The pair is remembered only once a
+     cycle is proven there (see persist). */
+  function sessionStartMs() {
+    var ms = parseInt(String(sessionKey || '').slice(1), 10);
+    return isFinite(ms) ? ms : 0;
+  }
+  function navigatedDumpCandidate() {
+    if (!curLoad || !curDate) return null;
+    var s = store();
+    if (!s) return null;
+    var nd = null;
+    try { nd = s.get('nav_data', null); } catch (e) {}
+    if (!nd || !nd.recent || !nd.recent.length) return null;
+    var startMs = sessionStartMs();
+    var best = null;
+    for (var i = 0; i < nd.recent.length; i++) {
+      var r = nd.recent[i];
+      if (!r || r.kind !== 'work' || !r.ts) continue;
+      var c = { lat: parseFloat(r.lat), lng: parseFloat(r.lng) };
+      if (!ENGINE.isCoord(c)) continue;
+      if (dateStrOf(r.ts) !== curDate) continue;                 // today only — recents outlive the day
+      if (startMs && r.ts < startMs - 2 * 3600000) continue;     // not hours before this session
+      if (!ENGINE.sitesCheck(curLoad, c).ok) continue;           // must pair with the load site
+      if (!best || r.ts > best.t) best = { lat: c.lat, lng: c.lng, label: r.name || 'Dump site', t: r.ts };
+    }
+    return best;
+  }
+  function adoptNavigatedDump(cand) {
+    var dump = { lat: cand.lat, lng: cand.lng, label: cand.label || 'Dump site', src: 'navigated' };
+    curSites = { load: curLoad, dump: dump };
+    var key = sitesKeyFor(curDispatchId, curLoad, dump);
+    counter = ENGINE.createGeoLoadCounter({ load: curLoad, dump: dump });
+    /* If the learner already watched the load visit AND the
+       departure, the truck is mid-loaded-leg right now: seed the
+       counter armed, or the first load of the day — the one he
+       is carrying — would be the one load it cannot count. (He
+       navigates when he LEAVES the pit, loaded; adoption on
+       that leg is the common case, not an edge.) */
+    var seed = null;
+    var prevLearnSnap = learner ? learner.snapshot() : null;
+    if (prevLearnSnap && prevLearnSnap.legArmed) {
+      seed = { sitesKey: key, zone: 'out', phase: 'to-dump', armed: true, count: 0, events: [], lastT: prevLearnSnap.lastT || 0 };
+    }
+    counter.begin(key, seed);
+    navArmDone = !!seed;
+    learnMode = 'observe';
+    /* The observe learner INHERITS the teach learner's leg state
+       (it watched the load visit too) — a fresh begin would
+       forget the very leg the counter was just seeded from. */
+    learner = ENGINE.createDumpLearner({ load: curLoad, dump: dump });
+    learner.begin(prevLearnSnap);
+    taughtOutstanding = false; wasDumpSinceTeach = false;
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = curSites; rec.blocked = null; rec.updatedAt = Date.now();
+    rec.navDump = { lat: dump.lat, lng: dump.lng, t: cand.t || Date.now() };
+    if (learner) rec.learn = learner.snapshot();
+    writeDay(rec);
+    persist(true);
+    return true;
+  }
+  /* Adoption is only ever a TEACH-mode event: a dump already
+     resolved (pin, remembered pair, taught) is never overridden
+     by a navigation. */
+  function maybeAdoptNavigatedDump() {
+    if (counter || learnMode !== 'teach' || !curLoad) return false;
+    var cand = navigatedDumpCandidate();
+    if (!cand) return false;
+    return adoptNavigatedDump(cand);
   }
 
   function sitesKeyFor(id, load, dump) {
@@ -688,6 +882,15 @@
       rec.events = baseEvents.concat(counter.events());
       rec.state = counter.snapshot();
       rec.blocked = null;
+      /* v140: a navigated dump earns its pair memory only once a
+         cycle is PROVEN there (a counted dump arrival) — the
+         same standard teaching is held to, never at adoption. */
+      if (curSites && curSites.dump && curSites.dump.src === 'navigated' && counter.count() > 0 && curLoad) {
+        var havePair = findPair(curLoad);
+        if (!havePair || ENGINE.haversineM(havePair.pair.dump.lat, havePair.pair.dump.lng, curSites.dump.lat, curSites.dump.lng) > 100) {
+          rememberPair(curLoad, { lat: curSites.dump.lat, lng: curSites.dump.lng, label: curSites.dump.label || '', learnedAt: Date.now() });
+        }
+      }
     }
     if (learner) rec.learn = learner.snapshot();
     writeDay(rec);
@@ -702,6 +905,13 @@
     taughtOutstanding = false; wasDumpSinceTeach = false;
     if (!d) { counter = null; curSites = null; return false; }
     var sites = sitesFromDispatch(d);
+    /* v140: no pin on the record is not the end — the dispatch
+       still NAMES its site, and the app already knows its places.
+       A unique name match supplies the load fence. */
+    if (!sites.load) {
+      var named = placeByName(d.jobSite) || placeByName(d.pickup);
+      if (named) sites.load = named;
+    }
     curLoad = sites.load || null;
     var why = blockedWhy(d, sites);
 
@@ -753,6 +963,10 @@
         learner.begin(sameT ? prevT.learn : null);
         baseCount = (!sameT && prevT) ? (prevT.count || 0) : 0;
         baseEvents = (!sameT && prevT && prevT.events) ? prevT.events.slice() : [];
+        /* v140: he may ALREADY have navigated to today's dump
+           (the tap is recorded before the drive) — adopt it now
+           and the day counts from the first load, no teaching. */
+        if (maybeAdoptNavigatedDump()) return true;
         var recT = prevT || blankDay(curDate);
         recT.dispatchId = d.id; recT.sessionKey = sessionKey;
         recT.sites = null; recT.blocked = 'learning'; recT.updatedAt = Date.now();
@@ -892,7 +1106,39 @@
 
   function onFix(fix) {
     if (!watching || (!counter && !learner)) return null;
+    /* v140: while the day is still in teach mode, watch for the
+       navigated hand-off (throttled — the recents log changes
+       rarely): he taps Navigate at the pit, loaded, and the
+       counter must be armed before he reaches the dump. */
+    if (!counter && learner && learnMode === 'teach') {
+      var ft = (fix && typeof fix.time === 'number') ? fix.time : Date.now();
+      if (!onFix._navT || ft - onFix._navT > 15000) {
+        onFix._navT = ft;
+        maybeAdoptNavigatedDump();
+      }
+    }
     var r = feedFix(fix);
+    /* v140: adoption can land in the window between the truck
+       leaving the load fence and the learner confirming the
+       departure (45 s) — too early to know the leg was loaded.
+       So the arm is re-checked here, lazily: the first time the
+       learner's leg stands confirmed while the navigated
+       counter is still untouched (never armed, no zone of its
+       own), the counter is re-seeded armed with its own
+       snapshot — the load he is carrying counts. */
+    if (counter && !navArmDone && curSites && curSites.dump && curSites.dump.src === 'navigated') {
+      var csA = counter.snapshot();
+      if (csA && (csA.armed || csA.count > 0 || csA.phase !== 'away')) {
+        navArmDone = true;
+      } else if (csA && csA.zone === 'out' && learner) {
+        var lsA = learner.snapshot();
+        if (lsA && lsA.legArmed) {
+          csA.armed = true; csA.phase = 'to-dump';
+          counter.begin(csA.sitesKey, csA);
+          navArmDone = true;
+        }
+      }
+    }
     // A dump event belongs to the date it happened on (overnight
     // shifts): if midnight passed, roll the day record forward.
     var fd = dateStrOf(fix.time || Date.now());
@@ -948,6 +1194,7 @@
       curLoad = null;
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
+      navArmDone = false;
       baseCount = 0;
       baseEvents = [];
     },
@@ -991,8 +1238,36 @@
         dispatchId: rec.dispatchId || null,
         learnedDump: rec.learnedDump || null,
         altDump: rec.altDump || null,
-        dumpContested: rec.dumpContested || null
+        dumpContested: rec.dumpContested || null,
+        navDump: rec.navDump || null
       };
+    },
+
+    /* v140: the dashboard's read of today — the machine count and
+       whether a site pair is actually fenced (armed). While a
+       session is watching, live state wins; otherwise the
+       persisted day record speaks. armed=false means counting
+       has no pair yet (still learning, or never ran): the caller
+       falls back to the driver's corrections, honestly. */
+    today: function () {
+      var date = dateStrOf(Date.now());
+      var rec = recordFor(date);
+      var out = {
+        date: date,
+        count: rec ? (rec.count || 0) : 0,
+        blocked: rec ? (rec.blocked || null) : null,
+        sites: rec ? (rec.sites || null) : null,
+        armed: !!(rec && rec.sites)
+      };
+      if (watching && curDate === date) {
+        out.armed = !!counter;
+        if (counter) {
+          out.count = baseCount + counter.count();
+          out.sites = curSites || out.sites;
+          out.blocked = null;
+        }
+      }
+      return out;
     },
 
     sitesCheck: ENGINE.sitesCheck,

@@ -406,6 +406,7 @@
         });
       });
       if (tkLoads > 0) { loads = tkLoads; loadsSrc = 'tickets'; }
+      if (!loads && geoDay && geoDay.count > 0) { loads = geoDay.count; loadsSrc = 'sites'; } /* v140: same ladder as the shared helper — movement count above taps */
       if (!loads) {
         var tapLoads = liveTapLoads;
         sessions.forEach(function (s) { tapLoads += parseInt(s.manualLoads, 10) || 0; });

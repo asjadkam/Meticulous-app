@@ -417,7 +417,10 @@ console.log('— F: statics —');
     'F8 the sync answer reads the real CloudSync.status()');
   ok(askSrc.indexOf('choices: step.choices') !== -1 && chatSrc.indexOf('chat-choice') !== -1,
     'F9 miss choices flow from the core to tappable card buttons');
-  eq('F10 webVersion ships as 141', JSON.parse(read('version.json')).webVersion, 141);
+  /* v140 pin move (the standing convention): this was the v138
+     build's own ship assertion at 141; the OTA number only moves
+     forward, so the pin follows the live version. */
+  eq('F10 webVersion ships as 142', JSON.parse(read('version.json')).webVersion, 142);
 }
 
 console.log('chatbot-v141-test: ' + pass + ' passed, ' + fail + ' failed');

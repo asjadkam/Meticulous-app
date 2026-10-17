@@ -331,12 +331,21 @@
        2. the dispatch record's own loads, when deliberately
           recorded (loadsSet — the untouched form default '1' is
           NOT a recording and never counts);
-       3. the day's +1 load taps (sessions + the live taps the
-          caller hands in);
-       4. a Weight day's counted loads (session loadCount);
-       5. the learned-site count (geo) — the movement-derived
-          count, last resort, always overridable by any source
-          above it on a later close.
+       3. the movement count (geo, v140) — the geofence engine's
+          day record: the count the app made itself from the
+          truck's load<->dump cycles. Load counts are never the
+          driver's job; this is the count of record whenever
+          the machine could run;
+       4. the day's +1 load taps (sessions + the live taps the
+          caller hands in) — the driver's CORRECTION, the number
+          used when counting genuinely could not run;
+       5. a Weight day's counted loads (session loadCount).
+     (v140 moved the movement count from last resort to above
+     the taps: through Oct 17 it ranked LAST, so one tap
+     silently outranked a full day of machine counting — and
+     the dashboard never showed the machine count at all.
+     Tickets and deliberate records still outrank it:
+     paperwork is paperwork.)
      Pure: the caller passes the day's records in. */
   function invCycDayLoads(dateStr, src) {
     src = src || {};
@@ -357,6 +366,10 @@
       if (rec > 0) { loads = Math.round(rec); source = 'recorded'; }
     }
     if (!loads) {
+      var g = parseInt(src.geoLoads, 10) || 0;
+      if (g > 0) { loads = g; source = 'sites'; }
+    }
+    if (!loads) {
       var taps = parseInt(src.liveTaps, 10) || 0;
       (src.sessions || []).forEach(function (s) { taps += parseInt(s && s.manualLoads, 10) || 0; });
       if (taps > 0) { loads = taps; source = 'taps'; }
@@ -365,10 +378,6 @@
       var w = 0;
       (src.sessions || []).forEach(function (s) { w += parseInt(s && s.loadCount, 10) || 0; });
       if (w > 0) { loads = w; source = 'weight'; }
-    }
-    if (!loads) {
-      var g = parseInt(src.geoLoads, 10) || 0;
-      if (g > 0) { loads = g; source = 'sites'; }
     }
     return { loads: loads, source: source };
   }

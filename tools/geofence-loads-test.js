@@ -269,10 +269,12 @@ function stayStill(c, clock, center, durS, stepS, flags) {
   stay(L, clock, llOf(LOAD), 70, 10);                 // confirmed load visit
   drive(L, clock, llOf(LOAD), llOf(DUMP), 240, 10);   // departure + drive
   ok(!L.learned(), 'nothing learned before the dwell completes');
-  stayStill(L, clock, llOf(DUMP), 120, 10, flags);
-  ok(!flags.learned, 'a 2-minute dwell does not teach yet');
-  stayStill(L, clock, llOf(DUMP), 120, 10, flags);
-  ok(!!flags.learned, 'the ~3-minute dwell teaches');
+  /* v140 PIN MOVE: the teaching bar dropped from ~3 min to ~2 min
+     (a real tip's stop) — the boundary checks move with it. */
+  stayStill(L, clock, llOf(DUMP), 60, 10, flags);
+  ok(!flags.learned, 'a 1-minute dwell does not teach yet');
+  stayStill(L, clock, llOf(DUMP), 60, 10, flags);
+  ok(!!flags.learned, 'the ~2-minute dwell teaches (v140 bar)');
   const got = L.learned();
   ok(Math.abs(got.lat - DUMP.lat) < 0.0005 && Math.abs(got.lng - DUMP.lng) < 0.0005,
     'learned site is the dwell place (~within 50 m)');
@@ -385,14 +387,18 @@ console.log('(k) learning: snapshot/restore keeps the leg, drops the half-built 
   const clock = { t: 0 };
   stay(L1, clock, llOf(LOAD), 70, 10);
   drive(L1, clock, llOf(LOAD), llOf(DUMP), 240, 10);
-  stayStill(L1, clock, llOf(DUMP), 100, 10, {});      // half a dwell, then "killed"
+  stayStill(L1, clock, llOf(DUMP), 60, 10, {});       // half a dwell, then "killed"
+                                                      // (v140: 60 s parked + the approach
+                                                      // tail is still under the ~2 min bar)
   const snap = L1.snapshot();
   const L2 = E.createDumpLearner({ load: LOAD, dump: null });
   L2.begin(snap);
   const flags = {};
-  stayStill(L2, clock, llOf(DUMP), 120, 10, flags);
+  /* v140 PIN MOVE: segments sized to the ~2-minute teaching bar
+     (was ~3): 90 s fresh must not teach, 180 s continuous must. */
+  stayStill(L2, clock, llOf(DUMP), 90, 10, flags);
   ok(!flags.learned, 'restored learner does not inherit the half-built dwell');
-  stayStill(L2, clock, llOf(DUMP), 120, 10, flags);
+  stayStill(L2, clock, llOf(DUMP), 90, 10, flags);
   ok(!!flags.learned, 'a full fresh dwell after restore teaches');
   const snap2 = L2.snapshot();
   const L3 = E.createDumpLearner({ load: LOAD, dump: null });

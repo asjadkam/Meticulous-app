@@ -671,7 +671,12 @@
      manifest's Loads could only ever be 0/absent. One tap per load
      dumped, counted on the session accumulator; the close flow
      pre-fills its Loads field from this count for his confirm, and
-     the stopped session carries it (manualLoads) to the manifest. */
+     the stopped session carries it (manualLoads) to the manifest.
+     v140: this accumulator is the driver's CORRECTION now, not
+     the counter — the movement count (GeoLoads) is the count of
+     record on the dashboard and in the shared dayLoads ladder;
+     taps are consumed only when the machine has nothing. The
+     bookkeeping itself is unchanged. */
   function trackerAddLoadTap() {
     if (!sessionActive()) return null;
     var a = trkAccum();
@@ -786,17 +791,37 @@
     var box = el('trkExtra');
     if (!box) return;
     /* v82: the load-tap button shows its running count, so the
-       count is part of the repaint signature for those modes. */
+       count is part of the repaint signature for those modes.
+       v140: the count of record is the MACHINE's (js/geoloads.js
+       GeoLoads.today()) — the signature carries it, and the face
+       below shows it; taps ride along as the correction count. */
     var taps = (mode === 'Hourly' || mode === 'Miles') ? trkAccum().manualLoads : 0;
-    var sig = mode + '|' + App.tracker.status + '|' + taps;
+    var geoToday = null;
+    if (mode === 'Hourly' || mode === 'Miles') {
+      try { if (window.GeoLoads && GeoLoads.today) geoToday = GeoLoads.today(); } catch (e) { geoToday = null; }
+    }
+    var sig = mode + '|' + App.tracker.status + '|' + taps + '|' +
+      (geoToday ? (geoToday.armed ? 'g' + geoToday.count : 'off') : 'na');
     if (sig === _extraSig) return;
     _extraSig = sig;
     var h = '';
     if (sessionActive() && mode === 'Weight') h = '<button type="button" class="trkAddBtn" id="trkAddLoadBtn">＋ Add load</button>';
     else if (sessionActive() && mode === 'Trip') h = '<button type="button" class="trkAddBtn" id="trkAddTripBtn">＋ Load</button>';
     /* v82 (item 3b): hourly/miles card work gets the big one-tap
-       load counter — one tap per load dumped, no form. */
-    else if (sessionActive()) h = '<button type="button" class="trkAddBtn" id="trkLoadTapBtn">🚛 +1 load' + (taps ? ' · ' + taps + ' today' : '') + '</button>';
+       load counter — one tap per load dumped, no form.
+       v140: DEMOTED. The day's load count is counted by the app
+       from movement and shown as the count; the button is now a
+       small correction underneath it — never the counter of
+       record, never required. While counting has no site pair
+       yet (armed=false), the correction count is what shows,
+       honestly, until the machine takes over. */
+    else if (sessionActive()) {
+      var machineLoads = (geoToday && geoToday.armed) ? geoToday.count : null;
+      var shownLoads = (machineLoads !== null) ? machineLoads : taps;
+      h = '<div class="trkLoadCount">🚛 Loads today: <b>' + shownLoads + '</b>' +
+          (machineLoads !== null ? ' <span class="trkLoadSrc">counted by GPS</span>' : '') + '</div>' +
+          '<button type="button" class="trkAddBtn trkFixBtn" id="trkLoadTapBtn">+1 load correction</button>';
+    }
     box.innerHTML = h;
   }
   /* v41: "+ Add load" sheet (Weight mode) + public tracker APIs for

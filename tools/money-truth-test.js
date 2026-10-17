@@ -215,20 +215,28 @@ console.log('\n— Custom window with empty bounds is the rolling window, not al
   eq('bounded custom still includes Oct 15', sb2.__rev.inPeriod('2026-10-15'), true);
 }
 
-console.log('\n— dayLoads priority: never a sum, recorded beats taps, taps beat geo —');
+console.log('\n— dayLoads priority: never a sum, recorded beats the machine, the machine beats taps (v140) —');
 {
   const sb = world(oct16Mem(), null);
   const dl = sb.Meticulous.shared.dayLoads;
   eq('ticket loads win over everything',
     JSON.stringify(dl(D, { dispatches: [{ tickets: [{ loads: '6' }], loads: '9', loadsSet: true }], sessions: [{ manualLoads: 3 }], geoLoads: 4 })),
     JSON.stringify({ loads: 6, source: 'tickets' }));
-  eq('a deliberately recorded dispatch count beats taps',
+  eq('a deliberately recorded dispatch count beats the machine',
     JSON.stringify(dl(D, { dispatches: [{ loads: '8', loadsSet: true }], sessions: [{ manualLoads: 3 }], geoLoads: 4 })),
     JSON.stringify({ loads: 8, source: 'recorded' }));
-  eq('the untouched form default (loads 1, no loadsSet) proves nothing',
+  /* v140 PIN MOVE: this case pinned taps-over-geo (the v107 ladder).
+     The owner's law — load counts are never the driver's job — moves
+     the movement count above his taps: the untouched form default now
+     falls to the machine count, and taps speak only when the machine
+     has nothing. */
+  eq('the untouched form default (loads 1, no loadsSet) proves nothing — the movement count speaks',
     JSON.stringify(dl(D, { dispatches: [{ loads: '1' }], sessions: [{ manualLoads: 3 }], geoLoads: 4 })),
+    JSON.stringify({ loads: 4, source: 'sites' }));
+  eq('taps are the correction when the machine has nothing',
+    JSON.stringify(dl(D, { dispatches: [{ loads: '1' }], sessions: [{ manualLoads: 3 }] })),
     JSON.stringify({ loads: 3, source: 'taps' }));
-  eq('the learned-site count is the last resort',
+  eq('the learned-site count alone still reads',
     JSON.stringify(dl(D, { dispatches: [], sessions: [], geoLoads: 5 })),
     JSON.stringify({ loads: 5, source: 'sites' }));
   eq('nothing recorded anywhere = 0, honestly',

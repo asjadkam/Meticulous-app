@@ -2613,7 +2613,10 @@
              taps — the count is never the driver's job (owner,
              Oct 16: "I don't even know and remember how many loads
              I did"), and this field is exactly where he can
-             override the machine's count before it records. */
+             override the machine's count before it records.
+             v140: the machine count pre-fills FIRST now — taps are
+             the correction, used only when counting could not
+             run (no count recorded). */
           var tapsNow = 0;
           try { if (window.App && App.trackerLoadTaps) tapsNow = App.trackerLoadTaps() || 0; } catch (e) {}
           var geoNow = 0;
@@ -2625,11 +2628,11 @@
             }
           } catch (e) { geoNow = 0; }
           var loadsVal = (t.loads !== null && t.loads !== undefined && t.loads !== '') ? t.loads
-            : (tapsNow > 0 ? String(tapsNow) : (geoNow > 0 ? String(geoNow) : ''));
+            : (geoNow > 0 ? String(geoNow) : (tapsNow > 0 ? String(tapsNow) : ''));
           inputs += '<label class="f">Loads hauled today</label>' +
             '<input id="dp_cf_loads" type="number" inputmode="numeric" min="0" step="1" value="' + esc(loadsVal) + '" placeholder="e.g. 6">' +
-            (tapsNow > 0 && String(loadsVal) === String(tapsNow) ? '<div class="b">Counted from your +1 load taps today — change it if it\'s off.</div>'
-              : (geoNow > 0 && String(loadsVal) === String(geoNow) ? '<div class="b">Counted from your truck\'s pit &amp; dump visits today — change it if it\'s off.</div>' : ''));
+            (geoNow > 0 && String(loadsVal) === String(geoNow) ? '<div class="b">Counted from your truck\'s pit &amp; dump visits today — change it if it\'s off.</div>'
+              : (tapsNow > 0 && String(loadsVal) === String(tapsNow) ? '<div class="b">Counted from your +1 load taps today — change it if it\'s off.</div>' : ''));
         }
         wrap.innerHTML =
           '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
