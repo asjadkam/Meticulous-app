@@ -444,6 +444,17 @@
     pickerRowHTML: pickerRowHTML,
     pickerFind: pickerFind,
     displayPlaceName: displayPlaceName, /* v118: hosts resolve a place's answerable name through here */
+    /* v150: THE hand-off, callable by other modules — a dispatch
+       pin (owner, Oct 17, 2026 22:02 MDT: "Why does this pin take
+       me to google maps still.. When our navigator is up and
+       ready") enters the Navigator through the very same door a
+       place picked here uses: the visit is recorded (work —
+       Manifest line + the recent the load fence reads), the
+       destination travels as nav_pending, the Navigator opens.
+       No second path into navigation exists. */
+    navigateToPin: function (name, lat, lng) {
+      goNavigate({ name: name || '', lat: lat, lng: lng }, 'work');
+    },
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';

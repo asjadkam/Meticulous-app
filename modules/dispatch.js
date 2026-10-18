@@ -426,6 +426,32 @@
     var n = Math.round((parseFloat(x) || 0) * 100) / 100;
     return (n % 1 === 0) ? n.toFixed(1) : String(n);
   }
+  /* v150 (owner, Oct 17, 2026 22:02 MDT, over his own Oct 17
+     dispatch: "Why does this pin take me to google maps still..
+     When our navigator is up and ready"): a dispatch pin's action
+     is OUR Navigator — the pin is handed over through the
+     Navigation module's own hand-off (navigateToPin: the visit is
+     recorded as a work navigation, so the v140 load fence arms
+     exactly as it does for a place picked there, and the
+     destination rides nav_pending into the Navigator). The
+     fallback writes that same one-shot record directly if the
+     places component is somehow absent — there is no second
+     navigation path, and no pin leaves the app anymore. */
+  function dspNavigatePin(lat, lng, name) {
+    var la = parseFloat(lat), ln = parseFloat(lng);
+    if (!isFinite(la) || !isFinite(ln)) return false;
+    var nm = String(name || '').trim() || 'Dropped pin';
+    try {
+      var nav = (typeof window !== 'undefined' && window.Meticulous && Meticulous.modules)
+        ? Meticulous.modules.navigation : null;
+      if (nav && nav.navigateToPin) { nav.navigateToPin(nm, la, ln); return true; }
+    } catch (e) {}
+    try {
+      App._store.set('nav_pending', { name: nm, ts: Date.now(), lat: la, lng: ln });
+      App.openModule('navigator');
+      return true;
+    } catch (e) { return false; }
+  }
   function dspCompletionPlan(x) {
     var entry = null, claim = null, wagePosting = null, heldOut = 0, disclosure = '', mode = 'none';
     var sum = x.sum || null;
@@ -1603,7 +1629,11 @@
             (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
             (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
             (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
-              ' · <a href="https://www.google.com/maps?q=' + d.lat + ',' + d.lng + '" target="_blank" rel="noopener">📍 Map</a>' : '') +
+              /* v150: the pin's action is our Navigator (wired at
+                 render end via data-nav); an office face — which
+                 never drives — keeps a plain pin line, no button. */
+              (isOffice ? ' · 📍 Pin set' :
+                ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
             (d.material ? ' · ' + esc(d.material) : '') +
             (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
             (d.amount ? ' · $' + esc(d.amount) : '') +
@@ -1875,6 +1905,30 @@
         var e = body.querySelector('#dp_save_err');
         if (e) e.innerHTML = '';
       }
+      /* v150: THE painter of the form's pin line — every path that
+         lands a pin in the form (draft restore, a ticket read)
+         paints through here, so the pin's action is the same on
+         every surface: our Navigator, never a link out of the app
+         (the Google Maps anchors this replaces were leftovers from
+         before the Navigator existed). The coordinates are read
+         from the form's own hidden fields at tap time — the
+         form's truth, edits included. An office face keeps the
+         plain line: it never drives, so it gets no button. */
+      function paintPinLine(coordText) {
+        var el = body.querySelector('#dp_pin');
+        if (!el) return;
+        var la = body.querySelector('#dp_lat'), ln = body.querySelector('#dp_lng');
+        if (!la || !ln || la.value === '' || ln.value === '' ||
+            la.value === null || ln.value === null ||
+            la.value === undefined || ln.value === undefined) { el.innerHTML = ''; return; }
+        el.innerHTML = '📍 Map pin set' + (coordText ? ' (' + esc(coordText) + ')' : '') +
+          (isOffice ? '' : ' — <button type="button" class="btn small ghost" data-navpin="1" style="padding:2px 8px">🧭 Navigate</button>');
+        var b = el.querySelector('[data-navpin]');
+        if (b) b.onclick = function () {
+          var site = body.querySelector('#dp_site');
+          dspNavigatePin(body.querySelector('#dp_lat').value, body.querySelector('#dp_lng').value, site ? site.value : '');
+        };
+      }
       function restoreDraft() {
         if (!draft0 || !draft0.fields) return;
         var f = draft0.fields;
@@ -1889,8 +1943,7 @@
         set('#dp_loadsset', f.loadsSet ? '1' : '');
         set('#dp_driver', f.driverId);
         if (f.lat !== '' && f.lat !== undefined && f.lat !== null && f.lng !== '' && f.lng !== undefined && f.lng !== null) {
-          body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
-            ' — <a href="https://www.google.com/maps?q=' + f.lat + ',' + f.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
+          paintPinLine('');
         }
         if (editingId) {
           /* v56: an edit draft restores AS an edit — the banner names
@@ -2128,9 +2181,7 @@
         if (form.lat !== undefined && form.lat !== null && form.lng !== undefined && form.lng !== null) {
           body.querySelector('#dp_lat').value = form.lat;
           body.querySelector('#dp_lng').value = form.lng;
-          body.querySelector('#dp_pin').innerHTML = '📍 Map pin set' +
-            (form.coordinates ? ' (' + esc(form.coordinates) + ')' : '') +
-            ' — <a href="https://www.google.com/maps?q=' + form.lat + ',' + form.lng + '" target="_blank" rel="noopener">Open in Maps</a>';
+          paintPinLine(form.coordinates || '');
         }
         if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
         /* v107: the ticket # comes from the form mapping OR the
@@ -3120,6 +3171,14 @@
       });
       body.querySelectorAll('[data-edit]').forEach(function (b) {
         b.onclick = function () { startEdit(list()[+b.getAttribute('data-edit')]); };
+      });
+      /* v150: a history pin's Navigate — into our Navigator with
+         the pin as the destination (see dspNavigatePin). */
+      body.querySelectorAll('[data-nav]').forEach(function (b) {
+        b.onclick = function () {
+          var d = list()[+b.getAttribute('data-nav')];
+          if (d) dspNavigatePin(d.lat, d.lng, d.jobSite || d.pickup || '');
+        };
       });
       /* v129: a completed record's row View opens its face. */
       body.querySelectorAll('[data-view]').forEach(function (b) {

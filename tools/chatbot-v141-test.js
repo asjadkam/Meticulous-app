@@ -426,8 +426,9 @@ console.log('— F: statics —');
      v144 pin move: 145 -> 146, same convention.
      v145 pin move: 146 -> 147, same convention.
      v146 pin move: 147 -> 148, same convention.
-     v149 pin move: 148 -> 149, same convention. */
-  eq('F10 webVersion ships as 149', JSON.parse(read('version.json')).webVersion, 149);
+     v149 pin move: 148 -> 149, same convention.
+     v150 pin move: 149 -> 150, same convention. */
+  eq('F10 webVersion ships as 150', JSON.parse(read('version.json')).webVersion, 150);
 }
 
 console.log('chatbot-v141-test: ' + pass + ' passed, ' + fail + ' failed');
