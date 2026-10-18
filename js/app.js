@@ -445,7 +445,76 @@
     Array.prototype.forEach.call(g.querySelectorAll('.modcard'), function (c) {
       c.onclick = function () { App.openModule(c.getAttribute('data-mod')); };
     });
+    paintNameCard(); // v147: the one-time name ask (self-hiding once settled)
   }
+
+  /* NAME-CARD-BEGIN — v147 (owner, Oct 17, 2026 21:31 MDT): the
+     ONE-TIME name ask for accounts created before setup asked.
+     Their Connect identity has always been a business or an
+     email guess; this card asks the PERSON once, on the
+     dashboard, in the parkCard slot's own shape. The law:
+       - shows only for a finished account (onboarded) with no
+         person name on the record and the question not yet
+         settled (onboarding.nameAsked unset);
+       - Save (a real name) stores it on the onboarding record —
+         the same record setup + Preferences write — marks the
+         question settled, and republishes the directory at once;
+       - Skip is one tap and settles the question forever with
+         no name invented;
+       - an empty Save settles NOTHING (the card stays, with a
+         hint) — and nothing anywhere waits on this card: it
+         never blocks the dashboard, never gates a save, never
+         re-appears after answer or skip. Accounts that finished
+         setup on v147+ were asked there (finishOnboarding and
+         the Skip path both stamp nameAsked), so they never see
+         this card at all. */
+  function paintNameCard() {
+    try {
+      var card = el('nameCard');
+      if (!card) return;
+      var o = store.get('onboarding', {}) || {};
+      var person = ((o.firstName || '') + ' ' + (o.lastName || '')).replace(/\s+/g, ' ').trim();
+      var show = !!store.get('onboarded', false) && !person && !o.nameAsked;
+      if (!show) {
+        card.classList.add('hidden');
+        if (card.innerHTML) card.innerHTML = '';
+        return;
+      }
+      card.classList.remove('hidden');
+      card.innerHTML =
+        '<div class="parkTxt">👋 What is your name?</div>' +
+        '<p class="note" style="margin:0 0 10px">People connect with people. Right now your Connect listing shows only your business — add your name once and people can find you by it. Your business still shows under your name.</p>' +
+        '<label class="f">First name</label><input id="nm_first" value="">' +
+        '<label class="f">Last name</label><input id="nm_last" value="">' +
+        '<p class="note" id="nm_hint" style="display:none;color:#b3541e;font-weight:700"></p>' +
+        '<div class="parkRow" style="margin-top:10px">' +
+        '<button type="button" class="btn primary" id="nm_save" style="flex:1">Save</button>' +
+        '<button type="button" class="btn ghost" id="nm_skip" style="flex:1">Skip</button></div>';
+      var saveBtn = card.querySelector('#nm_save');
+      if (saveBtn) saveBtn.onclick = function () {
+        var fEl = card.querySelector('#nm_first'), lEl = card.querySelector('#nm_last');
+        var fn = fEl ? fEl.value.trim() : '', ln = lEl ? lEl.value.trim() : '';
+        if (!fn && !ln) {
+          var hint = card.querySelector('#nm_hint');
+          if (hint) { hint.textContent = 'Type your name — or tap Skip.'; hint.style.display = ''; }
+          return;
+        }
+        var cur = store.get('onboarding', {}) || {};
+        cur.firstName = fn; cur.lastName = ln; cur.nameAsked = true;
+        store.set('onboarding', cur);
+        try { if (window.ConnectLive && ConnectLive.publishMine) ConnectLive.publishMine(); } catch (e) {}
+        paintNameCard();
+      };
+      var skipBtn = card.querySelector('#nm_skip');
+      if (skipBtn) skipBtn.onclick = function () {
+        var cur = store.get('onboarding', {}) || {};
+        cur.nameAsked = true;
+        store.set('onboarding', cur);
+        paintNameCard();
+      };
+    } catch (e) {}
+  }
+  /* NAME-CARD-END */
 
   var SIDEBAR_ITEMS = [
     ['dashboard', '🏠', 'Dashboard'],
@@ -2353,6 +2422,16 @@
 
   /* ---------------- onboarding ---------------- */
   var ONB_STEPS = [
+    /* v147 (owner, Oct 17 21:31 MDT): the FIRST question is the
+       person's own name — "why are we not asking first and last
+       name?" Setup never asked, so Connect identity fell back to
+       the business name (a man listed as a company) or an
+       email-derived string, and nobody could find or recognize
+       the person. The fields may be left blank (asking is fine,
+       walling is not) — Finish marks the question asked
+       (nameAsked) so the one-time dashboard ask never repeats it. */
+    { key: 'name', title: 'What is your name?', hint: 'How people you connect with will find and recognize you — Connect is between people. Your business name still shows under your name.',
+      type: 'name' },
     { key: 'accountType', title: 'What best describes you?', hint: 'This shapes what the app tracks for you.',
       type: 'opts', opts: [['Driver', '🚛', 'Driver'], ['Owner-Operator', '🧾', 'Owner-Operator'], ['Fleet Manager', '👥', 'Fleet Manager']] },
     /* v52: the second question is about the person holding the phone,
@@ -2387,6 +2466,19 @@
   var _onbRoleNudge = false; // set when a mover is blocked at the role question
   function onbRoleStepIndex() {
     for (var i = 0; i < ONB_STEPS.length; i++) { if (ONB_STEPS[i].key === 'userRole') return i; }
+    return -1;
+  }
+  /* v147: the account-type question gets the SAME must-answer law
+     as the role question — until now it could be walked past
+     unanswered while every downstream fallback (identity role,
+     the Preferences role note, the Preferences select) treated
+     the missing answer as 'Driver', so accounts were mis-typed
+     from birth. The step def still carries no pre-selection:
+     optGrid marks an option only when the record holds the value. */
+  var _onbTypeNudge = false; // set when a mover is blocked at the type question
+  function isAccountType(v) { return v === 'Driver' || v === 'Owner-Operator' || v === 'Fleet Manager'; }
+  function onbTypeStepIndex() {
+    for (var i = 0; i < ONB_STEPS.length; i++) { if (ONB_STEPS[i].key === 'accountType') return i; }
     return -1;
   }
   function onbStepVisible(idx, o) {
@@ -2455,12 +2547,23 @@
     el('onbBack').style.visibility = onbPrevVisible(i, o) < 0 ? 'hidden' : 'visible';
     el('onbNext').textContent = onbNextVisible(i, o) < 0 ? 'Finish' : 'Next';
     var h = '<div class="step on"><h3>Step ' + vPos + ' of ' + vCount + ': ' + st.title + '</h3><p class="hint">' + st.hint + '</p>';
-    if (st.type === 'opts') {
+    if (st.type === 'name') {
+      /* v147: the person's own name — plain text fields, collected
+         by collectOnbInputs like every other typed answer. */
+      h += '<label class="f">First name</label><input id="ob_fname" value="' + esc(o.firstName || '') + '">' +
+        '<label class="f">Last name</label><input id="ob_lname" value="' + esc(o.lastName || '') + '">';
+    } else if (st.type === 'opts') {
       h += optGrid(st.opts, o[st.key]);
       /* v76 (F1): blocked at the role question — say so HERE, at the
          question, in plain words (never a silent no-op). */
       if (st.key === 'userRole' && _onbRoleNudge && !isUserRole(o.userRole)) {
         h += '<p class="hint" id="onb_role_warn" style="color:#b3541e;font-weight:700;margin-top:10px">👆 Pick one to continue — this decides your home screen. You can change it later in Preferences.</p>';
+      }
+      /* v147: the same law at the type question — it decides what
+         the directory calls this account, and until now the
+         fallbacks quietly answered "Driver" for him. */
+      if (st.key === 'accountType' && _onbTypeNudge && !isAccountType(o.accountType)) {
+        h += '<p class="hint" id="onb_type_warn" style="color:#b3541e;font-weight:700;margin-top:10px">👆 Pick one to continue — this shapes what the app tracks for you. You can change it later in Preferences.</p>';
       }
     } else if (st.type === 'pay') {
       h += optGrid([['Miles', '🛣️', 'Miles'], ['Hourly', '⏱️', 'Hourly'], ['Trip', '🔁', 'Trip'], ['Weight', '⚖️', 'Weight']], o.payStandard);
@@ -2516,7 +2619,8 @@
         '<p class="note">We will remind you 30 days before it expires. Skip it if you prefer to set it later.</p>' +
         '<button type="button" class="btn ghost" id="ob_safety_skip" style="margin-top:6px;">Skip this step →</button>';
     } else if (st.type === 'done') {
-      h += '<div class="card"><div class="kv"><span>Account</span><b>' + esc(o.accountType || '—') + '</b></div>' +
+      h += '<div class="card"><div class="kv"><span>Name</span><b>' + esc(((o.firstName || '') + ' ' + (o.lastName || '')).trim() || '—') + '</b></div>' +
+        '<div class="kv"><span>Account</span><b>' + esc(o.accountType || '—') + '</b></div>' +
         '<div class="kv"><span>Employment</span><b>' + esc(o.employment || '—') + '</b></div>' +
         '<div class="kv"><span>Pay</span><b>' + esc(o.payStandard || '—') + (o.payRate ? ' @ $' + esc(o.payRate) : '') + '</b></div>' +
         '<div class="kv"><span>Base</span><b>' + esc(o.baseLocation || '—') + '</b></div>' +
@@ -2534,6 +2638,7 @@
         var v = d.getAttribute('data-v');
         if (st.key === 'pay') o.payStandard = v; else o[st.key] = v;
         if (st.key === 'userRole') _onbRoleNudge = false; // answered — the gate is satisfied
+        if (st.key === 'accountType') _onbTypeNudge = false; // v147: same
         store.set('onboarding', o);
         renderOnbStep();
       };
@@ -3540,6 +3645,12 @@
 
   function collectOnbInputs() {
     var o = App.onb, g = function (id) { var n = el(id); return n ? n.value.trim() : ''; };
+    /* v147: the name fields write whenever the name step is on
+       screen (element present) — including an emptied field, so a
+       corrected name is the stored name. Off-step, nothing is
+       touched (the pattern the guarded reads below follow). */
+    if (el('ob_fname')) o.firstName = g('ob_fname');
+    if (el('ob_lname')) o.lastName = g('ob_lname');
     if (g('ob_rate')) o.payRate = g('ob_rate');
     if (g('ob_base')) o.baseLocation = g('ob_base');
     if (g('ob_cname')) o.companyName = g('ob_cname');
@@ -3562,6 +3673,17 @@
        not at the next app start. */
     try { if (window.ConnectLive) ConnectLive.publishMine(); } catch (e) {}
     var o = App.onb || {};
+    /* v147: finishing is impossible with the account-type question
+       unanswered too — hold AT the question (it is the earlier
+       step) instead of letting the fallbacks answer "Driver" for
+       him, which is how accounts were mis-typed from birth. */
+    if (!isAccountType(o.accountType)) {
+      _onbTypeNudge = true;
+      var txi = onbTypeStepIndex();
+      if (txi >= 0) App.onbStep = txi;
+      renderOnbStep();
+      return;
+    }
     /* v76 (F1): finishing is impossible with the role question
        unanswered — hold AT the question instead of stamping a
        default. (The v52 stamp this replaces is what put the driver
@@ -3621,6 +3743,10 @@
         }
       }
     } catch (e) {}
+    /* v147: setup ASKED the name question — the one-time dashboard
+       ask must not repeat it for this account, answered or left
+       blank (see paintNameCard). */
+    try { o.nameAsked = true; App.onb = o; store.set('onboarding', o); } catch (e) {}
     store.set('onboarded', true);
     // ask for notification permission once — never let it block onboarding
     // (v19: Notification API throws synchronously in some WebViews, which
@@ -3905,6 +4031,13 @@
         renderOnbStep();
         return;
       }
+      /* v147: the account-type question is a must-answer too — its
+         fallbacks used to answer "Driver" silently. */
+      if (cur && cur.key === 'accountType' && !isAccountType(App.onb.accountType)) {
+        _onbTypeNudge = true;
+        renderOnbStep();
+        return;
+      }
       var nx = onbNextVisible(App.onbStep, App.onb);
       if (nx >= 0) { App.onbStep = nx; renderOnbStep(); }
       else finishOnboarding();
@@ -3915,6 +4048,13 @@
          one answer the app cannot guess). Once answered, Skip works
          exactly as before. */
       collectOnbInputs();
+      if (!isAccountType(App.onb.accountType)) { /* v147: Skip lands on the earlier unanswered question (the type) first */
+        _onbTypeNudge = true;
+        var txi = onbTypeStepIndex();
+        if (txi >= 0) App.onbStep = txi;
+        renderOnbStep();
+        return;
+      }
       if (!isUserRole(App.onb.userRole)) {
         _onbRoleNudge = true;
         var ri = onbRoleStepIndex();
@@ -3922,6 +4062,9 @@
         renderOnbStep();
         return;
       }
+      /* v147: setup presented the name question on the way here —
+         the one-time dashboard ask must not repeat it. */
+      try { App.onb.nameAsked = true; store.set('onboarding', App.onb); } catch (e) {}
       store.set('onboarded', true); App.showView('main');
     };
 

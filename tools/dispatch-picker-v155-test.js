@@ -435,12 +435,13 @@ function stubBody(map) {
     dspSrc.indexOf('ConnectPipe.sendDispatch') !== -1);
   check('f: ConnectPipe.connectedPeers stays the FULL peer set (publishing/viewers untouched)',
     cpSrc.indexOf("c.status === 'connected'") !== -1);
-  /* v155 deliberate pin move: ships as webVersion 155 */
-  eq('f: version ships as 155', ver.webVersion, 155);
-  check('f: index loads the touched files at the 155 pin',
-    idxSrc.indexOf('js/connectlive.js?v=155') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=155') !== -1 &&
-    idxSrc.indexOf('modules/connect.js?v=155') !== -1);
+  /* v155 deliberate pin move: ships as webVersion 155.
+     v147 pin move: 155 -> 156, same convention. */
+  eq('f: version ships as 156', ver.webVersion, 156);
+  check('f: index loads the touched files at the 156 pin',
+    idxSrc.indexOf('js/connectlive.js?v=156') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=156') !== -1 &&
+    idxSrc.indexOf('modules/connect.js?v=156') !== -1);
 
   console.log('\ndispatch-picker-v155 test: ' + pass + '/' + (pass + fail) + ' passed');
   if (fail) process.exitCode = 1;

@@ -205,8 +205,11 @@ function makeBody() {
   /* v155 deliberate pin move: the record gains the FACE beside the
      type (driver / both / office — whether the person drives; the
      type alone cannot say it). Still identity-only. */
+  /* v147 deliberate pin move: the record gains the PERSON beside
+     the business (the man's own name — it IS the display name
+     when known). Still identity-only. */
   eq('a: record carries EXACTLY the identity fields (+derived indexes)',
-    Object.keys(od).sort(), ['business', 'businessLower', 'face', 'name', 'nameLower', 'role', 'tokens', 'updatedAt']);
+    Object.keys(od).sort(), ['business', 'businessLower', 'face', 'name', 'nameLower', 'person', 'role', 'tokens', 'updatedAt']);
   eq('a: face is the person-level drive answer (unanswered Owner-Operator holds at office — the app.js v76 law)',
     od.face, 'office');
   eq('a: name is the trading name', od.name, 'Asjad Kamal');
@@ -240,8 +243,11 @@ function makeBody() {
   eq('c: "Asjad" finds the owner', byFirst.map((p) => p.uid), ['uid-owner']);
   /* v155 deliberate pin move: the result also carries the face —
      it is the peer object sendRequest snapshots from. */
-  eq('c: the result is name + business + role + face only',
-    byFirst[0], { uid: 'uid-owner', name: 'Asjad Kamal Trucking', business: 'Asjad Kamal Trucking', role: 'Owner-Operator', face: 'office' });
+  /* v147 deliberate pin move: the result also carries the person
+     ('' here — this world's owner has given no separate person
+     name; name == business is his trading name). */
+  eq('c: the result is name + business + role + face + person only',
+    byFirst[0], { uid: 'uid-owner', name: 'Asjad Kamal Trucking', business: 'Asjad Kamal Trucking', role: 'Owner-Operator', face: 'office', person: '' });
   eq('c: surname word finds him too', (await CL().search('kamal')).map((p) => p.uid), ['uid-owner']);
   eq('c: a typed prefix finds him', (await CL().search('Asj')).map((p) => p.uid), ['uid-owner']);
   eq('c: the full multi-word name finds him', (await CL().search('asjad kamal')).map((p) => p.uid), ['uid-owner']);

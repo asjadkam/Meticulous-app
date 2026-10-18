@@ -1,4 +1,10 @@
-/* Preferences module — edit everything from onboarding + app settings */
+/* Preferences module — edit everything from onboarding + app settings.
+   v147 (owner, Oct 17 21:31 MDT): the Account card now asks the
+   PERSON's first + last name first of all — the name Connect
+   finds and shows — persisting live on change like the account
+   type (v149 pattern), and an account type that was never
+   answered renders an honest "— pick one —" instead of the
+   first-option Driver the select used to imply. */
 (function () {
   'use strict';
   var esc = function (s) { return App._esc(s); };
@@ -118,21 +124,35 @@
         '<button type="button" class="btn ghost" id="pf_tab_advanced" style="flex:1;">⚙️ Advanced</button></div></div>' +
         '<div id="pf_view_settings">' +
         '<div class="card"><h3>👤 Account</h3>' +
+        /* v147 (owner, Oct 17 21:31 MDT): "why are we not asking
+           first and last name?" — the PERSON's name leads the
+           identity card. It is how people find and recognize him
+           in Connect; his business name stays on the Pay card
+           and rides as the second line everywhere. Persists live
+           on change, exactly like the selects below. */
+        '<label class="f">First name</label><input id="pf_fname" value="' + esc(o.firstName || '') + '">' +
+        '<label class="f">Last name</label><input id="pf_lname" value="' + esc(o.lastName || '') + '">' +
+        '<p class="note">Your name is how people you connect with find and recognize you — your Connect listing shows you first, with your business under your name.</p>' +
+        /* v147: an account type that was never answered renders
+           honestly — the old first-option-wins display called
+           every unanswered account "Driver" without asking. */
         '<label class="f">Account type</label><select id="pf_acct">' +
+        (o.accountType ? '' : '<option value="" selected>— pick one —</option>') +
         ['Driver', 'Owner-Operator', 'Fleet Manager'].map(function (x) { return '<option' + (o.accountType === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
         '<label class="f">Do you drive a truck yourself?</label><select id="pf_role">' +
         ['driver', 'both', 'office'].map(function (x) { return '<option value="' + x + '"' + (effRole === x ? ' selected' : '') + '>' + ROLE_LABEL[x] + '</option>'; }).join('') + '</select>' +
         '<p class="note" id="pf_role_note">' +
         (rawRole
           ? 'Your answer now: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. This tunes your home screen (tracker for drivers, office tools for office-only) and decides whether travel time is your income or a wage owed to a driver. It saves the moment you change it.'
-          : 'Set automatically from your account type (' + esc(o.accountType || 'Driver') + ') as: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. If that\u2019s wrong, change it here — it tunes your home screen and decides whether travel time is your income or a wage owed to a driver.') +
+          : 'Set automatically from your account type' + (o.accountType ? ' (' + esc(o.accountType) + ')' : '') + ' as: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. If that\u2019s wrong, change it here — it tunes your home screen and decides whether travel time is your income or a wage owed to a driver.') +
         '</p>' +
         '<label class="f">Employment</label><select id="pf_emp">' +
         ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
         /* v149: the truth about this card, stated where the user
-           stands — the three selects above persist on change (the
-           wiring sits with the role select's below). */
-        '<p class="note" id="pf_acct_note">Account type, the driving answer and Employment save the moment you change them — your screens and your Connect listing update right away. No need to close the app.</p></div>';
+           stands — the name fields and the three selects above
+           persist on change (the wiring sits with the role
+           select's below). */
+        '<p class="note" id="pf_acct_note">Your name, account type, the driving answer and Employment save the moment you change them — your screens and your Connect listing update right away. No need to close the app.</p></div>';
 
       /* v106 (owner directive, Oct 16, 2026 19:49 MDT): "Give login its
          own page!" The Security card (v34 change-password + the v95
@@ -422,6 +442,11 @@
       body.innerHTML = h;
       body.querySelector('#pf_save').onclick = function () {
         var g = function (id) { return body.querySelector('#' + id).value.trim(); };
+        /* v147: the person's name saves with everything else (it
+           also persists live on change — wiring below; the write
+           here keeps Save authoritative). A blank name never
+           blocks this save. */
+        o.firstName = g('pf_fname'); o.lastName = g('pf_lname');
         o.accountType = g('pf_acct'); o.employment = g('pf_emp'); o.payStandard = g('pf_std');
         o.travelBonus = g('pf_travel') || '1';
         /* v137: only the rate fields this role's face rendered are
@@ -639,6 +664,23 @@
           o.payStandard = stdSel.value;
           App._store.set('onboarding', o);
         };
+        /* v147: the name fields persist the moment they change,
+           through the same funnel as the account type above —
+           stored, the render closure kept in sync, and the
+           sign-in funnel re-run so the directory republishes
+           the PERSON in-session (no restart, no Save tap). Both
+           fields save together, so a later Save can never write
+           one stale half of the name back over the other. */
+        var pfFnEl = body.querySelector('#pf_fname');
+        var pfLnEl = body.querySelector('#pf_lname');
+        var pfNameApply = function () {
+          o.firstName = pfFnEl ? pfFnEl.value.trim() : (o.firstName || '');
+          o.lastName = pfLnEl ? pfLnEl.value.trim() : (o.lastName || '');
+          App._store.set('onboarding', o);
+          App.onAuth(App.user);
+        };
+        if (pfFnEl) pfFnEl.onchange = pfNameApply;
+        if (pfLnEl) pfLnEl.onchange = pfNameApply;
       } catch (e) {}
       /* v46: the Daily-odometer-photos toggle also persists the moment
          it changes (like the photo retakes above), so it takes effect

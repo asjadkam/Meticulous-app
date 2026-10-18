@@ -36,7 +36,14 @@
    and maintenance record (js/connectpipe.js, the shared
    records), and his priced pay lands in the payer's P&L as an
    expense. The honesty line under Current connections names
-   exactly what crosses. */
+   exactly what crosses.
+   v147: PEOPLE, NOT COMPANIES — the directory results, the
+   requests and the connection rows headline the PERSON (the
+   display name ConnectLive publishes is the man's own name
+   when he has given it), with his business as the second
+   line; the connection row reads the business off the
+   con_list entry itself, which ConnectLive now keeps there.
+   A peer with no person name renders exactly as before. */
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('con_' + k, d); };
@@ -307,7 +314,12 @@
           var linked = !!c.uid;
           var shareable = !linked || c.status === 'connected';
           h += '<div class="listitem"><div class="a">' + esc(c.name) + '</div>' +
-            '<div class="b">' + esc(c.role || '') + (c.contact ? ' · ' + esc(c.contact) : '') + '</div>' +
+            '<div class="b">' + esc(c.role || '') +
+            /* v147: the person headlines; his business rides the
+               second line (manual entries carry no business —
+               rendered exactly as before). */
+            (c.business && c.business !== c.name ? ' · ' + esc(c.business) : '') +
+            (c.contact ? ' · ' + esc(c.contact) : '') + '</div>' +
             (linked && c.status === 'connected' ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected</div>' : '') +
             (linked && c.status === 'pending' ? '<div class="b">⏳ Request sent — waiting for them to accept</div>' : '') +
             (linked && c.status === 'declined' ? '<div class="b">Request declined</div>' : '') +
@@ -574,7 +586,7 @@
             uiReqs.outgoing.forEach(function (x) { if (x.id === b.getAttribute('data-cn-resend')) q = x; });
             if (!q) return;
             b.disabled = true;
-            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole, face: q.toFace }).then(function () { refreshLive(true); });
+            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole, face: q.toFace, person: q.toPerson || '' }).then(function () { refreshLive(true); });
           };
         });
       }

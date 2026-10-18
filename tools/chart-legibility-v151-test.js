@@ -310,9 +310,10 @@ console.log('— v151: ship pins —');
   const idxSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   /* v152 pin move (the standing convention): 151 -> 152.
      v154 pin move: 153 -> 154, same convention.
-     v155 pin move: 154 -> 155, same convention. */
-  eq('ships as webVersion 155', ver.webVersion, 155);
-  ok('index loads revenue at the 155 pin', idxSrc.indexOf('modules/revenue.js?v=155') !== -1);
+     v155 pin move: 154 -> 155, same convention.
+     v147 pin move: 155 -> 156, same convention. */
+  eq('ships as webVersion 156', ver.webVersion, 156);
+  ok('index loads revenue at the 156 pin', idxSrc.indexOf('modules/revenue.js?v=156') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 

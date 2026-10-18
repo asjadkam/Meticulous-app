@@ -7,7 +7,13 @@
  *    from those same two strings). v155 adds the FACE (driver /
  *    both / office — whether the person drives) beside the role:
  *    the role is the account TYPE, which cannot say that (an
- *    owner-operator may be office-only). No email, no rates, no personal
+ *    owner-operator may be office-only). v147 adds the PERSON —
+ *    the man's own first + last name, asked in setup (js/app.js)
+ *    and Preferences — beside the business: the display name IS
+ *    the person when he is known, the business rides as its own
+ *    field (the listing's second line), and `person` travels the
+ *    exact channels `face` travels (record, request snapshots,
+ *    con_list entries, the reconcile heal). No email, no rates, no personal
  *    data ever enters the record. Published on sign-up/sign-in
  *    (App.onAuth -> ConnectLive.onAuth) and re-published whenever the
  *    profile changes (Preferences save, onboarding finish, opening
@@ -19,19 +25,21 @@
  *    (lowercase range) and multi-word queries all resolve against
  *    the directory; results carry name + business + role only.
  *  - REQUESTS: requests/{fromUid}_{toUid} — one doc per ordered
- *    pair: {from, to, fromName/fromBusiness/fromRole/fromFace,
- *    toName/toBusiness/toRole/toFace, status, createdAt, updatedAt}. The
- *    identity snapshots ride the request so each side can render
- *    and materialize the connection without a second lookup; they
- *    are the same identity-only fields the directory publishes.
+ *    pair: {from, to, fromName/fromBusiness/fromRole/fromFace/
+ *    fromPerson, toName/toBusiness/toRole/toFace/toPerson, status,
+ *    createdAt, updatedAt}. The identity snapshots ride the
+ *    request so each side can render and materialize the
+ *    connection without a second lookup; they are the same
+ *    identity-only fields the directory publishes.
  *  - ACCEPT lands the connection in BOTH accounts' own cloud data:
  *    the accepter writes their con_list entry immediately; the
  *    requester's app materializes its side on reconcile (app start
  *    after the first kv pull + every Connect render), because no
  *    account may write another account's tree. con_list entries
  *    keep the existing shape ({id, name, role, contact}) extended
- *    with {uid, status, viaConnect}; a uid the user removed locally
- *    is remembered in con_hidden so reconcile never resurrects it.
+ *    with {uid, status, viaConnect, face, person, business}; a uid
+ *    the user removed locally is remembered in con_hidden so
+ *    reconcile never resurrects it.
  *
  * Firestore rules for both collections ship in firestore.rules and
  * deploy with the app (deploy.yml: hosting,firestore:rules).
@@ -61,17 +69,36 @@
 
   function titleWord(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : w; }
 
-  /* The display name the account is findable by. The app holds no
-     separate person-name field: the business/company name IS the
-     trading name for this user base (an owner-operator's invoices read
-     his business name from exactly this field). Only when it is empty
-     do we fall back to a name-shaped reading of the account email's
-     local part — the email itself is never stored. */
+  /* v147: the PERSON's full name — onboarding.firstName +
+     lastName, asked in setup and Preferences. Connect is between
+     people: the directory, the requests and the crew boards name
+     the man, with his business as the second line. '' when the
+     account has never been asked (or left it blank — asking is
+     fine, walling is not: every surface falls back exactly as
+     before when the person is unknown). */
+  function personOf(o) {
+    o = o || {};
+    return (String(o.firstName || '').trim() + ' ' + String(o.lastName || '').trim())
+      .replace(/\s+/g, ' ').trim();
+  }
+  CL.personOf = personOf;
+
+  /* The display name the account is findable by. v147 law: the
+     PERSON's full name when he is known — a man is found and
+     recognized by his name, not his company. The business/company
+     name stays the trading name on its own field (an
+     owner-operator's invoices read his business name from exactly
+     that field), and only when NEITHER person nor business is
+     known do we fall back to a name-shaped reading of the account
+     email's local part — the email itself is never stored. With
+     no person name, every output below is byte-identical to the
+     pre-v147 behaviour. */
   CL.identity = function () {
     var st = store();
     var o = (st && st.get('onboarding', {})) || {};
     var business = String(o.companyName || '').trim();
-    var name = business;
+    var person = personOf(o);
+    var name = person || business;
     if (!name) {
       var f = fb();
       var local = ((f && f.user && f.user.email) || '').split('@')[0] || '';
@@ -82,7 +109,7 @@
     }
     if (!name) name = 'Meticulous user';
     var role = String(o.accountType || '').trim() || 'Driver';
-    return { name: name, business: business, role: role, face: faceOf(o) };
+    return { name: name, business: business, role: role, face: faceOf(o), person: person };
   }
 
   /* v155: the FACE — the person-level answer to "Do you drive a
@@ -122,6 +149,7 @@
       business: idn.business,
       role: idn.role,
       face: idn.face,
+      person: idn.person,
       nameLower: idn.name.toLowerCase(),
       businessLower: idn.business.toLowerCase(),
       tokens: tokensFor(idn.name, idn.business),
@@ -135,7 +163,7 @@
     var f = fb();
     if (!f) return Promise.resolve(false);
     var rec = dirRecord();
-    var key = JSON.stringify([rec.name, rec.business, rec.role, rec.face]);
+    var key = JSON.stringify([rec.name, rec.business, rec.role, rec.face, rec.person]);
     if (CL._pubKey === key) return Promise.resolve(false);
     CL._pubKey = key;
     return f.db.collection('directory').doc(f.user.uid).set(rec, { merge: true })
@@ -164,7 +192,7 @@
         var hay = ((v.nameLower || '') + ' ' + (v.businessLower || '')).trim();
         for (var i = 0; i < words.length; i++) { if (hay.indexOf(words[i]) === -1) return; }
         seen[d.id] = 1;
-        out.push({ uid: d.id, name: v.name || '', business: v.business || '', role: v.role || '', face: v.face || '' });
+        out.push({ uid: d.id, name: v.name || '', business: v.business || '', role: v.role || '', face: v.face || '', person: v.person || '' });
       });
     }
     function job(p) { return p.then(add).catch(function () {}); }
@@ -196,8 +224,8 @@
       var now = Date.now();
       var doc = {
         from: f.user.uid, to: peer.uid,
-        fromName: me.name, fromBusiness: me.business, fromRole: me.role, fromFace: me.face,
-        toName: peer.name || '', toBusiness: peer.business || '', toRole: peer.role || '', toFace: peer.face || '',
+        fromName: me.name, fromBusiness: me.business, fromRole: me.role, fromFace: me.face, fromPerson: me.person,
+        toName: peer.name || '', toBusiness: peer.business || '', toRole: peer.role || '', toFace: peer.face || '', toPerson: peer.person || '',
         status: 'pending', updatedAt: now
       };
       if (!snap.exists) doc.createdAt = now;
@@ -240,7 +268,7 @@
       .update({ status: accept ? 'accepted' : 'declined', updatedAt: Date.now() })
       .then(function () {
         if (accept) {
-          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace }, 'connected');
+          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace, person: req.fromPerson }, 'connected');
         }
         return true;
       })
@@ -271,6 +299,14 @@
          face value may land; a pre-v155 snapshot's empty face
          never erases a known one. */
       if (isFace(peer.face) && found.face !== peer.face) { found.face = peer.face; changed = true; }
+      /* v147: the person rides the same refresh under the same
+         guard (a pre-v147 snapshot's missing person never erases
+         a known one), and the BUSINESS lands on the entry too —
+         it is one of the names the peer is known by (bill-to
+         matching reads the entry), and his display name becoming
+         his person must not cost the books his company. */
+      if (peer.person && found.person !== peer.person) { found.person = peer.person; changed = true; }
+      if (peer.business && found.business !== peer.business) { found.business = peer.business; changed = true; }
       if (!found.viaConnect) { found.viaConnect = true; changed = true; }
     } else {
       list.push({
@@ -278,6 +314,8 @@
         name: peer.name || 'Meticulous user',
         role: peer.role || '',
         face: isFace(peer.face) ? peer.face : '',
+        person: peer.person || '',
+        business: peer.business || '',
         contact: '',
         uid: peer.uid,
         status: status,
@@ -312,7 +350,7 @@
         if (!snap.exists) return false;
         var v = snap.data() || {};
         return CL.upsertConn(
-          { uid: c.uid, name: v.name, role: v.role, face: v.face },
+          { uid: c.uid, name: v.name, role: v.role, face: v.face, person: v.person, business: v.business },
           c.status || 'connected');
       }).catch(function () { return false; }));
     });
@@ -330,11 +368,11 @@
     return CL.listMine().then(function (r) {
       var changed = false;
       r.outgoing.forEach(function (q) {
-        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace }, q.status === 'accepted' ? 'connected' : q.status)) changed = true;
+        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace, person: q.toPerson, business: q.toBusiness }, q.status === 'accepted' ? 'connected' : q.status)) changed = true;
       });
       r.incoming.forEach(function (q) {
         if (q.status === 'accepted') {
-          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace }, 'connected')) changed = true;
+          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace, person: q.fromPerson, business: q.fromBusiness }, 'connected')) changed = true;
         }
       });
       return healFromDirectory().then(function (healed) {

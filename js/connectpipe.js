@@ -708,7 +708,13 @@
     var st = store();
     if (st) {
       (st.get('con_list', []) || []).forEach(function (c) {
-        if (c && c.uid === uid && c.name) out.push(c.name);
+        if (c && c.uid === uid) {
+          if (c.name) out.push(c.name);
+          /* v147: the entry's business is one of the peer's names
+             too — since the person may now headline the entry, an
+             invoice billed to his COMPANY must still match him. */
+          if (c.business) out.push(c.business);
+        }
       });
     }
     try {
