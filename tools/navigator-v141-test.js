@@ -140,9 +140,10 @@ console.log('— 1. the wiring (static) —');
   /* v142 pin move (the standing convention): the OTA number only
      moves forward, so the pin follows the live version 143 -> 144.
      v143 pin move: 144 -> 145, same convention.
-     v144 pin move: 145 -> 146, same convention. */
-  check('ships as webVersion 146, and index.html loads the navigator at the 146 pin',
-    ver.webVersion === 146 && idxSrc.indexOf('src="modules/navigator.js?v=146"') >= 0,
+     v144 pin move: 145 -> 146, same convention.
+     v145 pin move: 146 -> 147, same convention. */
+  check('ships as webVersion 147, and index.html loads the navigator at the 147 pin',
+    ver.webVersion === 147 && idxSrc.indexOf('src="modules/navigator.js?v=147"') >= 0,
     'webVersion=' + ver.webVersion);
   check('version.json carries all three render assets in the OTA manifest',
     ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

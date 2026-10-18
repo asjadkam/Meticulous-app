@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 146,
-  "notes": "v144: Connect first-request fix — the requests read rule now survives the not-yet-existing pair doc, so a first connection request between two accounts can be created.",
+  "webVersion": 147,
+  "notes": "v145: Pull-to-refresh on every shell screen (one shared gesture: cloud sync settles, the screen re-reads and repaints through its own load path; never over an open sheet, the Navigator/Drive, or a form being typed in) + the Connect results line now derives from the peer's live state, so a connected card no longer claims the request is still out.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",

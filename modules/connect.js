@@ -53,7 +53,8 @@
   var uiConfirmDel = -1;    // connection index awaiting its inline confirm
   var uiFlash = '';         // one-shot note at the top of the connections card
   var uiResults = null;     // last directory search results (v131)
-  var uiSearchMsg = '';     // line under the search box (v131)
+  var uiSearchMsg = '';     // general line under the search box (v131)
+  var uiPeerNote = null;    // {uid, name} the results tail is ABOUT (v145)
   var uiReqs = null;        // last requests load {incoming, outgoing} (v131)
 
   function live() {
@@ -162,6 +163,37 @@
     return st;
   }
 
+  /* CN-NOTE-BEGIN — v145: the line under the search results is a
+     claim about ONE person's state, so it is DERIVED from that
+     state at paint time, never stored as a sentence. The stored
+     version kept printing "Request sent to X — they accept it in
+     their Connect screen" under a card that already read
+     "✓ Connected" (owner's recording, Oct 17 21:10 MDT): the
+     button had moved on, the sentence had not. Same rule as the
+     buttons above it — state in, copy out:
+       connected -> the connected truth
+       sent      -> the request is out, they accept on their side
+       incoming  -> they asked too; the answer lives in Requests
+       anything else -> silence (no claim the state can't back) */
+  function cnStateNote(st, name) {
+    if (st === 'sent') return 'Request sent to ' + name + ' — they accept it in their Connect screen.';
+    if (st === 'connected') return '✓ Connected to ' + name + ' — you are linked.';
+    if (st === 'incoming') return name + ' asked you too — answer in Requests below.';
+    return '';
+  }
+  /* CN-NOTE-END */
+
+  /* the tail under the results: a live peer note (derived through
+     cnStateNote from the peer's CURRENT state) outranks the
+     general line; the general line (search errors, hints) shows
+     only while no peer note is live. */
+  function resultsTail() {
+    var tail = '';
+    if (uiPeerNote) tail = cnStateNote(peerState(uiPeerNote.uid), uiPeerNote.name);
+    else if (uiSearchMsg) tail = uiSearchMsg;
+    return tail ? '<p class="note" style="margin-top:6px">' + esc(tail) + '</p>' : '';
+  }
+
   function resultsHtml() {
     if (uiResults === null) return uiSearchMsg ? '<p class="note" style="margin-top:8px">' + esc(uiSearchMsg) + '</p>' : '';
     if (!uiResults.length) return '<p class="note" style="margin-top:8px">Nobody found by that name yet. Check the spelling — or they may not be on Meticulous yet.</p>';
@@ -174,7 +206,7 @@
       return '<div class="listitem"><div class="a">' + esc(p.name) + '</div>' +
         '<div class="b">' + esc(p.role || '') + (p.business && p.business !== p.name ? ' · ' + esc(p.business) : '') + '</div>' +
         '<div class="row" style="margin-top:8px">' + btn + '</div></div>';
-    }).join('') + (uiSearchMsg ? '<p class="note" style="margin-top:6px">' + esc(uiSearchMsg) + '</p>' : '');
+    }).join('') + resultsTail();
   }
 
   function requestsHtml() {
@@ -477,9 +509,15 @@
             if (!p) return;
             b.disabled = true; b.textContent = 'Sending…';
             CL.sendRequest(p).then(function (r) {
-              uiSearchMsg = r === 'sent' ? 'Request sent to ' + p.name + ' — they accept it in their Connect screen.'
-                : r === 'connected' ? 'You are already connected to ' + p.name + '.'
-                : 'Could not send the request — check your connection and try again.';
+              /* v145: the outcome is bound to THIS peer (uiPeerNote)
+                 and re-derived from his live state at every paint
+                 through cnStateNote — the old code stored the
+                 sentence itself, and it outlived the state it
+                 described (the stale-helper recording). A failed
+                 send stays a general line: it claims nothing about
+                 the peer's state. */
+              if (r === 'sent' || r === 'connected') { uiPeerNote = { uid: p.uid, name: p.name }; uiSearchMsg = ''; }
+              else { uiPeerNote = null; uiSearchMsg = 'Could not send the request — check your connection and try again.'; }
               CL.listMine().then(function (res) { uiReqs = res; paintResults(); paintRequests(); CL.reconcile(); });
             });
           };
@@ -543,6 +581,7 @@
         if (!CL) return;
         var qEl = body.querySelector('#cn_q');
         var q = qEl ? qEl.value.trim() : '';
+        uiPeerNote = null; // v145: a new search retires the old peer's note
         if (!q) { uiResults = null; uiSearchMsg = 'Type a name or business first.'; paintResults(); return; }
         uiSearchMsg = 'Searching…'; paintResults();
         CL.search(q).then(function (res) {

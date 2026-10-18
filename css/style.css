@@ -228,6 +228,19 @@ img{max-width:100%;}
   box-shadow:0 -4px 24px rgba(0,0,0,.2);}
 #fbSheet.open{transform:translateY(0);}
 
+/* ---------- v145: pull-to-refresh (js/app.js PTR region) ----------
+   The gesture belongs to the app: the browser's own pull-reload
+   would throw away app state, so the top overscroll is owned here.
+   The pill is the whole face of it — pull hint, refreshing, and the
+   settled "✓ Updated" — pointer-transparent, above the sheets. */
+body{overscroll-behavior-y:none;}
+#ptrPill{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;
+  transform:translate(-50%,-64px);z-index:1300;background:var(--navy);color:#fff;
+  font-size:13.5px;font-weight:600;padding:8px 16px;border-radius:999px;
+  box-shadow:0 4px 16px rgba(0,0,0,.28);transition:transform .22s ease;
+  pointer-events:none;white-space:nowrap;}
+#ptrPill.show{transform:translate(-50%,0);}
+
 /* ---------- v93: the road hand (js/chatbot.js) ----------
    ONE round mic-first Ask button, bottom-right, stacked above
    the feedback FAB so neither covers the home tracker or a

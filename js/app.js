@@ -515,6 +515,7 @@
     el('dashView').classList.remove('hidden');
     el('modView').classList.add('hidden');
     buildDashboard();
+    try { App.ptrNoteRepainted(); } catch (e) {} // v145: a fresh paint ends any dirty spell
   };
 
   /* v116 (owner recording, Oct 16 2026): Back from a module
@@ -564,6 +565,7 @@
     try { if (mod.resetView) mod.resetView(); } catch (e) {}
     try { mod.render(body); } catch (e) { body.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
     paintPowerBanner(body);
+    try { App.ptrNoteRepainted(); } catch (e) {} // v145: a fresh paint ends any dirty spell
     window.scrollTo(0, 0);
   };
 
@@ -589,6 +591,193 @@
       if (b) b.onclick = function () { try { PowerRead.markAllSeen(); } catch (e) {} if (d.parentNode) d.parentNode.removeChild(d); };
     } catch (e) {}
   }
+
+  /* PTR-BEGIN — v145 PULL-TO-REFRESH (owner, Oct 17 21:11 MDT,
+     over his own screen recording of the Connect screen: "When
+     pulled down, it should update by it self!"). One shared gesture
+     for every scrollable screen in the shell — no per-screen hacks:
+     a pull that STARTS at the very top of the page and travels
+     past PTR_THRESHOLD fires exactly ONE refresh cycle:
+       1. the cloud sync settles (CloudSync.syncNow: pull + flush);
+       2. the visible screen re-reads and repaints through its OWN
+          load path — a module re-enters exactly as if the user had
+          left and come back (App.openModule: resetView + render,
+          which is also what makes Connect republish + reconcile on
+          open); the dashboard rebuilds its cards (their statuses
+          re-read the store) and repaints the tracker hero.
+     Hard guards: never while a sheet or the sidebar is open, never
+     while the Navigator shell (the Drive screen) is up, never off
+     the main view, never a second cycle while one is running, and
+     the REPAINT leg never runs over a screen the user has typed in
+     or is focused into — the sync leg still runs, but typed input
+     is never blown away. The dirt is scoped to the screen it was
+     typed on and ends at the next real repaint (openModule /
+     showDashboard call App.ptrNoteRepainted). Note the cloud pull
+     keeps its own 60s freshness gap inside CloudSync: a pull
+     inside that window settles from the pull that just ran, while
+     the screen's own live re-read (Connect requests/connections,
+     Dispatch lists) always runs. Harness-extractable region:
+     tools/pull-refresh-v145-test.js drives it whole against fakes. */
+  var PTR_THRESHOLD = 80;    // px of downward travel that arms a refresh
+  var PTR_MIN_WAIT_MS = 500; // a refresh is never an invisible flash
+  var PTR_SETTLE_MS = 9000;  // longest wait on the cloud settle
+  var PTR_SHEETS = ['trkStartSheet', 'trkEndSheet', 'odoSheet', 'loadSheet', 'fbSheet', 'chatSheet'];
+
+  var ptrTrack = null;       // {y0, dy} of the touch being tracked
+  var ptrRefreshing = false;
+  var ptrDirtyFor = null;    // screen key carrying unsaved typing
+  var ptrPill = null;
+  var ptrHideTimer = 0;
+
+  function ptrScreenKey() {
+    var mv = el('modView');
+    if (mv && !mv.classList.contains('hidden') && App._modKey) return 'mod:' + App._modKey;
+    return 'dashboard';
+  }
+
+  function ptrOverlayOpen() {
+    for (var i = 0; i < PTR_SHEETS.length; i++) {
+      var s = el(PTR_SHEETS[i]);
+      if (s && s.classList.contains('open')) return true;
+    }
+    var sb = el('sidebar');
+    if (sb && sb.classList.contains('open')) return true;
+    try { if (document.querySelector('.nv-shell')) return true; } catch (e) {}
+    return false;
+  }
+
+  function ptrEditing() {
+    if (ptrDirtyFor && ptrDirtyFor === ptrScreenKey()) return true;
+    if (App.currentView !== 'main') return false;
+    var a = document.activeElement;
+    if (!a) return false;
+    var tag = a.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!a.isContentEditable;
+  }
+
+  /* the pure gesture decision — the harness pins this table */
+  function ptrDecide(s) {
+    if (s.refreshing || s.view !== 'main' || s.overlay) return 'ignore';
+    if (s.phase === 'start') return s.scrollY <= 0 ? 'track' : 'ignore';
+    if (!s.tracking) return 'ignore';
+    if (s.phase === 'move') return (s.scrollY <= 0 && s.dy > 0) ? 'show' : 'hide';
+    if (s.phase === 'end') return (s.scrollY <= 0 && s.dy >= PTR_THRESHOLD) ? 'fire' : 'cancel';
+    return 'ignore';
+  }
+  App.ptrDecide = ptrDecide;
+
+  function ptrPillEl() {
+    if (ptrPill) return ptrPill;
+    var d = document.createElement('div');
+    d.id = 'ptrPill';
+    document.body.appendChild(d);
+    ptrPill = d;
+    return d;
+  }
+  function ptrPaint(mode, dy) {
+    var p = ptrPillEl();
+    if (ptrHideTimer) { clearTimeout(ptrHideTimer); ptrHideTimer = 0; }
+    if (mode === 'hide') { p.classList.remove('show'); return; }
+    if (mode === 'pull') p.textContent = dy >= PTR_THRESHOLD ? '↑ Release to refresh' : '↓ Pull to refresh';
+    else if (mode === 'refreshing') p.textContent = '↻ Refreshing…';
+    else if (mode === 'done') p.textContent = '✓ Updated';
+    p.classList.add('show');
+    if (mode === 'done') ptrHideTimer = setTimeout(function () { ptrPaint('hide'); }, 900);
+  }
+
+  function ptrSettleWait(t0) {
+    return new Promise(function (resolve) {
+      (function step() {
+        var syncing = false;
+        try {
+          if (window.CloudSync && CloudSync.status) syncing = CloudSync.status().state === 'syncing';
+        } catch (e) {}
+        var waited = Date.now() - t0;
+        if ((!syncing && waited >= PTR_MIN_WAIT_MS) || waited >= PTR_SETTLE_MS) return resolve();
+        setTimeout(step, 150);
+      })();
+    });
+  }
+
+  function ptrRepaint() {
+    if (ptrOverlayOpen()) return false;
+    if (ptrEditing()) return false; // the sync leg ran; the form keeps its text
+    if (ptrScreenKey() === 'dashboard') { buildDashboard(); trackerTick(); }
+    else if (App._modKey) App.openModule(App._modKey); // == leaving and re-entering
+    ptrDirtyFor = null;
+    return true;
+  }
+
+  App.ptrRefreshNow = function () {
+    if (ptrRefreshing) return Promise.resolve(false);
+    if (App.currentView !== 'main' || ptrOverlayOpen()) return Promise.resolve(false);
+    ptrRefreshing = true;
+    ptrPaint('refreshing');
+    try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
+    var t0 = Date.now();
+    return ptrSettleWait(t0).then(function () {
+      try { ptrRepaint(); } catch (e) {}
+      ptrRefreshing = false;
+      ptrPaint('done');
+      return true;
+    });
+  };
+
+  App.ptrNoteRepainted = function () { ptrDirtyFor = null; };
+
+  function ptrTouchY(e) {
+    var t = (e.touches && e.touches.length) ? e.touches[0]
+      : (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0] : null;
+    return t ? t.clientY : null;
+  }
+  function ptrSnapshot(phase, dy) {
+    return {
+      phase: phase, tracking: !!ptrTrack, refreshing: ptrRefreshing,
+      view: App.currentView || '', overlay: ptrOverlayOpen(),
+      scrollY: window.scrollY || 0, dy: dy || 0
+    };
+  }
+  try {
+    document.addEventListener('touchstart', function (e) {
+      if (ptrTrack) { ptrTrack = null; ptrPaint('hide'); return; } // a second finger cancels the pull
+      var y = ptrTouchY(e);
+      if (y === null) return;
+      if (ptrDecide(ptrSnapshot('start', 0)) === 'track') ptrTrack = { y0: y, dy: 0 };
+    }, { passive: true });
+    document.addEventListener('touchmove', function (e) {
+      if (!ptrTrack) return;
+      var y = ptrTouchY(e);
+      if (y === null) return;
+      ptrTrack.dy = y - ptrTrack.y0;
+      if (ptrDecide(ptrSnapshot('move', ptrTrack.dy)) === 'show') {
+        ptrPaint('pull', ptrTrack.dy);
+        if (ptrTrack.dy > 8 && e.cancelable) e.preventDefault();
+      } else { ptrTrack = null; ptrPaint('hide'); }
+    }, { passive: false });
+    document.addEventListener('touchend', function () {
+      if (!ptrTrack) return;
+      var d = ptrDecide(ptrSnapshot('end', ptrTrack.dy));
+      ptrTrack = null;
+      if (d === 'fire') App.ptrRefreshNow();
+      else ptrPaint('hide');
+    }, { passive: true });
+    document.addEventListener('touchcancel', function () {
+      ptrTrack = null; ptrPaint('hide');
+    }, { passive: true });
+    /* typing on the visible screen marks it dirty for the repaint
+       leg — capture phase, main view only; sheets and the chat are
+       already behind the overlay guard and never reach the flag */
+    document.addEventListener('input', function (e) {
+      if (App.currentView !== 'main') return;
+      var t = e.target;
+      if (!t) return;
+      var tag = t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) {
+        ptrDirtyFor = ptrScreenKey();
+      }
+    }, true);
+  } catch (e) {}
+  /* PTR-END */
 
   function doLogout() {
     if (window.FB && FB.ready && FB.user) {
