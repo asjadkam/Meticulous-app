@@ -2453,7 +2453,14 @@
       function attemptSave(start) {
         clearSaveError();
         var fields = readForm();
-        if (!fields.jobSite) { showSaveError('Enter the job site first — nothing was saved yet. Your entry is kept below as a draft.'); return; }
+        /* v154: NO field is required to save — the job site least
+           of all (owner, Oct 17, 2026 22:21: a completed record
+           whose site stood empty refused to re-save while he was
+           attaching its haul-card photo — "site was a mandatory
+           field... It shouldn't be!"). Sites arrive verbally and
+           cards don't always carry one; a blank site saves, and
+           every surface renders its fallback ('Dispatch' / '—').
+           The only gate left is the verified write below. */
         var fp = JSON.stringify([fields, pendingTickets.map(function (t) { return t.id; }), pendingPhoto]);
         var d;
         if (lastSaveTry && lastSaveTry.fp === fp) {
@@ -2496,7 +2503,8 @@
         var orig = dspFindRecord(editingId);
         if (!orig) { dspClearDraft(); api.render(body); return; } // gone mid-edit; render discards + explains
         var fields = readForm();
-        if (!fields.jobSite) { showSaveError('Enter the job site first — nothing was saved. Your edit is kept below as a draft.'); return; }
+        /* v154: an edit saves with an empty job site too — see
+           attemptSave. The verified write below is the only gate. */
         fields.date = orig.date; // readForm stamps today; dspApplyEdit derives the stored day from the scheduled date (v153)
         var updated = dspApplyEdit(orig, fields, pendingTickets, pendingPhoto);
         var res = dspUpdateRecord(updated, orig);

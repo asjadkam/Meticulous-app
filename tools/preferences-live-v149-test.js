@@ -376,11 +376,11 @@ function fireChange(el) {
     'Revenue is not priced yet — set your client rate in Preferences (the Pay card).');
   /* v151 pin move (the standing convention): 150 -> 151.
      v152 pin move: 151 -> 152, same convention.
-     v153 pin move: 152 -> 153, same convention. */
-  eq('d: version ships as 153', ver.webVersion, 153);
+     v154 pin move: 153 -> 154, same convention. */
+  eq('d: version ships as 154', ver.webVersion, 154);
   check('d: index loads the touched files at the 150 pin',
-    idxSrc.indexOf('modules/preferences.js?v=153') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=153') !== -1);
+    idxSrc.indexOf('modules/preferences.js?v=154') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=154') !== -1);
 
   console.log('\npreferences-live-v149: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

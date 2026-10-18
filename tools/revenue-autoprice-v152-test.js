@@ -354,9 +354,9 @@ console.log('\n— v152 auto-price: no wage rate on file —');
 }
 
 console.log('\n— v152 ship pins —');
-/* v153 pin move (the standing convention): 152 -> 153. */
-eq('ships as webVersion 153', ver.webVersion, 153);
-ok('index loads revenue at the 153 pin', idxSrc.indexOf('modules/revenue.js?v=153') !== -1);
+/* v154 pin move (the standing convention): 153 -> 154. */
+eq('ships as webVersion 154', ver.webVersion, 154);
+ok('index loads revenue at the 154 pin', idxSrc.indexOf('modules/revenue.js?v=154') !== -1);
 
 console.log('\nrevenue-autoprice-v152-test: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
