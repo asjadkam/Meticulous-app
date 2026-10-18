@@ -54,6 +54,11 @@
     /* photo stored once: inside tickets[] when tickets carry it;
        top-level only for the legacy no-ticket case. */
     d.photo = d.tickets.length ? null : (legacyPhoto || null);
+    /* v153: a record is BORN consistent — readForm stamps the
+       save day into `date`, but the record's day is its
+       SCHEDULED date whenever one was picked (a dispatch saved
+       on the 16th FOR the 17th is the 17th's, from birth). */
+    d.date = dspRecordDate(d) || d.date;
     d.status = 'saved';
     return d;
   }
@@ -135,7 +140,13 @@
     for (k in f) { if (Object.prototype.hasOwnProperty.call(f, k)) d[k] = f[k]; }
     d.id = orig.id;           // an edit never mints a new id
     d.status = orig.status;   // lifecycle is not a form field
-    d.date = orig.date;       // an edit never moves the dispatch's day
+    /* v153: the stored day follows the SCHEDULED date — an edit
+       that leaves the schedule alone keeps the same derived day
+       (readForm's today-stamp can never move a day by itself),
+       an edit that re-schedules moves the day WITH the schedule,
+       and a record born disagreeing (saved on the 16th for the
+       17th, date still saying the 16th) is healed by any save. */
+    d.date = dspRecordDate(d) || orig.date;
     if (orig.startedAt !== undefined) d.startedAt = orig.startedAt;
     if (orig.endedAt !== undefined) d.endedAt = orig.endedAt;
     d.tickets = tickets ? tickets.slice() : [];
@@ -1619,13 +1630,29 @@
         if (editingId && d.id === editingId) return; // v117: the form is its one presence
         histShown.push({ d: d, i: hist.length - 1 - ri });
       });
+      /* v153: History files by the record's DATE TRUTH — its
+         scheduled date when it carries one (dspRecordDate), the
+         same derivation the publish key and the completed face
+         already use. The sort is stable: records sharing a day
+         keep tonight's newest-first order, so agreeing records
+         render exactly as before; a record saved on the 16th
+         FOR the 17th sorts WITH the 17th, where its card date
+         (below) also reads the 17th. */
+      histShown.sort(function (a, b) {
+        var da = dspRecordDate(a.d), db = dspRecordDate(b.d);
+        if (da === db) return 0;
+        return da < db ? 1 : -1;
+      });
       h += '<div class="card"><h3>📋 History</h3>' +
         (histShown.length ? histShown.map(function (it) {
           var d = it.d, i = it.i;
           var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
                    d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
           return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
-            '<div class="b">' + esc(d.date || '') +
+            /* v153: the card's date line is the derived day
+               (scheduled date wins) — never the raw stored date
+               that could disagree with the 🕗 line beside it. */
+            '<div class="b">' + esc(dspRecordDate(d) || '') +
             (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
             (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
             (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
@@ -2470,7 +2497,7 @@
         if (!orig) { dspClearDraft(); api.render(body); return; } // gone mid-edit; render discards + explains
         var fields = readForm();
         if (!fields.jobSite) { showSaveError('Enter the job site first — nothing was saved. Your edit is kept below as a draft.'); return; }
-        fields.date = orig.date; // readForm stamps today; an edit never moves the dispatch's day
+        fields.date = orig.date; // readForm stamps today; dspApplyEdit derives the stored day from the scheduled date (v153)
         var updated = dspApplyEdit(orig, fields, pendingTickets, pendingPhoto);
         var res = dspUpdateRecord(updated, orig);
         if (!res.ok) {
@@ -2563,7 +2590,12 @@
              that never split them, every value is unchanged. */
           billingRate: parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
           wageRate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
-          role: role, driver: matchedDriver, today: App._today()
+          /* v153: the completion's day is the RECORD's day — its
+             scheduled date — not the day the close happens to be
+             tapped on. A day closed late files its money on the
+             day the work was scheduled for, the same day the
+             History card and the publish key name. */
+          role: role, driver: matchedDriver, today: dspRecordDate(rec) || App._today()
         };
       }
       function applyCompletion(cur, prePlan) {

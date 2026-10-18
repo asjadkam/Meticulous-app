@@ -92,7 +92,20 @@
   }
 
   function collect(d) {
-    var dispatches = (G('dsp_list', [])).filter(function (x) { return x.date === d; });
+    /* v153: the printed set files a dispatch the way dayDsp
+       below (v83) already does — scheduledAt's date wins over
+       the raw stored date. collect used to filter on the raw
+       date alone, so one manifest could carry a dispatch in
+       its times (dayDsp) yet miss it in its printed lines. */
+    var dispatches = (G('dsp_list', [])).filter(function (x) {
+      if (!x) return false;
+      var sd = '';
+      if (typeof x.scheduledAt === 'string') {
+        var mm = /^(\d{4}-\d{2}-\d{2})/.exec(x.scheduledAt);
+        if (mm) sd = mm[1];
+      }
+      return (sd || x.date) === d;
+    });
     var navLog = (G('nav_log', [])).filter(function (x) { return x.at.slice(0, 10) === d; });
     var fills = (G('fuel_fills', [])).filter(function (x) { return x.date === d; });
     var expenses = (G('fuel_expenses', [])).filter(function (x) { return x.date === d; });

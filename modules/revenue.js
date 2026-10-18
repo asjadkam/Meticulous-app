@@ -719,7 +719,14 @@
     });
     var dispatches = [];
     (App._store.get('dsp_list', []) || []).forEach(function (d) {
-      if (!d || d.date !== ds) return;
+      if (!d) return;
+      /* v153: filed by the record's date truth — scheduledAt's
+         date wins, the same derivation summary() and
+         dayLoadsFor() above already use; the raw stored date
+         alone filed a disagreeing record under the wrong day. */
+      var sd = '';
+      if (typeof d.scheduledAt === 'string') { var mm = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt); if (mm) sd = mm[1]; }
+      if ((sd || d.date) !== ds) return;
       dispatches.push({ jobSite: d.jobSite || d.pickup || 'Dispatch', status: d.status || '', ticketNo: d.ticketNo || '' });
     });
     return {

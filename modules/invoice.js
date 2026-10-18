@@ -703,7 +703,17 @@
     var cards = {};
     (dspList || []).forEach(function (rec) {
       if (!rec || rec.status !== 'completed') return;
-      var d = (typeof rec.date === 'string' && rec.date) ? rec.date : String(rec.scheduledAt || '').slice(0, 10);
+      /* v153: the card files under the record's date truth —
+         scheduledAt's date wins (the raw stored date won here
+         before, so a disagreeing record's card missed the day
+         its own completion entry was filed under and dropped
+         out of the closing note). */
+      var d = '';
+      if (typeof rec.scheduledAt === 'string') {
+        var sm = /^(\d{4}-\d{2}-\d{2})/.exec(rec.scheduledAt);
+        if (sm) d = sm[1];
+      }
+      if (!d) d = (typeof rec.date === 'string' && rec.date) ? rec.date : '';
       if (!d || !dspDates[d]) return;
       var tk = rec.tickets || [];
       if (!tk.length) return;

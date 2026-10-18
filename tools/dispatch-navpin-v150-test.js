@@ -251,9 +251,10 @@ function seedList(store) {
   check('a: navigation api exposes navigateToPin (source)', navSrc.indexOf('navigateToPin') !== -1);
   check('a: dispatch hands off via dspNavigatePin (source)', dspSrc.indexOf('dspNavigatePin') !== -1);
   /* v151 pin move (the standing convention): 150 -> 151.
-     v152 pin move: 151 -> 152, same convention. */
-  eq('a: version.json webVersion is 152', ver.webVersion, 152);
-  check('a: index cohort is ?v=152', idxSrc.indexOf('?v=151') === -1 && idxSrc.indexOf('?v=152') !== -1);
+     v152 pin move: 151 -> 152, same convention.
+     v153 pin move: 152 -> 153, same convention. */
+  eq('a: version.json webVersion is 153', ver.webVersion, 153);
+  check('a: index cohort is ?v=153', idxSrc.indexOf('?v=152') === -1 && idxSrc.indexOf('?v=153') !== -1);
 
   /* ---------- (b) driver History renders ---------- */
   console.log('(b) driver history');

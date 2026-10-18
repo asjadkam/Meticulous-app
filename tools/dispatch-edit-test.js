@@ -122,7 +122,18 @@ function eq(name, got, want) {
   eq('a: id pinned to the original', upd.id, 'd-edit-1');
   eq('a: status pinned to the original', upd.status, 'active');
   eq('a: startedAt pinned to the original', upd.startedAt, 1791950400000);
-  eq('a: day pinned to the original', upd.date, '2026-10-13');
+  /* v153 pin move (deliberate, supersedes the v56 pin): the
+     fixture record is itself a DISAGREEING record — stored day
+     2026-10-13, scheduled 2026-10-14T08:00. The stored day no
+     longer pins to the original; it aligns to the SCHEDULED
+     date at save (v153 date truth — the rule that heals the
+     owner's Oct 17 record, stored 16th / scheduled 17th). */
+  eq('a: day follows the scheduled date (v153)', upd.date, '2026-10-14');
+  /* the v56 guard survives in its real form: the form's stray
+     raw `date` field still cannot move the day on its own —
+     only the schedule can. */
+  const updStray = w.dspApplyEdit(orig, formFields({ date: '2026-10-20' }), orig.tickets, null);
+  eq('a: a stray form date cannot move the day (v153)', updStray.date, '2026-10-14');
   eq('a: notes take the edited value', upd.notes, 'Go to Ivor East Pond empty');
   eq('a: non-form fields ride along (netWeight)', upd.netWeight, '12.5');
   eq('a: non-form fields ride along (dumpLat)', upd.dumpLat, 51.1);

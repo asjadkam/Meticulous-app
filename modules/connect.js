@@ -82,11 +82,21 @@
     var out = [];
     if (type === 'dispatch') {
       App._store.get('dsp_list', []).forEach(function (d, i) {
+        /* v153: the picker label + packaged date carry the
+           record's date truth — scheduledAt's date wins, the
+           same derivation the receiving side (below) already
+           applies when it lands the record. */
+        var dDate = '';
+        if (typeof d.scheduledAt === 'string') {
+          var dm = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
+          if (dm) dDate = dm[1];
+        }
+        dDate = dDate || d.date || '';
         out.push({
           id: d.id || ('d' + i),
-          label: (d.date || '') + ' — ' + dispatchName(d),
+          label: dDate + ' — ' + dispatchName(d),
           content: {
-            jobSite: dispatchName(d), date: d.date || '', scheduledAt: d.scheduledAt || '',
+            jobSite: dispatchName(d), date: dDate, scheduledAt: d.scheduledAt || '',
             equipment: d.equipment || '', material: d.material || '',
             ticketNo: d.ticketNo || '', notes: d.notes || ''
           }

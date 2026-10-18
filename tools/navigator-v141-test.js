@@ -146,9 +146,10 @@ console.log('— 1. the wiring (static) —');
      v149 pin move: 148 -> 149, same convention.
      v150 pin move: 149 -> 150, same convention.
      v151 pin move: 150 -> 151, same convention.
-     v152 pin move: 151 -> 152, same convention. */
-  check('ships as webVersion 152, and index.html loads the navigator at the 152 pin',
-    ver.webVersion === 152 && idxSrc.indexOf('src="modules/navigator.js?v=152"') >= 0,
+     v152 pin move: 151 -> 152, same convention.
+     v153 pin move: 152 -> 153, same convention. */
+  check('ships as webVersion 153, and index.html loads the navigator at the 153 pin',
+    ver.webVersion === 153 && idxSrc.indexOf('src="modules/navigator.js?v=153"') >= 0,
     'webVersion=' + ver.webVersion);
   check('version.json carries all three render assets in the OTA manifest',
     ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

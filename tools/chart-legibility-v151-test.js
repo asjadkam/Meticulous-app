@@ -308,9 +308,10 @@ console.log('— v151: ship pins —');
 {
   const ver = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
   const idxSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  /* v152 pin move (the standing convention): 151 -> 152. */
-  eq('ships as webVersion 152', ver.webVersion, 152);
-  ok('index loads revenue at the 152 pin', idxSrc.indexOf('modules/revenue.js?v=152') !== -1);
+  /* v152 pin move (the standing convention): 151 -> 152.
+     v153 pin move: 152 -> 153, same convention. */
+  eq('ships as webVersion 153', ver.webVersion, 153);
+  ok('index loads revenue at the 153 pin', idxSrc.indexOf('modules/revenue.js?v=153') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 
