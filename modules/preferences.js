@@ -440,6 +440,46 @@
       h += '</div>';
 
       body.innerHTML = h;
+      /* v161 (the v149 named remainder): LIVE REPAINT — the four
+         live-apply selects (role, account type, employment,
+         payment standard) persist the moment they change, but the
+         OPEN page used to keep its already-painted cards until
+         re-entry: the Pay card's rate block, the "Where I park"
+         card and the Truck card's driver tools all hang from the
+         account type / role the page painted at entry — a man who
+         changed his type saw the old face and read it as "it
+         didn't take". After a live-apply change the page now
+         re-renders ITSELF from the new state, in place: the
+         module's own render on the same body, no reload, no
+         leaving. Two protections: typed-but-unsaved field values
+         are snapshotted first and restored into the new DOM, so
+         the repaint can never eat what the man was mid-typing
+         (file inputs are skipped — a page may not set those),
+         and the scroll position is carried over. The name fields
+         do NOT repaint (they gate no card, and a repaint under a
+         man tabbing through text fields would cost him his
+         place); the econ select and the photo toggles shape
+         nothing this page paints and keep their own live-apply. */
+      function pfRepaintLive(body) {
+        try {
+          var snap = {};
+          var els = body.querySelectorAll('input, select, textarea');
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el && el.id && el.type !== 'file') snap[el.id] = { v: el.value, c: !!el.checked };
+          }
+          var sy = null, by = null;
+          try { sy = window.scrollY; } catch (e1) {}
+          try { by = body.scrollTop; } catch (e2) {}
+          Meticulous.modules.preferences.render(body);
+          Object.keys(snap).forEach(function (id) {
+            var nel = body.querySelector('#' + id);
+            if (nel) { try { nel.value = snap[id].v; nel.checked = snap[id].c; } catch (e3) {} }
+          });
+          try { if (by) body.scrollTop = by; } catch (e4) {}
+          try { if (sy) window.scrollTo(0, sy); } catch (e5) {}
+        } catch (e) {}
+      }
       body.querySelector('#pf_save').onclick = function () {
         var g = function (id) { return body.querySelector('#' + id).value.trim(); };
         /* v147: the person's name saves with everything else (it
@@ -622,6 +662,7 @@
           var rn = body.querySelector('#pf_role_note');
           if (rn) rn.innerHTML = 'Your answer now: <b>' + esc(ROLE_LABEL[roleSel.value]) + '</b>. Changing it re-tunes your home screen right away.';
           App.onAuth(App.user);
+          pfRepaintLive(body); /* v161: the open page re-paints from the new role */
         };
       } catch (e) {}
       /* v149 (owner, Oct 17 21:45 MDT — the payer's first evening:
@@ -653,16 +694,19 @@
           o.accountType = acctSel.value;
           App._store.set('onboarding', o);
           App.onAuth(App.user);
+          pfRepaintLive(body); /* v161: the open page re-paints from the new type */
         };
         var empSel = body.querySelector('#pf_emp');
         if (empSel) empSel.onchange = function () {
           o.employment = empSel.value;
           App._store.set('onboarding', o);
+          pfRepaintLive(body); /* v161 */
         };
         var stdSel = body.querySelector('#pf_std');
         if (stdSel) stdSel.onchange = function () {
           o.payStandard = stdSel.value;
           App._store.set('onboarding', o);
+          pfRepaintLive(body); /* v161 */
         };
         /* v147: the name fields persist the moment they change,
            through the same funnel as the account type above —
