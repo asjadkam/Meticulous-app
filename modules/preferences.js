@@ -128,7 +128,11 @@
           : 'Set automatically from your account type (' + esc(o.accountType || 'Driver') + ') as: <b>' + esc(ROLE_LABEL[effRole]) + '</b>. If that\u2019s wrong, change it here — it tunes your home screen and decides whether travel time is your income or a wage owed to a driver.') +
         '</p>' +
         '<label class="f">Employment</label><select id="pf_emp">' +
-        ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div>';
+        ['Contract', 'Payroll'].map(function (x) { return '<option' + (o.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
+        /* v149: the truth about this card, stated where the user
+           stands — the three selects above persist on change (the
+           wiring sits with the role select's below). */
+        '<p class="note" id="pf_acct_note">Account type, the driving answer and Employment save the moment you change them — your screens and your Connect listing update right away. No need to close the app.</p></div>';
 
       /* v106 (owner directive, Oct 16, 2026 19:49 MDT): "Give login its
          own page!" The Security card (v34 change-password + the v95
@@ -145,7 +149,11 @@
          renders here is only the signed-in user's OWN money
          identity, framed as theirs: an owner-operator's two rates
          (what he bills, what he pays himself), a driver's one pay
-         rate, and NO rate fields at all for an office/boss face.
+         rate, and no PERSONAL rate fields for an office/boss face.
+         v149 (owner, Oct 17 21:43 MDT): the office face DOES carry
+         the client billing rate — it is a company setting, not a
+         personal rate, and pricingFor reads it (see the Pay card
+         build below).
          The setup-time onboarding.payRate stays stored as the
          legacy fallback inside every rate chain (wage readers use
          ownWageRate || payRate; billing uses billingRate ||
@@ -169,6 +177,24 @@
       } else if (!pfOfficeFace) {
         h += '<label class="f">Your pay rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
           '<p class="note">Your own rate — your pay stubs, invoices and day earnings are figured at it. Every driver carries their own; a boss sets his drivers\u2019 rates in P&L, not here.</p>';
+      } else {
+        /* v149 (owner, Oct 17 21:43 MDT — over the payer's own
+           evening): the office/boss face rendered NO rate fields
+           (v137: personal wage rates don't belong on a boss's
+           face — that stands, and no wage field joins this card),
+           but the CLIENT BILLING RATE is a company setting, not a
+           personal rate, and this field is the only Preferences
+           writer of the onboarding.billingRate that
+           ConnectPipe.pricingFor reads. The payer's Crew card
+           told him "set your client rate in Preferences" while
+           his face had no such field — an office-only owner could
+           never set the rate, so his crew revenue could never
+           price. The door now renders on the payer faces too
+           (office role, Fleet Manager, owner-operator of any
+           role), framed as the company's rate. It writes through
+           the same guarded Save line as the owner-operator's. */
+        h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="e.g. 52">' +
+          '<p class="note">Your company\u2019s rate — what you bill your customer for each foreman hour a connected driver works. It prices the revenue on your crew board and in P&L. Each driver\u2019s pay rate is set on his own entry in P&L, not here.</p>';
       }
       h += '</div>';
 
@@ -399,9 +425,11 @@
         o.accountType = g('pf_acct'); o.employment = g('pf_emp'); o.payStandard = g('pf_std');
         o.travelBonus = g('pf_travel') || '1';
         /* v137: only the rate fields this role's face rendered are
-           written (an office face renders none). o.payRate is NOT
-           written here anymore — the setup-time value stays as the
-           legacy fallback inside every rate chain. */
+           written. o.payRate is NOT written here anymore — the
+           setup-time value stays as the legacy fallback inside
+           every rate chain. v149: an office face renders the
+           company billing rate (only), so its Save writes
+           billingRate through this same guarded line. */
         var pfBrEl = body.querySelector('#pf_billrate'); if (pfBrEl) o.billingRate = pfBrEl.value.trim();
         var pfWgEl = body.querySelector('#pf_wagerate'); if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
@@ -569,6 +597,47 @@
           var rn = body.querySelector('#pf_role_note');
           if (rn) rn.innerHTML = 'Your answer now: <b>' + esc(ROLE_LABEL[roleSel.value]) + '</b>. Changing it re-tunes your home screen right away.';
           App.onAuth(App.user);
+        };
+      } catch (e) {}
+      /* v149 (owner, Oct 17 21:45 MDT — the payer's first evening:
+         "why does he have to close the app to have his settings
+         saved?"): the identity-shaping selects persist the MOMENT
+         they change, in the v52 role pattern above — the store is
+         written with the render-closure `o` kept in sync, so a
+         later "Save preferences" can never write a stale value
+         back over the pick. ACCOUNT TYPE is the identity the
+         whole face hangs from: until v149 it was written ONLY
+         inside the Save button's handler, nothing re-tuned or
+         re-published in-session, and the Preferences page itself
+         kept the pre-save face — on an iPhone that reads as
+         "close the app or it didn't save" (the payer changed his
+         type twice and still saw a driver's face). Its change now
+         also re-runs App.onAuth: the sidebar + dashboard re-tune
+         at once, and the funnel's ConnectLive leg republishes
+         the directory record, so the new type is what the world
+         sees without a restart. EMPLOYMENT rides the same
+         pattern (it is the pay-stub identity); PAYMENT STANDARD
+         persists on change too (the v127 economy-select pattern —
+         its readers read the store live at their own render, so
+         no re-tune is owed). Typed fields keep Save as their
+         commit, and Save already ends in App.onAuth — no path
+         leaves the app showing the old face. */
+      try {
+        var acctSel = body.querySelector('#pf_acct');
+        if (acctSel) acctSel.onchange = function () {
+          o.accountType = acctSel.value;
+          App._store.set('onboarding', o);
+          App.onAuth(App.user);
+        };
+        var empSel = body.querySelector('#pf_emp');
+        if (empSel) empSel.onchange = function () {
+          o.employment = empSel.value;
+          App._store.set('onboarding', o);
+        };
+        var stdSel = body.querySelector('#pf_std');
+        if (stdSel) stdSel.onchange = function () {
+          o.payStandard = stdSel.value;
+          App._store.set('onboarding', o);
         };
       } catch (e) {}
       /* v46: the Daily-odometer-photos toggle also persists the moment

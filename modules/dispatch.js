@@ -1068,7 +1068,7 @@
       (!pricing.wage
         ? '<div style="margin-top:6px"><button class="btn small navy" data-pipesetpay="' + esc(day.driver) + '" data-pipename="' + esc(day.driverName || '') + '">Set his pay rate</button></div>'
         : '') +
-      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences.</div>');
+      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences (the Pay card).</div>');
     /* v146: a one-line strip from his shared RECORDS (fuel /
        maintenance / latest invoice billed to you) — the full
        read-only detail lives on the P&L crew card */

@@ -663,12 +663,15 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
 
   /* ============ (i) statics ============ */
   console.log('(i) statics — hooks, pins, locality');
-  check('i: version ships as 148', ver.webVersion === 148);
-  check('i: index loads the touched files at the 148 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=148') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=148') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=148') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=148') !== -1);
+  /* v149 pin move (the standing convention): the OTA number only
+     moves forward, so this suite's ship pins follow the live
+     version 148 -> 149. */
+  check('i: version ships as 149', ver.webVersion === 149);
+  check('i: index loads the touched files at the 149 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=149') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=149') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=149') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=149') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

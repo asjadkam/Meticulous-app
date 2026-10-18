@@ -12,6 +12,10 @@
  *      signed-in user's OWN money identity, framed as theirs:
  *      owner-operator → his billing rate + his wage rate; pure
  *      driver → his one pay rate; office/boss → NO rate fields.
+ *      [v149 amendment, Oct 17 21:43: the office/boss face now
+ *      renders the CLIENT BILLING RATE — a company setting, not a
+ *      personal rate; the two absence pins below moved in place.
+ *      The personal-rate rule is untouched.]
  *      Every rate reader migrated to the right chain (own books:
  *      ownWageRate || payRate; billing: billingRate || ownWageRate
  *      || payRate) so the owner's numbers are byte-identical:
@@ -214,7 +218,13 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
   const body = makeBody();
   w.sb.Meticulous.modules.preferences.render(body);
   const html = body.innerHTML;
-  hasnt('boss face: NO billing rate field', html, 'id="pf_billrate"');
+  /* v149 pin move (owner catch, Oct 17 21:43): the boss face DOES
+     render the client billing rate now — it is a COMPANY setting,
+     not a personal rate, and its absence left an office-only
+     owner unable to set the very rate his Crew card told him to
+     set in Preferences. The v137 rule that survives intact is the
+     personal one: no wage/pay rate field on this face. */
+  has('boss face: the company billing rate field renders (v149)', html, 'id="pf_billrate"');
   hasnt('boss face: NO wage/pay rate field', html, 'id="pf_wagerate"');
   hasnt('boss face: NO universal rate field', html, 'id="pf_rate"');
   has('boss face: the Pay card itself remains', html, 'id="pf_std"');
@@ -229,7 +239,9 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
   w.sb.Meticulous.modules.preferences.render(body);
   const html = body.innerHTML;
   hasnt('FM/drives face: NO personal rate fields', html, 'id="pf_wagerate"');
-  hasnt('FM/drives face: NO billing field', html, 'id="pf_billrate"');
+  /* v149 pin move, same catch as the boss face above: the company
+     billing rate renders on payer faces; personal rates stay off. */
+  has('FM/drives face: the company billing rate field renders (v149)', html, 'id="pf_billrate"');
 }
 
 /* ================= 2. Save: guarded writes, setup rate untouched ================= */
@@ -250,14 +262,17 @@ console.log('— 2. Save writes only the rendered rate fields; the setup rate is
   eq(saved.travelBonus, '1', 'save: travel bonus still saves');
 }
 {
-  /* The boss saves Preferences with NO rate fields rendered: the
-     handler must not throw and must not invent or erase rates. */
+  /* The boss saves Preferences with NO PERSONAL rate fields
+     rendered: the handler must not throw and must not invent or
+     erase personal rates. (v149: the company billing field DOES
+     render on this face and writes billingRate — empty here, so
+     the stored shape below is unchanged.) */
   const w = prefsWorld({ accountType: 'Fleet Manager', userRole: 'office', payStandard: 'Hourly', payRate: '40', ownWageRate: '38' }, 'office');
   const body = makeBody();
   w.sb.Meticulous.modules.preferences.render(body);
   let threw = null;
   try { body.querySelector('#pf_save').click(); } catch (e) { threw = e; }
-  eq(threw, null, 'boss save: no throw with zero rate fields rendered');
+  eq(threw, null, 'boss save: no throw with no personal rate fields rendered');
   const saved = w.store.get('onboarding', {});
   eq(saved.payRate, '40', 'boss save: stored setup rate untouched');
   eq(saved.ownWageRate, '38', 'boss save: stored wage rate untouched (nothing rendered, nothing written)');
