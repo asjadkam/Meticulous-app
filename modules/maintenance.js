@@ -197,6 +197,86 @@
     };
   }
 
+  /* v156 — LIFETIME DISTANCE TRUTH (owner, Oct 17, 2026 22:29–22:34
+     MDT: "Since May or June when I started reporting fuel for this
+     truck, I think this truck has had over 10,000 km's… What's leg
+     suppose to be?" / "I asked for lifetime" / "System has its
+     lifetime km's… what does it matter if you don't have Odos on
+     [the fills]?"). He is right: a lifetime distance is the
+     distance between the system's OWN odometer bookends — the
+     current master minus the EARLIEST dated reading in the log
+     (odo_readings) — never the sum of the legs between the few
+     fills that happen to carry stamps. Before v156 the Lifetime
+     block below printed that leg fragment (his real screen: 790 km
+     from 2 of 56 fills) and called the leg average (5.0 km/L) the
+     lifetime economy; both were fragments wearing the word
+     Lifetime.
+     SPAN RULE (stated): the economy divides the bookend distance
+     by the litres of the fill-ups dated ON OR AFTER the earliest
+     reading's date — the window the distance actually covers (a
+     dated reading is a day boundary: it opens its day, so that
+     day's fills belong to its window). When the earliest reading
+     predates the first fill, the window is the whole record and
+     the economy is the true lifetime economy. Partial coverage is
+     named on the face (see lifetimeNote); with NO dated reading
+     at all (or a master below the earliest), no lifetime figure
+     exists and the face prints the honest state instead of a
+     number. Reads the log LIVE: a past reading added later
+     through the Add-a-past-reading door extends the figure on
+     the next render — no migration, nothing rewritten. */
+  function lifetimeStats(ms) {
+    ms = ms || mileageStats();
+    var log = [];
+    try { log = App._store.get('odo_readings', []) || []; } catch (e) {}
+    var earliest = null;
+    (Array.isArray(log) ? log : []).forEach(function (r) {
+      if (!r || !r.date || !(parseFloat(r.value) > 0)) return;
+      var cand = { date: String(r.date), value: parseFloat(r.value), ts: parseFloat(r.ts) || 0 };
+      if (!earliest || cand.date < earliest.date ||
+          (cand.date === earliest.date && cand.ts < earliest.ts)) earliest = cand;
+    });
+    var master = null;
+    try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
+    if (!(master > 0)) { var co = currentOdo(); master = co > 0 ? co : null; }
+    if (!earliest || master === null || master < earliest.value) {
+      return {
+        ok: false, earliest: earliest, master: master, distance: 0,
+        fromDate: earliest ? earliest.date : '', windowLitres: 0,
+        economy: 0, fullCoverage: false
+      };
+    }
+    var windowLitres = 0;
+    fills().forEach(function (x) {
+      var d = String((x && x.date) || '');
+      if (d && d >= earliest.date) windowLitres += parseFloat(x.litres) || 0;
+    });
+    var distance = master - earliest.value;
+    return {
+      ok: true, earliest: earliest, master: master, distance: distance,
+      fromDate: earliest.date, windowLitres: windowLitres,
+      economy: windowLitres > 0 ? distance / windowLitres : 0,
+      fullCoverage: !ms.firstFillDate || earliest.date <= ms.firstFillDate
+    };
+  }
+
+  /* v156: the Lifetime footer's words — the span said out loud in
+     each of the three states (full window / partial window named
+     by its from-date / no readings yet). */
+  function lifetimeNote(ms, lt) {
+    var span = (ms.firstFillDate ? ', ' + esc(ms.firstFillDate) + ' → ' + esc(ms.lastFillDate) : '') +
+      ' (' + ms.fillCount + ' fill-up' + (ms.fillCount === 1 ? '' : 's') + ')';
+    if (lt.ok && lt.fullCoverage) {
+      return 'Lifetime — from your fill-up records' + span + '. Distance runs from your earliest odometer reading (' +
+        esc(lt.fromDate) + ') to today\'s odometer; fuel counts every fill-up.';
+    }
+    if (lt.ok) {
+      return 'Lifetime — fuel counts every fill-up in your records' + span + ', but your dated odometer readings start ' +
+        esc(lt.fromDate) + ' — so distance and economy cover ' + esc(lt.fromDate) +
+        ' → today. Add an earlier reading above and the lifetime figures reach back with it.';
+    }
+    return 'Lifetime — fuel counts every fill-up in your records' + span + '. Distance and economy come from your dated odometer readings, and none are on record yet — no figure is printed rather than a wrong one.';
+  }
+
   /* ---- Odometer: max seen across fills + events, or manual override ---- */
   function currentOdo() {
     var manual = parseFloat(S('odo', ''));
@@ -342,6 +422,7 @@
     _allowed: function () { return true; },
     _dueItems: dueItems,
     _mileageStats: mileageStats,
+    _lifetimeStats: lifetimeStats, /* v156: the bookend lifetime derivation */
     _currentOdo: currentOdo,
     _applyOdoCorrection: applyOdoCorrection,
     _logOdoCorrection: logOdoCorrection,
@@ -364,6 +445,14 @@
       /* Gate removed Oct 13, 2026 — everyone (including Drivers) gets access. */
       var ms = mileageStats();
       var msEcon = econDisp(ms.avgKpl); /* v127: the summary economy, in the chosen unit */
+      /* v156: the LIFETIME figures (bookends) — the headline
+         economy is the lifetime economy whenever a true bookend
+         figure exists; the leg average remains only as the
+         fallback for a face with no dated readings yet. */
+      var lt = lifetimeStats(ms);
+      var ltEcon = econDisp(lt.economy);
+      var headEcon = (lt.ok && lt.economy > 0) ? ltEcon : msEcon;
+      var headEconShow = (lt.ok && lt.economy > 0) || ms.legs > 0;
       var d = dueItems();
       var ev = events();
       var totalMaint = 0;
@@ -377,7 +466,7 @@
         (d.odo > 0 ? kmStr(d.odo) : '—') + '</div></div>' +
         '<div class="card" style="flex:1;margin:0"><div class="note">Fuel efficiency</div>' +
         '<div class="center" style="font-size:20px;font-weight:800;color:var(--navy)">' +
-        (ms.legs > 0 ? msEcon.value + ' <small style="font-size:12px">' + msEcon.unit + '</small>' : '—') + '</div></div>' +
+        (headEconShow ? headEcon.value + ' <small style="font-size:12px">' + headEcon.unit + '</small>' : '—') + '</div></div>' +
         '<div class="card" style="flex:1;margin:0"><div class="note">Maint. spend (all)</div>' +
         '<div class="center" style="font-size:20px;font-weight:800;color:var(--navy)">' + money(totalMaint) + '</div></div>' +
         '</div>' +
@@ -387,17 +476,21 @@
            life time how many km's and how many liters of fuel and
            how much kmpl"): the LIFETIME block — distance + fuel +
            economy over every record the app holds, with the span
-           the records cover said out loud. Distance and economy
-           count the legs between fill-ups with odometer readings
-           (the same sane legs as the trend); fuel counts every
-           fill-up. This replaces the old "Tracked over" line —
-           its facts (tracked km + leg count) live on in the first
-           row here. */
+           the records cover said out loud.
+           v156 (owner, Oct 17 22:29–22:34 MDT): the distance and
+           economy are the BOOKEND figures now (lifetimeStats —
+           master minus the earliest dated reading, over the
+           window that reading opens); the leg figures live on
+           ONLY as their own labelled line — the diesel watch's
+           instrument — and never again AS the Lifetime rows. */
         (ms.fillCount > 0
-          ? '<div class="kv"><span>Lifetime distance</span><b>' + kmStr(ms.kmTracked) + (ms.legs ? ' (' + ms.legs + ' leg' + (ms.legs === 1 ? '' : 's') + ')' : '') + '</b></div>' +
+          ? (lt.ok
+              ? '<div class="kv"><span>Lifetime distance</span><b>' + kmStr(lt.distance) + '</b></div>'
+              : '<div class="kv"><span>Lifetime distance</span><b>—</b></div>') +
             '<div class="kv"><span>Lifetime fuel</span><b>' + ms.totalLitres.toFixed(1) + ' L</b></div>' +
-            (ms.legs > 0 ? '<div class="kv"><span>Lifetime economy</span><b>' + msEcon.value + ' ' + msEcon.unit + '</b></div>' : '') +
-            '<p class="note">Lifetime — from your fill-up records' + (ms.firstFillDate ? ', ' + esc(ms.firstFillDate) + ' → ' + esc(ms.lastFillDate) : '') + ' (' + ms.fillCount + ' fill-up' + (ms.fillCount === 1 ? '' : 's') + '). Distance and economy count the legs between fill-ups with odometer readings; fuel counts every fill-up.</p>'
+            (lt.ok && lt.windowLitres > 0 ? '<div class="kv"><span>Lifetime economy</span><b>' + ltEcon.value + ' ' + ltEcon.unit + '</b></div>' : '') +
+            (ms.legs > 0 ? '<div class="kv"><span>Between fill-ups (legs)</span><b>' + kmStr(ms.kmTracked) + ' · ' + ms.legs + ' leg' + (ms.legs === 1 ? '' : 's') + ' · ' + msEcon.value + ' ' + msEcon.unit + '</b></div>' : '') +
+            '<p class="note">' + lifetimeNote(ms, lt) + '</p>'
           : '') +
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +
         '<div class="row"><div><label class="f">Update odometer (km)</label><input id="mt_odo" type="number" inputmode="decimal" placeholder="' + (d.odo > 0 ? Math.round(d.odo) : '') + '"></div>' +

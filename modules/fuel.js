@@ -902,6 +902,21 @@
         var rec = { date: formVals.date };
         if (fuReadTime) rec.time = fuReadTime;
         if (hasOdo && odoPlan.mode !== 'refuse') rec.odo = odo;
+        /* v156: a fill saved with NO reading of its own is stamped
+           with the CURRENT master odometer — the app knows the
+           reading, so a fill never lands odo-less again (the leg
+           watch and Maintenance's lifetime figures feed on
+           stamps). A reading the driver typed or a photo supplied
+           always wins (rec.odo above); a REFUSED jump keeps the
+           v86 contract — that save was told it carries no reading,
+           and hasOdo is true there, so it never reaches this
+           stamp. Existing entries are never rewritten: this
+           stamps only the record being created, here at its save. */
+        if (!(rec.odo > 0) && !hasOdo) {
+          var stampMaster = null;
+          try { if (window.App && App._masterOdometer) stampMaster = App._masterOdometer(); } catch (e) {}
+          if (stampMaster > 0) rec.odo = stampMaster;
+        }
         rec.litres = litresV;
         rec.cost = costV;
         rec.station = formVals.station;

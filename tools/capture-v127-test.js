@@ -597,7 +597,7 @@ async function partF() {
 
 /* ============ (e) LIFETIME TOTALS ============ */
 function partE() {
-  console.log('\n— (e) lifetime totals: every fill counted for fuel, sane legs for distance/economy —');
+  console.log('\n— (e) lifetime totals: every fill counted for fuel; distance/economy are the bookends since v156 (legs keep their own line) —');
   const FILLS = [
     { date: '2026-10-13', odo: 168510, litres: 94.522, cost: 234.32, station: 'Mobil — Westwinds' },
     { date: '2026-10-14', odo: 168759, litres: 100.0, cost: 247.90, station: 'Mobil — Heritage Meadows' },
@@ -605,33 +605,52 @@ function partE() {
     { date: '2026-10-15', odo: 519326, litres: 78.175, cost: 193.80, station: 'Mobil (poisoned stamp)' },
     { date: '2026-10-16', odo: 169166, litres: 88.106, cost: 199.91, station: 'Petro-Canada — Barlow Tr' }
   ];
-  const seed = [['mt_odo', '169166'], ['fuel_fills', JSON.parse(JSON.stringify(FILLS))]];
+  /* v156 DELIBERATE PIN MOVE (cited): this part pinned v127's
+     semantics — Lifetime distance = the leg sum, Lifetime economy
+     = the leg economy. v156 (Fuel Distance Truth) supersedes
+     exactly that: the Lifetime rows are the odometer BOOKENDS
+     (master − earliest dated reading) and the leg figures live on
+     their own labelled line. The world therefore gains the dated
+     reading the real app's log holds for its first fill
+     (2026-10-13 @ 168,510 — the seed-fill source), which makes
+     the bookend distance coincide with the leg span here (656),
+     while the economy becomes the honest bookend figure:
+     656 ÷ 432.803 L (every fill in the window) = 1.52 km/L. The
+     leg pins themselves (legs / kmTracked / legLitres / avgKpl)
+     are UNCHANGED — the leg math did not move, only which rows
+     may call themselves Lifetime. */
+  const seed = [['mt_odo', '169166'], ['fuel_fills', JSON.parse(JSON.stringify(FILLS))],
+    ['odo_readings', [{ ts: new Date(2026, 9, 13, 12).getTime(), date: '2026-10-13', value: 168510, source: 'seed-fill' }]]];
   const w = makeModuleWorld({ maint: true, seed: seed });
   const M = w.sandbox.Meticulous.modules.maintenance;
   const ms = M._mileageStats();
   eq('lifetime legs: the 3 real ones (the poisoned stamp forms none)', ms.legs, 3);
-  eq('lifetime distance: real legs only', Math.round(ms.kmTracked), 249 + 177 + 230);
+  eq('leg distance: real legs only', Math.round(ms.kmTracked), 249 + 177 + 230);
   near('leg litres (economy basis)', ms.legLitres, 100 + 72 + 88.106, 1e-9);
   near('lifetime fuel counts EVERY fill-up — the poisoned fill still burned diesel', ms.totalLitres, 94.522 + 100 + 72 + 78.175 + 88.106, 1e-9);
   eq('lifetime fill count', ms.fillCount, 5);
   eq('the records span opens at the first fill', ms.firstFillDate, '2026-10-13');
   eq('the records span closes at the last fill', ms.lastFillDate, '2026-10-16');
-  near('lifetime economy is the leg economy', ms.avgKpl, 656 / 260.106, 1e-9);
+  near('the leg economy stays the leg average (avgKpl) — it is the legs line’s figure now', ms.avgKpl, 656 / 260.106, 1e-9);
+  const lt156 = M._lifetimeStats();
+  eq('v156: the bookend distance coincides with the leg span in this world', Math.round(lt156.distance), 656);
+  near('v156: the lifetime economy is distance ÷ every litre in the window', lt156.economy, 656 / 432.803, 1e-9);
 
   M.render(w.body);
   const h = w.body._html;
   ok('the card shows Lifetime distance', h.indexOf('Lifetime distance') >= 0 && h.indexOf('656') >= 0);
   ok('the card shows Lifetime fuel (432.8 L)', h.indexOf('Lifetime fuel') >= 0 && h.indexOf('432.8 L') >= 0);
   ok('the card shows Lifetime economy', h.indexOf('Lifetime economy') >= 0);
-  ok('the span is labelled honestly (records, first → last, count, leg basis)',
+  ok('the legs live on their own labelled line', h.indexOf('Between fill-ups (legs)') >= 0 && h.indexOf('3 legs') >= 0);
+  ok('the span is labelled honestly (records, first → last, count, bookend basis)',
     h.indexOf('2026-10-13 → 2026-10-16 (5 fill-ups)') >= 0 &&
-    h.indexOf('Distance and economy count the legs between fill-ups') >= 0 &&
+    h.indexOf('Distance runs from your earliest odometer reading') >= 0 &&
     h.indexOf('fuel counts every fill-up') >= 0);
 
   const w2 = makeModuleWorld({ maint: true, seed: seed.concat([['mt_econUnit', 'mpg']]) });
   w2.sandbox.Meticulous.modules.maintenance.render(w2.body);
-  ok('the lifetime economy prints in the chosen unit (2.52 km/L → 5.9 MPG)',
-    w2.body._html.indexOf('Lifetime economy') >= 0 && w2.body._html.indexOf('5.9 MPG') >= 0,
+  ok('the lifetime economy prints in the chosen unit (1.52 km/L → 3.6 MPG)',
+    w2.body._html.indexOf('Lifetime economy') >= 0 && w2.body._html.indexOf('3.6 MPG') >= 0,
     w2.body._html.slice(w2.body._html.indexOf('Lifetime economy'), w2.body._html.indexOf('Lifetime economy') + 120));
 }
 

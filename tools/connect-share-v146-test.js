@@ -675,13 +675,13 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
-     v148 pin move: 156 -> 157, same convention. */
-  check('i: version ships as 157', ver.webVersion === 157);
-  check('i: index loads the touched files at the 157 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=157') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=157') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=157') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=157') !== -1);
+     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. */
+  check('i: version ships as 158', ver.webVersion === 158);
+  check('i: index loads the touched files at the 158 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=158') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=158') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=158') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=158') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
