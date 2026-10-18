@@ -202,8 +202,13 @@ function makeBody() {
   eq('a: publish writes once', await CL().publishMine(), true);
   const od = dirDoc('uid-owner');
   check('a: directory doc exists for the owner', !!od);
+  /* v155 deliberate pin move: the record gains the FACE beside the
+     type (driver / both / office — whether the person drives; the
+     type alone cannot say it). Still identity-only. */
   eq('a: record carries EXACTLY the identity fields (+derived indexes)',
-    Object.keys(od).sort(), ['business', 'businessLower', 'name', 'nameLower', 'role', 'tokens', 'updatedAt']);
+    Object.keys(od).sort(), ['business', 'businessLower', 'face', 'name', 'nameLower', 'role', 'tokens', 'updatedAt']);
+  eq('a: face is the person-level drive answer (unanswered Owner-Operator holds at office — the app.js v76 law)',
+    od.face, 'office');
   eq('a: name is the trading name', od.name, 'Asjad Kamal');
   eq('a: business is the company name', od.business, 'Asjad Kamal');
   eq('a: role is the account type', od.role, 'Owner-Operator');
@@ -233,8 +238,10 @@ function makeBody() {
   asUser(users.ahmed);
   const byFirst = await CL().search('Asjad');
   eq('c: "Asjad" finds the owner', byFirst.map((p) => p.uid), ['uid-owner']);
-  eq('c: the result is name + business + role only',
-    byFirst[0], { uid: 'uid-owner', name: 'Asjad Kamal Trucking', business: 'Asjad Kamal Trucking', role: 'Owner-Operator' });
+  /* v155 deliberate pin move: the result also carries the face —
+     it is the peer object sendRequest snapshots from. */
+  eq('c: the result is name + business + role + face only',
+    byFirst[0], { uid: 'uid-owner', name: 'Asjad Kamal Trucking', business: 'Asjad Kamal Trucking', role: 'Owner-Operator', face: 'office' });
   eq('c: surname word finds him too', (await CL().search('kamal')).map((p) => p.uid), ['uid-owner']);
   eq('c: a typed prefix finds him', (await CL().search('Asj')).map((p) => p.uid), ['uid-owner']);
   eq('c: the full multi-word name finds him', (await CL().search('asjad kamal')).map((p) => p.uid), ['uid-owner']);

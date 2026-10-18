@@ -4,7 +4,10 @@
  *  - DIRECTORY: every signed-in account publishes a small public
  *    record at directory/{uid} holding IDENTITY ONLY — display name,
  *    business name, role (+ lowercase/token search indexes derived
- *    from those same two strings). No email, no rates, no personal
+ *    from those same two strings). v155 adds the FACE (driver /
+ *    both / office — whether the person drives) beside the role:
+ *    the role is the account TYPE, which cannot say that (an
+ *    owner-operator may be office-only). No email, no rates, no personal
  *    data ever enters the record. Published on sign-up/sign-in
  *    (App.onAuth -> ConnectLive.onAuth) and re-published whenever the
  *    profile changes (Preferences save, onboarding finish, opening
@@ -16,8 +19,8 @@
  *    (lowercase range) and multi-word queries all resolve against
  *    the directory; results carry name + business + role only.
  *  - REQUESTS: requests/{fromUid}_{toUid} — one doc per ordered
- *    pair: {from, to, fromName/fromBusiness/fromRole,
- *    toName/toBusiness/toRole, status, createdAt, updatedAt}. The
+ *    pair: {from, to, fromName/fromBusiness/fromRole/fromFace,
+ *    toName/toBusiness/toRole/toFace, status, createdAt, updatedAt}. The
  *    identity snapshots ride the request so each side can render
  *    and materialize the connection without a second lookup; they
  *    are the same identity-only fields the directory publishes.
@@ -79,8 +82,30 @@
     }
     if (!name) name = 'Meticulous user';
     var role = String(o.accountType || '').trim() || 'Driver';
-    return { name: name, business: business, role: role };
-  };
+    return { name: name, business: business, role: role, face: faceOf(o) };
+  }
+
+  /* v155: the FACE — the person-level answer to "Do you drive a
+     truck yourself?" (onboarding.userRole: 'driver' / 'both' /
+     'office'), resolved with the app's OWN law (js/app.js v52
+     role region + the v76 provisional hold): a stored answer
+     wins; an unanswered one falls back to the accountType
+     default, and the 'both' default (Owner-Operator) holds at
+     'office' until the person answers. The directory publishes
+     the face BESIDE the type because the type alone cannot say
+     whether a man drives — an owner-operator may never touch a
+     wheel (the payer: type Owner-Operator, face office) — and
+     the Dispatch send picker (modules/dispatch.js) offers work
+     only to faces that drive. Identity-only, like the type. */
+  var FACE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
+  function isFace(v) { return v === 'driver' || v === 'both' || v === 'office'; }
+  function faceOf(o) {
+    o = o || {};
+    if (isFace(o.userRole)) return o.userRole;
+    var d = FACE_DEFAULTS[String(o.accountType || '').trim()] || 'driver';
+    return d === 'both' ? 'office' : d;
+  }
+  CL.isFace = isFace;;
 
   function tokensFor(name, business) {
     var seen = {}, out = [];
@@ -96,6 +121,7 @@
       name: idn.name,
       business: idn.business,
       role: idn.role,
+      face: idn.face,
       nameLower: idn.name.toLowerCase(),
       businessLower: idn.business.toLowerCase(),
       tokens: tokensFor(idn.name, idn.business),
@@ -109,7 +135,7 @@
     var f = fb();
     if (!f) return Promise.resolve(false);
     var rec = dirRecord();
-    var key = JSON.stringify([rec.name, rec.business, rec.role]);
+    var key = JSON.stringify([rec.name, rec.business, rec.role, rec.face]);
     if (CL._pubKey === key) return Promise.resolve(false);
     CL._pubKey = key;
     return f.db.collection('directory').doc(f.user.uid).set(rec, { merge: true })
@@ -138,7 +164,7 @@
         var hay = ((v.nameLower || '') + ' ' + (v.businessLower || '')).trim();
         for (var i = 0; i < words.length; i++) { if (hay.indexOf(words[i]) === -1) return; }
         seen[d.id] = 1;
-        out.push({ uid: d.id, name: v.name || '', business: v.business || '', role: v.role || '' });
+        out.push({ uid: d.id, name: v.name || '', business: v.business || '', role: v.role || '', face: v.face || '' });
       });
     }
     function job(p) { return p.then(add).catch(function () {}); }
@@ -170,8 +196,8 @@
       var now = Date.now();
       var doc = {
         from: f.user.uid, to: peer.uid,
-        fromName: me.name, fromBusiness: me.business, fromRole: me.role,
-        toName: peer.name || '', toBusiness: peer.business || '', toRole: peer.role || '',
+        fromName: me.name, fromBusiness: me.business, fromRole: me.role, fromFace: me.face,
+        toName: peer.name || '', toBusiness: peer.business || '', toRole: peer.role || '', toFace: peer.face || '',
         status: 'pending', updatedAt: now
       };
       if (!snap.exists) doc.createdAt = now;
@@ -214,7 +240,7 @@
       .update({ status: accept ? 'accepted' : 'declined', updatedAt: Date.now() })
       .then(function () {
         if (accept) {
-          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole }, 'connected');
+          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace }, 'connected');
         }
         return true;
       })
@@ -241,12 +267,17 @@
       if (found.status !== status) { found.status = status; changed = true; }
       if (peer.name && found.name !== peer.name) { found.name = peer.name; changed = true; }
       if (peer.role && found.role !== peer.role) { found.role = peer.role; changed = true; }
+      /* v155: the face rides the same refresh — but only a real
+         face value may land; a pre-v155 snapshot's empty face
+         never erases a known one. */
+      if (isFace(peer.face) && found.face !== peer.face) { found.face = peer.face; changed = true; }
       if (!found.viaConnect) { found.viaConnect = true; changed = true; }
     } else {
       list.push({
         id: 'u' + peer.uid,
         name: peer.name || 'Meticulous user',
         role: peer.role || '',
+        face: isFace(peer.face) ? peer.face : '',
         contact: '',
         uid: peer.uid,
         status: status,
@@ -258,6 +289,38 @@
     return changed;
   };
 
+  /* v155 heal: a link formed before faces were published carries
+     none, and its request doc is a send-time snapshot besides —
+     the peer may have changed his setup since (the payer turned
+     office-only AFTER the owner's request snapshot froze him as
+     'Driver'). The DIRECTORY is the peer's current word: refresh
+     each linked entry's identity (name / type / face) from his
+     directory record, at his entry's CURRENT status so a heal
+     never moves a link's state. Best-effort — offline or a
+     missing record changes nothing — and it only ever touches
+     entries already in con_list (upsertConn's con_hidden guard
+     still applies), so it creates and resurrects nothing. */
+  function healFromDirectory() {
+    var f = fb();
+    var st = store();
+    if (!f || !st) return Promise.resolve(false);
+    var list = st.get('con_list', []) || [];
+    var jobs = [];
+    list.forEach(function (c) {
+      if (!c || !c.uid) return;
+      jobs.push(f.db.collection('directory').doc(c.uid).get().then(function (snap) {
+        if (!snap.exists) return false;
+        var v = snap.data() || {};
+        return CL.upsertConn(
+          { uid: c.uid, name: v.name, role: v.role, face: v.face },
+          c.status || 'connected');
+      }).catch(function () { return false; }));
+    });
+    return Promise.all(jobs).then(function (rs) {
+      return rs.some(function (x) { return !!x; });
+    });
+  }
+
   /* Brings my con_list in line with my requests: outgoing states
      mirror the request status; accepted incoming pairs land as
      connected. Idempotent; resolves true when anything changed. */
@@ -267,15 +330,17 @@
     return CL.listMine().then(function (r) {
       var changed = false;
       r.outgoing.forEach(function (q) {
-        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole }, q.status === 'accepted' ? 'connected' : q.status)) changed = true;
+        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace }, q.status === 'accepted' ? 'connected' : q.status)) changed = true;
       });
       r.incoming.forEach(function (q) {
         if (q.status === 'accepted') {
-          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole }, 'connected')) changed = true;
+          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace }, 'connected')) changed = true;
         }
       });
-      CL._reconciling = false;
-      return changed;
+      return healFromDirectory().then(function (healed) {
+        CL._reconciling = false;
+        return changed || healed;
+      });
     }).catch(function () { CL._reconciling = false; return false; });
   };
 

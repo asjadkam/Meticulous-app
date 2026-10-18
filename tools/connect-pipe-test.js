@@ -140,8 +140,10 @@ const users = {
     store: makeStore({
       onboarding: { companyName: 'AI Trucking', accountType: 'Fleet Manager', billingRate: 52, payRate: 40 },
       con_list: [
-        { id: 'ud1', name: 'Asjad Kamal', role: 'Driver', contact: '', uid: 'uid-driver', status: 'connected', viaConnect: true },
-        { id: 'ud2', name: 'Umar Works', role: 'Driver', contact: '', uid: 'uid-driver2', status: 'connected', viaConnect: true }
+        /* v155 deliberate seed move: entries carry the peer's FACE
+           (the picker offers drivers by face now) — both men drive. */
+        { id: 'ud1', name: 'Asjad Kamal', role: 'Driver', face: 'driver', contact: '', uid: 'uid-driver', status: 'connected', viaConnect: true },
+        { id: 'ud2', name: 'Umar Works', role: 'Driver', face: 'driver', contact: '', uid: 'uid-driver2', status: 'connected', viaConnect: true }
       ],
       pnl_drivers: [
         { id: 'pd1', name: 'Asjad Kamal', payType: 'hourly', rate: 29, uid: 'uid-driver', viaConnect: true, travelHours: 0, start: '2026-10' }
@@ -156,7 +158,7 @@ const users = {
          never appear in anything the boss can read */
       onboarding: { companyName: 'Asjad Kamal', accountType: 'Owner-Operator', travelBonus: 1, payRate: 29, billingRate: 999, ownWageRate: 29 },
       con_list: [
-        { id: 'ub', name: 'AI Trucking', role: 'Fleet Manager', contact: '', uid: 'uid-boss', status: 'connected', viaConnect: true }
+        { id: 'ub', name: 'AI Trucking', role: 'Fleet Manager', face: 'office', contact: '', uid: 'uid-boss', status: 'connected', viaConnect: true }
       ],
       dsp_list: [
         {
@@ -181,7 +183,7 @@ const users = {
     store: makeStore({
       onboarding: { companyName: 'Umar Works', accountType: 'Driver', travelBonus: 1, payRate: 25 },
       con_list: [
-        { id: 'ub', name: 'AI Trucking', role: 'Fleet Manager', contact: '', uid: 'uid-boss', status: 'connected', viaConnect: true }
+        { id: 'ub', name: 'AI Trucking', role: 'Fleet Manager', face: 'office', contact: '', uid: 'uid-boss', status: 'connected', viaConnect: true }
       ],
       dsp_list: [
         { id: 'du1', jobSite: 'Bradi Pit', date: TODAY, scheduledAt: TODAY + 'T08:00', status: 'saved', tickets: [], photo: null }

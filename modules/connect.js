@@ -574,7 +574,7 @@
             uiReqs.outgoing.forEach(function (x) { if (x.id === b.getAttribute('data-cn-resend')) q = x; });
             if (!q) return;
             b.disabled = true;
-            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole }).then(function () { refreshLive(true); });
+            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole, face: q.toFace }).then(function () { refreshLive(true); });
           };
         });
       }

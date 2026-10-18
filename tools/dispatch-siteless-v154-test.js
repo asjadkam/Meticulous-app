@@ -285,8 +285,9 @@ function crewPipe(day) {
 (async function main() {
   /* ---------- ship pins + statics ---------- */
   console.log('(pins) ship state + statics');
-  eq('pins: version.json webVersion is 154', ver.webVersion, 154);
-  check('pins: index cohort is ?v=154', idxSrc.indexOf('?v=153') === -1 && idxSrc.indexOf('?v=154') !== -1);
+  /* v155 pin move (the standing convention): 154 -> 155. */
+  eq('pins: version.json webVersion is 155', ver.webVersion, 155);
+  check('pins: index cohort is ?v=155', idxSrc.indexOf('?v=154') === -1 && idxSrc.indexOf('?v=155') !== -1);
   check('statics: the site hard-block copy is GONE from dispatch.js',
     dspSrc.indexOf('Enter the job site first') === -1);
   check('statics: the verified-save storage error copy is intact (the remaining gate)',

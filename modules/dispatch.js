@@ -1153,15 +1153,32 @@
     });
     return h;
   }
+  /* v155: a dispatch can only be SENT to a man who drives. The
+     picker reads the peer's FACE (the Connect identity's
+     person-level answer — 'driver' / 'both' take work; 'office'
+     never does: an owner on an office face is not a driver,
+     whatever his account TYPE says, and the type is all the old
+     picker had). A peer whose record carries NO face (a link
+     formed before faces were published, not yet healed from his
+     directory) is NOT offered — the picker only offers known
+     drivers. connectedPeers() itself stays the full set: days
+     still publish to every connected peer (the payer included). */
+  function peerDrives(c) {
+    return !!c && (c.face === 'driver' || c.face === 'both');
+  }
   function sendHtml() {
     var peers = ConnectPipe.connectedPeers();
     if (!peers.length) {
       return '<p class="note">Connect a driver first (Connect screen) — then a dispatch you send lands straight in his app, as his scheduled job for that day.</p>';
     }
+    var drivers = peers.filter(peerDrives);
+    if (!drivers.length) {
+      return '<p class="note">No drivers connected yet — connect a driver to send dispatches.</p>';
+    }
     var today = ''; try { today = App._today(); } catch (e) {}
     var tom = today; try { tom = ConnectPipe.dateShift(today, 1); } catch (e) {}
     return '<label class="f">Driver</label><select id="dp_send_to">' +
-      peers.map(function (c) { return '<option value="' + esc(c.uid) + '">' + esc(c.name) + '</option>'; }).join('') + '</select>' +
+      drivers.map(function (c) { return '<option value="' + esc(c.uid) + '">' + esc(c.name) + '</option>'; }).join('') + '</select>' +
       '<div class="row"><div><label class="f">Date</label><input type="date" id="dp_send_date" value="' + esc(tom) + '"></div>' +
       '<div><label class="f">Start time</label><input type="time" id="dp_send_time" value="08:00"></div></div>' +
       '<label class="f">Job site</label><input id="dp_send_site" placeholder="e.g. Maple Ridge">' +
