@@ -45,6 +45,39 @@
  * deploy with the app (deploy.yml: hosting,firestore:rules).
  * NOT in this build: dispatch/document sharing across the pipe —
  * the Connect UI says "comes next" wherever that space shows.
+ *
+ * v148 — CONNECTION KINDS (owner, Oct 17, 2026 21:35–21:36 +
+ * 22:26 MDT): at connect time a man chooses the KIND of
+ * connection — 'all' (Connect all), 'limited' (Connect limited),
+ * 'once' (One time connection). The kind rides the request doc
+ * (the requester proposes; the accepter sees it and can change
+ * it at accept — the ACCEPTED value governs) and lands on both
+ * con_list entries through upsertConn, exactly the channels face
+ * and person ride. A pair with NO kind anywhere (every pre-v148
+ * connection — the owner's own payer pair included) reads as
+ * 'all' — his words for that pair: Full access — and behaves
+ * byte-identically to before. Later changes go through
+ * CL.setKind: the entry re-stamps at once and the accepted
+ * request doc(s) carry the new kind to the other side (the rules
+ * allow either party a kind-only update on an accepted doc), so
+ * reconcile re-governs both apps from that moment.
+ *   LIMITED: the sharing side publishes nothing but dispatches
+ *   + manifests to that viewer (connectpipe gates the viewers
+ *   lists, the billing doc and the records), the reading side
+ *   renders no money/share surfaces for him, and the rules deny
+ *   the withheld dirs outright.
+ *   ONE-TIME: the connection is for ONE day (onceDate — the day
+ *   of the request, re-stamped to the riding dispatch's date
+ *   when one is sent). It ENDS ITSELF when that day closes: the
+ *   earlier of (a) the riding dispatch completing on the
+ *   driver's books (a completed dispatch with pipeFrom = that
+ *   peer, dated onceDate — the sweep in reconcile sees it from
+ *   the pipe's own facts), or (b) the day simply ending (today
+ *   passes onceDate, either side's reconcile). The end stamps
+ *   endedAt on the pair's request doc, so the other side ends
+ *   on its next reconcile and the rules shut at the same mark;
+ *   the row stays as an ended row until removed, and a fresh
+ *   request re-opens the ended doc (sendRequest) any time.
  */
 (function () {
   'use strict';
@@ -207,20 +240,109 @@
     });
   };
 
+  /* ---------------- v148: connection kinds ---------------- */
+
+  /* The kind vocabulary. Absent/invalid reads as 'all' everywhere
+     (CL.kindOf) — every pre-v148 pair is grandfathered Full
+     access with no field written anywhere. */
+  CL.isKind = function (v) { return v === 'all' || v === 'limited' || v === 'once'; };
+  CL.kindOf = function (entry) {
+    return (entry && CL.isKind(entry.kind)) ? entry.kind : 'all';
+  };
+
+  function z2(n) { return ('0' + n).slice(-2); }
+  function dateOfMs(ms) {
+    var d = new Date(ms || 0);
+    if (!isFinite(d.getTime())) return '';
+    return d.getFullYear() + '-' + z2(d.getMonth() + 1) + '-' + z2(d.getDate());
+  }
+  function todayStr() {
+    try { if (window.App && App._today) { var t = App._today(); if (t) return t; } } catch (e) {}
+    return dateOfMs(Date.now());
+  }
+  CL.todayStr = todayStr;
+
+  /* Send-side preselection (owner's law: a DISPATCHER usually
+     connects Limited). The best available signal on the
+     requester's own side: MY face is office (I don't drive) AND
+     the peer's face drives AND the peer is NOT on my payroll
+     books (no pnl_drivers entry carries his uid — a payer asking
+     his own driver is an All pairing). Anything else: All. */
+  function payrollHas(uid) {
+    var st = store();
+    if (!st || !uid) return false;
+    return (st.get('pnl_drivers', []) || []).some(function (d) { return d && d.uid === uid; });
+  }
+  CL.defaultKindFor = function (peer) {
+    if (!peer || !peer.uid) return 'all';
+    var me = CL.identity();
+    var peerDrives = peer.face === 'driver' || peer.face === 'both';
+    if (me.face === 'office' && peerDrives && !payrollHas(peer.uid)) return 'limited';
+    return 'all';
+  };
+
+  /* Accept-side preselection: the PROPOSAL governs when the doc
+     carries one. For a kind-less (pre-v148) request, the same
+     dispatcher shape read from the other side: the requester's
+     face is office, MY face drives, and he is not my payer of
+     record (he matches none of my issued invoices' bill-to,
+     through the pipe's own matcher over the request snapshots /
+     my books) -> Limited; otherwise All. */
+  function billToMatchesName(billTo, name) {
+    try {
+      if (!(window.ConnectPipe && ConnectPipe.normName && ConnectPipe.billToName)) return false;
+      var bt = ConnectPipe.billToName(billTo), pn = ConnectPipe.normName(name);
+      if (!bt || bt.length < 3 || !pn || pn.length < 3) return false;
+      return pn === bt || pn.indexOf(bt) !== -1 || bt.indexOf(pn) !== -1;
+    } catch (e) { return false; }
+  }
+  CL.defaultKindForRequest = function (q) {
+    if (!q) return 'all';
+    if (CL.isKind(q.kind)) return q.kind;
+    var me = CL.identity();
+    var iDrive = me.face === 'driver' || me.face === 'both';
+    if (q.fromFace === 'office' && iDrive) {
+      var payer = false;
+      try {
+        var st = store();
+        if (st) {
+          payer = (st.get('inv_list', []) || []).some(function (r) {
+            if (!r) return false;
+            try {
+              if (window.ConnectPipe && ConnectPipe.peerMatchesBillTo &&
+                  ConnectPipe.peerMatchesBillTo(q.from, r.billTo)) return true;
+            } catch (e) {}
+            return billToMatchesName(r.billTo, q.fromName) || billToMatchesName(r.billTo, q.fromBusiness);
+          });
+        }
+      } catch (e) { payer = false; }
+      if (!payer) return 'limited';
+    }
+    return 'all';
+  };
+
   /* ---------------- requests ---------------- */
 
   CL.requestId = function (from, to) { return from + '_' + to; };
 
   /* Creates (or re-opens after a decline) my request to a peer found
-     in search. Resolves 'sent' | 'connected' | 'self' | 'error'. */
-  CL.sendRequest = function (peer) {
+     in search. Resolves 'sent' | 'connected' | 'self' | 'error'.
+     v148: the caller (the Connect picker's choice) may stamp the
+     proposed kind (+ the once day) on the doc; called the old
+     way (no kind), the doc keeps the exact pre-v148 shape. An
+     accepted pair whose one-time connection has ENDED itself
+     (endedAt stamped) is not 'connected' — the fresh request
+     re-opens the same doc as pending with the end cleared (the
+     rules carry that branch). */
+  CL.sendRequest = function (peer, kind, onceDate) {
     var f = fb();
     if (!f || !peer || !peer.uid) return Promise.resolve('error');
     if (peer.uid === f.user.uid) return Promise.resolve('self');
     var me = CL.identity();
     var ref = f.db.collection('requests').doc(CL.requestId(f.user.uid, peer.uid));
     return ref.get().then(function (snap) {
-      if (snap.exists && (snap.data() || {}).status === 'accepted') return 'connected';
+      var cur = snap.exists ? (snap.data() || {}) : null;
+      if (cur && cur.status === 'accepted' && !((cur.endedAt || 0) > 0)) return 'connected';
       var now = Date.now();
       var doc = {
         from: f.user.uid, to: peer.uid,
@@ -228,6 +350,9 @@
         toName: peer.name || '', toBusiness: peer.business || '', toRole: peer.role || '', toFace: peer.face || '', toPerson: peer.person || '',
         status: 'pending', updatedAt: now
       };
+      if (cur && (cur.endedAt || 0) > 0) doc.endedAt = 0; // the re-open clears the end
+      if (CL.isKind(kind)) doc.kind = kind;
+      if (kind === 'once') doc.onceDate = onceDate || todayStr();
       if (!snap.exists) doc.createdAt = now;
       return ref.set(doc, { merge: true }).then(function () { return 'sent'; });
     }).catch(function () { return 'error'; });
@@ -260,15 +385,32 @@
 
   /* Accept / decline an incoming request. On accept, MY con_list
      gains the connection immediately (my own tree, my own write);
-     the requester's side materializes on their next reconcile. */
-  CL.respond = function (req, accept) {
+     the requester's side materializes on their next reconcile.
+     v148: the accepter may pass the kind he chose at accept (the
+     picker preselects the proposal through defaultKindForRequest)
+     — the ACCEPTED kind is stamped on the doc and on my entry,
+     and it governs both sides; a re-accept of a re-opened
+     one-time pair clears the old end. Called the old way (no
+     kind), the doc keeps the proposal (or the pre-v148 shape). */
+  CL.respond = function (req, accept, kind, onceDate) {
     var f = fb();
     if (!f || !req || !req.id) return Promise.resolve(false);
+    var upd = { status: accept ? 'accepted' : 'declined', updatedAt: Date.now() };
+    var ak = null, od = null;
+    if (accept) {
+      ak = CL.isKind(kind) ? kind : (CL.isKind(req.kind) ? req.kind : null);
+      if (ak) upd.kind = ak;
+      if (ak === 'once') {
+        od = onceDate || req.onceDate || todayStr();
+        upd.onceDate = od;
+      }
+      if ((req.endedAt || 0) > 0) upd.endedAt = 0;
+    }
     return f.db.collection('requests').doc(req.id)
-      .update({ status: accept ? 'accepted' : 'declined', updatedAt: Date.now() })
+      .update(upd)
       .then(function () {
         if (accept) {
-          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace, person: req.fromPerson }, 'connected');
+          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace, person: req.fromPerson, kind: ak, onceDate: od }, 'connected');
         }
         return true;
       })
@@ -307,9 +449,16 @@
          his person must not cost the books his company. */
       if (peer.person && found.person !== peer.person) { found.person = peer.person; changed = true; }
       if (peer.business && found.business !== peer.business) { found.business = peer.business; changed = true; }
+      /* v148: the KIND (and a one-time pair's day) rides the same
+         refresh under the same discipline — only a valid kind
+         lands, so a pre-v148 snapshot never invents or erases
+         one; an entry formed before kinds existed gains no kind
+         key at all and reads as 'all' (CL.kindOf). */
+      if (CL.isKind(peer.kind) && found.kind !== peer.kind) { found.kind = peer.kind; changed = true; }
+      if (peer.onceDate && found.onceDate !== peer.onceDate) { found.onceDate = peer.onceDate; changed = true; }
       if (!found.viaConnect) { found.viaConnect = true; changed = true; }
     } else {
-      list.push({
+      var entry = {
         id: 'u' + peer.uid,
         name: peer.name || 'Meticulous user',
         role: peer.role || '',
@@ -320,7 +469,10 @@
         uid: peer.uid,
         status: status,
         viaConnect: true
-      });
+      };
+      if (CL.isKind(peer.kind)) entry.kind = peer.kind;
+      if (peer.onceDate) entry.onceDate = peer.onceDate;
+      list.push(entry);
       changed = true;
     }
     if (changed) st.set('con_list', list);
@@ -359,6 +511,116 @@
     });
   }
 
+  /* v148: THE ONE-TIME SWEEP. A one-time connection ends itself
+     when its day closes — the earlier of (a) the riding dispatch
+     completing on the driver's books: a completed dispatch in
+     MY list with pipeFrom = that peer, dated the pair's day
+     (the pipe's own completion fact, read from the side that
+     holds the driver's books), or (b) the day ending: today has
+     passed the pair's day, on either side. An end already
+     stamped on the doc (by the other side) ends my entry too.
+     Ending = the entry's status becomes 'ended' (the row stays,
+     removable as today) + endedAt stamped on the pair's accepted
+     doc (fire-and-forget; the rules' kind-governance branch
+     allows either party), so the other side and the rules shut
+     at the same mark. Runs inside reconcile, over the requests
+     reconcile just loaded. Resolves true when an entry ended. */
+  function recordDateOf(d) {
+    if (!d) return '';
+    if (typeof d.scheduledAt === 'string') {
+      var m = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
+      if (m) return m[1];
+    }
+    return d.date || '';
+  }
+  function dayClosedFor(peerUid, dateStr) {
+    var st = store();
+    if (!st || !peerUid || !dateStr) return false;
+    return (st.get('dsp_list', []) || []).some(function (d) {
+      return d && d.pipeFrom === peerUid && d.status === 'completed' && recordDateOf(d) === dateStr;
+    });
+  }
+  CL.sweepOnce = function (r) {
+    var st = store(), f = fb();
+    if (!st || !f || !r) return false;
+    var me = f.user.uid, today = todayStr();
+    var docs = [];
+    (r.outgoing || []).forEach(function (q) { if (q && q.status === 'accepted' && q.kind === 'once') docs.push(q); });
+    (r.incoming || []).forEach(function (q) { if (q && q.status === 'accepted' && q.kind === 'once') docs.push(q); });
+    if (!docs.length) return false;
+    var list = st.get('con_list', []) || [];
+    var changed = false;
+    docs.forEach(function (q) {
+      var peer = q.from === me ? q.to : q.from;
+      var entry = null;
+      list.forEach(function (c) { if (c && c.uid === peer) entry = c; });
+      if (!entry || entry.status !== 'connected') return;
+      var od = q.onceDate || (q.createdAt ? dateOfMs(q.createdAt) : '');
+      var ended = (q.endedAt || 0) > 0 || (!!od && today > od) || dayClosedFor(peer, od);
+      if (!ended) return;
+      entry.status = 'ended';
+      changed = true;
+      if (!((q.endedAt || 0) > 0)) {
+        try {
+          f.db.collection('requests').doc(q.id)
+            .update({ endedAt: Date.now(), updatedAt: Date.now() })
+            .catch(function () {});
+        } catch (e) {}
+      }
+    });
+    if (changed) st.set('con_list', list);
+    return changed;
+  };
+
+  /* v148: CHANGE A CONNECTION'S KIND from its row (either side).
+     My entry re-stamps at once; the pair's accepted request
+     doc(s) carry the new kind to the other side's next reconcile
+     (the rules allow either party a kind-only update on an
+     accepted doc). The pipe re-governs from the caller's next
+     publish (the Connect screen republishes on the change).
+     Switching TO one-time stamps the day as given (the row
+     passes today; a dispatch sent later re-stamps it to the
+     job's day through CL.stampOnceDate). */
+  CL.setKind = function (uid, kind, onceDate) {
+    var st = store();
+    if (!st || !uid || !CL.isKind(kind)) return Promise.resolve(false);
+    var list = st.get('con_list', []) || [];
+    var entry = null;
+    list.forEach(function (c) { if (c && c.uid === uid) entry = c; });
+    if (!entry) return Promise.resolve(false);
+    entry.kind = kind;
+    if (kind === 'once') entry.onceDate = onceDate || entry.onceDate || todayStr();
+    st.set('con_list', list);
+    var f = fb();
+    if (!f) return Promise.resolve(true);
+    return CL.listMine().then(function (r) {
+      var jobs = [];
+      [r.outgoing, r.incoming].forEach(function (arr) {
+        (arr || []).forEach(function (q) {
+          if (!q || q.status !== 'accepted') return;
+          var peer = q.from === f.user.uid ? q.to : q.from;
+          if (peer !== uid) return;
+          var upd = { kind: kind, updatedAt: Date.now() };
+          if (kind === 'once') upd.onceDate = entry.onceDate;
+          jobs.push(f.db.collection('requests').doc(q.id).update(upd).catch(function () {}));
+        });
+      });
+      return Promise.all(jobs).then(function () { return true; });
+    }).catch(function () { return true; });
+  };
+
+  /* v148: a dispatch sent over a one-time connection re-stamps
+     the pair's day to the JOB's day (the connection rides in
+     with that dispatch). No-op for any other kind. */
+  CL.stampOnceDate = function (uid, dateStr) {
+    var st = store();
+    if (!st || !uid || !dateStr) return Promise.resolve(false);
+    var entry = null;
+    (st.get('con_list', []) || []).forEach(function (c) { if (c && c.uid === uid) entry = c; });
+    if (!entry || entry.kind !== 'once' || entry.onceDate === dateStr) return Promise.resolve(false);
+    return CL.setKind(uid, 'once', dateStr);
+  };
+
   /* Brings my con_list in line with my requests: outgoing states
      mirror the request status; accepted incoming pairs land as
      connected. Idempotent; resolves true when anything changed. */
@@ -367,17 +629,30 @@
     CL._reconciling = true;
     return CL.listMine().then(function (r) {
       var changed = false;
+      /* v148: an accepted doc whose one-time end is already
+         stamped (endedAt — by either side's sweep) upserts as
+         ENDED, never back to 'connected': the doc's own facts
+         govern, and upsert-then-sweep would otherwise flip the
+         entry on every reconcile forever. The sweep below still
+         ends pairs whose trigger fired but whose stamp has not
+         landed yet. */
+      var pairStatus = function (q) {
+        if (q.status !== 'accepted') return q.status;
+        return (q.endedAt || 0) > 0 ? 'ended' : 'connected';
+      };
       r.outgoing.forEach(function (q) {
-        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace, person: q.toPerson, business: q.toBusiness }, q.status === 'accepted' ? 'connected' : q.status)) changed = true;
+        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace, person: q.toPerson, business: q.toBusiness, kind: q.kind, onceDate: q.onceDate }, pairStatus(q))) changed = true;
       });
       r.incoming.forEach(function (q) {
         if (q.status === 'accepted') {
-          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace, person: q.fromPerson, business: q.fromBusiness }, 'connected')) changed = true;
+          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace, person: q.fromPerson, business: q.fromBusiness, kind: q.kind, onceDate: q.onceDate }, pairStatus(q))) changed = true;
         }
       });
       return healFromDirectory().then(function (healed) {
+        var swept = false;
+        try { swept = CL.sweepOnce(r); } catch (e) {}
         CL._reconciling = false;
-        return changed || healed;
+        return changed || healed || swept;
       });
     }).catch(function () { CL._reconciling = false; return false; });
   };

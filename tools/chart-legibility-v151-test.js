@@ -311,9 +311,10 @@ console.log('— v151: ship pins —');
   /* v152 pin move (the standing convention): 151 -> 152.
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
-     v147 pin move: 155 -> 156, same convention. */
-  eq('ships as webVersion 156', ver.webVersion, 156);
-  ok('index loads revenue at the 156 pin', idxSrc.indexOf('modules/revenue.js?v=156') !== -1);
+     v147 pin move: 155 -> 156, same convention.
+     v148 pin move: 156 -> 157, same convention. */
+  eq('ships as webVersion 157', ver.webVersion, 157);
+  ok('index loads revenue at the 157 pin', idxSrc.indexOf('modules/revenue.js?v=157') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 

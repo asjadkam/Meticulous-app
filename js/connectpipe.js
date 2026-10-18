@@ -75,6 +75,34 @@
  *  writable only by the driver; a pipe dispatch is readable by
  *  its two parties, creatable only by its sender as 'sent', and
  *  only the recipient may advance its receipt marks.
+ *
+ *  v148 — CONNECTION KINDS (owner, Oct 17, 2026 21:35–21:36 MDT):
+ *  the kind on a connection (js/connectlive.js) governs what
+ *  crosses to that peer:
+ *    ALL (and every pre-v148 pair — the grandfather read): the
+ *      full v132/v146 share, byte-identical to before.
+ *    LIMITED (a dispatcher's kind): ONLY the dispatch pipe
+ *      (untouched, both ways) and his MANIFESTS cross — a new
+ *      per-viewer doc sharedmanifests/{driver}_{viewer} carrying
+ *      the manifest lines for exactly the days that viewer
+ *      dispatched to the driver (his dsp_list records with
+ *      pipeFrom = that viewer). The day/records/photos viewers
+ *      lists are built from sharePeers() — connected peers
+ *      MINUS limited ones — no billing doc is ever written for
+ *      a limited peer (a stale one is emptied by the standing
+ *      clearing pass), and the readers gate on the same kind:
+ *      fetchCrew/fetchCrewRange drop a limited driver's days
+ *      even when a stale day doc still names the viewer, and
+ *      fetchRecords hands a limited peer his manifests doc and
+ *      nothing else. The rules deny the withheld dirs to a
+ *      limited viewer outright (firestore.rules pairLimited).
+ *    ONE-TIME: All scope while it lives; when it ends itself
+ *      (connectlive's sweep), status leaves 'connected', so
+ *      connectedPeers() stops naming him and the next publish
+ *      cycle prunes him everywhere — ended peers are pruned
+ *      from a day doc's viewers even when he was its last viewer
+ *      (publishDay's write-once-with-empty-viewers, the records
+ *      doc's v146 discipline carried to days).
  */
 (function () {
   'use strict';
@@ -87,6 +115,8 @@
     _recCache: {},      // v146: records/billing docId -> JSON last published (or 'CLEARED')
     _billedKnown: null, // v146: viewerUids with a live billing doc (seeded from the cloud once)
     _billedSession: {}, // v146: viewerUids billed by this session's publishes
+    _mfKnown: null,     // v148: viewerUids with a live sharedmanifests doc (seeded with the billing seed)
+    _mfSession: {},     // v148: viewerUids given a manifests doc by this session's publishes
     _photoCache: {},    // v146: fillKey -> publish guard for receipt renditions
     _peerCache: null    // v146: last fetchRecords result {records, billing}
   };
@@ -135,6 +165,28 @@
       if (c && c.uid && c.status === 'connected') out.push(c);
     });
     return out;
+  };
+
+  /* v148: the kind on MY con_list entry for a peer — the same
+     grandfather read as ConnectLive.kindOf (absent/invalid =
+     'all'), restated here so the pipe never depends on the
+     handshake engine being loaded first. */
+  CP.kindFor = function (uid) {
+    var st = store();
+    if (!st || !uid) return 'all';
+    var out = 'all';
+    (st.get('con_list', []) || []).forEach(function (c) {
+      if (c && c.uid === uid && (c.kind === 'limited' || c.kind === 'once')) out = c.kind;
+    });
+    return out;
+  };
+
+  /* v148: the peers my SHARED FACTS publish to — every connected
+     peer except LIMITED ones. A limited peer gets the dispatch
+     pipe and his manifests doc, never a seat in a viewers list.
+     One-time peers ride while connected, exactly like All. */
+  CP.sharePeers = function () {
+    return CP.connectedPeers().filter(function (c) { return CP.kindFor(c.uid) !== 'limited'; });
   };
 
   /* ---------------- the shared day record ---------------- */
@@ -378,7 +430,7 @@
       date: dateStr,
       driverName: idn.name || '',
       driverBusiness: idn.business || '',
-      viewers: CP.connectedPeers().map(function (c) { return c.uid; }),
+      viewers: CP.sharePeers().map(function (c) { return c.uid; }),
       session: session,
       dispatches: dispatches,
       close: close,
@@ -398,7 +450,6 @@
     if (!f) return Promise.resolve(false);
     var doc = CP.buildDay(dateStr);
     if (!doc) return Promise.resolve(false);
-    if (!doc.viewers.length) return Promise.resolve(false);
     var id = CP.dayDocId(f.user.uid, dateStr);
     /* the write guard compares FACTS, not the stamp: updatedAt
        changes on every publish by design, so it is excluded from
@@ -406,6 +457,25 @@
     var keyDoc = clone(doc); delete keyDoc.updatedAt;
     var key = JSON.stringify(keyDoc);
     if (CP._pubCache[id] === key) return Promise.resolve(false);
+    if (!doc.viewers.length) {
+      /* v148: when the LAST shareable viewer goes away — a kind
+         flip to limited, a one-time end, a removal — the day is
+         written ONCE more with the empty viewers list (access
+         actually revoked, the records doc's v146 discipline),
+         then stays silent. Only when THIS session published the
+         day with viewers before: a day that never had any has
+         nothing to revoke (a cross-session remainder is covered
+         by the reader gates + the rules' pair checks). */
+      var prev = CP._pubCache[id];
+      CP._pubCache[id] = key;
+      if (!prev) return Promise.resolve(false);
+      var prevViewers = [];
+      try { prevViewers = JSON.parse(prev).viewers || []; } catch (e) {}
+      if (!prevViewers.length) return Promise.resolve(false);
+      return f.db.collection('shareddays').doc(id).set(doc)
+        .then(function () { return true; })
+        .catch(function () { CP._pubCache[id] = ''; return false; });
+    }
     CP._pubCache[id] = key;
     return f.db.collection('shareddays').doc(id).set(doc)
       .then(function () { return true; })
@@ -444,7 +514,17 @@
       status: 'sent', sentAt: Date.now(), deliveredAt: 0, seenAt: 0
     };
     return f.db.collection('pipedispatches').doc(id).set(doc)
-      .then(function () { return 'sent'; })
+      .then(function () {
+        /* v148: a dispatch sent over a ONE-TIME connection
+           re-stamps the pair's day to the job's day — the
+           connection rides in with this dispatch. */
+        try {
+          if (window.ConnectLive && ConnectLive.stampOnceDate && doc.date) {
+            ConnectLive.stampOnceDate(peerUid, doc.date);
+          }
+        } catch (e) {}
+        return 'sent';
+      })
       .catch(function () { return 'error'; });
   };
 
@@ -551,7 +631,14 @@
     if (!f) return Promise.resolve([]);
     return job(f.db.collection('shareddays').where('viewers', 'array-contains', f.user.uid).get())
       .then(function (a) {
-        var days = a.filter(function (d) { return d && d.date === dateStr; });
+        /* v148 READER GATE: a LIMITED driver's days never render
+           on my board — even when a stale day doc (published
+           before the kind, or before a flip) still names me in
+           its viewers. The kind on MY con_list entry governs
+           what my surfaces may show. */
+        var days = a.filter(function (d) {
+          return d && d.date === dateStr && CP.kindFor(d.driver) !== 'limited';
+        });
         CP._crewCache = { date: dateStr, days: days };
         return days;
       });
@@ -561,7 +648,9 @@
     if (!f) return Promise.resolve([]);
     return job(f.db.collection('shareddays').where('viewers', 'array-contains', f.user.uid).get())
       .then(function (a) {
-        return a.filter(function (d) { return d && d.date >= fromDate && d.date <= toDate; });
+        return a.filter(function (d) {
+          return d && d.date >= fromDate && d.date <= toDate && CP.kindFor(d.driver) !== 'limited';
+        });
       });
   };
 
@@ -901,6 +990,63 @@
     return { pa: pa, pb: pb, days: days };
   };
 
+  /* v148: the manifest days for an explicit list of dates — the
+     manifest's OWN printed lines per day (the same internals
+     sharedManifest walks for a billed period), for exactly the
+     days named and no others. */
+  CP._manifestDays = function (dates) {
+    var M = null;
+    try { M = window.Meticulous && Meticulous.modules && Meticulous.modules.manifest; } catch (e) {}
+    if (!M || !M._collectDay || !M._docLines) return [];
+    var t = {};
+    try { t = M._toggles ? M._toggles() : {}; } catch (e) { t = {}; }
+    var days = [];
+    (dates || []).forEach(function (d) {
+      var c = null, lines = null;
+      try { c = M._collectDay(d); } catch (e) { c = null; }
+      if (c && (c.dispatches.length || c.sessions.length || c.fills.length ||
+                c.expenses.length || c.incidents.length)) {
+        try { lines = M._docLines(d, c, t); } catch (e) { lines = null; }
+        if (lines && lines.length) days.push({ date: d, lines: lines });
+      }
+    });
+    return days;
+  };
+
+  /* v148: MY manifests doc for ONE LIMITED viewer — the manifest
+     lines for exactly the days HE dispatched to me (my dispatch
+     records carrying pipeFrom = him, any live status), newest
+     31 days. This is the whole of what crosses to a limited
+     peer besides the dispatch pipe itself: no fuel, no
+     expenses, no maintenance, no invoices, no money picture —
+     and no other day's manifest, not even a neighbouring one.
+     Null when he never dispatched a day I still hold. */
+  CP.buildManifestsFor = function (viewerUid) {
+    var f = fb(), st = store();
+    if (!f || !st || !viewerUid) return null;
+    var dates = [];
+    (st.get('dsp_list', []) || []).forEach(function (d) {
+      if (!d || d.pipeFrom !== viewerUid || d.status === 'cancelled') return;
+      var dt = CP.recordDate(d);
+      if (dt && dates.indexOf(dt) === -1) dates.push(dt);
+    });
+    if (!dates.length) return null;
+    dates.sort();
+    dates = dates.slice(-31);
+    var days = CP._manifestDays(dates);
+    if (!days.length) return null;
+    var idn = { name: '', business: '' };
+    try { if (window.ConnectLive) idn = ConnectLive.identity(); } catch (e) {}
+    return {
+      driver: f.user.uid,
+      viewer: viewerUid,
+      driverName: idn.name || '',
+      driverBusiness: idn.business || '',
+      manifests: [{ pa: dates[0], pb: dates[dates.length - 1], days: days }],
+      updatedAt: Date.now()
+    };
+  };
+
   /* MY shared records doc — fuel + expenses + maintenance for
      ALL my connected peers (the bill-to split lives in the
      per-peer billing docs below, never in here). */
@@ -919,7 +1065,7 @@
       driver: f.user.uid,
       driverName: idn.name || '',
       driverBusiness: idn.business || '',
-      viewers: CP.connectedPeers().map(function (c) { return c.uid; }),
+      viewers: CP.sharePeers().map(function (c) { return c.uid; }),
       fuel: fuel,
       expenses: expenses,
       maintenance: CP.sharedMaintenance(),
@@ -968,6 +1114,26 @@
       .catch(function () { CP._recCache[id] = ''; return false; });
   }
 
+  /* v148: the guarded write for a limited peer's manifests doc.
+     Its guard key is namespaced ('sharedmanifests:' + docId):
+     the billing clearing pass uses the bare docId key for its
+     own 'CLEARED' mark, and the two docs share the id shape —
+     a bare key would let one doc's guard eat the other's
+     write. */
+  CP._setManifestsDoc = function (viewerUid, doc) {
+    var f = fb();
+    if (!f || !doc) return null;
+    var id = f.user.uid + '_' + viewerUid;
+    var key = 'sharedmanifests:' + id;
+    var keyDoc = clone(doc); delete keyDoc.updatedAt;
+    var k = JSON.stringify(keyDoc);
+    if (CP._recCache[key] === k) return null;
+    CP._recCache[key] = k;
+    return f.db.collection('sharedmanifests').doc(id).set(doc)
+      .then(function () { return true; })
+      .catch(function () { CP._recCache[key] = ''; return false; });
+  };
+
   /* Publish my records + billing (+ receipt photos behind them).
      Same discipline as publishDay: content-guarded per session,
      viewers named from my CURRENT connections — a peer who goes
@@ -986,6 +1152,8 @@
           f.db.collection('sharedbilling').where('driver', '==', me).get()
             .catch(function () { return null; }),
           f.db.collection('sharedrecords').doc(me).get()
+            .catch(function () { return null; }),
+          f.db.collection('sharedmanifests').where('driver', '==', me).get()
             .catch(function () { return null; })
         ]).then(function (r) {
           CP._billedKnown = {};
@@ -997,12 +1165,21 @@
               }
             });
           }
+          /* v148: which limited viewers already hold a manifests
+             doc (the clearing pass below empties a stale one) */
+          CP._mfKnown = {};
+          if (r[2]) {
+            r[2].forEach(function (d) {
+              var v = d.data() || {};
+              if (v.viewer && (v.manifests || []).length) CP._mfKnown[v.viewer] = true;
+            });
+          }
           /* an existing records doc primes the write guard with a
              sentinel, so a viewers list that changed while the app
              was closed is re-published (pruned) on this pass */
           if (r[1] && r[1].exists && !CP._recCache[me]) CP._recCache[me] = '__seed__';
         })
-        .catch(function () { CP._billedKnown = CP._billedKnown || {}; });
+        .catch(function () { CP._billedKnown = CP._billedKnown || {}; CP._mfKnown = CP._mfKnown || {}; });
     return seed.then(function () {
       var jobs = [];
       /* the records doc — written while I have peers; when the
@@ -1014,11 +1191,26 @@
       }
       var matched = {};
       CP.connectedPeers().forEach(function (peer) {
+        /* v148: a LIMITED peer never gets a billing doc — his
+           only share doc is his manifests (below); a stale
+           billing doc of his is emptied by the clearing pass
+           since he never enters `matched`. */
+        if (CP.kindFor(peer.uid) === 'limited') return;
         var bill = CP.buildBilling(peer.uid);
         if (!bill) return;
         matched[peer.uid] = true;
         var j2 = guardedSet('sharedbilling', me + '_' + peer.uid, bill);
         if (j2) jobs.push(j2);
+      });
+      /* v148: the limited peers' manifests docs */
+      var mfMatched = {};
+      CP.connectedPeers().forEach(function (peer) {
+        if (CP.kindFor(peer.uid) !== 'limited') return;
+        var mdoc = CP.buildManifestsFor(peer.uid);
+        if (!mdoc) return;
+        mfMatched[peer.uid] = true;
+        var j3 = CP._setManifestsDoc(peer.uid, mdoc);
+        if (j3) jobs.push(j3);
       });
       /* peers who had a billing doc and no longer match: empty it */
       var known = {};
@@ -1037,6 +1229,26 @@
           .catch(function () { CP._recCache[me + '_' + uid] = ''; return false; }));
       });
       CP._billedSession = matched;
+      /* v148: peers who had a manifests doc and are no longer
+         limited-connected (kind changed to All, a one-time end,
+         a removal): empty it once, the billing discipline */
+      var mfKnown = {};
+      Object.keys(CP._mfKnown || {}).forEach(function (u) { mfKnown[u] = true; });
+      Object.keys(CP._mfSession || {}).forEach(function (u) { mfKnown[u] = true; });
+      Object.keys(mfKnown).forEach(function (uid) {
+        var mfKey = 'sharedmanifests:' + me + '_' + uid;
+        if (mfMatched[uid] || CP._recCache[mfKey] === 'CLEARED') return;
+        CP._recCache[mfKey] = 'CLEARED';
+        var mfEmpty = {
+          driver: me, viewer: uid,
+          driverName: doc.driverName, driverBusiness: doc.driverBusiness,
+          manifests: [], updatedAt: Date.now()
+        };
+        jobs.push(f.db.collection('sharedmanifests').doc(me + '_' + uid).set(mfEmpty)
+          .then(function () { return true; })
+          .catch(function () { CP._recCache[mfKey] = ''; return false; }));
+      });
+      CP._mfSession = mfMatched;
       var wroteAny = jobs.length > 0;
       return Promise.all(jobs).then(function () {
         return doc.viewers.length ? CP.publishPhotos(doc) : CP.clearPhotoViewers();
@@ -1147,9 +1359,21 @@
      the viewers/viewer door on every doc). */
   CP.fetchRecords = function () {
     var f = fb();
-    if (!f) return Promise.resolve({ records: {}, billing: {} });
-    var out = { records: {}, billing: {} };
+    if (!f) return Promise.resolve({ records: {}, billing: {}, manifests: {} });
+    var out = { records: {}, billing: {}, manifests: {} };
     var jobs = CP.connectedPeers().map(function (p) {
+      /* v148 READER GATE: for a LIMITED peer my side reads ONLY
+         his manifests doc — the records and billing dirs are
+         not his at all (the rules deny those reads outright;
+         the client never even asks). His result lands under
+         manifests, never records/billing. */
+      if (CP.kindFor(p.uid) === 'limited') {
+        return f.db.collection('sharedmanifests').doc(p.uid + '_' + f.user.uid).get()
+          .then(function (snap) {
+            if (snap && snap.exists) out.manifests[p.uid] = snap.data();
+          })
+          .catch(function () {});
+      }
       return Promise.all([
         f.db.collection('sharedrecords').doc(p.uid).get().catch(function () { return null; }),
         f.db.collection('sharedbilling').doc(p.uid + '_' + f.user.uid).get().catch(function () { return null; })

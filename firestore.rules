@@ -2,6 +2,30 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // v148: connection-kind pair checks. The kind of the pair
+    // between two uids rides their accepted request doc (either
+    // direction — the accepted value is stamped on the doc and
+    // re-stamped by a kind change from either side). A pre-v148
+    // doc has no kind field: .get('kind', 'all') reads it as
+    // 'all' (grandfathered — Full access), and a missing
+    // endedAt reads as 0 (the one-time pair is still alive).
+    function pairLimited(a, b) {
+      return (exists(/databases/$(database)/documents/requests/$(a + '_' + b))
+          && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.status == 'accepted'
+          && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.get('kind', 'all') == 'limited')
+        || (exists(/databases/$(database)/documents/requests/$(b + '_' + a))
+          && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.status == 'accepted'
+          && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.get('kind', 'all') == 'limited');
+    }
+    function pairEnded(a, b) {
+      return (exists(/databases/$(database)/documents/requests/$(a + '_' + b))
+          && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.status == 'accepted'
+          && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.get('endedAt', 0) > 0)
+        || (exists(/databases/$(database)/documents/requests/$(b + '_' + a))
+          && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.status == 'accepted'
+          && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.get('endedAt', 0) > 0);
+    }
+
     // Meticulous stores ALL app data under the signed-in user's own tree:
     //   users/{uid}/kv/{key}          (cloud sync store)
     //   users/{uid}/meta, sessions, feedback, revenue, dispatches, fuel,
@@ -67,6 +91,22 @@ service cloud.firestore {
           || (request.auth.uid == resource.data.from
             && resource.data.status == 'declined'
             && request.resource.data.status == 'pending')
+          // v148: EITHER party re-stamps the KIND of an accepted
+          // connection (a kind change from the connection's row,
+          // or the one-time sweep stamping the end) — nothing but
+          // the kind fields may move, and the pair stays accepted
+          || ((request.auth.uid == resource.data.from
+              || request.auth.uid == resource.data.to)
+            && resource.data.status == 'accepted'
+            && request.resource.data.status == 'accepted'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['kind', 'onceDate', 'endedAt', 'updatedAt']))
+          // v148: the sender re-opens an ENDED one-time pair with
+          // a fresh request — the end clears as it re-opens
+          || (request.auth.uid == resource.data.from
+            && resource.data.status == 'accepted'
+            && resource.data.get('endedAt', 0) > 0
+            && request.resource.data.status == 'pending'
+            && request.resource.data.get('endedAt', 0) == 0)
         );
       allow delete: if false;
     }
@@ -81,9 +121,15 @@ service cloud.firestore {
     // by the driver it describes — a peer can never write another
     // account's day. The driver field is immutable after create.
     match /shareddays/{dayId} {
+      // v148: a LIMITED viewer (the dispatcher's kind) and a
+      // viewer of an ENDED one-time pair are shut out even when
+      // a stale record still names them — the pair's kind on
+      // the request doc governs, not the viewers list alone.
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
-          || request.auth.uid in resource.data.viewers);
+          || (request.auth.uid in resource.data.viewers
+            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
         && request.resource.data.viewers is list;
@@ -137,9 +183,13 @@ service cloud.firestore {
     // by the driver it describes. The driver field is immutable
     // after create, and the doc id IS the driver's uid.
     match /sharedrecords/{driverId} {
+      // v148: same kind gates as the shared days — a limited
+      // viewer / an ended one-time viewer reads nothing here.
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
-          || request.auth.uid in resource.data.viewers);
+          || (request.auth.uid in resource.data.viewers
+            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
         && request.auth.uid == driverId
@@ -164,9 +214,13 @@ service cloud.firestore {
     // writable ONLY by the driver; driver and viewer are
     // immutable after create.
     match /sharedbilling/{billingId} {
+      // v148: same kind gates — billing is exactly what a
+      // limited connection withholds.
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
-          || request.auth.uid == resource.data.viewer);
+          || (request.auth.uid == resource.data.viewer
+            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
         && request.resource.data.viewer is string;
@@ -186,14 +240,41 @@ service cloud.firestore {
     // driver — who may also delete, so a superseded rendition
     // (an edited or deleted fill) is pruned by its owner.
     match /sharedphotos/{photoId} {
+      // v148: same kind gates as the records they belong to.
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
-          || request.auth.uid in resource.data.viewers);
+          || (request.auth.uid in resource.data.viewers
+            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create, update: if request.auth != null
         && request.auth.uid == request.resource.data.driver
         && request.resource.data.viewers is list;
       allow delete: if request.auth != null
         && request.auth.uid == resource.data.driver;
+    }
+
+    // Connect shared manifests (v148):
+    // sharedmanifests/{driverUid}_{viewerUid} — the ONE share a
+    // LIMITED connection carries besides the dispatch pipe: the
+    // manifest lines for exactly the days that viewer dispatched
+    // to the driver. Readable ONLY by the driver and the one
+    // viewer the doc names, and only while their pair has not
+    // ENDED (a one-time pair that ended itself shuts here too);
+    // writable ONLY by the driver; driver and viewer are
+    // immutable after create.
+    match /sharedmanifests/{mfId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.driver
+          || (request.auth.uid == resource.data.viewer
+            && !pairEnded(resource.data.driver, request.auth.uid)));
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.driver
+        && request.resource.data.viewer is string;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.driver
+        && request.resource.data.driver == resource.data.driver
+        && request.resource.data.viewer == resource.data.viewer;
+      allow delete: if false;
     }
 
     // No other paths are used by the app; everything else stays denied.

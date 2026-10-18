@@ -378,11 +378,12 @@ function fireChange(el) {
      v152 pin move: 151 -> 152, same convention.
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
-     v147 pin move: 155 -> 156, same convention. */
-  eq('d: version ships as 156', ver.webVersion, 156);
-  check('d: index loads the touched files at the 156 pin',
-    idxSrc.indexOf('modules/preferences.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=156') !== -1);
+     v147 pin move: 155 -> 156, same convention.
+     v148 pin move: 156 -> 157, same convention. */
+  eq('d: version ships as 157', ver.webVersion, 157);
+  check('d: index loads the touched files at the 157 pin',
+    idxSrc.indexOf('modules/preferences.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=157') !== -1);
 
   console.log('\npreferences-live-v149: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

@@ -318,8 +318,28 @@
   }
     return h;
   }
-  function pnlCrewHtml(days, recs, bills, month) {
-    var hasRecs = !!((recs && Object.keys(recs).length) || (bills && Object.keys(bills).length));
+  /* v148: a LIMITED driver's block on the crew card — his
+     MANIFESTS for the days this side dispatched him, and
+     nothing else: no money lines, no fuel, no expenses, no
+     maintenance, no invoices (the money picture does not cross
+     on Limited — fetchRecords never even hands them over). */
+  function pnlLimitedManifestsHtml(uid, mdoc) {
+    var h = '<div style="margin:8px 0 2px;font-weight:700">📋 His manifests — days you dispatched him</div>';
+    var mans = (mdoc && mdoc.manifests) || [];
+    if (!mans.length) {
+      return h + '<div class="empty">No manifests shared yet.</div>';
+    }
+    mans.forEach(function (mn) {
+      var nd = (mn.days || []).length;
+      h += '<div class="kv"><span style="padding-left:14px">Manifest · ' + esc(mn.pa) + ' → ' + esc(mn.pb) + '</span><b>' + nd + ' day' + (nd === 1 ? '' : 's') + '</b></div>' +
+        '<div style="margin:2px 0 6px"><button class="btn small ghost" data-pnlmanl="' + esc(uid) + ':' + esc(mn.pa) + '_' + esc(mn.pb) + '">📋 View manifest</button></div>' +
+        '<div id="pnl_manldoc_' + esc(uid) + '_' + esc(mn.pa) + '_' + esc(mn.pb) + '"></div>';
+    });
+    return h;
+  }
+  function pnlCrewHtml(days, recs, bills, mans, month) {
+    var hasRecs = !!((recs && Object.keys(recs).length) || (bills && Object.keys(bills).length) ||
+      (mans && Object.keys(mans).length));
     if (!days.length && !hasRecs) return '<div class="empty">No shared days yet this month. When a connected driver works, his day lands here by itself.</div>';
     var byDriver = {}, order = [];
     days.forEach(function (day) {
@@ -361,12 +381,22 @@
     var extraUids = {};
     Object.keys(recs || {}).forEach(function (u) { extraUids[u] = true; });
     Object.keys(bills || {}).forEach(function (u) { extraUids[u] = true; });
+    Object.keys(mans || {}).forEach(function (u) { extraUids[u] = true; });
     Object.keys(extraUids).forEach(function (uid) {
       if (seenRec[uid]) return;
+      var mdoc = mans && mans[uid];
       var nm = (recs && recs[uid] && (recs[uid].driverName || recs[uid].driverBusiness)) ||
-        (bills && bills[uid] && (bills[uid].driverName || bills[uid].driverBusiness)) || 'Driver';
-      h += '<div class="kv" style="margin-top:8px"><span>' + esc(nm) + '</span><b></b></div>' +
-        pnlDriverRecordsHtml(uid, recs, bills, month);
+        (bills && bills[uid] && (bills[uid].driverName || bills[uid].driverBusiness)) ||
+        (mdoc && (mdoc.driverName || mdoc.driverBusiness)) || 'Driver';
+      h += '<div class="kv" style="margin-top:8px"><span>' + esc(nm) + '</span><b></b></div>';
+      /* v148: a uid that arrived ONLY with a manifests doc is a
+         LIMITED driver — his block is manifests, never the
+         records/invoice surfaces. */
+      if (mdoc && !(recs && recs[uid]) && !(bills && bills[uid])) {
+        h += pnlLimitedManifestsHtml(uid, mdoc);
+      } else {
+        h += pnlDriverRecordsHtml(uid, recs, bills, month);
+      }
     });
     return h;
   }
@@ -400,6 +430,20 @@
       App._store.set(CREW_CACHE_KEY, all);
     } catch (e) {}
   }
+  /* v148: a LIMITED connection (the dispatcher's kind) books NO
+     P&L legs for that driver — the money picture does not cross
+     on Limited, so his days never price into my totals, even
+     when a stale crew cache still holds them. The kind is read
+     off MY con_list entry (absent = All, the grandfather read). */
+  function crewKindLimited(uid) {
+    try {
+      var list = App._store.get('con_list', []) || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].uid === uid) return list[i].kind === 'limited';
+      }
+    } catch (e) {}
+    return false;
+  }
   function crewWagesFor(m) {
     var out = { total: 0, byDriver: {} };
     var days = [];
@@ -412,6 +456,7 @@
       byUid[day.driver].days.push(day);
     });
     Object.keys(byUid).forEach(function (uid) {
+      if (crewKindLimited(uid)) return; // v148: no legs on Limited
       var g = byUid[uid];
       var pricing = ConnectPipe.pricingFor(uid);
       var wage = 0, priced = false;
@@ -1075,8 +1120,9 @@
           var days = r[0] || [];
           var recs = (r[1] && r[1].records) || {};
           var bills = (r[1] && r[1].billing) || {};
+          var mans = (r[1] && r[1].manifests) || {};
           cacheCrewDays(m, days);
-          crewEl.innerHTML = pnlCrewHtml(days, recs, bills, m);
+          crewEl.innerHTML = pnlCrewHtml(days, recs, bills, mans, m);
           crewEl.querySelectorAll('[data-pnlsetpay]').forEach(function (b) {
             b.onclick = function () {
               pnlPrefill = { uid: b.getAttribute('data-pnlsetpay'), name: b.getAttribute('data-pipename') || '' };
@@ -1115,6 +1161,28 @@
                 '<div style="margin-top:8px"><button class="btn small navy" id="pnl_manprint_' + parts[0] + '_' + man.pa + '_' + man.pb + '">Print manifest</button></div></div>';
               var pb2 = slot.querySelector('#pnl_manprint_' + parts[0] + '_' + man.pa + '_' + man.pb);
               if (pb2) pb2.onclick = function () {
+                ConnectPipe.printManifestDoc('Manifest — ' + man.pa + ' to ' + man.pb, lines);
+              };
+            };
+          });
+          /* v148: a LIMITED driver's manifests — the same
+             view/print door over his manifests doc */
+          crewEl.querySelectorAll('[data-pnlmanl]').forEach(function (b) {
+            b.onclick = function () {
+              var parts = (b.getAttribute('data-pnlmanl') || '').split(':');
+              var mdoc = mans[parts[0]], man = null;
+              if (mdoc) (mdoc.manifests || []).forEach(function (x) { if (x.pa + '_' + x.pb === parts[1]) man = x; });
+              if (!man) return;
+              var slot = crewEl.querySelector('#pnl_manldoc_' + parts[0] + '_' + man.pa + '_' + man.pb);
+              if (!slot) return;
+              if (slot.innerHTML) { slot.innerHTML = ''; return; }
+              var lines = [];
+              man.days.forEach(function (dy) { (dy.lines || []).forEach(function (l) { lines.push(l); }); });
+              slot.innerHTML = '<div class="card" style="margin:6px 0">' +
+                ConnectPipe.manifestLinesHtml(lines) +
+                '<div style="margin-top:8px"><button class="btn small navy" id="pnl_manlprint_' + parts[0] + '_' + man.pa + '_' + man.pb + '">Print manifest</button></div></div>';
+              var pb3 = slot.querySelector('#pnl_manlprint_' + parts[0] + '_' + man.pa + '_' + man.pb);
+              if (pb3) pb3.onclick = function () {
                 ConnectPipe.printManifestDoc('Manifest — ' + man.pa + ' to ' + man.pb, lines);
               };
             };

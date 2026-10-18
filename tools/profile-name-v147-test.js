@@ -800,15 +800,15 @@ function stepIndex(ob, key) {
 
   /* ============ (i) ship pins ============ */
   console.log('(i) ship pins');
-  /* v147 pin move (the standing convention): 155 -> 156. */
-  eq('i: version ships as 156', ver.webVersion, 156);
-  check('i: index loads every touched file at the 156 pin',
-    idxSrc.indexOf('js/app.js?v=156') !== -1 &&
-    idxSrc.indexOf('js/connectlive.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/connect.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/preferences.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=156') !== -1);
-  check('i: index cohort carries no stale 155 pin', idxSrc.indexOf('?v=155') === -1);
+  /* v147 ship pins: 155 -> 156. v148 pin move: 156 -> 157, same convention. */
+  eq('i: version ships as 157', ver.webVersion, 157);
+  check('i: index loads every touched file at the 157 pin',
+    idxSrc.indexOf('js/app.js?v=157') !== -1 &&
+    idxSrc.indexOf('js/connectlive.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/connect.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/preferences.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=157') !== -1);
+  check('i: index cohort carries no stale 156 pin', idxSrc.indexOf('?v=156') === -1);
   has('i: the dashboard carries the one-time ask slot', idxSrc, 'id="nameCard"');
 
   console.log('\nprofile-name-v147 test: ' + pass + ' passed, ' + fail + ' failed');

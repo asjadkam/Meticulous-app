@@ -254,9 +254,10 @@ function seedList(store) {
      v152 pin move: 151 -> 152, same convention.
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
-     v147 pin move: 155 -> 156, same convention. */
-  eq('a: version.json webVersion is 156', ver.webVersion, 156);
-  check('a: index cohort is ?v=156', idxSrc.indexOf('?v=155') === -1 && idxSrc.indexOf('?v=156') !== -1);
+     v147 pin move: 155 -> 156, same convention.
+     v148 pin move: 156 -> 157, same convention. */
+  eq('a: version.json webVersion is 157', ver.webVersion, 157);
+  check('a: index cohort is ?v=157', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=157') !== -1);
 
   /* ---------- (b) driver History renders ---------- */
   console.log('(b) driver history');

@@ -405,6 +405,15 @@ async function part2() {
 
   body._connectBtn.onclick();
   await flush();
+  /* v148 deliberate flow move: Connect now opens the KIND
+     PICKER first (Connect all / Connect limited / One time) —
+     the send happens from the picker's own Send button, with
+     the role default preselected. The flow's truth (request
+     out -> peer note -> accept -> connected) is unchanged. */
+  const pickHtml = body._stub('#cn_results').innerHTML;
+  check('flow: v148 — Connect opens the kind picker', pickHtml.indexOf('Connect all') !== -1 && pickHtml.indexOf('Connect limited') !== -1 && pickHtml.indexOf('One time connection') !== -1, pickHtml.slice(0, 300));
+  body._stub('#cn_kind_send').onclick();
+  await flush();
   const res2 = body._stub('#cn_results').innerHTML;
   check('flow: after send, the line says the request is out', res2.indexOf('Request sent to Ahmed Thraya — they accept it in their Connect screen.') !== -1, res2.slice(0, 300));
   check('flow: after send, the button is the sent state', res2.indexOf('Request sent ✓') !== -1);

@@ -459,7 +459,10 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   eq('c: payer2 fetchRecords — his billing only',
     p2Fetch.billing['uid-driver'].invoices.map((i) => i.no), ['2000']);
   asUser(users.stranger);
-  eq('c: a stranger with no connections fetches nothing', await CP().fetchRecords(), { records: {}, billing: {} });
+  /* v148 pin move: fetchRecords' result gains the additive
+     manifests map (a LIMITED peer's manifests land there) — the
+     stranger still fetches nothing, in all three maps. */
+  eq('c: a stranger with no connections fetches nothing', await CP().fetchRecords(), { records: {}, billing: {}, manifests: {} });
   const photoBack = await (async () => { asUser(users.boss); return CP().fetchPhoto('uid-driver', fillKey); })();
   eq('c: the payer can pull the receipt photo by its key', photoBack, 'data:image/jpeg;base64,RENDITION');
 
@@ -671,13 +674,14 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v152 pin move: 151 -> 152, same convention.
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
-     v147 pin move: 155 -> 156, same convention. */
-  check('i: version ships as 156', ver.webVersion === 156);
-  check('i: index loads the touched files at the 156 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=156') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=156') !== -1);
+     v147 pin move: 155 -> 156, same convention.
+     v148 pin move: 156 -> 157, same convention. */
+  check('i: version ships as 157', ver.webVersion === 157);
+  check('i: index loads the touched files at the 157 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=157') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=157') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
