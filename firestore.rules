@@ -119,6 +119,77 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Connect shared records (v146): sharedrecords/{driverUid} —
+    // ONE record per driver holding his FUEL entries (date, time,
+    // station, litres, amount, $/L, odometer — the full receipt
+    // data; the photo itself rides sharedphotos), his other
+    // Fuel & Expense entries, and his MAINTENANCE record
+    // (odometer, next-service targets, due list, the annual
+    // inspection expiry, recent services). Readable ONLY by the
+    // driver and the peers named in the record's viewers list
+    // (his accepted connections at publish time); writable ONLY
+    // by the driver it describes. The driver field is immutable
+    // after create, and the doc id IS the driver's uid.
+    match /sharedrecords/{driverId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.driver
+          || request.auth.uid in resource.data.viewers);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.driver
+        && request.auth.uid == driverId
+        && request.resource.data.viewers is list;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.driver
+        && request.auth.uid == driverId
+        && request.resource.data.driver == resource.data.driver
+        && request.resource.data.viewers is list;
+      allow delete: if false;
+    }
+
+    // Connect shared billing (v146): sharedbilling/{driverUid}_{viewerUid} —
+    // the driver's ISSUED pay invoices for periods billed to ONE
+    // payer (the bill-to is matched against that payer's names on
+    // the DRIVER's side before anything is written — no other
+    // customer's invoice is ever in this doc), with the full
+    // document payload so the payer renders/prints the driver's
+    // own document, plus the period manifests pairing with those
+    // invoices (the manifest's printed lines per day). Readable
+    // ONLY by the driver and the one viewer the doc names;
+    // writable ONLY by the driver; driver and viewer are
+    // immutable after create.
+    match /sharedbilling/{billingId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.driver
+          || request.auth.uid == resource.data.viewer);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.driver
+        && request.resource.data.viewer is string;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.driver
+        && request.resource.data.driver == resource.data.driver
+        && request.resource.data.viewer == resource.data.viewer;
+      allow delete: if false;
+    }
+
+    // Connect shared receipt photos (v146):
+    // sharedphotos/{driverUid}_{fillKey} — a downscaled rendition
+    // of ONE of the driver's fuel receipt photos, published for
+    // the same viewers as his records doc (the facts stay in
+    // sharedrecords; only the picture rides here). Readable ONLY
+    // by the driver and the named viewers; writable ONLY by the
+    // driver — who may also delete, so a superseded rendition
+    // (an edited or deleted fill) is pruned by its owner.
+    match /sharedphotos/{photoId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.driver
+          || request.auth.uid in resource.data.viewers);
+      allow create, update: if request.auth != null
+        && request.auth.uid == request.resource.data.driver
+        && request.resource.data.viewers is list;
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.driver;
+    }
+
     // No other paths are used by the app; everything else stays denied.
   }
 }

@@ -29,9 +29,14 @@
    marked Sent. A connected driver's DAY also flows up by itself
    (his Dispatch board aggregates it; nothing to send by hand).
    What still prepares locally: documents (damage / manifest /
-   location) and anything aimed at a manual connection. Invoice
-   & manifest SHARING is not built — the copy says "arrives next"
-   for exactly that, nowhere else. */
+   location) and anything aimed at a manual connection.
+   v146: invoice & manifest SHARING is built too — the driver's
+   issued pay invoices and period manifests cross to the payer
+   they are billed to, with his fuel (receipts too), expenses
+   and maintenance record (js/connectpipe.js, the shared
+   records), and his priced pay lands in the payer's P&L as an
+   expense. The honesty line under Current connections names
+   exactly what crosses. */
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('con_' + k, d); };
@@ -276,9 +281,14 @@
         /* the sharing honesty: ONE quiet line, not a banner card.
            v132: dispatches flow both ways across a live connection
            (the pipe) and a connected driver's day lands on the
-           boss's Dispatch board by itself; invoice & manifest
-           sharing is the part that still arrives next. */
-        '<p class="note" style="margin-top:0">Dispatches flow both ways with connected drivers — a driver\u2019s day lands on your Dispatch board by itself. Invoice &amp; manifest sharing arrives next; documents you prepare still wait in History below.</p>';
+           boss's Dispatch board by itself. v146 (owner, Oct 17
+           21:25–21:33 MDT): the driver's fuel (receipts too), his
+           expenses, his maintenance record, and his pay invoices
+           & manifests for the periods billed to that payer now
+           cross too, and his pay lands in the payer's P&L as an
+           expense — the line below says exactly that, derived
+           from what the pipe actually publishes. */
+        '<p class="note" style="margin-top:0">Dispatches flow both ways with connected drivers — a driver\u2019s day lands on your Dispatch board by itself. A connected driver also shares his fuel (receipts too), his expenses, his truck maintenance, and his pay invoices &amp; manifests for the periods billed to you — and his pay lands in the payer\u2019s P&amp;L as an expense. Rates never cross either way. Documents you prepare by hand still wait in History below.</p>';
       if (uiFlash) h += '<p class="note" style="color:#2e7d32;font-weight:600">' + esc(uiFlash) + '</p>';
       if (!list.length) {
         h += '<div class="empty">No connections yet.<br>Add your dispatcher, manager, or family below.</div>';
@@ -572,7 +582,7 @@
           /* v132: a fresh link changes who my days publish to —
              republish right away so the pipe starts flowing from
              this moment, not the next app start. */
-          try { if (window.ConnectPipe) ConnectPipe.publishRecent(); } catch (e) {}
+          try { if (window.ConnectPipe) { if (ConnectPipe.publishAll) ConnectPipe.publishAll(); else ConnectPipe.publishRecent(); } } catch (e) {}
           if (changed && rerenderAfter) rerender();
         }).catch(function () {});
       }

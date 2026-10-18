@@ -213,6 +213,80 @@
     else if (parseFloat(rec.paid) > 0) paid += parseFloat(rec.paid);
     return invCycRound2(paid);
   }
+  /* v146: THE DOCUMENT, composed from the record alone. This is
+     the exact HTML printInvoice has printed since v122 (the
+     owner's #1150 structure — header band, Bill-to block, the
+     hours as their own ruled table, the generated closing note,
+     the totals block, the prepared-by footer), lifted into the
+     cycle region under its own name so a CONNECTED PAYER renders
+     and prints the driver's invoice with the very same composer
+     (Connect v146 ships him the record's document payload; his
+     app calls this through Meticulous.shared). Two honesty
+     guards travel with the extraction: the truck number is an
+     ARGUMENT (the issuer's reprint may fall back to the truck in
+     his Preferences; a payer's copy uses only what the record
+     carries), and the cardDays rebuild from live stores happens
+     ONLY when the caller says the stores are the ISSUER's own
+     (fromStores) — on the payer's phone those stores are the
+     payer's, and rebuilding from them would print his facts on
+     the driver's document. */
+  function invSharedDocHtml(rec, truckNo, fromStores) {
+    var bizName = (rec.company && rec.company.name) || '';
+    var rows = '';
+    (rec.revLines || []).forEach(function (l) {
+      var hrs = (rec.dayHours && l.date) ? parseFloat(rec.dayHours[l.date]) : NaN;
+      var isDay = l.src !== 'extra' && isFinite(hrs) && hrs > 0;
+      var label = l.src === 'extra' ? (l.desc || '')
+        : isDay ? invCycDateShort(l.date)
+        : (invCycLineLabel(l, rec.dayHours) || l.desc || '');
+      var rateTxt = isDay && rec.rate ? '$' + Number(rec.rate).toFixed(2) + (rec.taxIncluded ? ' tax incl.' : '') : '—';
+      rows += '<tr><td>' + esc(label) + '</td><td>' + esc(rateTxt) + '</td>' +
+        '<td>' + (isDay ? invCycFmtH(hrs) : '—') + '</td>' +
+        '<td class="tot">$' + (Number(l.amt) || 0).toFixed(2) + '</td></tr>';
+    });
+    (rec.items || []).forEach(function (it) {
+      rows += '<tr><td>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</td>' +
+        '<td>—</td><td>—</td>' +
+        '<td class="tot">$' + ((Number(it.qty) || 0) * (Number(it.rate) || 0)).toFixed(2) + '</td></tr>';
+    });
+    var cardDays = rec.cardDays;
+    if (!cardDays && rec.dayHours && fromStores) {
+      try {
+        cardDays = invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []), rec.dayHours, rec.pa, rec.pb);
+      } catch (e) { cardDays = null; }
+    }
+    var genNote = invCycDocNote(rec.revLines || [], rec.dayHours, cardDays,
+      { rate: rec.rate, taxRate: rec.taxRate, taxIncluded: rec.taxIncluded });
+    var noteText = [genNote, String(rec.notes || '').trim()].filter(Boolean).join(' ');
+    var btParts = String(rec.billTo || '').split(',');
+    var btName = (btParts.shift() || '').trim();
+    var btAddr = btParts.join(',').trim();
+    var netSub = rec.taxIncluded ? invCycRound2((Number(rec.sub) || 0) - (Number(rec.tax) || 0)) : (Number(rec.sub) || 0);
+    var gstLabel = 'GST (' + esc(rec.taxRate) + '%' + (rec.taxIncluded ? ', included in the rate' : '') + ')' +
+      ((rec.company && rec.company.gst) ? ' — GST/HST ' + esc(rec.company.gst) : '');
+    var paid = invCycPaidTotal(rec);
+    var balance = invCycRound2((Number(rec.total) || 0) - paid);
+    return '<div class="band"><h1>' + esc(bizName || 'Invoice') + '</h1>' +
+      '<p>' + esc((rec.company && rec.company.addr) || '').replace(/\n/g, '<br>') + '</p></div>' +
+      '<h2>INVOICE #' + esc(rec.no) + '</h2>' +
+      '<div class="row"><span><b>Date:</b> ' + esc(rec.date) + '</span>' +
+      ((rec.pa && rec.pb) ? '<span><b>Pay period:</b> ' + esc(invCycLabel({ a: rec.pa, b: rec.pb })) + '</span>' : '') + '</div>' +
+      '<h3 class="sec">Bill to</h3>' +
+      '<div class="billto"><b>' + esc(btName || '—') + '</b>' +
+      (btAddr ? '<br>' + esc(btAddr) : '') +
+      (truckNo ? '<br>Truck #' + esc(truckNo) : '') + '</div>' +
+      '<h3 class="sec">Hours</h3>' +
+      '<table><tr><th>Description</th><th>Rate</th><th>Hours</th><th style="text-align:right">Amount</th></tr>' + rows + '</table>' +
+      (noteText ? '<h3 class="sec">Notes</h3><p class="muted">' + esc(noteText) + '</p>' : '') +
+      '<div class="totblock">' +
+      '<div class="row"><span>Net subtotal</span><span>$' + netSub.toFixed(2) + '</span></div>' +
+      '<div class="row"><span>' + gstLabel + '</span><span>$' + (Number(rec.tax) || 0).toFixed(2) + '</span></div>' +
+      '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + (Number(rec.total) || 0).toFixed(2) + '</b></span></div>' +
+      '<div class="row"><span>Paid amount</span><span>$' + paid.toFixed(2) + '</span></div>' +
+      '<div class="row"><span><b>Balance owing</b></span><span><b>$' + balance.toFixed(2) + '</b></span></div>' +
+      '</div>' +
+      '<p class="muted foot">Prepared by ' + esc(bizName || '—') + ' · Invoice ' + esc(rec.no) + ' · Page 1</p>';
+  }
   function invCycCompanyMissing(company) {
     return !String((company && company.name) || '').trim();
   }
@@ -392,6 +466,17 @@
     Meticulous.shared.buildRevenueLines = invCycBuildRevenueLines;
     Meticulous.shared.revenueEntrySource = invCycEntrySrc;
     Meticulous.shared.dayLoads = invCycDayLoads;
+    /* v146: the invoice document composer + printer, shared with
+       a connected payer's app (Connect ships him the record's
+       document payload; his side renders/prints the driver's own
+       document — never a rebuild from the payer's stores, so
+       fromStores stays false on this door). */
+    Meticulous.shared.invoiceDocHtml = function (rec) {
+      return invSharedDocHtml(rec, (rec && rec.truckNo) || '', false);
+    };
+    Meticulous.shared.printInvoiceDoc = function (rec) {
+      printDoc('Invoice ' + (rec && rec.no), invSharedDocHtml(rec, (rec && rec.truckNo) || '', false));
+    };
   } catch (e) {}
   /* Dates whose invoice lines come from BOTH a dispatch completion
      and the tracker — the classic double count. Lines carry
@@ -1308,6 +1393,11 @@
           invoices().forEach(function (r) { if (r.id === id) printInvoice(r); });
         };
       });
+      /* v146: my shared billing republishes on this module's own
+         lifecycle — an invoice issued or settled here lands in
+         the payer it is billed to on the same pass this screen
+         repaints (content-guarded in the pipe). */
+      try { if (window.ConnectPipe) ConnectPipe.publishRecords(); } catch (e) {}
     }
 
     function printInvoice(rec) {
@@ -1326,77 +1416,16 @@
          the included GST backed out, and the GST line is that
          included portion — nothing is added on top. */
       var o = onb();
-      var bizName = (rec.company && rec.company.name) || '';
-      var truckNo = rec.truckNo || o.truckNo || '';
-      var rows = '';
-      (rec.revLines || []).forEach(function (l) {
-        var hrs = (rec.dayHours && l.date) ? parseFloat(rec.dayHours[l.date]) : NaN;
-        var isDay = l.src !== 'extra' && isFinite(hrs) && hrs > 0;
-        /* Day rows read "Oct 1" in the Description column (the
-           owner's #1150 shape); extras and hour-less lines keep
-           their stored descriptions (the v105 hour-sheet label
-           remains the fallback). */
-        var label = l.src === 'extra' ? (l.desc || '')
-          : isDay ? invCycDateShort(l.date)
-          : (invCycLineLabel(l, rec.dayHours) || l.desc || '');
-        var rateTxt = isDay && rec.rate ? '$' + Number(rec.rate).toFixed(2) + (rec.taxIncluded ? ' tax incl.' : '') : '—';
-        rows += '<tr><td>' + esc(label) + '</td><td>' + esc(rateTxt) + '</td>' +
-          '<td>' + (isDay ? invCycFmtH(hrs) : '—') + '</td>' +
-          '<td class="tot">$' + (Number(l.amt) || 0).toFixed(2) + '</td></tr>';
-      });
-      (rec.items || []).forEach(function (it) {
-        rows += '<tr><td>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</td>' +
-          '<td>—</td><td>—</td>' +
-          '<td class="tot">$' + ((Number(it.qty) || 0) * (Number(it.rate) || 0)).toFixed(2) + '</td></tr>';
-      });
-      /* v105: the closing note is GENERATED from the record's own
-         facts (rate, tax mode, haul cards, total hours) in the
-         exact shape of the invoice the owner sent (#1151). Records
-         issued before v105 carry no cardDays — rebuild them from
-         the live stores on a best-effort basis. His own typed
-         notes, when he wrote any, follow the generated note. */
-      var cardDays = rec.cardDays;
-      if (!cardDays && rec.dayHours) {
-        try {
-          cardDays = invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []), rec.dayHours, rec.pa, rec.pb);
-        } catch (e) { cardDays = null; }
-      }
-      var genNote = invCycDocNote(rec.revLines || [], rec.dayHours, cardDays,
-        { rate: rec.rate, taxRate: rec.taxRate, taxIncluded: rec.taxIncluded });
-      var noteText = [genNote, String(rec.notes || '').trim()].filter(Boolean).join(' ');
-      /* The Bill-to block: name on its own line, address under it,
-         truck number when known — the stored Bill-to is the saved
-         "Name, Address" string, split on its first comma. */
-      var btParts = String(rec.billTo || '').split(',');
-      var btName = (btParts.shift() || '').trim();
-      var btAddr = btParts.join(',').trim();
-      var netSub = rec.taxIncluded ? invCycRound2((Number(rec.sub) || 0) - (Number(rec.tax) || 0)) : (Number(rec.sub) || 0);
-      var gstLabel = 'GST (' + esc(rec.taxRate) + '%' + (rec.taxIncluded ? ', included in the rate' : '') + ')' +
-        ((rec.company && rec.company.gst) ? ' — GST/HST ' + esc(rec.company.gst) : '');
-      var paid = invCycPaidTotal(rec);
-      var balance = invCycRound2((Number(rec.total) || 0) - paid);
+      /* v146: the document itself is composed by invSharedDocHtml
+         (INV-CYCLE region) from the record — the same composer a
+         connected payer's app calls on the shared copy, so his
+         print is this print. The issuer's two live fallbacks stay
+         here: the Preferences truck number, and the card-days
+         rebuild from HIS OWN stores (fromStores). */
       printDoc('Invoice ' + rec.no,
-        '<div class="band"><h1>' + esc(bizName || 'Invoice') + '</h1>' +
-        '<p>' + esc((rec.company && rec.company.addr) || '').replace(/\n/g, '<br>') + '</p></div>' +
-        '<h2>INVOICE #' + esc(rec.no) + '</h2>' +
-        '<div class="row"><span><b>Date:</b> ' + esc(rec.date) + '</span>' +
-        ((rec.pa && rec.pb) ? '<span><b>Pay period:</b> ' + esc(invCycLabel({ a: rec.pa, b: rec.pb })) + '</span>' : '') + '</div>' +
-        '<h3 class="sec">Bill to</h3>' +
-        '<div class="billto"><b>' + esc(btName || '—') + '</b>' +
-        (btAddr ? '<br>' + esc(btAddr) : '') +
-        (truckNo ? '<br>Truck #' + esc(truckNo) : '') + '</div>' +
-        '<h3 class="sec">Hours</h3>' +
-        '<table><tr><th>Description</th><th>Rate</th><th>Hours</th><th style="text-align:right">Amount</th></tr>' + rows + '</table>' +
-        (noteText ? '<h3 class="sec">Notes</h3><p class="muted">' + esc(noteText) + '</p>' : '') +
-        '<div class="totblock">' +
-        '<div class="row"><span>Net subtotal</span><span>$' + netSub.toFixed(2) + '</span></div>' +
-        '<div class="row"><span>' + gstLabel + '</span><span>$' + (Number(rec.tax) || 0).toFixed(2) + '</span></div>' +
-        '<div class="row" style="font-size:18px"><span><b>Total due</b></span><span><b>$' + (Number(rec.total) || 0).toFixed(2) + '</b></span></div>' +
-        '<div class="row"><span>Paid amount</span><span>$' + paid.toFixed(2) + '</span></div>' +
-        '<div class="row"><span><b>Balance owing</b></span><span><b>$' + balance.toFixed(2) + '</b></span></div>' +
-        '</div>' +
-        '<p class="muted foot">Prepared by ' + esc(bizName || '—') + ' · Invoice ' + esc(rec.no) + ' · Page 1</p>');
+        invSharedDocHtml(rec, rec.truckNo || o.truckNo || '', true));
     }
+
 
     draw();
   }

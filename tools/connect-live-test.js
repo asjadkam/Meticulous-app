@@ -340,9 +340,13 @@ function makeBody() {
   check('g: signed-in face has the search box', body.innerHTML.indexOf('id="cn_q"') !== -1 && body.innerHTML.indexOf('id="cn_search"') !== -1);
   check('g: signed-in face has the Requests card', body.innerHTML.indexOf('🤝 Requests') !== -1);
   /* v132 deliberate pin move: dispatch sharing went LIVE with the
-     pipe — the honesty line now scopes "arrives next" to invoice &
-     manifest sharing, the part that is genuinely not built. */
-  check('g: the sharing honesty is the live wording', body.innerHTML.indexOf('Invoice &amp; manifest sharing arrives next') !== -1);
+     pipe — the honesty line scoped "arrives next" to invoice &
+     manifest sharing, the part that was genuinely not built.
+     v146 deliberate pin move: invoice & manifest sharing is LIVE
+     too (owner, Oct 17 21:30/21:33 MDT) — the line now names what
+     crosses (fuel, expenses, maintenance, pay invoices &
+     manifests) and no "arrives next" remains. */
+  check('g: the sharing honesty is the live wording', body.innerHTML.indexOf('pay invoices &amp; manifests for the periods billed to you') !== -1 && body.innerHTML.indexOf('arrives next') === -1);
   eq('g: status counts connections without a live cache', sb.Meticulous.modules.connect.status().indexOf('connection') !== -1, true);
 
   /* ---------------- (h) statics ---------------- */
@@ -378,11 +382,14 @@ function makeBody() {
   check('h: NO Phase-1 handshake disclaimer left in Connect copy',
     conSrc.indexOf('arrives in a later update') === -1 && conSrc.indexOf('until delivery is enabled') === -1 && conSrc.indexOf('Phase 1 (Meticulous') === -1);
   /* v132 deliberate pin move: the v131 check asserted ALL sharing
-     was framed as future. Dispatch sharing is live now (the pipe);
-     what must stay framed as future is invoice & manifest sharing
-     ONLY, and dispatch sharing must NOT be framed as future. */
-  check('h: invoice & manifest sharing framed as "arrives next"; dispatch sharing never framed as future',
-    conSrc.indexOf('Invoice &amp; manifest sharing arrives next') !== -1 &&
+     was framed as future; dispatch sharing went live with the
+     pipe and only invoice & manifest sharing stayed future.
+     v146 deliberate pin move: invoice & manifest sharing is live
+     too — NOTHING in Connect is framed as future now; the honesty
+     line names the shared set instead. */
+  check('h: v146 — nothing framed as future; the honesty line names the shared set',
+    conSrc.indexOf('arrives next') === -1 &&
+    conSrc.indexOf('pay invoices &amp; manifests for the periods billed to you') !== -1 &&
     conSrc.indexOf('Dispatch &amp; document sharing arrives next') === -1 &&
     conSrc.indexOf('Dispatch & document sharing comes next') === -1);
   check('h: P&L no longer claims invites go live later', pnlSrc.indexOf('Invites go live with Connect') === -1);

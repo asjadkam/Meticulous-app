@@ -1012,6 +1012,12 @@
         var x = S('expenses', []); x.push({ what: what, cost: cost, date: fxOcrDate || App._today() }); W('expenses', x);
         Meticulous.modules.fuel.render(body);
       };
+      /* v146: my shared records republish on this module's own
+         lifecycle — a fill saved or an expense added here lands
+         in my connected payers' hands on the same pass this
+         screen repaints (content-guarded in the pipe: unchanged
+         facts are never written twice). */
+      try { if (window.ConnectPipe) ConnectPipe.publishRecords(); } catch (e) {}
     }
   };
 })();

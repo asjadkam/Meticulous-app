@@ -31,8 +31,8 @@
  *  (f) the Dispatch board region (DSP-PIPE, verbatim extraction)
  *      renders the priced aggregation + the send card
  *  (g) statics: rules shapes for both new collections, honest
- *      copy (invoice & manifest sharing = "arrives next"; dispatch
- *      sharing never framed as future), role gates in source,
+ *      copy (v146: invoice & manifest sharing is LIVE — no
+ *      "arrives next" remains in Connect), role gates in source,
  *      funnel + version pins
  * Run: node tools/connect-pipe-test.js
  */
@@ -266,8 +266,12 @@ function extract(src, beginMark, endMark) {
   eq('a: publishDay writes', await CP().publishDay(TODAY), true);
   const doc = dayDoc('uid-driver', TODAY);
   check('a: the day doc exists', !!doc);
+  /* v146 deliberate shape move: the day doc gains `close` — the
+     day's close facts (foreman/travel/bonus split from whichever
+     record closed the day; the payer-screenshot fix, Oct 17
+     21:41 MDT). Still facts only: no rates, no amounts. */
   keysEq('a: day doc carries facts only (exact key set)', doc,
-    ['driver', 'date', 'driverName', 'driverBusiness', 'viewers', 'session', 'dispatches', 'loads', 'ticketsClosed', 'updatedAt']);
+    ['driver', 'date', 'driverName', 'driverBusiness', 'viewers', 'session', 'dispatches', 'close', 'loads', 'ticketsClosed', 'updatedAt']);
   eq('a: driver + date + identity', [doc.driver, doc.date, doc.driverName], ['uid-driver', TODAY, 'Asjad Kamal']);
   eq('a: viewers = my accepted connections only', doc.viewers, ['uid-boss']);
   eq('a: session hours from the saved session', doc.session.hours, 11);
@@ -444,8 +448,12 @@ function extract(src, beginMark, endMark) {
     pdBlock.indexOf('request.resource.data.jobSite == resource.data.jobSite') !== -1 &&
     pdBlock.indexOf('request.resource.data.notes == resource.data.notes') !== -1);
   check('g: the users tree is untouched (still owner-only)', rulesSrc.indexOf('match /users/{userId}/{document=**}') !== -1);
-  check('g: honest copy — invoice & manifest sharing is the ONLY "arrives next" left in Connect',
-    conSrc.indexOf('Invoice &amp; manifest sharing arrives next') !== -1 &&
+  /* v146 deliberate pin move: invoice & manifest sharing is LIVE
+     (owner, Oct 17 21:30/21:33 MDT) — NO "arrives next" remains in
+     Connect at all; the honesty line names what crosses instead. */
+  check('g: honest copy — v146 sharing is live; no "arrives next" left in Connect',
+    conSrc.indexOf('arrives next') === -1 &&
+    conSrc.indexOf('pay invoices &amp; manifests for the periods billed to you') !== -1 &&
     conSrc.indexOf('Dispatch &amp; document sharing arrives next') === -1);
   check('g: Connect really sends for a connected connection (the pipe call + a Sent history entry)',
     conSrc.indexOf('ConnectPipe.sendDispatch') !== -1 && conSrc.indexOf('sent: true') !== -1);

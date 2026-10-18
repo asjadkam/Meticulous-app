@@ -992,6 +992,8 @@
      State here is session-only paint state; the records are the
      engine's. */
   var pipeDays = null;    // last fetchCrew(today) — null = loading
+  var pipeRecords = null; // v146: last fetchRecords — {records, billing} by driver uid
+  var pipeBilling = null; // v146: fetchRecords().billing, split out for crewDayHtml
   var pipeSent = null;    // last listSent()
   var pipeFlash = '';     // one-shot arrival note (driver side)
   var pipeSendMsg = '';   // one-shot line inside the send card
@@ -1013,10 +1015,32 @@
       '<div class="b">' +
       (ses.hours > 0 ? dspFmtH(ses.hours) + ' h on the clock' : 'no hours yet') +
       (day.loads > 0 ? ' · ' + day.loads + ' loads' : '') +
-      (day.ticketsClosed > 0 ? ' · ' + day.ticketsClosed + ' ticket' + (day.ticketsClosed === 1 ? '' : 's') + ' closed' : ' · no tickets closed yet') +
+      /* v146: "no tickets closed yet" is only honest when the day
+         truly has no close — a day whose CLOSE record carries the
+         hours (tracker close, ticketless close) says so instead */
+      (day.ticketsClosed > 0 ? ' · ' + day.ticketsClosed + ' ticket' + (day.ticketsClosed === 1 ? '' : 's') + ' closed'
+        : (day.close && ((day.close.foremanHours || 0) + (day.close.travelHours || 0) + (day.close.bonusHours || 0)) > 0
+          ? ' · closed on his day sheet'
+          : ' · no tickets closed yet')) +
       '</div>';
     priced.rows.forEach(function (r) {
-      var sd = r.dispatch, pr = r.price;
+      var pr = r.price;
+      /* v146: the close-facts row — the day closed on the driver's
+         own day sheet (End Shift / ticketless close), priced from
+         the split his books hold */
+      if (r.close) {
+        var cl = r.close;
+        h += '<div class="kv"><span>' + esc(cl.material || 'Day close') +
+          (cl.ticketNo ? ' · #' + esc(cl.ticketNo) : '') +
+          ' · day sheet close</span><b>Closed</b></div>' +
+          '<div class="kv"><span style="padding-left:14px">Hours — ' + dspFmtH(cl.foremanHours) + ' foreman' +
+          (cl.travelHours > 0 ? ' + ' + dspFmtH(cl.travelHours) + ' travel' : '') +
+          (cl.bonusHours > 0 ? ' + ' + dspFmtH(cl.bonusHours) + ' bonus' : '') + '</span><b></b></div>' +
+          '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
+          '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel' + (cl.bonusHours > 0 ? ' + bonus' : '') + ', your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+        return;
+      }
+      var sd = r.dispatch;
       h += '<div class="kv"><span>' + esc(sd.jobSite || 'Dispatch') +
         (sd.ticketNo ? ' · #' + esc(sd.ticketNo) : '') +
         (sd.origin === 'driver'
@@ -1024,11 +1048,18 @@
           : ' · sent by you') +
         '</span><b>' + (sd.status === 'completed' ? 'Closed' : esc(sd.status || '')) + '</b></div>';
       if (sd.status === 'completed') {
-        /* the ticket's double duty, priced on THIS side only */
-        h += '<div class="kv"><span style="padding-left:14px">Hours — ' + dspFmtH(sd.foremanHours) + ' foreman' +
-          (sd.travelHours > 0 ? ' + ' + dspFmtH(sd.travelHours) + ' travel' : '') + '</span><b></b></div>' +
-          '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
-          '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel, your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+        /* v146: when the day sheet close carries the hours, this
+           ticketless row prints no 0.0-foreman lines — the close
+           row below carries the day's truth */
+        var closeCarries = day.close && ((day.close.foremanHours || 0) + (day.close.travelHours || 0) + (day.close.bonusHours || 0)) > 0 &&
+          !((sd.foremanHours || 0) > 0 || (sd.travelHours || 0) > 0);
+        if (!closeCarries) {
+          /* the ticket's double duty, priced on THIS side only */
+          h += '<div class="kv"><span style="padding-left:14px">Hours — ' + dspFmtH(sd.foremanHours) + ' foreman' +
+            (sd.travelHours > 0 ? ' + ' + dspFmtH(sd.travelHours) + ' travel' : '') + '</span><b></b></div>' +
+            '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
+            '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel, your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+        }
       }
     });
     h += '<div class="kv"><span><b>Day revenue</b></span><b>' + pipeMoney(priced.revenue) + '</b></div>' +
@@ -1037,8 +1068,35 @@
       (!pricing.wage
         ? '<div style="margin-top:6px"><button class="btn small navy" data-pipesetpay="' + esc(day.driver) + '" data-pipename="' + esc(day.driverName || '') + '">Set his pay rate</button></div>'
         : '') +
-      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences.</div>') +
-      '</div>';
+      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences.</div>');
+    /* v146: a one-line strip from his shared RECORDS (fuel /
+       maintenance / latest invoice billed to you) — the full
+       read-only detail lives on the P&L crew card */
+    var rec2 = pipeRecords && pipeRecords[day.driver];
+    if (rec2) {
+      var lf = (rec2.fuel || [])[0];
+      if (lf) {
+        h += '<div class="kv"><span style="padding-left:14px">⛽ Latest fuel — ' + esc(lf.date) +
+          (lf.station ? ' · ' + esc(lf.station) : '') + '</span><b>' +
+          (lf.litres ? Number(lf.litres) + ' L · ' : '') + pipeMoney(lf.cost) +
+          (lf.photoRef ? ' 🧾' : '') + '</b></div>';
+      }
+      var mt2 = rec2.maintenance;
+      if (mt2 && mt2.odometer) {
+        h += '<div class="kv"><span style="padding-left:14px">🔧 Odometer</span><b>' +
+          Number(mt2.odometer).toLocaleString('en-CA') + ' km' +
+          (mt2.nextServiceOdo ? ' · service at ' + Number(mt2.nextServiceOdo).toLocaleString('en-CA') + ' km' : '') +
+          '</b></div>';
+      }
+    }
+    var bill2 = pipeBilling && pipeBilling[day.driver];
+    if (bill2 && bill2.invoices && bill2.invoices.length) {
+      var iv2 = bill2.invoices[bill2.invoices.length - 1];
+      h += '<div class="kv"><span style="padding-left:14px">🧾 Invoice #' + esc(iv2.no) +
+        ' (' + esc(iv2.pa) + ' → ' + esc(iv2.pb) + ')</span><b>' +
+        pipeMoney(iv2.total) + ' · ' + esc(iv2.status) + '</b></div>';
+    }
+    h += '</div>';
     return h;
   }
   function crewHtml() {
@@ -3097,6 +3155,17 @@
               var w = body.querySelector('#dp_crew');
               if (w) { w.innerHTML = crewHtml(); wirePipe(body); }
             });
+            /* v146: the crew's shared records ride the same entry —
+               the day cards gain their fuel / maintenance /
+               invoice strip when they land */
+            if (ConnectPipe.fetchRecords) {
+              ConnectPipe.fetchRecords().then(function (r) {
+                pipeRecords = (r && r.records) || {};
+                pipeBilling = (r && r.billing) || {};
+                var w3 = body.querySelector('#dp_crew');
+                if (w3 && pipeDays) { w3.innerHTML = crewHtml(); wirePipe(body); }
+              }).catch(function () {});
+            }
             ConnectPipe.listSent().then(function (sent) {
               pipeSent = sent;
               var w2 = body.querySelector('#dp_sentlist');

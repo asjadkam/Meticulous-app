@@ -1050,6 +1050,12 @@
         } catch (e) {}
         api.render(body);
       };
+      /* v146: my shared records republish on this module's own
+         lifecycle — a service logged, an odometer saved, a due
+         date changed here lands in my connected payers' hands on
+         the same pass this screen repaints (content-guarded in
+         the pipe: unchanged facts are never written twice). */
+      try { if (window.ConnectPipe) ConnectPipe.publishRecords(); } catch (e) {}
     }
   };
 

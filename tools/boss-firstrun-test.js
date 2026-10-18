@@ -540,9 +540,12 @@ console.log('(e) Connect — two cards, content-carrying shares (F7 + owner dire
      was the Phase-1 disclaimer; finding/connecting people is LIVE now, and the one
      quiet line now scopes the honesty to sharing only.
      v132 deliberate pin move: dispatch sharing is LIVE too (the pipe,
-     js/connectpipe.js) — the line now scopes "arrives next" to invoice &
-     manifest sharing only, the part that is genuinely not built. */
-  has('the honest line is ONE quiet line in the module', body.innerHTML, 'Invoice &amp; manifest sharing arrives next');
+     js/connectpipe.js) — the line scoped "arrives next" to invoice &
+     manifest sharing only, the part that was genuinely not built.
+     v146 deliberate pin move: invoice & manifest sharing is LIVE too
+     (owner, Oct 17 21:30/21:33 MDT) — the line now names the shared
+     set (fuel, expenses, maintenance, pay invoices & manifests). */
+  has('the honest line is ONE quiet line in the module', body.innerHTML, 'pay invoices &amp; manifests for the periods billed to you');
   has('connection listed', body.innerHTML, 'Boss Man');
   has('legacy stub still renders in History', body.innerHTML, 'Queued — on this device');
   has('status counts the connection', sb.Meticulous.modules.connect.status(), '1 connection');

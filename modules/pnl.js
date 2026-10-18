@@ -226,9 +226,101 @@
      records grouped per driver, priced with THIS side's rates by
      the pipe's pure pricer (revenue at the client rate; wages at
      (foreman + travel) x the pay rate set for that driver — the
-     ticket's double duty). Read-only: it posts nothing anywhere. */
-  function pnlCrewHtml(days) {
-    if (!days.length) return '<div class="empty">No shared days yet this month. When a connected driver works, his day lands here by itself.</div>';
+     ticket's double duty). v146: the priced wage is ALSO an
+     expense in the month's totals (crewWagesFor, derived from
+     the cache this card's fetch leaves) — it still stamps nothing
+     into the wage log, so it can never double-post there. */
+  /* v146: one connected driver's shared-records block (fuel /
+     expenses / maintenance / his invoices + manifests billed to
+     this payer) — painted inside the crew card per driver. */
+  function pnlDriverRecordsHtml(uid, recs, bills, month) {
+    var h = '';
+  /* v146: the driver's shared RECORDS (owner, Oct 17 21:25 MDT:
+     "he sees my fuel... my maintenance record") — his fuel
+     entries with their receipt data (the receipt photo itself
+     one tap away), his other expenses, and his maintenance
+     record, read-only, from his sharedrecords doc. */
+  var rec = recs && recs[uid];
+  if (rec) {
+    var mfuel = (rec.fuel || []).filter(function (x) { return inMonth(x.date, month); });
+    if (mfuel.length) {
+      h += '<div style="margin:8px 0 2px;font-weight:700">⛽ His fuel — ' + esc(monthLabel(month)) + '</div>';
+      mfuel.forEach(function (x) {
+        h += '<div class="kv"><span style="padding-left:14px">' + esc(x.date) +
+          (x.time ? ' ' + esc(x.time) : '') + (x.station ? ' · ' + esc(x.station) : '') +
+          (x.pricePerLitre ? ' · $' + Number(x.pricePerLitre).toFixed(3) + '/L' : '') +
+          (x.odo ? ' · odo ' + Number(x.odo).toLocaleString('en-CA') : '') +
+          '</span><b>' + (x.litres ? Number(x.litres) + ' L · ' : '') + money(x.cost || 0) + '</b></div>' +
+          (x.photoRef && x.photoKey
+            ? '<div style="margin:2px 0 4px"><button class="btn small ghost" data-pnlphoto="' + esc(uid) + ':' + esc(x.photoKey) + '">🧾 Receipt photo</button></div>' +
+              '<div id="pnl_photo_' + esc(uid) + '_' + esc(x.photoKey) + '"></div>'
+            : '');
+      });
+      var ft = 0, fl = 0;
+      mfuel.forEach(function (x) { ft += x.cost || 0; fl += x.litres || 0; });
+      h += '<div class="kv"><span style="padding-left:14px"><b>Fuel total</b></span><b>' + (fl ? Number(fl) + ' L · ' : '') + money(ft) + '</b></div>';
+    }
+    var mexp = (rec.expenses || []).filter(function (x) { return inMonth(x.date, month); });
+    if (mexp.length) {
+      h += '<div style="margin:8px 0 2px;font-weight:700">🧾 His expenses — ' + esc(monthLabel(month)) + '</div>';
+      mexp.forEach(function (x) {
+        h += '<div class="kv"><span style="padding-left:14px">' + esc(x.date) + ' · ' + esc(x.what) + '</span><b>' + money(x.cost || 0) + '</b></div>';
+      });
+      var et = 0;
+      mexp.forEach(function (x) { et += x.cost || 0; });
+      h += '<div class="kv"><span style="padding-left:14px"><b>Expenses total</b></span><b>' + money(et) + '</b></div>';
+    }
+    var mt = rec.maintenance;
+    if (mt) {
+      h += '<div style="margin:8px 0 2px;font-weight:700">🔧 His truck — maintenance record</div>';
+      if (mt.odometer) h += '<div class="kv"><span style="padding-left:14px">Odometer</span><b>' + Number(mt.odometer).toLocaleString('en-CA') + ' km</b></div>';
+      if (mt.nextServiceOdo || mt.nextServiceDate) {
+        h += '<div class="kv"><span style="padding-left:14px">Next service</span><b>' +
+          (mt.nextServiceOdo ? Number(mt.nextServiceOdo).toLocaleString('en-CA') + ' km' : '') +
+          (mt.nextServiceOdo && mt.nextServiceDate ? ' · ' : '') + esc(mt.nextServiceDate || '') + '</b></div>';
+      }
+      if (mt.annualExpiry) h += '<div class="kv"><span style="padding-left:14px">Annual inspection expires</span><b>' + esc(mt.annualExpiry) + '</b></div>';
+      (mt.due || []).slice(0, 3).forEach(function (du) {
+        h += '<div class="kv"><span style="padding-left:14px">' + esc(du.name) + '</span><b>' +
+          (du.dateBased ? esc(du.annualDate || '')
+            : (du.overdue ? '⚠️ overdue' : 'due in ' + Number(du.remainingKm || 0).toLocaleString('en-CA') + ' km')) +
+          '</b></div>';
+      });
+      (mt.services || []).slice(0, 3).forEach(function (sv) {
+        h += '<div class="kv"><span style="padding-left:14px">Service — ' + esc(sv.date) + '</span><b>' + esc(sv.type) +
+          (sv.odo ? ' · ' + Number(sv.odo).toLocaleString('en-CA') + ' km' : '') +
+          (sv.cost ? ' · ' + money(sv.cost) : '') + '</b></div>';
+      });
+    }
+  }
+  /* v146: his PAY INVOICES billed to THIS payer (owner, Oct 17
+     21:30 MDT) + the period manifests pairing with them
+     (21:33 MDT) — from his sharedbilling doc, which carries
+     only this payer's periods. View/print composes the
+     driver's own documents (Invoice module composer; the
+     manifest's own printed lines). */
+  var bill = bills && bills[uid];
+  if (bill && bill.invoices && bill.invoices.length) {
+    h += '<div style="margin:8px 0 2px;font-weight:700">🧾 His pay invoices to you</div>';
+    bill.invoices.forEach(function (iv) {
+      var man = null;
+      (bill.manifests || []).forEach(function (mn) {
+        if (mn.pa === iv.pa && mn.pb === iv.pb) man = mn;
+      });
+      h += '<div class="kv"><span style="padding-left:14px">Invoice #' + esc(iv.no) + ' · ' + esc(iv.pa) + ' → ' + esc(iv.pb) +
+        (iv.hours != null ? ' · ' + iv.hours + ' h' : '') + '</span><b>' + money(iv.total || 0) + ' · ' + esc(iv.status) + '</b></div>' +
+        '<div style="margin:2px 0 6px"><button class="btn small navy" data-pnlinv="' + esc(uid) + ':' + esc(iv.id) + '">View / print invoice</button>' +
+        (man ? ' <button class="btn small ghost" data-pnlman="' + esc(uid) + ':' + esc(iv.pa) + '_' + esc(iv.pb) + '">📋 Manifest</button>' : '') +
+        '</div>' +
+        '<div id="pnl_ivdoc_' + esc(uid) + '_' + esc(iv.id) + '"></div>' +
+        (man ? '<div id="pnl_mandoc_' + esc(uid) + '_' + esc(iv.pa) + '_' + esc(iv.pb) + '"></div>' : '');
+    });
+  }
+    return h;
+  }
+  function pnlCrewHtml(days, recs, bills, month) {
+    var hasRecs = !!((recs && Object.keys(recs).length) || (bills && Object.keys(bills).length));
+    if (!days.length && !hasRecs) return '<div class="empty">No shared days yet this month. When a connected driver works, his day lands here by itself.</div>';
     var byDriver = {}, order = [];
     days.forEach(function (day) {
       if (!byDriver[day.driver]) { byDriver[day.driver] = { name: day.driverName || 'Driver', days: [] }; order.push(day.driver); }
@@ -254,11 +346,85 @@
         '<div class="kv"><span style="padding-left:14px">Wages (foreman + travel, your rate for him)</span><b>' + (nWage ? money(wage) : '—') + '</b></div>' +
         (nRev && nWage ? '<div class="kv"><span style="padding-left:14px">Margin</span><b>' + money(rev - wage) + '</b></div>' : '') +
         (!pricing.wage ? '<div style="margin:4px 0 8px"><button class="btn small navy" data-pnlsetpay="' + esc(uid) + '" data-pipename="' + esc(g.name) + '">Set his pay rate</button></div>' : '');
+      h += pnlDriverRecordsHtml(uid, recs, bills, month);
     });
-    h += '<div class="kv"><span><b>Crew revenue</b></span><b>' + (anyRev ? money(tRev) : '—') + '</b></div>' +
-      '<div class="kv"><span><b>Crew wages</b></span><b>' + (anyWage ? money(tWage) : '—') + '</b></div>' +
-      (anyRev && anyWage ? '<div class="kv"><span><b>Crew margin</b></span><b>' + money(tRev - tWage) + '</b></div>' : '');
+    if (days.length) {
+      h += '<div class="kv"><span><b>Crew revenue</b></span><b>' + (anyRev ? money(tRev) : '—') + '</b></div>' +
+        '<div class="kv"><span><b>Crew wages</b></span><b>' + (anyWage ? money(tWage) : '—') + '</b></div>' +
+        (anyRev && anyWage ? '<div class="kv"><span><b>Crew margin</b></span><b>' + money(tRev - tWage) + '</b></div>' : '');
+    }
+    /* v146: a driver can share records (fuel, maintenance,
+       invoices) in a month where he closed no days here — his
+       records still show, under his name. */
+    var seenRec = {};
+    order.forEach(function (u) { seenRec[u] = true; });
+    var extraUids = {};
+    Object.keys(recs || {}).forEach(function (u) { extraUids[u] = true; });
+    Object.keys(bills || {}).forEach(function (u) { extraUids[u] = true; });
+    Object.keys(extraUids).forEach(function (uid) {
+      if (seenRec[uid]) return;
+      var nm = (recs && recs[uid] && (recs[uid].driverName || recs[uid].driverBusiness)) ||
+        (bills && bills[uid] && (bills[uid].driverName || bills[uid].driverBusiness)) || 'Driver';
+      h += '<div class="kv" style="margin-top:8px"><span>' + esc(nm) + '</span><b></b></div>' +
+        pnlDriverRecordsHtml(uid, recs, bills, month);
+    });
     return h;
+  }
+  /* v146: CONNECTED CREW WAGES IN THE TOTALS (owner, Oct 17
+     21:25 MDT: "my pay goes as an expense in his pnl"). The crew
+     card has priced connected drivers' shared days read-only
+     since v132; now the priced wage ALSO lands in the month's
+     expense totals — DERIVED, never stamped: when the crew card
+     fetches a month's shared days they are cached locally (a
+     '__'-prefixed key CloudSync never carries — another driver's
+     facts are not this account's data to sync), and calc() prices
+     the cache with the pipe's own pricer. Derived means:
+     idempotent per day by construction (one shared record per
+     driver per day — re-pricing can never double-post), a
+     corrected day re-prices itself on the next fetch, an unset
+     pay rate contributes $0/unpriced exactly as the board shows,
+     and an account with no connections never has a cache, so its
+     figures are byte-identical to before. The local wage log
+     (pnl_wage_entries) is untouched — the same work must not be
+     hand-logged as well, or it would count twice. */
+  var CREW_CACHE_KEY = '__crew_days';
+  function crewCache() {
+    try { return App._store.get(CREW_CACHE_KEY, {}) || {}; } catch (e) { return {}; }
+  }
+  function cacheCrewDays(month, days) {
+    try {
+      var all = crewCache();
+      all[month] = days || [];
+      var keys = Object.keys(all).sort();
+      while (keys.length > 6) { delete all[keys.shift()]; }
+      App._store.set(CREW_CACHE_KEY, all);
+    } catch (e) {}
+  }
+  function crewWagesFor(m) {
+    var out = { total: 0, byDriver: {} };
+    var days = [];
+    try { days = crewCache()[m] || []; } catch (e) { days = []; }
+    if (!days.length || !window.ConnectPipe) return out;
+    var byUid = {};
+    days.forEach(function (day) {
+      if (!day || !day.driver) return;
+      if (!byUid[day.driver]) byUid[day.driver] = { name: day.driverName || 'Driver', days: [] };
+      byUid[day.driver].days.push(day);
+    });
+    Object.keys(byUid).forEach(function (uid) {
+      var g = byUid[uid];
+      var pricing = ConnectPipe.pricingFor(uid);
+      var wage = 0, priced = false;
+      g.days.forEach(function (day) {
+        var p = ConnectPipe.priceDay(day, pricing);
+        if (p.wage !== null) { wage += p.wage; priced = true; }
+      });
+      wage = Math.round(wage * 100) / 100;
+      out.byDriver[uid] = { name: g.name, wage: wage, priced: priced, days: g.days.length };
+      if (priced) out.total += wage;
+    });
+    out.total = Math.round(out.total * 100) / 100;
+    return out;
   }
   var UNIT = { hourly: 'hrs', permile: 'mi', perload: 'loads' };
   var QTY_LABEL = { hourly: 'Hours', permile: 'Miles', perload: 'Loads' };
@@ -430,6 +596,11 @@
 
     var dw = driverWages(m);
 
+    /* v146: the connected crew's priced wages — an expense on
+       these books in their own right, attributed per driver
+       (crewWagesByDriver), derived from the cached shared days. */
+    var cw = crewWagesFor(m);
+
     /* Detailed expense categories (the owner's spreadsheet format) */
     var miles = totalMiles(m);
     var det = detailAmounts(m, income, dw.total);
@@ -447,11 +618,12 @@
       });
     });
 
-    var expenses = fuel + fuelOther + biz + dw.total + detTotal;
+    var expenses = fuel + fuelOther + biz + dw.total + detTotal + cw.total;
     return {
       month: m, income: income, incomeByType: incomeByType, extras: extras,
       fuel: fuel, fuelOther: fuelOther, biz: biz, bizByCat: bizByCat,
       wages: dw.total, wagesByDriver: dw.per,
+      crewWages: cw.total, crewWagesByDriver: cw.byDriver,
       miles: miles,
       detail: detRows, detailTotal: detTotal,
       fuelPerMile: miles > 0 ? fuel / miles : 0,
@@ -540,6 +712,16 @@
         h += '<div class="kv"><span>' + esc(k) + '</span><b>' + money(c.bizByCat[k]) + '</b></div>';
       });
       if (c.wages > 0) h += '<div class="kv"><span>👥 Driver wages</span><b>' + money(c.wages) + '</b></div>';
+      /* v146: connected crew wages — attributed per driver */
+      if (c.crewWages > 0) {
+        h += '<div class="kv"><span>🤝 Connected crew wages</span><b>' + money(c.crewWages) + '</b></div>';
+        Object.keys(c.crewWagesByDriver || {}).forEach(function (uid) {
+          var g = c.crewWagesByDriver[uid];
+          if (g && g.wage > 0) {
+            h += '<div class="kv"><span style="padding-left:14px">↳ ' + esc(g.name) + ' (Connect)</span><b>' + money(g.wage) + '</b></div>';
+          }
+        });
+      }
       h += '<div class="kv"><span><b>Total expenses</b></span><b>' + money(c.expenses) + '</b></div>';
       h += '<p class="note">Fuel costs pull automatically from Fuel &amp; Expense. Add other business costs below.</p></div>';
 
@@ -568,6 +750,13 @@
         h += '<tr><td>Total salaries</td><td style="text-align:right">' + money(c.wages) + '</td>' +
           '<td style="text-align:right">' + c.wagesPerMile.toFixed(5) + '</td>' +
           '<td style="text-align:right">' + c.wagesPct.toFixed(2) + '</td></tr>';
+      }
+      /* v146: connected crew wages line — the same expense,
+         attributed in the analysis table as well */
+      if (c.crewWages > 0) {
+        h += '<tr><td>Crew wages (Connect)</td><td style="text-align:right">' + money(c.crewWages) + '</td>' +
+          '<td style="text-align:right">' + (c.miles > 0 ? (c.crewWages / c.miles).toFixed(5) : '') + '</td>' +
+          '<td style="text-align:right">' + (c.income > 0 ? (c.crewWages / c.income * 100).toFixed(2) : '') + '</td></tr>';
       }
       /* Detailed categories */
       c.detail.forEach(function (r) {
@@ -642,15 +831,18 @@
 
       /* v132: CONNECTED CREW — the pipe's books (office/both faces
          only; a pure driver's P&L never grows an owner surface).
-         Live from the shared day records connected drivers publish
-         to this account, priced with THIS side's rates by the
-         pipe's pricer. Read-only aggregation: it posts nothing
-         into the wage log, so pipe work can never double-count
-         against hand-logged work. Painted async into #pnl_crew. */
+         Live from the records connected drivers publish to this
+         account, priced with THIS side's rates by the pipe's
+         pricer. v146: the card is the connected-driver detail
+         surface (his fuel, expenses, maintenance, pay invoices +
+         manifests) and the priced wages are an expense in the
+         totals above (derived — nothing is stamped into the wage
+         log; hand-logging the same work WOULD count it twice, and
+         the note below says so). Painted async into #pnl_crew. */
       if ((App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
         h += '<div class="card"><h3>🤝 Connected crew — ' + esc(monthLabel(m)) + '</h3>' +
           '<div id="pnl_crew"><p class="note">Loading your crew\u2019s shared days…</p></div>' +
-          '<p class="note">From your drivers\u2019 own day records, priced with your rates only — their rates never cross to you, and yours never cross to them.</p></div>';
+          '<p class="note">From your drivers\u2019 own records, priced with your rates only — their rates never cross to you, and yours never cross to them. Their priced wages are counted in your Total expenses above — don\u2019t log the same work by hand.</p></div>';
       }
 
       /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
@@ -868,11 +1060,23 @@
          pending driver + connection and delivered nothing. */
       /* v132: connected-crew books — fetch the month's shared days
          and paint them priced; the card's own Set-pay door reopens
-         the manual form prefilled for that driver. */
+         the manual form prefilled for that driver. v146: the
+         peers' shared RECORDS ride the same fetch; the days are
+         cached locally for calc() so the priced crew wages sit in
+         the expense totals — and when this fetch changes them,
+         the module repaints once so the totals catch up. */
       var crewEl = body.querySelector('#pnl_crew');
       if (crewEl && window.ConnectPipe) {
-        ConnectPipe.fetchCrewRange(m + '-01', m + '-31').then(function (days) {
-          crewEl.innerHTML = pnlCrewHtml(days);
+        Promise.all([
+          ConnectPipe.fetchCrewRange(m + '-01', m + '-31').catch(function () { return []; }),
+          ConnectPipe.fetchRecords ? ConnectPipe.fetchRecords().catch(function () { return { records: {}, billing: {} }; })
+            : Promise.resolve({ records: {}, billing: {} })
+        ]).then(function (r) {
+          var days = r[0] || [];
+          var recs = (r[1] && r[1].records) || {};
+          var bills = (r[1] && r[1].billing) || {};
+          cacheCrewDays(m, days);
+          crewEl.innerHTML = pnlCrewHtml(days, recs, bills, m);
           crewEl.querySelectorAll('[data-pnlsetpay]').forEach(function (b) {
             b.onclick = function () {
               pnlPrefill = { uid: b.getAttribute('data-pnlsetpay'), name: b.getAttribute('data-pipename') || '' };
@@ -880,6 +1084,59 @@
               api.render(body);
             };
           });
+          /* v146: the shared documents + receipt photos */
+          crewEl.querySelectorAll('[data-pnlinv]').forEach(function (b) {
+            b.onclick = function () {
+              var parts = (b.getAttribute('data-pnlinv') || '').split(':');
+              var bill = bills[parts[0]], iv = null;
+              if (bill) (bill.invoices || []).forEach(function (x) { if (x.id === parts[1]) iv = x; });
+              if (!iv) return;
+              if (window.Meticulous && Meticulous.shared && Meticulous.shared.printInvoiceDoc) {
+                Meticulous.shared.printInvoiceDoc(iv.doc);
+              } else if (window.Meticulous && Meticulous.shared && Meticulous.shared.invoiceDocHtml) {
+                var slot = crewEl.querySelector('#pnl_ivdoc_' + parts[0] + '_' + parts[1]);
+                if (slot) slot.innerHTML = '<div class="card" style="margin:6px 0">' + Meticulous.shared.invoiceDocHtml(iv.doc) + '</div>';
+              }
+            };
+          });
+          crewEl.querySelectorAll('[data-pnlman]').forEach(function (b) {
+            b.onclick = function () {
+              var parts = (b.getAttribute('data-pnlman') || '').split(':');
+              var bill = bills[parts[0]], man = null;
+              if (bill) (bill.manifests || []).forEach(function (x) { if (x.pa + '_' + x.pb === parts[1]) man = x; });
+              if (!man) return;
+              var slot = crewEl.querySelector('#pnl_mandoc_' + parts[0] + '_' + man.pa + '_' + man.pb);
+              if (!slot) return;
+              if (slot.innerHTML) { slot.innerHTML = ''; return; }
+              var lines = [];
+              man.days.forEach(function (dy) { (dy.lines || []).forEach(function (l) { lines.push(l); }); });
+              slot.innerHTML = '<div class="card" style="margin:6px 0">' +
+                ConnectPipe.manifestLinesHtml(lines) +
+                '<div style="margin-top:8px"><button class="btn small navy" id="pnl_manprint_' + parts[0] + '_' + man.pa + '_' + man.pb + '">Print manifest</button></div></div>';
+              var pb2 = slot.querySelector('#pnl_manprint_' + parts[0] + '_' + man.pa + '_' + man.pb);
+              if (pb2) pb2.onclick = function () {
+                ConnectPipe.printManifestDoc('Manifest — ' + man.pa + ' to ' + man.pb, lines);
+              };
+            };
+          });
+          crewEl.querySelectorAll('[data-pnlphoto]').forEach(function (b) {
+            b.onclick = function () {
+              var parts = (b.getAttribute('data-pnlphoto') || '').split(':');
+              var slot = crewEl.querySelector('#pnl_photo_' + parts[0] + '_' + parts[1]);
+              if (!slot) return;
+              if (slot.innerHTML) { slot.innerHTML = ''; return; }
+              slot.innerHTML = '<p class="note">Loading the receipt…</p>';
+              ConnectPipe.fetchPhoto(parts[0], parts[1]).then(function (url) {
+                slot.innerHTML = url
+                  ? '<img src="' + url + '" alt="Fuel receipt" style="max-width:100%;border-radius:8px;margin:4px 0">'
+                  : '<p class="note">The receipt photo could not be loaded.</p>';
+              });
+            };
+          });
+          var nc = calc(m);
+          if (nc.crewWages !== c.crewWages) api.render(body);
+        }).catch(function () {
+          crewEl.innerHTML = '<p class="note">Crew is unreachable right now.</p>';
         });
       }
       var cOpen = body.querySelector('#pnl_connect_open');

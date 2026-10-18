@@ -609,6 +609,14 @@
   }
 
   Meticulous.modules.manifest = {
+    /* v146: the pipe's doors — Connect ships a connected payer the
+       manifest DOCUMENT for the periods billed to him as these
+       very lines (collect + docLines under the driver's own
+       toggles), so his view/print is the driver's own manifest,
+       never a rebuild from the payer's stores. */
+    _collectDay: collect,
+    _docLines: docLines,
+    _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is
        the tracker COMPLEMENT, not a repeat: the hero card counts
        the RUNNING session; this line totals the whole day (saved
