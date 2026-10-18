@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 158,
-  "notes": "v158: Maintenance's Lifetime distance and economy now come from your odometer itself — today's reading minus your earliest dated reading — with the span it covers said out loud, instead of only the stretches between the few fill-ups that carried readings. The between-fill-ups legs keep their own line. And a fill-up saved without an odometer reading is now stamped with the current odometer automatically, so every fill carries one.",
+  "webVersion": 159,
+  "notes": "v159: A repair on our own test bench — three long-standing checks were pointing at old numbers instead of the app (a version pinned to an older build, and one date frozen on the day its check was written). All three are fixed and the full bench now runs clean. Nothing in the app changes for you.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,7 +17,7 @@
     "css/style.css": "e24fb88c3fd2a30d75f0c73dfa39eef0bda78e2912005ae4b6efd935c0b953a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "b8010ec8547ffdbd69062a0b4bf113d59cdab38c9ebf3bd33b2f60869c6633d5",
+    "index.html": "5893f6612a05516565d81a8fd261d0688454f1cb6214815cced56826fe8a2459",
     "js/app.js": "d38572a0897a7cae815fe91f843c3db7e94207c8334dde045824f3d6b5f3a51c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",

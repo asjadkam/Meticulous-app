@@ -437,12 +437,12 @@ function stubBody(map) {
     cpSrc.indexOf("c.status === 'connected'") !== -1);
   /* v155 deliberate pin move: ships as webVersion 155.
      v147 pin move: 155 -> 156, same convention.
-     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. */
-  eq('f: version ships as 158', ver.webVersion, 158);
-  check('f: index loads the touched files at the 158 pin',
-    idxSrc.indexOf('js/connectlive.js?v=158') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=158') !== -1 &&
-    idxSrc.indexOf('modules/connect.js?v=158') !== -1);
+     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. */
+  eq('f: version ships as 159', ver.webVersion, 159);
+  check('f: index loads the touched files at the 159 pin',
+    idxSrc.indexOf('js/connectlive.js?v=159') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=159') !== -1 &&
+    idxSrc.indexOf('modules/connect.js?v=159') !== -1);
 
   console.log('\ndispatch-picker-v155 test: ' + pass + '/' + (pass + fail) + ' passed');
   if (fail) process.exitCode = 1;

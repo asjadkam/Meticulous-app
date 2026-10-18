@@ -319,9 +319,9 @@ function booksMem() {
   console.log('(pins) ship state');
   /* v155 pin move (the standing convention): 154 -> 155.
      v147 pin move: 155 -> 156, same convention.
-     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. */
-  eq('pins: version.json webVersion is 158', ver.webVersion, 158);
-  check('pins: index cohort is ?v=158', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=158') !== -1);
+     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. */
+  eq('pins: version.json webVersion is 159', ver.webVersion, 159);
+  check('pins: index cohort is ?v=159', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=159') !== -1);
 
   /* ---------- (a) the disagreeing record: date + sort ---------- */
   console.log('(a) history date line + sort');

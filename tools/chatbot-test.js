@@ -318,7 +318,12 @@ console.log('— G: weather —');
 console.log('— H: statics —');
 {
   has('H1 index.html loads the chatbot at the live pin', idxSrc, 'js/chatbot.js?v=' + ver.webVersion);
-  eq('H2 webVersion is 104 (v104: auto-enter Drive on go-now arms + while moving, Drive pinned at the sheet top, real route errors, opening-balloon fix)', ver.webVersion, 104);
+  /* v159 repair (stale test, product correct): the literal === 104
+     froze at the v104 ship and failed every later OTA bump while the
+     behaviours it names held. H1 already pins index↔version.json
+     consistency dynamically; H2's durable content is the FLOOR those
+     v104 behaviours shipped at (the OTA number only moves forward). */
+  ok(Number.isInteger(ver.webVersion) && ver.webVersion >= 104, 'H2 webVersion at/after 104 (v104: auto-enter Drive on go-now arms + while moving, Drive pinned at the sheet top, real route errors, opening-balloon fix)');
   eq('H3 native stays 35', ver.version, 35);
   ok(ver.apkUrl.indexOf('meticulous-v35.apk') !== -1, 'H4 apkUrl untouched', ver.apkUrl);
   /* The key correction (owner, Oct 16, 2026): no API-key field,

@@ -502,8 +502,14 @@ function cStatus(extra) {
     ok(/versionCode 10/.test(gradle) && /versionName "1\.8"/.test(gradle),
       'E7 native version bumped (code 10 / name 1.8)');
     const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
-    /* v104: webVersion moved to 104 (auto-enter Drive; native unchanged) */
-    ok(vj.webVersion === 104 && vj.version === 35, 'E8 version.json: web 104, native 35');
+    /* v104: webVersion moved to 104 (auto-enter Drive; native unchanged).
+       v159 repair (stale test, product correct): the literal === 104
+       froze at the ship that wrote it — the OTA number only moves
+       forward, so every later ship failed this row while the facts it
+       guarded held. The durable facts this suite owns: native is
+       STILL 35 (this feature's ship), and webVersion never fell below
+       the 104 the arm shipped at. */
+    ok(Number.isInteger(vj.webVersion) && vj.webVersion >= 104 && vj.version === 35, 'E8 version.json: web at/after 104 (the arm ship), native 35');
     const appSrc2 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
     ok(/var APK_VERSION = 35;/.test(appSrc2), 'E9 app.js APK_VERSION = 35');
     const idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

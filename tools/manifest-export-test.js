@@ -279,8 +279,17 @@ function runManifestWorlds() {
     const mRow = w.body._html.match(/<div class="kv"><span>Start Time<\/span><b>([^<]*)<\/b><\/div>/);
     let startOk = false;
     if (mRow) {
-      const parsed = Date.parse('2026-10-14 ' + mRow[1]);
-      startOk = isFinite(parsed) && Math.abs(parsed - (Date.now() - 2 * 3600 * 1000)) <= 3000;
+      /* v159 repair (stale test, product correct): the printed value
+         is a bare time-of-day, so the parse anchor must be the
+         session start's OWN date. This line hardcoded the fixture
+         date '2026-10-14' — the calendar day the test was written —
+         so the check could only ever pass on that one day, while
+         the manifest printed the right start (startTs − elapsed)
+         all along. Anchor via the file's own todayStrLocal on the
+         target instant; the 3 s tolerance is unchanged. */
+      const target = Date.now() - 2 * 3600 * 1000;
+      const parsed = Date.parse(todayStrLocal(target) + ' ' + mRow[1]);
+      startOk = isFinite(parsed) && Math.abs(parsed - target) <= 3000;
     }
     check('f1: Start Time shows the running session start (~2h ago)', startOk, 'row: ' + (mRow && mRow[0]));
     check('f1: End Time honestly open — Still working', w.body._html.indexOf('<div class="kv"><span>End Time</span><b>Still working</b></div>') >= 0);
