@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 159,
-  "notes": "v159: A repair on our own test bench — three long-standing checks were pointing at old numbers instead of the app (a version pinned to an older build, and one date frozen on the day its check was written). All three are fixed and the full bench now runs clean. Nothing in the app changes for you.",
+  "webVersion": 160,
+  "notes": "v160: Origin truth on Revenue entries. When you correct a tracker-created entry by hand — change its hours or its amount in Edit — the entry now says so: it reads 'Auto from tracker · auto · edited by hand' instead of claiming the tracker produced your corrected numbers untouched. Entries you never edited read exactly as before, and the day's totals and where the day came from are unchanged.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,7 +17,7 @@
     "css/style.css": "e24fb88c3fd2a30d75f0c73dfa39eef0bda78e2912005ae4b6efd935c0b953a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "5893f6612a05516565d81a8fd261d0688454f1cb6214815cced56826fe8a2459",
+    "index.html": "ff0bfe8174878a085d1996bbe2fa334dde688b04aba2444f0832500c925a8416",
     "js/app.js": "d38572a0897a7cae815fe91f843c3db7e94207c8334dde045824f3d6b5f3a51c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",
@@ -50,7 +50,7 @@
     "modules/pnl.js": "7606c09783b52f328d64e1050f265a2c6e60fcb5e6472ff907be41ea2a38c3e0",
     "modules/preferences.js": "e4cb6ff6025544acdbbb7ff5443fca6be45345a642c29b55fed5e8f1aacb565d",
     "modules/reminders.js": "80d3d3a2183aec785382ed33941e1f3dc200cfac0c7627439faaccbc0fb427e0",
-    "modules/revenue.js": "518b626362519f30ba1405b20c41659f5a2879c6964b050bac8fa174b921882a",
+    "modules/revenue.js": "b583097c44aaf59589d1f0e2416e06f18e2cf0cb34a72b32b112c838ed9e9b1f",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

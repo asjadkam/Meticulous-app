@@ -639,7 +639,7 @@
         tons: parseFloat(e.tons) || 0, trips: parseFloat(e.trips) || 0,
         loads: parseInt(e.loads, 10) || 0,
         amount: payFor(e, ctx.std, ownRate(o)),
-        note: e.note || '', auto: !!e.auto
+        note: e.note || '', auto: !!e.auto, handEdited: !!e.handEdited /* v160: the origin truth rides the projection */
       });
     });
     /* v116 (owner, Oct 16 2026, screenshot of Thu Oct 15): the
@@ -748,7 +748,7 @@
      v48 rule — write, read back, byte-compare; false means the
      stored list is unchanged and the caller keeps the edit form
      open with a plain in-page error. */
-  function applyEntryEdit(orig, form) {
+  function applyEntryEdit(orig, form, amtAutoPriced) {
     var e = {};
     for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) e[k] = orig[k]; }
     e.type = form.type || e.type || 'load';
@@ -759,6 +759,34 @@
       var v = parseFloat(form[name]);
       if (v > 0) e[name] = v; else delete e[name];
     });
+    /* v160 (owner, Oct 17, 2026, evening — his own repair of the
+       Oct 17 day): he hand-edited the tracker-created entry's
+       hours through this door, saved, and the entry still wore
+       "Auto from tracker" — a pure-auto origin claim over numbers
+       his hand had set. ENTRY ORIGIN TRUTH: when an auto-created
+       entry's NUMBERS change through this door, the saved record
+       is stamped handEdited. The creation facts are NOT rewritten
+       (auto stays, the note stays — the source classifiers that
+       key on them keep the day's provenance); only the PRESENTED
+       origin changes (the render sites print "auto · edited by
+       hand" for a stamped entry). What counts as his hand: the
+       type, any quantity (hours / miles / tons / trips / loads),
+       or the amount — EXCEPT an amount change amtAutoPriced
+       names as the door's own v152 recompute over UNCHANGED
+       quantities (the door's math is not his hand, so a save that
+       changes nothing of his stamps nothing). A note-only edit
+       stamps nothing: his words replace the note themselves,
+       and the numbers remain the tracker's. Once stamped, the
+       mark stays (the copy above carries it) — a later no-op
+       save never un-writes the history. */
+    if (orig && orig.auto && !e.handEdited) {
+      var num = function (v) { var n = parseFloat(v); return isFinite(n) ? n : 0; };
+      var qtyChanged = num(e.hours) !== num(orig.hours) || num(e.miles) !== num(orig.miles) ||
+        num(e.tons) !== num(orig.tons) || num(e.trips) !== num(orig.trips) ||
+        (parseInt(e.loads, 10) || 1) !== (parseInt(orig.loads, 10) || 1);
+      var amtChanged = num(e.amount).toFixed(2) !== num(orig.amount).toFixed(2);
+      if (e.type !== (orig.type || 'load') || qtyChanged || (amtChanged && !amtAutoPriced)) e.handEdited = true;
+    }
     return e;
   }
   function applyExtraEdit(orig, form) {
@@ -927,7 +955,7 @@
         if (e.trips > 0) parts.push(e.trips + ' trip' + (e.trips === 1 ? '' : 's'));
         if (e.type === 'load' && e.loads > 0) parts.push(e.loads + ' load' + (e.loads === 1 ? '' : 's'));
         if (e.note) parts.push(e.note);
-        if (e.auto) parts.push('auto');
+        if (e.auto) parts.push(e.handEdited ? 'auto · edited by hand' : 'auto');
         var editingThis = dayEdit && dayEdit.kind === 'entry' && dayEdit.index === e.index;
         return '<div class="listitem"><div class="a">$' + e.amount.toFixed(2) + ' <span class="pill">' + esc(e.type) + '</span></div>' +
           (parts.length ? '<div class="b">' + esc(parts.join(' · ')) + '</div>' : '') +
@@ -956,7 +984,7 @@
           if (e.trips > 0) parts.push(e.trips + ' trip' + (e.trips === 1 ? '' : 's'));
           if (e.type === 'load' && e.loads > 0) parts.push(e.loads + ' load' + (e.loads === 1 ? '' : 's'));
           if (e.note) parts.push(e.note);
-          if (e.auto) parts.push('auto');
+          if (e.auto) parts.push(e.handEdited ? 'auto · edited by hand' : 'auto');
           if (e.drip) parts.push('tracker drip — under 0.1h, never counted');
           var editingThisE = dayEdit && dayEdit.kind === 'entry' && dayEdit.index === e.index;
           return '<div class="listitem"><div class="a"><span class="pill">' + esc(e.type) + '</span></div>' +
@@ -1083,9 +1111,11 @@
            whatever the field happened to hold, so the stored
            pair always agrees. With no rate on file the typed
            amount stands, exactly as before. */
+        var amtAutoPriced = false;
         if (form.type === 'hourly' && !dayEditAmtCustom) {
           var svRate = ownRate(App._store.get('onboarding', {}));
           if (svRate > 0) {
+            amtAutoPriced = true; /* v160: the amount below is the door's own math, not the man's typing */
             var svHrs = parseFloat(form.hours);
             form.amount = (svHrs > 0 ? svHrs * svRate : 0).toFixed(2);
           }
@@ -1098,7 +1128,7 @@
         }
         var l = entries();
         if (!l[dayEdit.index]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
-        l[dayEdit.index] = applyEntryEdit(l[dayEdit.index], form);
+        l[dayEdit.index] = applyEntryEdit(l[dayEdit.index], form, amtAutoPriced);
         if (!saveEntriesVerified(l)) {
           dayEditErr = 'Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the entry is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.';
           api.render(body); return;
@@ -1476,7 +1506,7 @@
           var amt = payFor(e, std, ownRate(App._store.get('onboarding', {})));
           var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
           return '<div class="listitem" data-day-link="' + esc(e.date) + '" style="cursor:pointer"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
-            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? ' · auto' : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
+            '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? (e.handEdited ? ' · auto · edited by hand' : ' · auto') : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + r.index + '">Delete</button></div></div>';
         }).join('') : (entries().length
           ? '<div class="empty">Nothing counted right now — some days are recorded more than once. Open the day from the Month view to fix it.</div>'
