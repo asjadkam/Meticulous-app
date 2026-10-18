@@ -667,13 +667,14 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      moves forward, so this suite's ship pins follow the live
      version 148 -> 149.
      v150 pin move: 149 -> 150, same convention.
-     v151 pin move: 150 -> 151, same convention. */
-  check('i: version ships as 151', ver.webVersion === 151);
-  check('i: index loads the touched files at the 151 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=151') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=151') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=151') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=151') !== -1);
+     v151 pin move: 150 -> 151, same convention.
+     v152 pin move: 151 -> 152, same convention. */
+  check('i: version ships as 152', ver.webVersion === 152);
+  check('i: index loads the touched files at the 152 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=152') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=152') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=152') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=152') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

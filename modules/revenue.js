@@ -794,6 +794,24 @@
   }
   function renderDayDetail(body) {
     var ds = dayDetailDate;
+    /* v152: the wage rate when THIS paint's hourly amount is
+       computed (0 = the amount is a typed field on this paint);
+       the wiring at the bottom reads it for the live follow. */
+    var edLiveRate = 0;
+    /* v152: snapshot the entry form's current field values into
+       dayEditDraft, so the re-renders the amount door performs
+       (unlock / back-to-auto / a Type flip) never lose what the
+       man already typed — the same draft the failed-save path
+       reopens with. */
+    function snapshotEntryForm(b) {
+      if (!dayEdit || dayEdit.kind !== 'entry') return;
+      var g = function (id) { var el = b.querySelector(id); return el ? el.value : ''; };
+      dayEditDraft = { kind: 'entry', index: dayEdit.index, form: {
+        type: g('#rv_ed_type'), amount: g('#rv_ed_amt'), loads: g('#rv_ed_loads'),
+        hours: g('#rv_ed_hours'), miles: g('#rv_ed_miles'), tons: g('#rv_ed_tons'),
+        trips: g('#rv_ed_trips'), note: g('#rv_ed_note').trim()
+      } };
+    }
     var d = dayDetailData(ds);
     /* v116: the evidence card's open state belongs to ONE day —
        arriving on a new day starts it collapsed, EXCEPT a
@@ -805,7 +823,7 @@
        closes the edit quietly — never edit a ghost. */
     if (dayEdit) {
       var tgt = dayEdit.kind === 'entry' ? entries()[dayEdit.index] : extras()[dayEdit.index];
-      if (!tgt) { dayEdit = null; dayEditErr = ''; }
+      if (!tgt) { dayEdit = null; dayEditErr = ''; dayEditAmtCustom = false; }
     }
     var title = new Date(ds + 'T12:00:00').toLocaleDateString('en',
       { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
@@ -843,8 +861,39 @@
         var typeOpts = ['load', 'hourly', 'miles', 'trip', 'weight'].map(function (t) {
           return '<option value="' + t + '"' + (fv('type', rec.type || 'load') === t ? ' selected' : '') + '>' + t + '</option>';
         }).join('');
+        /* v152 (owner, Oct 17 22:12: "Why is this edit asking me
+           for amount it should know by it self"): an HOURLY
+           entry's amount IS hours x his wage rate — the chain the
+           books price with (ownRate: ownWageRate || payRate). It
+           renders computed and read-only, follows the Hours field
+           live (wiring below), and the save recomputes it, so an
+           hourly pair can never store hours that say one thing
+           and dollars that say another. The one deliberate door:
+           "Type a different amount" (dayEditAmtCustom) unlocks
+           typing for THIS edit only, starting from the computed
+           figure. Non-hourly types — and any entry when no wage
+           rate is on file — keep the typed field exactly as
+           before: the app only prices what it actually knows. */
+        var edRate = ownRate(App._store.get('onboarding', {}));
+        var edIsHourly = fv('type', rec.type || 'load') === 'hourly';
+        var edAutoAmt = edIsHourly && edRate > 0 && !dayEditAmtCustom;
+        var edAutoVal = (Math.max(0, parseFloat(fv('hours', rec.hours)) || 0) * edRate).toFixed(2);
+        var edAmtCell;
+        if (edAutoAmt) {
+          edLiveRate = edRate;
+          edAmtCell = '<div><label class="f">Amount $ — hours × $' + edRate.toFixed(2) + '/hr</label>' +
+            '<input id="rv_ed_amt" type="number" inputmode="decimal" min="0" step="0.01" value="' + edAutoVal + '" readonly>' +
+            '<div class="note" style="margin-top:4px">Priced from your hours — it follows when the hours change.</div>' +
+            '<button class="btn small ghost" id="rv_ed_amt_unlock" type="button" style="margin-top:6px">Type a different amount</button></div>';
+        } else if (edIsHourly && edRate > 0) {
+          edAmtCell = '<div><label class="f">Amount $</label>' +
+            '<input id="rv_ed_amt" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('amount', rec.amount)) + '">' +
+            '<button class="btn small ghost" id="rv_ed_amt_auto" type="button" style="margin-top:6px">Use hours × rate ($' + edAutoVal + ')</button></div>';
+        } else {
+          edAmtCell = '<div><label class="f">Amount $</label><input id="rv_ed_amt" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('amount', rec.amount)) + '"></div>';
+        }
         h += '<div class="row"><div><label class="f">Type</label><select id="rv_ed_type">' + typeOpts + '</select></div>' +
-          '<div><label class="f">Amount $</label><input id="rv_ed_amt" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('amount', rec.amount)) + '"></div></div>' +
+          edAmtCell + '</div>' +
           '<div class="row"><div><label class="f">Hours</label><input id="rv_ed_hours" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('hours', rec.hours)) + '"></div>' +
           '<div><label class="f">Loads</label><input id="rv_ed_loads" type="number" min="1" step="1" value="' + esc(fv('loads', rec.loads || 1)) + '"></div></div>' +
           '<div class="row"><div><label class="f">Miles (km)</label><input id="rv_ed_miles" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(fv('miles', rec.miles)) + '"></div>' +
@@ -961,7 +1010,7 @@
     }
     body.innerHTML = h;
     body.querySelector('#rv_day_back').onclick = function () {
-      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
       api.render(body);
     };
     /* v116: the evidence card's show/hide. */
@@ -990,7 +1039,7 @@
     body.querySelectorAll('[data-rvedit]').forEach(function (b) {
       b.onclick = function () {
         dayEdit = { kind: 'entry', index: +b.getAttribute('data-rvedit') };
-        dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+        dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
         api.render(body);
         var top = body.querySelector('#rv_day_back');
         if (top && top.scrollIntoView) { try { top.scrollIntoView({ block: 'start' }); } catch (e) {} }
@@ -999,14 +1048,14 @@
     body.querySelectorAll('[data-rxedit]').forEach(function (b) {
       b.onclick = function () {
         dayEdit = { kind: 'extra', index: +b.getAttribute('data-rxedit') };
-        dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+        dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
         api.render(body);
         var top = body.querySelector('#rv_day_back');
         if (top && top.scrollIntoView) { try { top.scrollIntoView({ block: 'start' }); } catch (e) {} }
       };
     });
     var edCancel = body.querySelector('#rv_ed_cancel');
-    if (edCancel) edCancel.onclick = function () { dayEdit = null; dayEditErr = ''; dayEditDraft = null; api.render(body); };
+    if (edCancel) edCancel.onclick = function () { dayEdit = null; dayEditErr = ''; dayEditDraft = null; dayEditAmtCustom = false; api.render(body); };
     var edSave = body.querySelector('#rv_ed_save');
     if (edSave) edSave.onclick = function () {
       if (!dayEdit) return;
@@ -1021,6 +1070,19 @@
           trips: body.querySelector('#rv_ed_trips').value,
           note: body.querySelector('#rv_ed_note').value.trim()
         };
+        /* v152: an hourly entry saved WITHOUT the deliberate
+           override stores the computed amount — hours x the wage
+           rate (ownRate, the chain the books price with) — never
+           whatever the field happened to hold, so the stored
+           pair always agrees. With no rate on file the typed
+           amount stands, exactly as before. */
+        if (form.type === 'hourly' && !dayEditAmtCustom) {
+          var svRate = ownRate(App._store.get('onboarding', {}));
+          if (svRate > 0) {
+            var svHrs = parseFloat(form.hours);
+            form.amount = (svHrs > 0 ? svHrs * svRate : 0).toFixed(2);
+          }
+        }
         dayEditDraft = { kind: 'entry', index: dayEdit.index, form: form };
         var amt = parseFloat(form.amount);
         if (!(amt >= 0) || isNaN(amt)) {
@@ -1054,9 +1116,30 @@
           api.render(body); return;
         }
       }
-      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
       api.render(body);
     };
+    /* v152: the auto-price door's wiring. A Type flip re-renders
+       (the amount's mode follows the type — hourly locks to the
+       computed figure, anything else is a typed field); the
+       unlock / back-to-auto buttons flip dayEditAmtCustom for
+       THIS edit; Hours edits repaint the computed amount live.
+       Every flip snapshots the form first (snapshotEntryForm),
+       so what the man already typed survives the re-render. */
+    var edTypeSel = body.querySelector('#rv_ed_type');
+    if (edTypeSel) edTypeSel.onchange = function () { snapshotEntryForm(body); api.render(body); };
+    var edUnlock = body.querySelector('#rv_ed_amt_unlock');
+    if (edUnlock) edUnlock.onclick = function () { snapshotEntryForm(body); dayEditAmtCustom = true; api.render(body); };
+    var edAutoBtn = body.querySelector('#rv_ed_amt_auto');
+    if (edAutoBtn) edAutoBtn.onclick = function () { snapshotEntryForm(body); dayEditAmtCustom = false; api.render(body); };
+    var edHrsIn = body.querySelector('#rv_ed_hours');
+    var edAmtIn = body.querySelector('#rv_ed_amt');
+    if (edHrsIn && edAmtIn && edLiveRate > 0) {
+      edHrsIn.oninput = function () {
+        var hv = parseFloat(edHrsIn.value) || 0;
+        edAmtIn.value = (Math.max(0, hv) * edLiveRate).toFixed(2);
+      };
+    }
   }
 
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
@@ -1071,6 +1154,13 @@
   var dayEditErr = '';
   var dayErr = '';
   var dayEditDraft = null; // v75: form values of a FAILED save, so the reopened editor still holds them
+  /* v152: while an HOURLY entry is edited, its amount is computed
+     (hours x wage rate) and read-only; this flag is the ONE
+     deliberate exception — the man tapped "Type a different
+     amount" for THIS edit. It resets whenever an edit opens,
+     cancels, saves, or the view resets, so an override can never
+     leak into another edit. */
+  var dayEditAmtCustom = false;
   /* v116: the graph's two-tap selection (a date string) — first
      tap selects + previews, second tap on the same day opens its
      detail. See graphTap / paintGraphPreview below. */
@@ -1219,13 +1309,13 @@
        settings, not a sub-view, and stay.) */
     back: function () {
       if (!dayDetailDate && !dayEdit) return false;
-      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
       dayDetailDate = null;
       if (lastBody) api.render(lastBody);
       return true;
     },
     resetView: function () {
-      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null;
+      dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
     },
     render: function (body) {
       lastBody = body;

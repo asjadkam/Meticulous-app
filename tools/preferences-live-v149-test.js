@@ -374,11 +374,12 @@ function fireChange(el) {
   has('d: account card copy says settings save on change', prefSrc, 'save the moment you change them');
   has('d: the Crew card hint names the Pay card door', dspSrc,
     'Revenue is not priced yet — set your client rate in Preferences (the Pay card).');
-  /* v151 pin move (the standing convention): 150 -> 151. */
-  eq('d: version ships as 151', ver.webVersion, 151);
+  /* v151 pin move (the standing convention): 150 -> 151.
+     v152 pin move: 151 -> 152, same convention. */
+  eq('d: version ships as 152', ver.webVersion, 152);
   check('d: index loads the touched files at the 150 pin',
-    idxSrc.indexOf('modules/preferences.js?v=151') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=151') !== -1);
+    idxSrc.indexOf('modules/preferences.js?v=152') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=152') !== -1);
 
   console.log('\npreferences-live-v149: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

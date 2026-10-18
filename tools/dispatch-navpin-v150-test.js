@@ -250,9 +250,10 @@ function seedList(store) {
   check('a: dispatch.js carries no "Open in Maps"', dspSrc.indexOf('Open in Maps') === -1);
   check('a: navigation api exposes navigateToPin (source)', navSrc.indexOf('navigateToPin') !== -1);
   check('a: dispatch hands off via dspNavigatePin (source)', dspSrc.indexOf('dspNavigatePin') !== -1);
-  /* v151 pin move (the standing convention): 150 -> 151. */
-  eq('a: version.json webVersion is 151', ver.webVersion, 151);
-  check('a: index cohort is ?v=151', idxSrc.indexOf('?v=150') === -1 && idxSrc.indexOf('?v=151') !== -1);
+  /* v151 pin move (the standing convention): 150 -> 151.
+     v152 pin move: 151 -> 152, same convention. */
+  eq('a: version.json webVersion is 152', ver.webVersion, 152);
+  check('a: index cohort is ?v=152', idxSrc.indexOf('?v=151') === -1 && idxSrc.indexOf('?v=152') !== -1);
 
   /* ---------- (b) driver History renders ---------- */
   console.log('(b) driver history');
