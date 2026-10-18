@@ -411,6 +411,40 @@
     return { added: added, rejected: rejected };
   }
 
+  /* v151 (owner, Oct 17 2026 22:10–22:11 MDT: "These dates are
+     mushed up" / "Can't tell which graph is for what date"): WHICH
+     bars carry a date label. Pure rule, in the canvas's doubled
+     coordinates at the 20px label font: a label is at most
+     12px per character wide, and a chosen label must leave 18px
+     of clear air before the next chosen label starts (labels are
+     left-anchored at i*bw + bw*0.15, the anchor drawChart has
+     always used). Greedy from the first day; the LAST day is
+     always labelled — any chosen label that would crowd it is
+     dropped, never the last day itself. The old rule (stride
+     ceil(days/8) + the last day forced in with no width math)
+     sat the final pair one slot apart at 16 days and printed
+     "10/16" and "10/17" on top of each other. */
+  function chartLabelIdx(days, Wd, labels) {
+    if (!(days > 0)) return [];
+    var bw = Wd / days, GAP = 18;
+    function w(i) { return String(labels[i] || '').length * 12; }
+    function x(i) { return i * bw + bw * 0.15; }
+    var chosen = [0], i, last;
+    for (i = 1; i < days - 1; i++) {
+      last = chosen[chosen.length - 1];
+      if (x(i) >= x(last) + w(last) + GAP) chosen.push(i);
+    }
+    if (days > 1) {
+      while (chosen.length > 1) {
+        last = chosen[chosen.length - 1];
+        if (x(days - 1) >= x(last) + w(last) + GAP) break;
+        chosen.pop();
+      }
+      if (chosen[chosen.length - 1] !== days - 1) chosen.push(days - 1);
+    }
+    return chosen;
+  }
+
   function drawChart(cv) {
     var days = Math.min(periodDays(), 62);
     var now = new Date();
@@ -432,14 +466,24 @@
     ctx.clearRect(0, 0, Wd, H);
     var max = Math.max.apply(null, buckets.concat([1]));
     var bw = Wd / days;
-    var step = Math.max(1, Math.ceil(days / 8));
+    /* v151: labels chosen by the width rule above — never crowded
+       at any day count, first + last always labelled, and at
+       small counts every bar carries its date. */
+    var labelSet = {};
+    chartLabelIdx(days, Wd, labels).forEach(function (ix) { labelSet[ix] = 1; });
+    /* v151: the MARKED bar — the day the preview readout under
+       the chart names. The two-tap selection when there is one;
+       until a tap (or after a stale selection falls away) the
+       most recent day, so the chart never sits unmarked with an
+       empty readout. */
+    var mark = (graphSel && dates.indexOf(graphSel) >= 0) ? graphSel : dates[dates.length - 1];
     buckets.forEach(function (v, i) {
       var h = (v / max) * (H - 70);
       /* v116: the two-tap SELECTED day paints navy — the same navy
          as the preview card under the chart. */
-      ctx.fillStyle = (dates[i] === graphSel) ? '#1F3764' : (v > 0 ? '#F26522' : '#e8ecf4');
+      ctx.fillStyle = (dates[i] === graphSel || dates[i] === mark) ? '#1F3764' : (v > 0 ? '#F26522' : '#e8ecf4');
       ctx.fillRect(i * bw + bw * 0.2, H - 44 - h, bw * 0.6, Math.max(h, 4));
-      if (i % step === 0 || i === days - 1) {
+      if (labelSet[i]) {
         ctx.fillStyle = '#6b7690'; ctx.font = '20px sans-serif';
         ctx.fillText(labels[i], i * bw + bw * 0.15, H - 12);
       }
@@ -488,13 +532,24 @@
   function paintGraphPreview(body) {
     var host = (body && body.querySelector) ? body.querySelector('#rv_gprev') : null;
     if (!host) return;
-    if (!graphSel) { host.innerHTML = ''; return; }
-    var a = dayAgg()[graphSel] || { hours: 0, amount: 0, duplicate: false };
-    var lbl = new Date(graphSel + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
-    host.innerHTML = '<div class="card" style="border:2px solid var(--navy)"><h3>📊 ' + esc(lbl) + '</h3>' +
+    /* v151: the readout is ALWAYS present in the period view —
+       the two-tap selection when there is one, otherwise the
+       chart's most recent day (the same day drawChart marks), so
+       a driver can name a day's date and dollars at a glance
+       instead of tapping around. The Month view has no chart on
+       the page, so no default appears there. */
+    var sel = graphSel;
+    if (!sel) {
+      var cv = body.querySelector('#revChart');
+      if (cv && cv._dayDates && cv._dayDates.length) sel = cv._dayDates[cv._dayDates.length - 1];
+    }
+    if (!sel) { host.innerHTML = ''; return; }
+    var a = dayAgg()[sel] || { hours: 0, amount: 0, duplicate: false };
+    var lbl = new Date(sel + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+    host.innerHTML = '<div class="card" style="border:2px solid var(--navy)"><h3>📊 ' + esc(lbl) + ' — $' + (a.amount || 0).toFixed(2) + '</h3>' +
       '<div class="kv"><span>Hours</span><b>' + fmtH(a.hours) + '</b></div>' +
       '<div class="kv"><span>Earnings</span><b>$' + (a.amount || 0).toFixed(2) + '</b></div>' +
-      '<div class="kv"><span>Loads</span><b>' + dayLoadsFor(graphSel) + '</b></div>' +
+      '<div class="kv"><span>Loads</span><b>' + dayLoadsFor(sel) + '</b></div>' +
       (a.duplicate ? '<div class="note" style="margin-top:6px;color:#c2410c;font-weight:600">⚠️ Recorded more than once — not counted yet. Open the day to fix it.</div>' : '') +
       '<div class="note" style="margin-top:6px">Tap the same day again to open it.</div></div>';
   }
