@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 172,
-  "notes": "v172: A dispatch's pin now becomes a Navigate suggestion only on the dispatch's own day. Tomorrow's job no longer offers navigation the night before — its pin shows plainly until its day arrives; today's and past days' pins keep their Navigate button, and changing a dispatch's date in the form arms or disarms the offer on the spot.",
+  "webVersion": 173,
+  "notes": "v173: Rates now live on the JOB. The dispatch form has a Job rate for that job plus three separate parties — Name on the ticket, Rate set by, and Paid by — because on double-brokered work they are three different parties. Closing a job prices it at its own rate (Preferences is only the fallback). A customer's last rate is remembered: name the same payer on a new job and their last rate fills in, changeable on that job alone. Rates still never cross Connect, and a driver's wage is always the driver's own.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,7 +17,7 @@
     "css/style.css": "e24fb88c3fd2a30d75f0c73dfa39eef0bda78e2912005ae4b6efd935c0b953a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "aaa2c4fa7adbe097def5535f5ccf650175a03d7ac24e70466c60c28d67768bb1",
+    "index.html": "b1029554fc7db1676305c2e7ef8614d6281ed8355d8c5f0a8b44628dea884eb1",
     "js/app.js": "73cbbaa0a6c1b6f8a3ad15196f010d9cb25f7d46517b4fd561669bd694612aa4",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",
@@ -40,7 +40,7 @@
     "modules/autostart.js": "6e751e87252fb430cb2f03634fccb4f9652b0a0d5bf2af8cf313f0b96d2bdb02",
     "modules/connect.js": "8bd9f84c223f2af8cb7fc3b07e473c253388dc8212922d06d862a845d2e7f42d",
     "modules/damage.js": "33584fc0989824ea912a686bf0cfe9e54952408c8ca0d9d63cd2e6c7e30c5913",
-    "modules/dispatch.js": "d1c8217db9e1d7cd34917f49b5b8ff7e7e22a22a6541f150481190dbdd32eb8b",
+    "modules/dispatch.js": "329446ef28028524e78ed4108ced15bde8b3abac8235ef4be59d298840f52632",
     "modules/fuel.js": "c725cb33e91335649a431528efbe746c842ffbdd881855e378bbb29b4ab8b07c",
     "modules/invoice.js": "9e77df35f113f74cf3ae65bdbe81dea8997d317ac0e7d2c055adacc083a87abb",
     "modules/maintenance.js": "3ec31726a46d37e160a0585a927070c4ad65ca14782065ba017994f192b39fc6",

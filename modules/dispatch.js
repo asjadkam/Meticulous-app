@@ -241,7 +241,10 @@
       amount: (isNaN(amt) || !(amt > 0)) ? '' : String(d.amount),
       loads: d.loadsSet ? String(d.loads) : (tkLoads > 0 ? String(tkLoads) : ((d.loads !== null && d.loads !== undefined && d.loads !== '') ? String(d.loads) : '1')),
       loadsSet: !!d.loadsSet || tkLoads > 0,
-      notes: d.notes || '', driverId: d.driverId || ''
+      notes: d.notes || '', driverId: d.driverId || '',
+      /* v173: the job's own rate + its three parties edit with the record */
+      jobRate: (parseFloat(d.jobRate) > 0) ? String(d.jobRate) : '',
+      ticketName: d.ticketName || '', rateSource: d.rateSource || '', payer: d.payer || ''
     };
   }
   /* v117: the read-summary cleaner for STORED docRead reports.
@@ -351,6 +354,39 @@
   function dspNavDayOk(d) {
     var dt = dspRecordDate(d);
     return !dt || dt <= App._today();
+  }
+  /* v173: RATES LIVE ON THE JOB (owner, Oct 18, 2026 21:13 +
+     21:17 MDT — the double-broker rulings). A dispatch carries
+     its own rate (jobRate) and THREE separate parties: the name
+     on the ticket (ticketName), who set the rate (rateSource —
+     never printed on the ticket), and who actually pays
+     (payer). The customer's LAST rate is remembered as their
+     default: dsp_rates maps a party name (the payer first, the
+     ticket name as the fallback — the names a job is known by)
+     to the rate on the last job saved for them. It is written
+     ONLY by a save that carries a rate (a hand on the form —
+     never a silent rewrite), and a new job for that party opens
+     at the remembered rate, changeable on the job alone.
+     Rates never cross Connect: none of these fields ride the
+     shared record (the pipe's facts stay rate-free, as always). */
+  function dspRateKey(rec) {
+    return String((rec && (rec.payer || rec.ticketName)) || '').trim().toLowerCase();
+  }
+  function dspRememberJobRate(rec) {
+    var r = parseFloat(rec && rec.jobRate);
+    if (!(r > 0)) return;
+    var key = dspRateKey(rec);
+    if (!key) return;
+    var m = dspGet('rates', {}) || {};
+    if (m[key] === r) return;
+    m[key] = r;
+    dspSet('rates', m);
+  }
+  function dspLastRateFor(name) {
+    var key = String(name || '').trim().toLowerCase();
+    if (!key) return 0;
+    var m = dspGet('rates', {}) || {};
+    return parseFloat(m[key]) || 0;
   }
   /* v86: the Scheduled field is a DATE input + a TIME input, not
      one datetime-local. A datetime-local takes a typed time only
@@ -478,13 +514,21 @@
   }
   function dspCompletionPlan(x) {
     var entry = null, claim = null, wagePosting = null, heldOut = 0, disclosure = '', mode = 'none';
+    /* v173: THE JOB'S OWN RATE prices the job's billing legs
+       (weight, office income, the owner-operator's billing leg,
+       a driver's income) whenever the job carries one — rates
+       attach to the job, not to a global Preferences value. The
+       WAGE legs never read it: a driver's pay is the driver's
+       own rate, always (the Oct 18 wage law). */
+    var jobRate = parseFloat(x.jobRate) || 0;
     var sum = x.sum || null;
     if (sum) {
       var brk = (sum.breakdown || []).map(function (b) {
         return b.label + ': ' + (b.foremanHours || 0) + 'h';
       }).join(', ');
-      if (x.std === 'weight' && sum.totalNetWeight > 0 && x.rate > 0) {
-        var wAmt = sum.totalNetWeight * x.rate;
+      if (x.std === 'weight' && sum.totalNetWeight > 0 && (x.rate > 0 || jobRate > 0)) {
+        var wRate0 = jobRate > 0 ? jobRate : x.rate;
+        var wAmt = sum.totalNetWeight * wRate0;
         entry = {
           date: x.date,
           amount: wAmt.toFixed(2),
@@ -492,14 +536,14 @@
           type: 'weight',
           loads: x.ticketCount,
           note: 'Dispatch: ' + (x.jobSite || '') +
-            ' · ' + sum.totalNetWeight.toFixed(2) + 't @ $' + x.rate + '/t' +
+            ' · ' + sum.totalNetWeight.toFixed(2) + 't @ $' + wRate0 + '/t' +
             ' (' + x.ticketCount + ' tickets)'
         };
         mode = 'weight';
       } else if ((x.std === 'hourly' || x.std === 'trip') && sum.totalForemanHours > 0) {
         var fh = sum.totalForemanHours, th = sum.travelBonus;
         if (x.role === 'office') {
-          var oAmt = fh * x.rate;
+          var oAmt = fh * (jobRate > 0 ? jobRate : x.rate);
           entry = {
             date: x.date,
             amount: oAmt.toFixed(2),
@@ -551,7 +595,7 @@
              driver-pay expense = (foreman + travel) × his wage rate.
              The two rates are his own Preferences values and may
              differ — the margin between them is the card's gross. */
-          var bRate = parseFloat(x.billingRate) > 0 ? parseFloat(x.billingRate) : x.rate;
+          var bRate = jobRate > 0 ? jobRate : (parseFloat(x.billingRate) > 0 ? parseFloat(x.billingRate) : x.rate);
           var wRate = parseFloat(x.wageRate) > 0 ? parseFloat(x.wageRate) : x.rate;
           var bAmt = fh * bRate;
           entry = {
@@ -584,8 +628,9 @@
           mode = 'both-books';
         } else {
           /* driver: byte-identical to the pre-v52 entry, plus the
-             split fields foremanHours / travelHours. */
-          var hAmt = sum.totalPaidHours * x.rate;
+             split fields foremanHours / travelHours. v173: at the
+             JOB's rate when the job carries one. */
+          var hAmt = sum.totalPaidHours * (jobRate > 0 ? jobRate : x.rate);
           entry = {
             date: x.date,
             amount: hAmt.toFixed(2),
@@ -750,6 +795,7 @@
       jobSite: (rec && rec.jobSite) || '', ticketCount: tickets.length,
       travelBonusRaw: sett.travelBonus, driver: sett.driver || null,
       billingRate: sett.billingRate, wageRate: sett.wageRate,
+      jobRate: rec ? parseFloat(rec.jobRate) || 0 : 0,
       legacyAmount: rec ? rec.amount : null, legacyNetWeight: rec ? rec.netWeight : null,
       loads: rec ? rec.loads : null, ticketNo: rec ? rec.ticketNo : null
     });
@@ -931,6 +977,9 @@
       travelHours: sum ? sum.travelBonus : 0,
       totalHours: sum ? sum.totalPaidHours : 0,
       netWeight: sum ? sum.totalNetWeight : 0,
+      /* v173: the job's rate + its three parties ride the face */
+      jobRate: parseFloat(d.jobRate) || 0,
+      ticketName: d.ticketName || '', rateSource: d.rateSource || '', payer: d.payer || '',
       notes: d.notes || '', photos: photos
     };
   }
@@ -1554,6 +1603,10 @@
           (face.netWeight > 0 ? '<div class="kv"><span>Net weight</span><b>' + esc(String(face.netWeight)) + ' t</b></div>' : '') +
           (face.loads > 0 ? '<div class="kv"><span>Loads</span><b>' + face.loads + '</b></div>' : '') +
           '<div class="kv"><span>Amount earned</span><b>$' + face.amount.toFixed(2) + '</b></div>' +
+          (face.jobRate > 0 ? '<div class="kv"><span>Job rate</span><b>$' + face.jobRate + '</b></div>' : '') +
+          (face.ticketName ? '<div class="kv"><span>Name on ticket</span><b>' + esc(face.ticketName) + '</b></div>' : '') +
+          (face.rateSource ? '<div class="kv"><span>Rate set by</span><b>' + esc(face.rateSource) + '</b></div>' : '') +
+          (face.payer ? '<div class="kv"><span>Paid by</span><b>' + esc(face.payer) + '</b></div>' : '') +
           (face.notes ? '<div class="kv"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
           face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">'; }).join('') +
           '<div class="row" style="margin-top:10px">' +
@@ -1600,6 +1653,19 @@
         '<div><label class="f">Ticket #</label><input id="dp_ticket" placeholder="e.g. 48213"></div></div>' +
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
         '<div><label class="f">Loads</label><input id="dp_loads" type="number" min="1" step="1" value="1"></div></div>' +
+        /* v173: THE JOB'S RATE + ITS THREE PARTIES (owner, Oct 18
+           21:13/21:17 MDT). The rate belongs to THIS job; naming
+           who pays fills it with that customer's last rate (their
+           remembered default), and changing it here changes only
+           this job — and becomes their new remembered rate when
+           the job saves. The three parties are separate because
+           they often ARE three different parties (double-brokered
+           work): the name on the ticket, who set the rate (never
+           on the ticket), and who actually pays. */
+        '<div class="row"><div><label class="f">Job rate $ (this job)</label><input id="dp_jobrate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 93"></div>' +
+        '<div><label class="f">Name on the ticket</label><input id="dp_ticketname" placeholder="e.g. P Hauling"></div></div>' +
+        '<div class="row"><div><label class="f">Rate set by</label><input id="dp_ratesrc" placeholder="Who set this rate"></div>' +
+        '<div><label class="f">Paid by</label><input id="dp_payer" placeholder="Who actually pays"></div></div>' +
         /* v107: whether the Loads value was DELIBERATELY set (typed
            by the driver, restored from a draft that recorded it, or
            carried from the record being edited) — the marker the
@@ -1915,6 +1981,8 @@
             material: q('#dp_mat'), ticketNo: q('#dp_ticket'),
             amount: q('#dp_amt'), loads: q('#dp_loads'), loadsSet: q('#dp_loadsset') === '1',
             notes: q('#dp_notes'),
+            jobRate: q('#dp_jobrate'), ticketName: q('#dp_ticketname'),
+            rateSource: q('#dp_ratesrc'), payer: q('#dp_payer'),
             driverId: q('#dp_driver')
           },
           tickets: pendingTickets.slice(),
@@ -1927,7 +1995,8 @@
         if (d.editId) return false; // v56: an edit in progress is never an "empty" draft
         var f = d.fields || {};
         var any = f.jobSite || f.scheduledAt || f.equipment || f.material ||
-                  f.ticketNo || f.amount || f.notes || f.lat || f.lng || f.driverId;
+                  f.ticketNo || f.amount || f.notes || f.lat || f.lng || f.driverId ||
+                  f.jobRate || f.ticketName || f.rateSource || f.payer;
         return !any && !(d.tickets && d.tickets.length) && !d.photo;
       }
       function showDraftWarn(msg) {
@@ -2001,6 +2070,9 @@
         set('#dp_lat', f.lat); set('#dp_lng', f.lng);
         set('#dp_mat', f.material); set('#dp_ticket', f.ticketNo);
         set('#dp_amt', f.amount); if (f.loads) set('#dp_loads', f.loads); set('#dp_notes', f.notes);
+        /* v173: the job's rate + parties restore with the draft */
+        set('#dp_jobrate', f.jobRate); set('#dp_ticketname', f.ticketName);
+        set('#dp_ratesrc', f.rateSource); set('#dp_payer', f.payer);
         set('#dp_loadsset', f.loadsSet ? '1' : '');
         set('#dp_driver', f.driverId);
         if (f.lat !== '' && f.lat !== undefined && f.lat !== null && f.lng !== '' && f.lng !== undefined && f.lng !== null) {
@@ -2202,6 +2274,43 @@
           dEl.addEventListener('input', repaintPin);
           dEl.addEventListener('change', repaintPin);
         }
+      })();
+      /* v173: THE CUSTOMER'S LAST RATE, APPLIED — naming who pays
+         (or whose name is on the ticket) fills the Job rate with
+         that customer's remembered rate. It fills only an empty
+         field or one still holding the last auto-fill, so a rate
+         typed by hand is never stomped; changing the filled rate
+         is the manual change the job then remembers at save. A
+         fresh form also opens with the ticket name prefilled
+         from Preferences' contracting company — the usual name
+         on his tickets — still just a field he can overwrite. */
+      (function () {
+        var autoRate = '';
+        var rateEl = body.querySelector('#dp_jobrate');
+        var fillFrom = function (nameVal) {
+          if (!rateEl) return;
+          var lr = dspLastRateFor(nameVal);
+          if (lr > 0 && (rateEl.value === '' || rateEl.value === autoRate)) {
+            rateEl.value = String(lr);
+            autoRate = String(lr);
+          }
+        };
+        var payerEl = body.querySelector('#dp_payer');
+        var tnEl = body.querySelector('#dp_ticketname');
+        if (payerEl) {
+          payerEl.addEventListener('change', function () { fillFrom(payerEl.value); });
+          payerEl.addEventListener('input', function () { fillFrom(payerEl.value); });
+        }
+        if (tnEl) {
+          tnEl.addEventListener('change', function () { fillFrom(tnEl.value); });
+          if (!draft0 && !editingId && !tnEl.value) {
+            var ob = App._store.get('onboarding', {}) || {};
+            if (ob.contractingCo) tnEl.value = ob.contractingCo;
+          }
+        }
+        /* a restored payer (draft/edit) opens at the remembered
+           rate when the job itself carries none yet */
+        if (rateEl && payerEl && !rateEl.value && payerEl.value) fillFrom(payerEl.value);
       })();
 
       /* v48: restore a kept draft (fields + tickets + note) */
@@ -2481,6 +2590,11 @@
           amount: body.querySelector('#dp_amt').value.trim(),
           loads: body.querySelector('#dp_loads').value.trim() || '1',
           loadsSet: !!(body.querySelector('#dp_loadsset') && body.querySelector('#dp_loadsset').value === '1'),
+          /* v173: the job's rate + parties save with the record */
+          jobRate: body.querySelector('#dp_jobrate').value.trim(),
+          ticketName: body.querySelector('#dp_ticketname').value.trim(),
+          rateSource: body.querySelector('#dp_ratesrc').value.trim(),
+          payer: body.querySelector('#dp_payer').value.trim(),
           notes: body.querySelector('#dp_notes').value.trim(),
           driverId: drvEl ? drvEl.value : '',                        // v52
           driverName: (drvEl && drvEl.value) ? drvEl.options[drvEl.selectedIndex].text : '', // v52
@@ -2531,6 +2645,7 @@
         }
         lastSaveTry = null;
         dspClearDraft(); // only a verified save clears the draft
+        dspRememberJobRate(d); // v173: this job's rate becomes its customer's remembered default
         fbSave(d);
         manifestFeedPush('dispatch', 'Dispatch ' + (mayStart ? 'started' : 'saved') + ': ' + d.jobSite + (d.ticketNo ? ' · ticket #' + d.ticketNo : ''));
         if (mayStart && window.FB && FB.localNotify) { try { FB.localNotify('Dispatch started', d.jobSite); } catch (e) {} }
@@ -2559,6 +2674,7 @@
           return;
         }
         dspClearDraft(); // only a verified update clears the draft
+        dspRememberJobRate(updated); // v173: an edited job's rate refreshes the customer's default too
         fbSave(updated);
         manifestFeedPush('dispatch', 'Dispatch edited: ' + updated.jobSite + (updated.ticketNo ? ' · ticket #' + updated.ticketNo : ''));
         api.render(body);
