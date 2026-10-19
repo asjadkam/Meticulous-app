@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 165,
-  "notes": "v165: PTI is complete. The module is named PTI; every inspection is a Pre-trip or Post-trip (your choice in the form, Pre-trip by default). New DOT Inspection Mode: hand the phone to an officer and they see only your filed inspections from the last 14 days — the rest of the app stays locked until you unlock it with your PIN (you set it the first time). The PTI dashboard card now counts what is owed: unsigned inspections and days without a pre-trip. Unsigned inspections keep asking to be signed, and closing a day with no PTI on file reminds you.",
+  "webVersion": 166,
+  "notes": "v166: Pull to refresh now brings the new version too, not just new data. Pull down and the app checks for an update: in the installed app it downloads the new version and restarts into it; on the web copy it activates the waiting update and reloads. If you are typing, the update still downloads but never interrupts you — it lands the next time you open the app.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,8 +17,8 @@
     "css/style.css": "e24fb88c3fd2a30d75f0c73dfa39eef0bda78e2912005ae4b6efd935c0b953a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "d7114d54413cad98d324ac9e7a0a7f2028a11a703b425d3005eb10be2dab47b3",
-    "js/app.js": "4f6a7c4d584e312abfe5449a5c1a5261a7f3843af8c3a456b945b42d8440c314",
+    "index.html": "f49b6a97b007c8a7dc7066d73a71fa51cd9603872bea59d1491ccdf087cdfec5",
+    "js/app.js": "b127deac277acb80b900d8a14bb178dc7473f4d0e36c05d91cef2766233ea2eb",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",
     "js/cloudsync.js": "500e6399afc8183ad10c7bb1f62e477ec191ededb9d11ff793954fb2bb5cc9c4",

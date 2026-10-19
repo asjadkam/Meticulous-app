@@ -199,7 +199,7 @@ const pnlSrc = read('modules/pnl.js');
 ok('the boss’s records block paints PTI', pnlSrc.indexOf('rec.pti') >= 0 && pnlSrc.indexOf('His PTIs') >= 0);
 ok('the boss’s PTI paint shouts majors', pnlSrc.indexOf('🚨 MAJOR DEFECT') >= 0);
 
-ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=165') >= 0);
+ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=166') >= 0);
 ok('sharedrecords rules exist for the ride', read('firestore.rules').indexOf('match /sharedrecords/{driverId}') >= 0);
 
 console.log('pti-v162 test: ' + pass + ' passed, ' + fail + ' failed');

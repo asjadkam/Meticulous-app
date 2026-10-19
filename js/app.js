@@ -764,6 +764,7 @@
     if (mode === 'hide') { p.classList.remove('show'); return; }
     if (mode === 'pull') p.textContent = dy >= PTR_THRESHOLD ? '↑ Release to refresh' : '↓ Pull to refresh';
     else if (mode === 'refreshing') p.textContent = '↻ Refreshing…';
+    else if (mode === 'update') p.textContent = '✓ New version ready — restarting…';
     else if (mode === 'done') p.textContent = '✓ Updated';
     p.classList.add('show');
     if (mode === 'done') ptrHideTimer = setTimeout(function () { ptrPaint('hide'); }, 900);
@@ -792,6 +793,89 @@
     return true;
   }
 
+  /* v166: THE VERSION LEG (owner, Oct 18, 2026 18:55 MDT — he
+     pulled to refresh and the app repainted its DATA but stayed
+     on the old code; v162's PTI card only arrived after a full
+     restart: "just got it after restart"). A pull must bring a
+     NEW VERSION too, not just new data. Two doors, one rule —
+     the update is fetched by the same machinery the rest of the
+     app trusts, and it is only APPLIED when the screen carries
+     no unsaved typing (the PTR contract above outranks it: a
+     downloaded update that can't apply yet simply lands at the
+     next launch):
+       NATIVE (the installed app): OTA.checkNow() downloads a
+         newer bundle (the Preferences check, minus its confirm);
+         OTA.restart() steps into it.
+       WEB / PWA: the service worker is asked for an update; a
+         waiting worker is activated (SKIP_WAITING) and the page
+         reloads into the new copy — the showUpdateBanner dance,
+         without making him hunt for the banner.
+     Resolves true when the app is stepping into the new version
+     (the page is going away — the repaint leg is skipped). */
+  function ptrVersionLeg() {
+    return new Promise(function (resolve) {
+      var settled = false;
+      function fin(v) { if (!settled) { settled = true; resolve(v); } }
+      /* the native door first */
+      try {
+        if (window.OTA && OTA.checkNow) {
+          OTA.checkNow().then(function (r) {
+            if (r && r.updated) {
+              if (ptrEditing()) { fin(false); return; } // downloaded — lands next launch; never blow away typing
+              ptrPaint('update');
+              try { OTA.restart(); } catch (e) {}
+              fin(true);
+              return;
+            }
+            /* the plain-web answer: fall through to the SW door */
+            if (r && r.reason === 'OTA works inside the installed app.') { ptrSwLeg(fin); return; }
+            fin(false);
+          }).catch(function () { fin(false); });
+          return;
+        }
+      } catch (e) {}
+      ptrSwLeg(fin);
+    });
+  }
+  function ptrSwLeg(fin) {
+    try {
+      if (!('serviceWorker' in navigator)) { fin(false); return; }
+      navigator.serviceWorker.getRegistration().then(function (reg) {
+        if (!reg) { fin(false); return; }
+        var apply = function (worker) {
+          if (!worker) { fin(false); return; }
+          if (ptrEditing()) { fin(false); return; } // the banner stays his door; typing is never blown away
+          ptrPaint('update');
+          var reloaded = false;
+          try {
+            navigator.serviceWorker.addEventListener('controllerchange', function () {
+              if (!reloaded) { reloaded = true; window.location.reload(); }
+            });
+          } catch (e) {}
+          try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch (e) {}
+          setTimeout(function () { if (!reloaded) { reloaded = true; window.location.reload(); } }, 1500);
+          fin(true);
+        };
+        reg.update().then(function () {
+          if (reg.waiting) { apply(reg.waiting); return; }
+          if (reg.installing) {
+            var w = reg.installing, doneWaiting = false;
+            var to = setTimeout(function () { if (!doneWaiting) { doneWaiting = true; fin(false); } }, 6000);
+            w.addEventListener('statechange', function () {
+              if (w.state === 'installed' && !doneWaiting) {
+                doneWaiting = true; clearTimeout(to);
+                apply(reg.waiting || w);
+              }
+            });
+            return;
+          }
+          fin(false);
+        }).catch(function () { fin(false); });
+      }).catch(function () { fin(false); });
+    } catch (e) { fin(false); }
+  }
+  App._ptrVersionLeg = ptrVersionLeg;
+
   App.ptrRefreshNow = function () {
     if (ptrRefreshing) return Promise.resolve(false);
     if (App.currentView !== 'main' || ptrOverlayOpen()) return Promise.resolve(false);
@@ -800,6 +884,14 @@
     try { if (window.CloudSync && CloudSync.syncNow) CloudSync.syncNow(); } catch (e) {}
     var t0 = Date.now();
     return ptrSettleWait(t0).then(function () {
+      return ptrVersionLeg();
+    }).then(function (steppedIntoUpdate) {
+      if (steppedIntoUpdate) {
+        /* the page is reloading into the new version — no
+           repaint, no '✓ Updated' for a screen that is going away */
+        ptrRefreshing = false;
+        return true;
+      }
       try { ptrRepaint(); } catch (e) {}
       ptrRefreshing = false;
       ptrPaint('done');
