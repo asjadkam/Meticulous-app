@@ -65,7 +65,37 @@
   var TYPE_LABEL = { dispatch: 'Dispatch', damage: 'Damage photo', manifest: 'Manifest', location: 'Location', doc: 'Document' };
   var DOC_TYPES = ['damage', 'manifest', 'location'];
 
-  function conns() { return S('list', []); }
+  /* v171: the list the FACE reads is deduped by account — one
+     card per real connection (owner, Oct 18, 2026 21:35 MDT:
+     the same person painted twice). Same rule as the data
+     layer (ConnectLive.dedupeConList): keyed by uid, strongest
+     status survives, uid-less manual entries untouched. Every
+     index-based row action resolves through this list, so the
+     indices the rows carry always name the card he sees; the
+     writes that flow from here (add/delete) persist the
+     deduped list, healing the store as a side effect. */
+  var CONN_RANK = { connected: 4, pending: 3, declined: 2, ended: 1 };
+  function conns() {
+    var list = S('list', []) || [];
+    var out = [], byUid = {};
+    list.forEach(function (c) {
+      if (!c || !c.uid) { out.push(c); return; }
+      var cur = byUid[c.uid];
+      if (!cur) { byUid[c.uid] = c; out.push(c); return; }
+      var keep = (CONN_RANK[c.status] || 0) > (CONN_RANK[cur.status] || 0) ? c : cur;
+      var drop = (keep === c) ? cur : c;
+      ['name', 'role', 'face', 'person', 'business', 'contact', 'kind', 'onceDate'].forEach(function (k) {
+        if (!keep[k] && drop[k]) keep[k] = drop[k];
+      });
+      if (drop.viaConnect) keep.viaConnect = true;
+      if (keep !== cur) {
+        var idx = out.indexOf(cur);
+        if (idx >= 0) out[idx] = keep;
+        byUid[c.uid] = keep;
+      }
+    });
+    return out;
+  }
   function outbox() { return S('outbox', []); }
 
   /* ---- UI state (this session only — never persisted) ---- */

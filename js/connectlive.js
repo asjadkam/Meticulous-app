@@ -419,6 +419,38 @@
 
   /* ---------------- con_list materialization ---------------- */
 
+  /* v171: ONE ENTRY PER ACCOUNT (owner, Oct 18, 2026 21:35 MDT —
+     his screenshot: 'Current connections (3)' with the same
+     person painted TWICE, identically). Entries are keyed by
+     uid: two rows for one account are ONE connection, however
+     they got there (an older accept path, a cloud merge, a
+     restore). dedupeConList collapses them — the survivor holds
+     the strongest status (connected > pending > declined >
+     ended), its empty fields filled from the dropped rows.
+     Uid-less manual entries are the user's own address book and
+     are never touched. Pure: callers persist the result. */
+  var CONN_STATUS_RANK = { connected: 4, pending: 3, declined: 2, ended: 1 };
+  CL.dedupeConList = function (list) {
+    var out = [], byUid = {};
+    (list || []).forEach(function (c) {
+      if (!c || !c.uid) { out.push(c); return; }
+      var cur = byUid[c.uid];
+      if (!cur) { byUid[c.uid] = c; out.push(c); return; }
+      var keep = (CONN_STATUS_RANK[c.status] || 0) > (CONN_STATUS_RANK[cur.status] || 0) ? c : cur;
+      var drop = (keep === c) ? cur : c;
+      ['name', 'role', 'face', 'person', 'business', 'contact', 'kind', 'onceDate'].forEach(function (k) {
+        if (!keep[k] && drop[k]) keep[k] = drop[k];
+      });
+      if (drop.viaConnect) keep.viaConnect = true;
+      if (keep !== cur) {
+        var idx = out.indexOf(cur);
+        if (idx >= 0) out[idx] = keep;
+        byUid[c.uid] = keep;
+      }
+    });
+    return out;
+  };
+
   /* Upserts the linked entry for a peer into MY con_list, in the
      existing record shape extended with {uid, status, viaConnect}.
      Manual (uid-less) entries are never touched. A uid in
@@ -475,6 +507,11 @@
       list.push(entry);
       changed = true;
     }
+    /* v171: every upsert leaves the list deduped by account —
+       even when THIS upsert changed nothing, a list that arrived
+       dirty (duplicates from an older path) heals on the pass */
+    var dd = CL.dedupeConList(list);
+    if (dd.length !== list.length) { list = dd; changed = true; }
     if (changed) st.set('con_list', list);
     return changed;
   };
@@ -651,8 +688,20 @@
       return healFromDirectory().then(function (healed) {
         var swept = false;
         try { swept = CL.sweepOnce(r); } catch (e) {}
+        /* v171: the reconcile heal — a list that arrived with
+           duplicate rows for one account (an old build, a cloud
+           merge) collapses to one entry per account, persisted. */
+        var deduped = false;
+        try {
+          var st2 = store();
+          if (st2) {
+            var l2 = st2.get('con_list', []) || [];
+            var d2 = CL.dedupeConList(l2);
+            if (d2.length !== l2.length) { st2.set('con_list', d2); deduped = true; }
+          }
+        } catch (e) {}
         CL._reconciling = false;
-        return changed || healed || swept;
+        return changed || healed || swept || deduped;
       });
     }).catch(function () { CL._reconciling = false; return false; });
   };
