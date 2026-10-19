@@ -133,22 +133,30 @@ function roleSandbox(store) {
   deepEq(sb.roleModuleOrder('both'), ALL_DRIVE, 'dashboard: both = the merged order (one Navigator door, no Navigation)');
   /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
      blueprint — the office home leads with the boss's five tools,
-     Connect FIRST, then Dispatch, Invoice, Maintenance, P&L. */
-  deepEq(sb.roleModuleOrder('office').slice(0, 5), ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl'], 'dashboard: office leads with the boss five, connect first');
+     Connect FIRST, then Dispatch, Invoice, Maintenance, P&L.
+     v167 SUPERSEDES the set itself (owner, Oct 18, 2026 21:50
+     MDT): the office face carries ONLY the five office tools —
+     Connect, Dispatch, Invoice, P&L, Manifest; the driver
+     modules are removed from the office face entirely. */
+  const OFFICE_FIVE = ['connect', 'dispatch', 'invoice', 'pnl', 'manifest'];
+  deepEq(sb.roleModuleOrder('office'), OFFICE_FIVE, 'dashboard: office = ONLY the five office tools, connect first');
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
-    const want = (r === 'office') ? ALL : ALL_DRIVE; // v162: PTI is a driver-face module
-    eq(ord.length, want.length, 'dashboard ' + r + ': all ' + want.length + ' modules present (v119 merge: Navigation folded into Navigator; v162: PTI on driver faces)');
-    deepEq(ord.slice().sort(), want.slice().sort(), 'dashboard ' + r + ': same module set, reordered only');
+    const want = (r === 'office') ? OFFICE_FIVE : ALL_DRIVE; // v167: office = the five only
+    eq(ord.length, want.length, 'dashboard ' + r + ': ' + want.length + ' modules present (v119 merge: Navigation folded into Navigator; v162: PTI on driver faces; v167: office keeps only its five)');
+    deepEq(ord.slice().sort(), want.slice().sort(), 'dashboard ' + r + ': the role’s module set');
   });
 
   const KEYS = ['dashboard', 'revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'feedback', 'logout'];
   const items = KEYS.map(function (k) { return [k, '', k]; });
   const off = sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });
-  /* v76 (F4): sidebar lead follows the same blueprint order. */
-  deepEq(off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'], 'sidebar: office leads with the boss five, connect first');
-  eq(off.length, 17, 'sidebar: office keeps every item');
+  /* v167: the office sidebar is FILTERED to the five tools + the
+     account utilities — driver modules never appear (supersedes
+     the v76 'keeps every item' pin). */
+  deepEq(off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest'], 'sidebar: office leads with the office five, connect first');
+  eq(off.length, 11, 'sidebar: office keeps the five + utilities only');
+  deepEq(off.slice().sort(), ['account', 'connect', 'dashboard', 'dispatch', 'feedback', 'invoice', 'logout', 'manifest', 'pnl', 'preferences', 'reminders', 'subscription'].filter(function (k) { return KEYS.indexOf(k) >= 0; }).sort(), 'sidebar: office set = five tools + utilities');
   const drv = sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq(drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch'], 'sidebar: driver leads with revenue/dispatch');
   eq(drv.length, 17, 'sidebar: driver keeps every item');

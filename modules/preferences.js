@@ -196,7 +196,7 @@
           '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave the billing rate blank to bill at your wage rate.</p>';
       } else if (!pfOfficeFace) {
         h += '<label class="f">Your pay rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
-          '<p class="note">Your own rate — your pay stubs, invoices and day earnings are figured at it. Every driver carries their own; a boss sets his drivers\u2019 rates in P&L, not here.</p>';
+          '<p class="note">Your own rate — your pay stubs, invoices and day earnings are figured at it. Every driver sets his own here; it reaches his boss\u2019s books by itself — a boss never sets a driver\u2019s wage.</p>';
       } else {
         /* v149 (owner, Oct 17 21:43 MDT — over the payer's own
            evening): the office/boss face rendered NO rate fields
@@ -214,9 +214,33 @@
            role), framed as the company's rate. It writes through
            the same guarded Save line as the owner-operator's. */
         h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="e.g. 52">' +
-          '<p class="note">Your company\u2019s rate — what you bill your customer for each foreman hour a connected driver works. It prices the revenue on your crew board and in P&L. Each driver\u2019s pay rate is set on his own entry in P&L, not here.</p>';
+          '<p class="note">Your company\u2019s rate — what you bill your customer for each foreman hour a connected driver works. It prices the revenue on your crew board and in P&L. Each driver sets his own wage in his own app — his wage shows under Drivers\u2019 wages below, never set on this side.</p>';
       }
       h += '</div>';
+
+      /* v167 (owner, Oct 18, 2026 21:17 + 21:50 MDT): each
+         connected driver's OWN wage, shown WITH that driver in
+         the boss's Preferences — read-only, because the wage is
+         the driver's to set (v163: it rides his shared records
+         as driverWage; P&L caches it in __peer_wages). One row
+         per driver, priced the way he set it; there is nothing
+         here to edit, by design. */
+      try {
+        var peerWages = App._store.get('__peer_wages', {}) || {};
+        var pwUids = Object.keys(peerWages).filter(function (u) { return peerWages[u] && parseFloat(peerWages[u].rate) > 0; });
+        if (pwUids.length) {
+          var pwUnit = { hourly: '/hour', permile: '/mile', perload: '/load' };
+          h += '<div class="card"><h3>🚛 Drivers\u2019 wages — set by each driver</h3>' +
+            pwUids.map(function (u) {
+              var w = peerWages[u];
+              var nm = '';
+              try { if (window.ConnectPipe && ConnectPipe.peerNames) nm = (ConnectPipe.peerNames(u) || [])[0] || ''; } catch (e) {}
+              return '<div class="kv"><span>' + esc(nm || 'Connected driver') + '</span><b>$' +
+                (parseFloat(w.rate) || 0).toFixed(2) + (pwUnit[w.payType] || '/hour') + '</b></div>';
+            }).join('') +
+            '<p class="note">Each driver sets his own wage in his own app — it arrives here by itself and prices his days in your P&L as your expense. To change a wage, the driver changes it on his side.</p></div>';
+        }
+      } catch (e) {}
 
       /* v36: tracker auto-start settings live in Revenue (the tracker
          feeds Revenue). A pointer card sat here until v52 — removed at

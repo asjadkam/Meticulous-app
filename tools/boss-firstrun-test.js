@@ -152,8 +152,11 @@ console.log('(b) office order — the boss five lead, Connect first (F4)');
      the boss five still lead the office home; nothing is removed.
      v119: MERGED — one Navigator door; 'navigation' is gone from
      every order (ten modules). */
-  deepEq('office module order: five lead, same ten modules (v119 merge)', w.sb.roleModuleOrder('office'),
-    ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator']);
+  /* v167 (owner, Oct 18, 2026 21:50 MDT): the office order IS the
+     five office tools only — the v119-era 'same ten modules' pin
+     superseded; driver modules are removed from the office face. */
+  deepEq('office module order: ONLY the five office tools', w.sb.roleModuleOrder('office'),
+    ['connect', 'dispatch', 'invoice', 'pnl', 'manifest']);
   /* v162: 'pti' (Pre-Trip Inspection) joins the driver + both
      orders after 'maintenance' — a driver-face module; the office
      order above deliberately does NOT carry it. */
@@ -165,8 +168,11 @@ console.log('(b) office order — the boss five lead, Connect first (F4)');
     ['manifest'], ['invoice'], ['reminders'], ['navigation'], ['connect'], ['preferences'], ['subscription']];
   const off = w.sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });
   deepEq('office sidebar leads: dashboard + the five', off.slice(0, 6),
-    ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl']);
-  eq('office sidebar keeps every item', off.length, items.length);
+    ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest']);
+  /* v167: filtered, not kept — of this suite's 14 items the office
+     sidebar keeps the five + dashboard/reminders/preferences/
+     subscription = 9 */
+  eq('office sidebar keeps the five + utilities only', off.length, 9);
   const drv = w.sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq('driver sidebar lead unchanged', drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch']);
 }

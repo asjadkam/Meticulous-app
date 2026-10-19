@@ -331,8 +331,15 @@
     /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
        five tools IN BLUEPRINT ORDER — Connect first (his #1: his
        connection to his drivers), then Dispatch, Invoice, Maintenance,
-       P&L. Everything else follows; nothing is removed. */
-    office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator'],
+       P&L. Everything else follows; nothing is removed.
+       v167 SUPERSEDES the tail (owner, Oct 18, 2026 21:50 MDT):
+       the office face carries ONLY the five office tools —
+       Connect, Dispatch, Invoice, P&L, Manifest. The driver
+       modules (Maintenance, Fuel & Expense, Revenue, and the
+       rest) are REMOVED from the office face — an office-only
+       user never drives, and driver tools on his face are noise
+       he has to look past. */
+    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest'],
     both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
@@ -340,7 +347,7 @@
      removed — tuning is emphasis only. */
   var ROLE_SIDEBAR_LEAD = {
     driver: ['dashboard', 'revenue', 'dispatch', 'navigator', 'fuel', 'maintenance', 'pti', 'damage', 'manifest'],
-    office: ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'],
+    office: ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest'],
     both: ['dashboard']
   };
   function roleDefaultFor(accountType) { return USER_ROLE_DEFAULTS[accountType] || 'driver'; }
@@ -382,6 +389,15 @@
   function roleShowsTracker(role) { return role !== 'office'; }
   function roleModuleOrder(role) { return (ROLE_MODULE_ORDER[role] || ROLE_MODULE_ORDER.both).slice(); }
   function roleSidebarOrder(role, items) {
+    /* v167: the office sidebar is FILTERED, not just reordered —
+       the five office tools plus the account utilities (dashboard,
+       reminders, preferences, subscription, account, feedback,
+       logout). Driver modules never appear on the office face,
+       in the sidebar any more than on the dashboard. */
+    if (role === 'office') {
+      var keep = ROLE_MODULE_ORDER.office.concat(['dashboard', 'reminders', 'preferences', 'subscription', 'account', 'feedback', 'logout']);
+      items = items.filter(function (it) { return keep.indexOf(it[0]) >= 0; });
+    }
     var lead = ROLE_SIDEBAR_LEAD[role] || [];
     var head = [], tail = [];
     items.forEach(function (it) {
