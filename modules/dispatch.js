@@ -339,6 +339,19 @@
     }
     return (d && typeof d.date === 'string') ? d.date : '';
   }
+  /* v172: a dispatch's pin becomes a NAVIGATE suggestion only on
+     the dispatch's OWN day (owner, Oct 18, 2026 21:47 MDT —
+     "Navigate suggestion shows tomorrow's dispatch pin today").
+     A future-dated record keeps its pin, plainly marked, but
+     offers no Navigate; its own day and every day after keep the
+     offer (driving back to a site is the driver's call). An
+     undated record has no day to respect and keeps it too. The
+     one gate both pin surfaces (History rows, the form pin line)
+     read. */
+  function dspNavDayOk(d) {
+    var dt = dspRecordDate(d);
+    return !dt || dt <= App._today();
+  }
   /* v86: the Scheduled field is a DATE input + a TIME input, not
      one datetime-local. A datetime-local takes a typed time only
      as part of a complete date+time — a time typed on its own is
@@ -1670,8 +1683,11 @@
             (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
               /* v150: the pin's action is our Navigator (wired at
                  render end via data-nav); an office face — which
-                 never drives — keeps a plain pin line, no button. */
-              (isOffice ? ' · 📍 Pin set' :
+                 never drives — keeps a plain pin line, no button.
+                 v172: a FUTURE dispatch's pin is not a navigate
+                 suggestion yet (dspNavDayOk) — plain line until
+                 its own day. */
+              (isOffice || !dspNavDayOk(d) ? ' · 📍 Pin set' :
                 ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
             (d.material ? ' · ' + esc(d.material) : '') +
             (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
@@ -1960,8 +1976,14 @@
         if (!la || !ln || la.value === '' || ln.value === '' ||
             la.value === null || ln.value === null ||
             la.value === undefined || ln.value === undefined) { el.innerHTML = ''; return; }
+        /* v172: the form's own date rules the offer — a dispatch
+           being entered for a FUTURE day shows its pin plainly
+           (the date field's listeners below repaint this line
+           when the day changes); its own day offers Navigate. */
+        var dateEl2 = body.querySelector('#dp_date');
+        var futureDay = !!(dateEl2 && dateEl2.value && dateEl2.value > App._today());
         el.innerHTML = '📍 Map pin set' + (coordText ? ' (' + esc(coordText) + ')' : '') +
-          (isOffice ? '' : ' — <button type="button" class="btn small ghost" data-navpin="1" style="padding:2px 8px">🧭 Navigate</button>');
+          (isOffice || futureDay ? '' : ' — <button type="button" class="btn small ghost" data-navpin="1" style="padding:2px 8px">🧭 Navigate</button>');
         var b = el.querySelector('[data-navpin]');
         if (b) b.onclick = function () {
           var site = body.querySelector('#dp_site');
@@ -2170,6 +2192,17 @@
         var schedNode = body.querySelector(sel);
         if (schedNode) { schedNode.addEventListener('input', paintActiveNote); schedNode.addEventListener('change', paintActiveNote); }
       });
+      /* v172: the pin line follows the same date changes — moving
+         the Scheduled date off a future day (or onto one) repaints
+         its Navigate offer to match dspNavDayOk. */
+      (function () {
+        var dEl = body.querySelector('#dp_date');
+        if (dEl) {
+          var repaintPin = function () { paintPinLine(''); };
+          dEl.addEventListener('input', repaintPin);
+          dEl.addEventListener('change', repaintPin);
+        }
+      })();
 
       /* v48: restore a kept draft (fields + tickets + note) */
       if (draft0) { restoreDraft(); renderTicketList(); updateNameEl(); }
