@@ -1237,6 +1237,7 @@
   function trackerTick() {
     var t = App.tracker, sec = t.elapsed;
     if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
+    if (sec < 0) sec = 0; // v174: an anchored session (start ahead) reads zero until its time
     // v41: the hero quantity depends on the pay method (dynamic tracker);
     // for Hourly this renders exactly the same clock as before.
     paintHero(sec);
@@ -1265,6 +1266,8 @@
       main.classList.add('play'); main.innerHTML = '▶<br>RESUME';
       stop.classList.remove('hidden'); meta.textContent = 'Paused';
     }
+    // v174: the standing no-PTI flag rides every tracker paint
+    try { paintPtiFlag(); } catch (e) {}
     // v28: show the effective start time + the Edit control
     var st = el('trkStartLabel');
     if (st) {
@@ -1357,14 +1360,16 @@
   App.trackerToggle = function () {
     var t = App.tracker;
     var wasIdle = t.status === 'idle';
+    var presetUsed = false;
     if (t.status === 'idle') {
       t.status = 'running'; t.startTs = Date.now();
       // v28: if a start time was preset ("I actually started at 8:30"), count from there
+      presetUsed = !!t.presetStart;
       t.elapsed = t.presetStart ? Math.max(0, Math.floor((Date.now() - t.presetStart) / 1000)) : 0;
       delete t.presetStart;
       resetAccum(); // v41: a fresh shift starts with empty weight/trip totals
     }
-    else if (t.status === 'running') { t.elapsed += Math.floor((Date.now() - t.startTs) / 1000); t.status = 'paused'; }
+    else if (t.status === 'running') { t.elapsed = Math.max(0, t.elapsed + Math.floor((Date.now() - t.startTs) / 1000)); t.status = 'paused'; } // v174: never negative (an anchored start lies ahead)
     else { t.status = 'running'; t.startTs = Date.now(); }
     trackerSave(); trackerPaint();
     // v40: a fresh shift start also starts live-miles tracking (inert
@@ -1373,11 +1378,35 @@
     // starting odometer — by-mile pay, or any pay mode with the v46
     // "Daily odometer photos" preference on; non-blocking either way.
     if (wasIdle) {
+      /* v174: a manual START with a plan for today anchors to the
+         PLAN time, exactly like auto-start (owner's settled law:
+         the session start is the dispatch's scheduled time —
+         never the tap, never movement; Oct 19, 2026 07:26 MDT
+         steer). The anchor pins the session identity too, so the
+         miles/geofence/native records key to the same 's<8:00>'
+         the native arm uses. His own preset ("I actually started
+         at…") still wins when he set one. An early tap leaves
+         startTs at the anchor: the running clock reads zero
+         until the plan time, then counts — the pay clock never
+         starts early. */
+      var anchorPin = 0;
+      if (!presetUsed) {
+        try {
+          var pA = autoStartPrefs();
+          var nowA = new Date(), todayA = todayStr(nowA);
+          var planA = autostartPlan(pA, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), todayA, nowA.getDay());
+          if (planA && planA.willStart) {
+            anchorPin = autostartTodayMs(todayA, planA.time);
+            t.elapsed = Math.max(0, Math.floor((Date.now() - anchorPin) / 1000));
+            t.startTs = anchorPin;
+          }
+        } catch (e) {}
+      }
       // v69: pin the session's stable record identity BEFORE anything
       // keys a record by it (see trackerSessionKeyMs) — pinned to the
       // effective start instant at this moment; it never moves again,
       // even if the driver edits the start clock afterwards.
-      t.sessionId = trackerSessionStartMs();
+      t.sessionId = anchorPin || trackerSessionStartMs();
       trackerSave();
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v50: geofence load counting rides the same session (js/geoloads.js)
@@ -1387,6 +1416,7 @@
       // v92: today is underway — the native arm now belongs to the NEXT day
       try { App.armNativeDay(); } catch (e) {}
       try { maybePromptOdo('start'); } catch (e) {}
+      try { if (App.maybePtiNudge) App.maybePtiNudge(); } catch (e) {} // v174: one PTI nudge as the day starts moving
     }
     // v62: the screen wake lock follows the session state — a pause
     // releases the hold, a resume takes it back (js/miles.js owns it).
@@ -1399,7 +1429,9 @@
      and endedAt are computed to that end. Mirrors the start-time Edit. */
   function trackedSecondsAt(endMs) {
     var t = App.tracker;
-    return t.elapsed + (t.status === 'running' ? Math.floor((endMs - t.startTs) / 1000) : 0);
+    /* v174: clamped at zero — an anchored session's start can lie
+       ahead of an early stop, and a negative duration is never a fact. */
+    return Math.max(0, t.elapsed + (t.status === 'running' ? Math.floor((endMs - t.startTs) / 1000) : 0));
   }
   /* v122: set by App.stopSessionOnDispatchClose for the duration
      of its stopSessionAt call — a dispatch-close stop stamps the
@@ -1914,6 +1946,39 @@
     }
     return null;
   }
+  /* v174: THE PTI READING IS THE DAY'S START READING (owner,
+     Oct 19, 2026 07:38 MDT, live from the road: he filed his
+     PTI WITH the dash photo, then the shift start asked him to
+     snap the SAME dash again — "PTI odometer must populate
+     everywhere — no second photo at shift start"). The PTI
+     commit lands in the dated readings log with source 'pti'
+     (App._bumpOdometer from modules/pti.js); the EARLIEST such
+     reading of the day is the day's start boundary — the same
+     one the manifest reads. The filed pre-trip report itself
+     is the fallback evidence (a reading whose master bump was
+     refused still stands on the report he signed). */
+  function ptiStartOdoFor(dateStr) {
+    var log = store.get('odo_readings', []);
+    var best = null, bestTs = Infinity;
+    if (Array.isArray(log)) {
+      for (var i = 0; i < log.length; i++) {
+        var r = log[i];
+        if (r && r.date === dateStr && r.source === 'pti' && parseFloat(r.value) > 0) {
+          var ts = parseFloat(r.ts) || 0;
+          if (ts < bestTs) { bestTs = ts; best = parseFloat(r.value); }
+        }
+      }
+    }
+    if (best > 0) return best;
+    var reps = store.get('pti_reports', []);
+    if (Array.isArray(reps)) {
+      for (var j = reps.length - 1; j >= 0; j--) {
+        var rp = reps[j];
+        if (rp && rp.date === dateStr && rp.kind !== 'post' && parseFloat(rp.odometer) > 0) return parseFloat(rp.odometer);
+      }
+    }
+    return null;
+  }
   function shouldPromptOdo(kind) {
     if (!isByMile() && !odoDailyPhotosOn()) return false;
     var today = todayStr(new Date());
@@ -1921,6 +1986,9 @@
     if (kind === 'start') {
       if (App.tracker && App.tracker.odoStart && App.tracker.odoStart.date === today) return false;
       if (sessionWithStartOdo(today)) return false;
+      /* v174: a PTI reading for today IS the start reading —
+         the photo prompt never asks for a second one. */
+      if (ptiStartOdoFor(today)) return false;
       return true;
     }
     var s = sessionWithStartOdo(today);
@@ -1983,9 +2051,107 @@
       delete t.odoStart;
       return v;
     }
-    return null;
+    /* v174: no sheet reading was taken — the day's PTI reading
+       is the session's startOdo (it populates everywhere the
+       sheet reading would have: the manifest's day boundary,
+       the day's miles pair, Revenue's by-mile fallback). */
+    return ptiStartOdoFor(sessionStartDate);
   }
   /* ODO-PROMPT-END */
+
+  /* PTI-NUDGE-BEGIN — v174: DRIVING WITHOUT A PTI FILED PROMPTS
+     A NUDGE (owner, Oct 19, 2026 07:40 MDT). It is not legal to
+     drive the truck without an inspection on file, so when the
+     day starts moving (a manual Start, or the auto-start) with
+     NO PTI filed for today, the app says so ONCE — one clear
+     sheet with a direct door into the PTI form (index.html
+     #ptiNudgeSheet) — and then never nags again that day: the
+     standing flag on the tracker card (paintPtiFlag) stays
+     visible until he files. The PTI also feeds the day (its
+     dash photo is the day's starting odometer — see
+     ptiStartOdoFor), which is the second reason the prompt
+     matters. Decision + record-keeping only; harness-
+     extractable: may use `store`, `App`, `todayStr`. */
+  function ptiFiledFor(dateStr) {
+    var reps = store.get('pti_reports', []);
+    if (!Array.isArray(reps)) return false;
+    for (var i = 0; i < reps.length; i++) {
+      var r = reps[i];
+      if (r && r.date === dateStr && r.kind !== 'post') return true;
+    }
+    return false;
+  }
+  function ptiNudgeShown(dateStr) {
+    var rec = store.get('pti_nudge', {});
+    return !!(rec && rec.date === dateStr);
+  }
+  function shouldNudgePti() {
+    if (App.userRole && App.userRole() === 'office') return false; // office never drives
+    var today = todayStr(new Date());
+    if (ptiFiledFor(today)) return false;
+    if (ptiNudgeShown(today)) return false;
+    return true;
+  }
+  function markPtiNudgeShown() {
+    store.set('pti_nudge', { date: todayStr(new Date()), ts: Date.now() });
+  }
+  /* The standing flag: visible whenever the day is a driving day
+     (a session running/paused, or a plan standing for today) and
+     no PTI is filed — including BEFORE the start, so the morning
+     face already carries it. Gone the moment he files. */
+  function ptiFlagVisible() {
+    if (App.userRole && App.userRole() === 'office') return false;
+    var today = todayStr(new Date());
+    if (ptiFiledFor(today)) return false;
+    var t = App.tracker || { status: 'idle' };
+    if (t.status === 'running' || t.status === 'paused') return true;
+    try {
+      var p = autoStartPrefs();
+      var plan = autostartPlan(p, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), today, new Date().getDay());
+      return !!(plan && plan.willStart);
+    } catch (e) { return false; }
+  }
+  /* PTI-NUDGE-END */
+
+  function closePtiNudge() {
+    var s = el('ptiNudgeSheet');
+    if (s) s.classList.remove('open');
+    var sc = el('scrim');
+    if (sc) { sc.classList.remove('show'); sc.onclick = closeSidebar; }
+  }
+  /* Called from BOTH start paths the moment a session begins.
+     Marks BEFORE showing — once per day, whatever happens next. */
+  App.maybePtiNudge = function () {
+    if (!shouldNudgePti()) return false;
+    markPtiNudgeShown();
+    var sheet = el('ptiNudgeSheet');
+    if (!sheet) return false;
+    sheet.classList.add('open');
+    var sc = el('scrim');
+    if (sc) { sc.classList.add('show'); sc.onclick = function () { closePtiNudge(); }; }
+    return true;
+  };
+  App.ptiNudgeGo = function () {
+    closePtiNudge();
+    App.openModule('pti');
+  };
+  App.ptiNudgeLater = function () { closePtiNudge(); };
+  /* Wired + painted from trackerPaint: the flag is a door, not
+     just a warning — tapping it opens the PTI form. */
+  function paintPtiFlag() {
+    var f = el('trkPtiFlag');
+    if (!f) return;
+    var show = false;
+    try { show = ptiFlagVisible(); } catch (e) { show = false; }
+    if (show) {
+      f.textContent = '⚠ No PTI filed today — tap to file';
+      f.classList.remove('hidden');
+      f.onclick = function () { App.openModule('pti'); };
+    } else {
+      f.classList.add('hidden');
+      f.onclick = null;
+    }
+  }
 
   /* v39: the prompt sheet itself (index.html #odoSheet) — mirrors the
      tracker start/end sheets. Shown from trackerToggle (manual start),
@@ -2304,7 +2470,14 @@
          today's start by itself. The plan's willStart gate is the
          standing on/off + days: 'off' / 'wrong-day' return as before. */
       var plan = autostartPlan(p, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), today, now.getDay());
-      if (!plan.willStart) return plan.reason;
+      if (!plan.willStart) {
+        /* v174: no plan for today — a day watch armed earlier
+           (before today's dispatch was cancelled) stands down. */
+        try {
+          if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() === 'd' + today && LiveMiles.stopDay) LiveMiles.stopDay();
+        } catch (e) {}
+        return plan.reason;
+      }
       if (autoStartFired(today)) return 'fired';
       var t = App.tracker || { status: 'idle' };
       if (t.status === 'running') { markAutoStartFired(today); return 'running'; }
@@ -2321,7 +2494,24 @@
       var tp = String(plan.time).split(':');
       var startMins = (+tp[0] || 0) * 60 + (+tp[1] || 0);
       var nowMins = now.getHours() * 60 + now.getMinutes();
-      if (nowMins < startMins) return 'not-yet';
+      if (nowMins < startMins) {
+        /* v174: KMS COUNT FROM FIRST MOVEMENT, NOT SHIFT START
+           (owner, Oct 19, 2026 06:57 MDT — live evidence 07:26:
+           driving to the pit with the 8:00 dispatch armed, the
+           face read "Ready to work · 00:00:00" and no distance
+           counted). The SESSION still starts at the plan time —
+           that law does not move — but DISTANCE is separate:
+           arm the date-keyed day watch now, so the miles engine
+           records from the first movement of the day, the face's
+           live-miles line counts it up while the clock still
+           waits for 8:00, and the session adopts the whole day
+           record when it starts (js/miles.js adoptableFragments:
+           the date key is adopted whole). */
+        if (t.status === 'idle') {
+          try { if (window.LiveMiles && LiveMiles.startDay) LiveMiles.startDay('d' + today); } catch (e) {}
+        }
+        return 'not-yet';
+      }
       /* v123: his pause is his — auto-start never force-resumes a
          session he paused. The fired flag stays unset here: if he
          resumes, the running branch consumes it; if he stops, the
@@ -2358,6 +2548,7 @@
       // v39: auto-start is a shift start too — same by-mile odometer
       // prompt as the manual play button (non-blocking).
       try { maybePromptOdo('start'); } catch (e) {}
+      try { if (App.maybePtiNudge) App.maybePtiNudge(); } catch (e) {} // v174: one PTI nudge as the day starts moving
       return 'started';
     } catch (e) { return 'error'; }
   };
@@ -4268,6 +4459,9 @@
     el('trkEndOdoCamIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoCamIn').files[0]); el('trkEndOdoCamIn').value = ''; };
     el('trkEndOdoIn').onchange = function () { endSheetOdoHandleFile(el('trkEndOdoIn').files[0]); el('trkEndOdoIn').value = ''; };
     el('odoSheetSave').onclick = function () { App.odoSheetSave(); }; // v46: confirm the reading in the sheet
+    // v174: the PTI nudge sheet controls
+    el('ptiNudgeGo').onclick = function () { App.ptiNudgeGo(); };
+    el('ptiNudgeLater').onclick = function () { App.ptiNudgeLater(); };
     // v41: dynamic tracker controls — mode buttons under the hero
     // (delegated: the buttons are re-rendered by paintTrackerExtra), the
     // tappable weight unit on the hero, and the "+ Add load" sheet.

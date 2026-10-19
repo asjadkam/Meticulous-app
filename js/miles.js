@@ -810,6 +810,15 @@
       }
       if (!lastT) return;
       if (!isFinite(firstT)) firstT = lastT;
+      /* v174: the day's OWN pre-session watch record (the date
+         key — armed by the app itself because a plan exists for
+         this day, see App.checkAutoStart) is adopted WHOLE,
+         however early the roll-out began: the slack windows
+         exist to keep OTHER records from leaking into a session,
+         and this record is this day's own driving by
+         construction. Native/crumb fragments and other sessions'
+         records keep the windows exactly as before. */
+      if (k === 'd' + dateStr) { out.push({ key: k, rec: rec, totalM: total, lastT: lastT }); return; }
       if (lastT < sessionStartMs - ADOPT_LAST_SLACK_MS) return;
       if (firstT < sessionStartMs - ADOPT_FIRST_SLACK_MS) return;
       out.push({ key: k, rec: rec, totalM: total, lastT: lastT });
@@ -907,6 +916,12 @@
       if (!g || !g.available()) return false; // inert — no watcher, no display
       if (watching && dayKey !== key) {
         // A different session is somehow live: close it out first.
+        /* v174: flush the OUTGOING record fresh before the switch
+           — the adoption below reads the persisted snapshot, and
+           the throttled persist can lag the live engine by
+           minutes (the day watch's whole total sat in memory
+           while its stored snapshot still read zero). */
+        persist(true);
         try { g.stop(); } catch (e) {}
         watching = false;
       }
@@ -915,6 +930,11 @@
       var keyMs = parseInt(String(key).slice(1), 10) || Date.now();
       var saved = recordFor(key);
       dayDate = (function () { var d = new Date(keyMs); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })();
+      /* v174: a DATE-keyed record (the pre-session day watch,
+         'dYYYY-MM-DD') names its own day — the numeric parse of
+         its key would land in 1970 and orphan the record. */
+      var dKeyM = /^d(\d{4}-\d{2}-\d{2})$/.exec(String(key));
+      if (dKeyM) dayDate = dKeyM[1];
       // v69: no record under this session's (pinned) key — the old
       // drifting key derivation may have orphaned this session's
       // record under a start-tap key earlier today. Adopt those

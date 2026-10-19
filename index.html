@@ -9,7 +9,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=173">
+<link rel="stylesheet" href="css/style.css?v=174">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 /* critical splash: visible before style.css / JS load */
@@ -127,6 +127,8 @@
         </div>
         <!-- v40: live miles (js/miles.js) — stays hidden unless live location is actually flowing; never a fake zero -->
         <div class="miles hidden" id="trkMiles"></div>
+        <!-- v174: the standing PTI flag — while no PTI is filed for today the day is visibly flagged right here; tapping it opens the PTI form. Painted by trackerPaint (js/app.js). -->
+        <div class="ptiflag hidden" id="trkPtiFlag"></div>
         <!-- v62/v70: session wake lock status (js/miles.js) — DYNAMIC: re-derived from the live wake-lock state on every paint ("🔒 Screen held" only while actually held; a truthful "not held" line when a running session's hold is lost for good; nothing at all when the hold is unavailable) -->
         <div class="wake hidden" id="trkWake"></div>
         <!-- v63: native background tracking ask (js/shifttrack.js) — shown only on the new shell when a running session lacks "Allow all the time" location; filled and wired by shifttrack.js -->
@@ -220,6 +222,13 @@
   <div id="trkEndReview" style="display:none"></div>
 </div>
 <!-- v39: by-mile odometer prompt (shown at shift start/stop for Miles pay) -->
+<!-- v174: the PTI nudge — ONE clear prompt when the day starts moving with no PTI filed (it is not legal to drive the truck without one). Shown once per day; the standing flag on the tracker card stays until he files. -->
+<div id="ptiNudgeSheet">
+  <h3 style="margin:0 0 6px;color:var(--navy)">📋 No PTI filed today</h3>
+  <p class="note" style="margin:0 0 10px">Your shift is starting and there is no inspection on file for today yet. Do the PTI before you drive — it takes a minute, and its dash photo sets the day's starting odometer too.</p>
+  <button type="button" class="btn primary" id="ptiNudgeGo" style="width:100%;margin:8px 0;">📋 File my PTI</button>
+  <button type="button" class="btn ghost" id="ptiNudgeLater" style="width:100%;">Later</button>
+</div>
 <div id="odoSheet">
   <h3 id="odoSheetTitle" style="margin:0 0 6px;color:var(--navy)">📸 Odometer</h3>
   <p class="note" id="odoSheetNote" style="margin:0 0 8px"></p>
@@ -255,41 +264,41 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="js/firebase.js?v=173"></script>
-<script src="js/cloudsync.js?v=173"></script>
-<script src="js/connectlive.js?v=173"></script>
-<script src="js/connectpipe.js?v=173"></script>
+<script src="js/firebase.js?v=174"></script>
+<script src="js/cloudsync.js?v=174"></script>
+<script src="js/connectlive.js?v=174"></script>
+<script src="js/connectpipe.js?v=174"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/ticket-ocr.js?v=173"></script>
+<script src="js/ticket-ocr.js?v=174"></script>
 <script src="js/powerread.js?v=102"></script>
 <script src="js/dispatch-ingest.js?v=96"></script>
-<script src="js/pdfexport.js?v=173"></script>
-<script src="modules/revenue.js?v=173"></script>
-<script src="modules/dispatch.js?v=173"></script>
-<script src="modules/navigation.js?v=173"></script>
+<script src="js/pdfexport.js?v=174"></script>
+<script src="modules/revenue.js?v=174"></script>
+<script src="modules/dispatch.js?v=174"></script>
+<script src="modules/navigation.js?v=174"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="modules/navigator.js?v=173"></script>
-<script src="modules/fuel.js?v=173"></script>
-<script src="modules/pnl.js?v=173"></script>
-<script src="modules/maintenance.js?v=173"></script>
-<script src="modules/pti.js?v=173"></script>
+<script src="modules/navigator.js?v=174"></script>
+<script src="modules/fuel.js?v=174"></script>
+<script src="modules/pnl.js?v=174"></script>
+<script src="modules/maintenance.js?v=174"></script>
+<script src="modules/pti.js?v=174"></script>
 <script src="modules/damage.js?v=96"></script>
-<script src="modules/manifest.js?v=173"></script>
-<script src="modules/invoice.js?v=173"></script>
-<script src="modules/connect.js?v=173"></script>
-<script src="modules/reminders.js?v=173"></script>
+<script src="modules/manifest.js?v=174"></script>
+<script src="modules/invoice.js?v=174"></script>
+<script src="modules/connect.js?v=174"></script>
+<script src="modules/reminders.js?v=174"></script>
 <script src="modules/autostart.js?v=96"></script>
-<script src="modules/preferences.js?v=173"></script>
-<script src="modules/account.js?v=173"></script>
+<script src="modules/preferences.js?v=174"></script>
+<script src="modules/account.js?v=174"></script>
 <script src="modules/subscription.js?v=96"></script>
-<script src="js/app.js?v=173"></script>
+<script src="js/app.js?v=174"></script>
 <script src="js/geo.js?v=96"></script>
 <script src="js/miles.js?v=96"></script>
-<script src="js/geoloads.js?v=173"></script>
+<script src="js/geoloads.js?v=174"></script>
 <script src="js/shifttrack.js?v=96"></script>
-<script src="js/parkplace.js?v=173"></script>
+<script src="js/parkplace.js?v=174"></script>
 <script src="js/yardstart.js?v=96"></script>
-<script src="js/chatbot.js?v=173"></script>
+<script src="js/chatbot.js?v=174"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {
