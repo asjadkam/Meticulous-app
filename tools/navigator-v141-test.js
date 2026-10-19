@@ -74,7 +74,7 @@ const idxSrc = read('index.html');
 const ver = JSON.parse(read('version.json'));
 const fixture = JSON.parse(read('tools/navigator-fixture-tripb.json'));
 const ORIGIN = [51.0955, -114.099], DEST = [51.1075, -114.0845];
-const BOX = { dump: [62, 118], semi: [62, 136], pickup: [60, 104], arrow: [54, 72] };
+const BOX = { dump: [92, 132], semi: [92, 144], pickup: [92, 118], arrow: [54, 72] }; /* v175 pin move: chase-view boxes (were 62x118 / 62x136 / 60x104) */
 
 /* Minimal PNG reader: enough to prove the assets are what the
    wiring claims — signature, IHDR geometry, and (via a real
@@ -121,8 +121,8 @@ function readPng(p) {
 
 console.log('— 1. the wiring (static) —');
 {
-  check('AVATAR_BOX carries the v141 boxes (the renders get room: dump 62x118, semi 62x136, pickup 60x104, arrow 54x72)',
-    /AVATAR_BOX = \{ dump: \[62, 118\], semi: \[62, 136\], pickup: \[60, 104\], arrow: \[54, 72\] \}/.test(navSrc));
+  check('AVATAR_BOX carries the render boxes (v141: dump 62x118, semi 62x136, pickup 60x104; v175 chase view: dump 92x132, semi 92x144, pickup 92x118, arrow 54x72)',
+    /AVATAR_BOX = \{ dump: \[92, 132\], semi: \[92, 144\], pickup: \[92, 118\], arrow: \[54, 72\] \}/.test(navSrc));
   check('AVATAR_ASSET maps every vehicle kind to its shipped render',
     navSrc.indexOf("AVATAR_ASSET = { dump: 'assets/avatar-dump.png', semi: 'assets/avatar-semi.png', pickup: 'assets/avatar-pickup.png' }") >= 0);
   check('avatarGlyph paints the vehicle kinds as ONE <img class="nv-avatar-img"> off the asset table',
@@ -151,8 +151,8 @@ console.log('— 1. the wiring (static) —');
      v155 pin move: 154 -> 155, same convention. */
   /* v147 pin move (the standing convention): 155 -> 156.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  check('ships as webVersion 174, and index.html loads the navigator at the 174 pin',
-    ver.webVersion === 174 && idxSrc.indexOf('src="modules/navigator.js?v=174"') >= 0,
+  check('ships as webVersion 175, and index.html loads the navigator at the 175 pin',
+    ver.webVersion === 175 && idxSrc.indexOf('src="modules/navigator.js?v=175"') >= 0,
     'webVersion=' + ver.webVersion);
   check('version.json carries all three render assets in the OTA manifest',
     ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {
@@ -378,8 +378,8 @@ function extract(src, beginMark, endMark) {
   api.render(w.body);
   const html = w.body._html;
 
-  check('the render paints the DUMP render as the marker, sized + margin-centred from the v141 box (62x118, -31/-59)',
-    html.indexOf('width:62px;height:118px;margin-left:-31px;margin-top:-59px') >= 0 &&
+  check('the render paints the DUMP render as the marker, sized + margin-centred from the box (v175: 92x132, -46/-66)',
+    html.indexOf('width:92px;height:132px;margin-left:-46px;margin-top:-66px') >= 0 &&
     html.indexOf('<img class="nv-avatar-img" src="assets/avatar-dump.png"') >= 0);
   check('the chooser offers all four kinds: three renders + the drawn arrow, dump selected',
     (html.match(/data-avatar=/g) || []).length === 4 &&
@@ -413,9 +413,9 @@ function extract(src, beginMark, endMark) {
     storeData.navigator.avatar === 'pickup', JSON.stringify(storeData.navigator));
   check('the glyph swaps AT THE TAP to the pickup render',
     w.reg.nvd_you._html.indexOf('src="assets/avatar-pickup.png"') >= 0, w.reg.nvd_you._html.slice(0, 70));
-  check('the marker box follows the kind: pickup 60x104, margins -30/-52 (plain styles, no transform)',
-    w.reg.nvd_you.style.width === '60px' && w.reg.nvd_you.style.height === '104px' &&
-    w.reg.nvd_you.style.marginLeft === '-30px' && w.reg.nvd_you.style.marginTop === '-52px',
+  check('the marker box follows the kind: pickup 92x118, margins -46/-59 (plain styles, no transform; v175 pin move from 60x104, -30/-52)',
+    w.reg.nvd_you.style.width === '92px' && w.reg.nvd_you.style.height === '118px' &&
+    w.reg.nvd_you.style.marginLeft === '-46px' && w.reg.nvd_you.style.marginTop === '-59px',
     JSON.stringify(w.reg.nvd_you.style));
   check('the chooser closes on the choice and marks pickup selected',
     w.reg.nvd_avatar_picker.classList.contains('hidden') && w.avOpts[2].classList.contains('on') &&
@@ -436,9 +436,9 @@ function extract(src, beginMark, endMark) {
   const w2 = makeWorld(store2);
   const api2 = w2.world.Meticulous.modules.navigator;
   api2.render(w2.body);
-  check('the persisted pickup paints in the markup, sized from its box (60x104, -30/-52)',
+  check('the persisted pickup paints in the markup, sized from its box (92x118, -46/-59; v175 pin move)',
     w2.body._html.indexOf('src="assets/avatar-pickup.png"') >= 0 &&
-    w2.body._html.indexOf('width:60px;height:104px;margin-left:-30px;margin-top:-52px') >= 0);
+    w2.body._html.indexOf('width:92px;height:118px;margin-left:-46px;margin-top:-59px') >= 0);
   api2.teardown();
 
   console.log('\nnavigator-v141: ' + pass + ' passed, ' + fail + ' failed');

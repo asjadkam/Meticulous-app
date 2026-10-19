@@ -226,8 +226,8 @@ console.log('— 4. the truck art (static) —');
      raster pins live in tools/navigator-v141-test.js. What
      remains here: the box table (new, bigger sizes), the asset
      wiring, and the arrow — the one kind that is still drawn. */
-  check('AVATAR_BOX carries a per-kind box for all four kinds (v141: bigger boxes for the renders)',
-    /AVATAR_BOX = \{ dump: \[62, 118\], semi: \[62, 136\], pickup: \[60, 104\], arrow: \[54, 72\] \}/.test(navSrc));
+  check('AVATAR_BOX carries a per-kind box for all four kinds (v141: bigger boxes for the renders; v175: chase-view boxes)',
+    /AVATAR_BOX = \{ dump: \[92, 132\], semi: \[92, 144\], pickup: \[92, 118\], arrow: \[54, 72\] \}/.test(navSrc));
   check('v141: the vehicle kinds are rendered assets (AVATAR_ASSET -> assets/avatar-<kind>.png), painted as <img>',
     navSrc.indexOf("dump: 'assets/avatar-dump.png'") >= 0 &&
     navSrc.indexOf("semi: 'assets/avatar-semi.png'") >= 0 &&
@@ -442,8 +442,8 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
   /* v141 PIN MOVE: box 54x84 -> 62x118; the glyph signature was
      the v139 steel-box gradient id (bxdumpm) — v141's glyph is
      the rendered dump asset. */
-  check('the render paints the marker sized + margin-centred from AVATAR_BOX (dump 62x118, -31/-59) before any drive',
-    w.body._html.indexOf('width:62px;height:118px;margin-left:-31px;margin-top:-59px') >= 0 &&
+  check('the render paints the marker sized + margin-centred from AVATAR_BOX (dump 92x132, -46/-66; v175 pin move from 62x118, -31/-59)',
+    w.body._html.indexOf('width:92px;height:132px;margin-left:-46px;margin-top:-66px') >= 0 &&
     w.body._html.indexOf('assets/avatar-dump.png') >= 0);
   check('the render paints the UNMUTED icon button (speaker + waves, aria-pressed=false, no text label)',
     /id="nvd_mute" aria-pressed="false"/.test(w.body._html) &&
@@ -517,9 +517,9 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
      the box follows the v141 table. */
   check('the glyph swaps AT THE TAP to the semi (its render asset painted)',
     w.reg.nvd_you._html.indexOf('assets/avatar-semi.png') >= 0, w.reg.nvd_you._html.slice(0, 60));
-  check('the marker box follows the kind: semi 62x136, margins -31/-68 (plain styles, no transform)',
-    w.reg.nvd_you.style.width === '62px' && w.reg.nvd_you.style.height === '136px' &&
-    w.reg.nvd_you.style.marginLeft === '-31px' && w.reg.nvd_you.style.marginTop === '-68px',
+  check('the marker box follows the kind: semi 92x144, margins -46/-72 (plain styles, no transform; v175 pin move from 62x136, -31/-68)',
+    w.reg.nvd_you.style.width === '92px' && w.reg.nvd_you.style.height === '144px' &&
+    w.reg.nvd_you.style.marginLeft === '-46px' && w.reg.nvd_you.style.marginTop === '-72px',
     JSON.stringify(w.reg.nvd_you.style));
   check('the chooser closes on the choice and marks semi selected',
     w.reg.nvd_avatar_picker.classList.contains('hidden') && w.avOpts[1].classList.contains('on') &&
@@ -544,9 +544,9 @@ const COMPOSED = function (h) { return 'perspective(1100px) rotateX(45deg) rotat
     w2.body._html.indexOf('#f26522') >= 0);
   /* v141 PIN MOVE: semi signature trsemim -> the render asset;
      box 54x92 -> 62x136. */
-  check('the persisted avatar paints in the markup, sized from its box (semi 62x136, -31/-68)',
+  check('the persisted avatar paints in the markup, sized from its box (semi 92x144, -46/-72; v175 pin move)',
     w2.body._html.indexOf('assets/avatar-semi.png') >= 0 &&
-    w2.body._html.indexOf('width:62px;height:136px;margin-left:-31px;margin-top:-68px') >= 0);
+    w2.body._html.indexOf('width:92px;height:144px;margin-left:-46px;margin-top:-72px') >= 0);
   api2.teardown();
 
   console.log('\nnavigator-v139: ' + pass + ' passed, ' + fail + ' failed');

@@ -493,10 +493,38 @@
      keeps its v139 chevron — a symbol, never the complaint.
      AVATAR_BOX is each kind's element box in px — the marker is
      centred on the anchor by negative margins from this table
-     (paintYou + the render), never by a transform. */
+     (paintYou + the render), never by a transform.
+     v175 (owner, Oct 19, 2026 08:20 MDT, over his live Drive
+     screenshot): "I do like this truck but instead of it being
+     2d image... It would look allot better if this same truck
+     was 3d and the image of it was on a tilt angle from the
+     back on perhaps a 45 degree angle from the rear" — and the
+     top-down view gives him "a lot of GTA 1 vibe". THE ART IS
+     A CHASE RENDER NOW: the same trucks (navy cab, steel box +
+     gravel, corrugated semi, open-bed pickup), re-rendered in
+     3D from BEHIND and ABOVE — a rear chase camera looking
+     down the truck's length at ~45°: rear gate / trailer doors
+     / tailgate large at the bottom of the frame, the load /
+     roof running away up-frame. Same production as v141
+     (generated renders on chroma green, keyed + despilled,
+     ground shadow baked in), plus two build steps the new
+     angle needs: each render was STRAIGHTENED to vertical
+     (its long axis measured off the alpha mask) and COMPOSED
+     so the truck's ground-centre — the midpoint of its
+     projected footprint — sits exactly on the canvas centre,
+     so the half-box margin centring keeps the truck's road
+     position true, the anchor contract unchanged. ONE render
+     per kind is geometrically exact here, not a shortcut: the
+     drive face is heading-up — the plane spins the WORLD
+     under a fixed marker — so the chase camera's angle to the
+     truck never changes, at any heading. (A heading-stepped
+     sprite set would have nothing to attach to: the marker
+     carries no transform, by the v139 rule.) The boxes grew
+     wider than tall-ish for the chase silhouette; the mild
+     length compression is the same house trade as v141. */
   var AVATAR_KINDS = ['dump', 'semi', 'pickup', 'arrow'];
   var AVATAR_LABELS = { dump: 'Dump truck', semi: 'Semi', pickup: 'Pickup', arrow: 'Arrow' };
-  var AVATAR_BOX = { dump: [62, 118], semi: [62, 136], pickup: [60, 104], arrow: [54, 72] };
+  var AVATAR_BOX = { dump: [92, 132], semi: [92, 144], pickup: [92, 118], arrow: [54, 72] };
   var AVATAR_ASSET = { dump: 'assets/avatar-dump.png', semi: 'assets/avatar-semi.png', pickup: 'assets/avatar-pickup.png' };
   function avatarBoxStyle(kind) {
     var b = AVATAR_BOX[kind] || AVATAR_BOX.dump;
