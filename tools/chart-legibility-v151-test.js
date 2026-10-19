@@ -125,11 +125,12 @@ function makeWorld() {
   vm.runInContext(extractCommentRegion(invSrc, 'INV-CYCLE-BEGIN', 'INV-CYCLE-END'), sandbox);
   vm.runInContext('var Meticulous = window.Meticulous;', sandbox);
   let code = helpersSlice() + '\nvar graphSel = null;\n';
-  ['drawChart', 'chartLabelIdx', 'graphTap', 'dayLoadsFor', 'paintGraphPreview'].forEach(function (fn) {
+  ['chartDates', 'drawChart', 'chartLabelIdx', 'graphTap', 'dayLoadsFor', 'paintGraphPreview'].forEach(function (fn) {
     const body = extractFn(revSrc, fn);
     if (body) code += '\n' + body + '\n';
   });
-  code += '\nthis.__x = { drawChart: (typeof drawChart === "function") ? drawChart : null,' +
+  code += '\nthis.__x = { chartDates: (typeof chartDates === "function") ? chartDates : null,' +
+    ' drawChart: (typeof drawChart === "function") ? drawChart : null,' +
     ' chartLabelIdx: (typeof chartLabelIdx === "function") ? chartLabelIdx : null,' +
     ' graphTap: graphTap, paintGraphPreview: paintGraphPreview,' +
     ' setSel: function (v) { graphSel = v; }, getSel: function () { return graphSel; } };';
@@ -313,8 +314,8 @@ console.log('— v151: ship pins —');
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('ships as webVersion 162', ver.webVersion, 162);
-  ok('index loads revenue at the 162 pin', idxSrc.indexOf('modules/revenue.js?v=162') !== -1);
+  eq('ships as webVersion 164', ver.webVersion, 164);
+  ok('index loads revenue at the 164 pin', idxSrc.indexOf('modules/revenue.js?v=164') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 

@@ -445,18 +445,58 @@
     return chosen;
   }
 
-  function drawChart(cv) {
-    var days = Math.min(periodDays(), 62);
-    var now = new Date();
-    var agg = dayAgg();
-    var buckets = [], labels = [], dates = [];
-    for (var i = days - 1; i >= 0; i--) {
-      var d = new Date(now.getTime() - i * 86400000);
-      var ds = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
-      buckets.push(agg[ds] ? agg[ds].amount : 0);
-      labels.push((d.getMonth() + 1) + '/' + d.getDate());
-      dates.push(ds);
+  /* v164: THE CHART'S DATES — ONE SOURCE, CALENDAR-TRUE (owner,
+     Oct 18, 2026 20:36 MDT, REPEAT of the Oct 17 report: "These
+     dates are still not fixed!"). Two defects fed it: (1) the
+     bars were built by subtracting raw 86400000-ms chunks from
+     "now" — the one place in this module not built calendar-
+     first like every other date here — so a bar's date could
+     drift off the calendar day it claimed; (2) WORSE, the window
+     was always "the last N days ending today" while the totals
+     beside it use the SELECTED period (inPeriod): with his
+     Oct 16–31 period chosen (16 days), the chart drew Oct 3→18
+     and the bars named days his period never covered. Now the
+     buckets are exactly the period's own dates: walk back by
+     CALENDAR days from the period's end (customB for a custom
+     period, else today) while inPeriod() — the totals' own
+     rule — says the day belongs, cap 62; future tail days of a
+     custom period are dropped (never draw the future) unless
+     the whole period is future. Every bar's date is the date
+     string itself, so a bar, its label, its tap target and the
+     preview all name the same day by construction. */
+  function chartDates() {
+    function fmt(d) {
+      return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
     }
+    var n = new Date();
+    var todayS = fmt(n);
+    var endD;
+    if (S('period', '30') === 'custom' && S('customB', '')) {
+      endD = new Date(S('customB', '') + 'T12:00:00');
+    } else {
+      endD = new Date(n.getFullYear(), n.getMonth(), n.getDate(), 12);
+    }
+    var out = [], d = endD, guard = 0;
+    while (guard++ < 62) {
+      var ds = fmt(d);
+      if (!inPeriod(ds)) break;
+      out.unshift(ds);
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12);
+    }
+    while (out.length > 1 && out[out.length - 1] > todayS) out.pop();
+    return out;
+  }
+
+  function drawChart(cv) {
+    var agg = dayAgg();
+    var dates = chartDates();
+    var days = dates.length;
+    if (!days) { cv._dayDates = []; return; }
+    var buckets = [], labels = [];
+    dates.forEach(function (ds) {
+      buckets.push(agg[ds] ? agg[ds].amount : 0);
+      labels.push((+ds.slice(5, 7)) + '/' + (+ds.slice(8, 10)));
+    });
     /* v75: each bar IS its day — render wires a canvas tap to the
        bucket under it via this list ("make sure revenue entries
        are clickable as well", owner, Oct 14). */
@@ -1202,6 +1242,7 @@
      tap selects + previews, second tap on the same day opens its
      detail. See graphTap / paintGraphPreview below. */
   var graphSel = null;
+  var rvShowAll = false; /* v164: the Entries list shows the latest 3 until asked for more */
   /* v116: the day detail's "Also recorded" evidence card —
      collapsed unless the owner opens it (or the day is a duplicate,
      where the evidence IS the fix-it path, so it starts open).
@@ -1499,8 +1540,12 @@
         if (a.e.date !== b.e.date) return a.e.date < b.e.date ? 1 : -1;
         return b.index - a.index;
       });
+      /* v164 (owner, Oct 18, 2026 20:54 MDT): the Entries list
+         scrolls endlessly — show the LATEST 3, the rest behind
+         one Show-more tap (and fold back with Show less). */
+      var rvShown = rvShowAll ? rvRows : rvRows.slice(0, 3);
       h += '<div class="card"><h3>📒 Entries</h3><div id="rv_list">' +
-        (rvRows.length ? rvRows.map(function (r) {
+        (rvRows.length ? rvShown.map(function (r) {
           var e = r.e;
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
           var amt = payFor(e, std, ownRate(App._store.get('onboarding', {})));
@@ -1510,7 +1555,11 @@
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + r.index + '">Delete</button></div></div>';
         }).join('') : (entries().length
           ? '<div class="empty">Nothing counted right now — some days are recorded more than once. Open the day from the Month view to fix it.</div>'
-          : '<div class="empty">No entries yet. Add one above or run the tracker.</div>')) + '</div></div>';
+          : '<div class="empty">No entries yet. Add one above or run the tracker.</div>')) + '</div>' +
+        (rvRows.length > 3
+          ? '<button class="btn ghost" id="rv_more" style="width:100%;margin-top:8px">' +
+            (rvShowAll ? 'Show less' : 'Show more — ' + (rvRows.length - 3) + ' more entr' + (rvRows.length - 3 === 1 ? 'y' : 'ies')) + '</button>'
+          : '') + '</div>';
 
       h += '<button class="btn navy" id="rv_export" style="width:100%;margin-bottom:16px">📝 Send summary to Manifest</button>';
 
@@ -1602,6 +1651,9 @@
       body.querySelectorAll('[data-p]').forEach(function (b) {
         b.onclick = function () { W('period', b.getAttribute('data-p')); api.render(body); };
       });
+      /* v164: Entries Show more / Show less */
+      var rvMore = body.querySelector('#rv_more');
+      if (rvMore) rvMore.onclick = function () { rvShowAll = !rvShowAll; api.render(body); };
       var ca = body.querySelector('#rv_ca'), cb = body.querySelector('#rv_cb');
       if (ca) ca.onchange = function () { W('customA', ca.value); api.render(body); };
       if (cb) cb.onchange = function () { W('customB', cb.value); api.render(body); };

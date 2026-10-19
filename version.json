@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 163,
-  "notes": "v163: P&L tells the whole truth now. Driver wages are a fixed line of their own in your expenses — always there, figured by the app, never typed — and a connected driver's wages price at HIS OWN rate, the wage he set on his own side (you never set a driver's wage; the old set-his-pay door is gone). Monthly miles come only from the truck's odometer — the miles text box is gone. The NATL line is deleted, and a + at the end of the expense lines adds your own custom lines. Maintenance: the 'between fill-ups' line is deleted, and lifetime distance is the odometer bookend figure, hardened so a bad reading can never bend it. Preferences: the pay card now says Driver wage rate.",
+  "webVersion": 164,
+  "notes": "v164: Revenue tells the truth about dates. The daily earnings chart now draws exactly your selected period — the same days your totals count — stepped by calendar days, so every bar, label, tap and preview names the same true day (with the Oct 16-31 period picked, it no longer draws October 3-18). And the Entries list opens with the latest 3 entries; the rest wait behind one Show more tap.",
   "files": {
     "assets/avatar-dump.png": "d1f640bd3002b70bdd5b1a3ad90e5bac6304a596edc0a32c384b852fb1485973",
     "assets/avatar-pickup.png": "9e44227d3d4489e1924a2e51676d55b65d30fefbfbec813e399a37c44e5016c2",
@@ -17,7 +17,7 @@
     "css/style.css": "e24fb88c3fd2a30d75f0c73dfa39eef0bda78e2912005ae4b6efd935c0b953a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "20c32d574ec2e31f78f582c529bbaf885b71bbed7ec79a7de7c4efbf35e2f3d8",
+    "index.html": "425a4b7494776cb0d1145b5a8a25c1f44d34a1adab50045dc28da352a5c9f240",
     "js/app.js": "3290c7dd5b3bb953c06f439132ccbaaccd1cfa6b92e0ef9279e490602a626139",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "a2db054f161a2d8638dc61d9018a82b9f289ced683e10c9aeccb0dbf7b74522d",
@@ -51,7 +51,7 @@
     "modules/preferences.js": "f1ffb1e37ddf8512bee5cde805678a86e2275d9ba00a40f92eb3626f57062481",
     "modules/pti.js": "101ebd5fc2812bed613e0332047922235aeaff21404f5d69c4dbe85ead8533ca",
     "modules/reminders.js": "80d3d3a2183aec785382ed33941e1f3dc200cfac0c7627439faaccbc0fb427e0",
-    "modules/revenue.js": "b583097c44aaf59589d1f0e2416e06f18e2cf0cb34a72b32b112c838ed9e9b1f",
+    "modules/revenue.js": "3289e36b1af68a33b0b17727d038dd60a1dff63e69f64fb2df035960427547c9",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }
