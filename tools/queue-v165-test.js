@@ -191,10 +191,13 @@ function makeWorld(seed) {
     body._html.indexOf('NOT SIGNED') !== -1);
   body.querySelector('#pti_sign_name').value = 'Test Driver';
   body._kids['#pti_sign'].onclick();
-  const after = w.store._data.pti_reports[0];
-  ok('D4 signing stamps it signed with the real time',
-    after.signed === true && after.signedName === 'Test Driver' && after.signedAt >= now);
-  eq('D5 and the badge clears', w.pti.status().indexOf('unsigned'), -1);
+  /* v170 supersedes the tap-only sign: the pad is required — with
+     no drawing the sign REFUSES (the full drawn-sign flow is
+     covered by tools/queue-v170-test.js with a canvas harness). */
+  ok('D4 without a drawn signature the sign refuses (v170 pad law)',
+    w.store._data.pti_reports[0].signed === false &&
+    (body._kids['#pti_sign_err']._html || '').indexOf('Draw your signature') !== -1);
+  eq('D5 and the badge still counts it unsigned', w.pti.status().indexOf('⚠ 1 unsigned') !== -1, true);
 }
 
 /* ---- E: shell lock + close prompt (source) ---- */

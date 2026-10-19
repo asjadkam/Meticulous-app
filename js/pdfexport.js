@@ -136,6 +136,7 @@
   function layout(doc) {
     var pages = [[]], y = TOP;
     var tables = [];
+    var images = []; /* v170: {b64, iw, ih} per 'sigimg' line, in order */
     function newPage() { pages.push([]); y = TOP; }
     function need(hgt) { if (y - hgt < BOTTOM) newPage(); }
     function ruleOp(color, wdt, yy) {
@@ -269,6 +270,25 @@
         i = j - 1;
         continue;
       }
+      if (ln.k === 'sigimg') {
+        /* v170: an embedded JPEG (a drawn signature) — the image
+           object is appended by buildPdf; here we only place it:
+           at most 240pt wide / 70pt tall, aspect kept. */
+        var im = ln.img || {};
+        if (im.b64 && im.iw > 0 && im.ih > 0) {
+          var dw = Math.min(240, CONTENT_W * 0.6), dh = dw * im.ih / im.iw;
+          if (dh > 70) { dh = 70; dw = dh * im.iw / im.ih; }
+          need(dh + 8);
+          y -= dh;
+          var imIdx = images.length;
+          images.push(im);
+          pages[pages.length - 1].push(
+            'q ' + dw.toFixed(1) + ' 0 0 ' + dh.toFixed(1) + ' ' + MARGIN.toFixed(1) + ' ' +
+            y.toFixed(1) + ' cm /Im' + imIdx + ' Do Q');
+          y -= 8;
+        }
+        continue;
+      }
       var a = toWinAnsi(ln.a || '');
       if (ln.k === 'kv') {
         var b = toWinAnsi(ln.b || '');
@@ -315,7 +335,7 @@
       }
       y -= st.after;
     }
-    return { pages: pages, tables: tables };
+    return { pages: pages, tables: tables, images: images };
   }
 
   function buildPdf(doc) {
@@ -342,12 +362,34 @@
     objs[2] = '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + nPages + ' >>';
     objs[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
     objs[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+    var images = lay.images || [];
+    var imgObjBase = 5 + nPages * 2;
+    var xobjDict = '';
+    if (images.length) {
+      var xo = [];
+      for (var ii = 0; ii < images.length; ii++) xo.push('/Im' + ii + ' ' + (imgObjBase + ii) + ' 0 R');
+      xobjDict = ' /XObject << ' + xo.join(' ') + ' >>';
+    }
     for (var q = 0; q < nPages; q++) {
       var pageObj = 5 + q * 2, contObj = 6 + q * 2;
       objs[pageObj] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PAGE_W + ' ' + PAGE_H +
-        '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' + contObj + ' 0 R >>';
+        '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xobjDict + ' >> /Contents ' + contObj + ' 0 R >>';
       var stream = pages[q].join('\n');
       objs[contObj] = '<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream';
+    }
+    /* v170: the embedded JPEGs — raw DCT data rides the string
+       as Latin-1 bytes (the final charCodeAt & 0xFF pass keeps
+       every byte exact). */
+    for (var im2 = 0; im2 < images.length; im2++) {
+      var img = images[im2];
+      var raw = b64decodeBytes(img.b64);
+      var binStr = '';
+      for (var bc = 0; bc < raw.length; bc += 8192) {
+        binStr += String.fromCharCode.apply(null, raw.subarray(bc, bc + 8192));
+      }
+      objs[imgObjBase + im2] = '<< /Type /XObject /Subtype /Image /Width ' + img.iw +
+        ' /Height ' + img.ih + ' /ColorSpace /DeviceRGB /BitsPerComponent 8' +
+        ' /Filter /DCTDecode /Length ' + raw.length + ' >>\nstream\n' + binStr + '\nendstream';
     }
 
     var out = '%PDF-1.4\n';
@@ -367,7 +409,7 @@
 
     var bytes = new Uint8Array(out.length);
     for (var bi = 0; bi < out.length; bi++) bytes[bi] = out.charCodeAt(bi) & 0xFF;
-    return { base64: b64encode(bytes), bytes: bytes, pages: nPages, tables: lay.tables };
+    return { base64: b64encode(bytes), bytes: bytes, pages: nPages, tables: lay.tables, images: images.length };
   }
 
   /* ---------------- base64 (env-safe, no btoa) ---------------- */

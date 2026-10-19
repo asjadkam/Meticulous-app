@@ -91,8 +91,13 @@ let d = { items: {}, odo: '', driverNameEffective: 'Asjad Kamal' };
 ok('no odometer → refused', PTI._validate(d).indexOf('odometer') >= 0);
 d = { items: {}, odo: '169300', driverNameEffective: 'Asjad Kamal' };
 ok('unchecked items → refused with the count', PTI._validate(d).indexOf('0 of 23') >= 0);
+/* v170 (owner, Oct 19, 2026 06:55 MDT): signing takes the DRAWN
+   signature too (the Motive pad) — the all-valid fixture carries
+   one, and a missing drawing refuses with its own words. */
 d = { items: fullItems(), odo: '169300', driverNameEffective: 'Asjad Kamal' };
-eq('all OK + odo + name → valid', PTI._validate(d), '');
+ok('no drawn signature → refused', PTI._validate(d).indexOf('Draw your signature') >= 0);
+d = { items: fullItems(), odo: '169300', driverNameEffective: 'Asjad Kamal', sig: 'data:image/jpeg;base64,XXXX' };
+eq('all OK + odo + name + drawn signature → valid', PTI._validate(d), '');
 d = { items: fullItems((it) => { it.fuel = { r: 'defect', note: 'Dripping leak' }; }), odo: '169300', driverNameEffective: 'Asjad Kamal' };
 ok('defect without severity → refused', PTI._validate(d).indexOf('Minor or Major') >= 0);
 d = { items: fullItems((it) => { it.fuel = { r: 'defect', sev: 'major', note: '' }; }), odo: '169300', driverNameEffective: 'Asjad Kamal' };
@@ -199,7 +204,7 @@ const pnlSrc = read('modules/pnl.js');
 ok('the boss’s records block paints PTI', pnlSrc.indexOf('rec.pti') >= 0 && pnlSrc.indexOf('His PTIs') >= 0);
 ok('the boss’s PTI paint shouts majors', pnlSrc.indexOf('🚨 MAJOR DEFECT') >= 0);
 
-ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=169') >= 0);
+ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=170') >= 0);
 ok('sharedrecords rules exist for the ride', read('firestore.rules').indexOf('match /sharedrecords/{driverId}') >= 0);
 
 console.log('pti-v162 test: ' + pass + ' passed, ' + fail + ' failed');

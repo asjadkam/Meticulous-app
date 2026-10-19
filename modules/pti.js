@@ -102,8 +102,12 @@
     };
   }
   function blankDraft() {
-    return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null, kind: 'pre' };
+    return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null, kind: 'pre', sig: '' };
   }
+  /* v170: the signature pad's fixed canvas geometry — the drawn
+     signature (a JPEG data URL) rides the filed report at this
+     size and prints on the PDF at the same aspect. */
+  var SIG_W = 660, SIG_H = 220;
   /* v165: an inspection is a PRE-TRIP or a POST-TRIP (owner,
      Oct 18, 2026 21:48 MDT) — the choice lives in the form,
      defaults to Pre-trip, and rides the filed report. */
@@ -169,6 +173,10 @@
     });
     if (bad) return bad;
     if (!String(d.driverNameEffective || '').trim()) return 'Your printed name is needed to sign the inspection.';
+    /* v170 (owner, Oct 19, 2026 06:55 MDT — the Motive Sign Logs
+       model): signing takes the DRAWN signature too, not just
+       the printed name — no drawing, no filing. */
+    if (!String(d.sig || '').trim()) return 'Draw your signature in the box — signing needs your drawn signature.';
     return '';
   }
 
@@ -191,8 +199,10 @@
       id: 'pti' + ts,
       schedule: 'Schedule 1',
       kind: (d.kind === 'post') ? 'post' : 'pre',
-      /* filed through the attestation tap = signed at filing */
+      /* filed through the attestation tap = signed at filing;
+         v170: the drawn signature rides the report */
       signed: true, signedAt: ts, signedName: String(d.driverNameEffective || ''),
+      signature: String(d.sig || ''),
       filedAt: ts,
       date: date,
       carrier: String(d.carrier || ''), carrierAddr: String(d.carrierAddr || ''),
@@ -256,6 +266,13 @@
     lines.push({ k: 'kv', a: 'Signed', b: isSigned(r)
       ? (r.signedName || r.driverName || '') + ' · ' + new Date(r.signedAt || r.filedAt).toLocaleString('en-CA')
       : 'NOT SIGNED' });
+    /* v170: the drawn signature prints on the PDF (MetPdf
+       'sigimg' — a JPEG XObject). A pre-pad report (signed by
+       name + attestation before the pad existed) prints without
+       one, exactly as it was filed. */
+    if (r.signature && String(r.signature).indexOf('base64,') !== -1) {
+      lines.push({ k: 'sigimg', img: { b64: String(r.signature).split('base64,')[1], iw: SIG_W, ih: SIG_H } });
+    }
     return lines;
   }
 
@@ -405,6 +422,90 @@
     return h + '</div>';
   }
 
+  /* ---------------- v170: the finger signature pad ----------------
+     Draw-to-sign, the Motive Sign Logs shape (owner, Oct 19,
+     2026 06:55 MDT): the attestation words, a drawable box, a
+     Clear button. Strokes land on a white canvas (so the JPEG
+     export is black-on-white), pointer events drive it (finger
+     or mouse), touch-action:none keeps the page from scrolling
+     mid-stroke, and every stroke's end commits the drawing as a
+     JPEG data URL through onChange. An existing drawing repaints
+     into the box on open. All canvas work is guarded — a surface
+     without a 2d context simply keeps the printed-name path
+     visible (validation still asks for the drawing, so such a
+     surface says so instead of silently passing). */
+  function sigPadHtml(prefix) {
+    return '<label class="f">Your signature — draw it with your finger</label>' +
+      '<canvas id="' + prefix + '_sig" width="' + SIG_W + '" height="' + SIG_H + '" ' +
+      'style="width:100%;height:150px;border:2px solid var(--navy);border-radius:10px;background:#fff;touch-action:none;display:block"></canvas>' +
+      '<div class="row" style="margin-top:6px"><button type="button" class="btn small ghost" id="' + prefix + '_sig_clear">Clear signature</button>' +
+      '<span class="note" id="' + prefix + '_sig_note"></span></div>';
+  }
+  function wireSigPad(body, prefix, initial, onChange) {
+    var cv = body.querySelector('#' + prefix + '_sig');
+    var note = body.querySelector('#' + prefix + '_sig_note');
+    var clearBtn = body.querySelector('#' + prefix + '_sig_clear');
+    if (!cv || !cv.getContext) return;
+    var ctx = null;
+    try { ctx = cv.getContext('2d'); } catch (e) {}
+    if (!ctx) return;
+    function blank() {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, SIG_W, SIG_H);
+    }
+    blank();
+    if (initial) {
+      try {
+        var img = new Image();
+        img.onload = function () { try { ctx.drawImage(img, 0, 0, SIG_W, SIG_H); } catch (e) {} };
+        img.src = initial;
+      } catch (e) {}
+      if (note) note.textContent = 'Signed — draw again to redo it, or Clear.';
+    }
+    var drawing = false, last = null;
+    function pos(ev) {
+      var r = cv.getBoundingClientRect();
+      var cx = (ev.clientX !== undefined) ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
+      var cy = (ev.clientY !== undefined) ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : 0);
+      return { x: (cx - r.left) * (SIG_W / (r.width || SIG_W)), y: (cy - r.top) * (SIG_H / (r.height || SIG_H)) };
+    }
+    function commit() {
+      try { onChange(cv.toDataURL('image/jpeg', 0.85)); } catch (e) {}
+      if (note) note.textContent = 'Signed — draw again to redo it, or Clear.';
+    }
+    function start(ev) {
+      drawing = true; last = pos(ev);
+      if (ev.preventDefault) ev.preventDefault();
+      try { if (cv.setPointerCapture && ev.pointerId !== undefined) cv.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+    function move(ev) {
+      if (!drawing) return;
+      var p = pos(ev);
+      ctx.strokeStyle = '#111827';
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      last = p;
+      if (ev.preventDefault) ev.preventDefault();
+    }
+    function end() { if (drawing) { drawing = false; commit(); } }
+    if (window.PointerEvent || cv.addEventListener) {
+      cv.addEventListener('pointerdown', start);
+      cv.addEventListener('pointermove', move);
+      cv.addEventListener('pointerup', end);
+      cv.addEventListener('pointercancel', end);
+    }
+    if (clearBtn) clearBtn.onclick = function () {
+      blank();
+      onChange('');
+      if (note) note.textContent = '';
+    };
+  }
+
   function renderForm(body) {
     var prof = profile();
     var d = draft();
@@ -473,6 +574,7 @@
     h += '<div class="card"><h3 style="margin-top:0">✍️ Sign &amp; file</h3>' +
       '<div style="border:1px solid #d7dce6;border-radius:10px;padding:10px;background:#f8fafc;font-size:14px">' + esc(ATTESTATION) + '</div>' +
       '<label class="f">Your printed name</label><input id="pti_driver" value="' + esc(dVal(d, prof, 'driverName')) + '">' +
+      sigPadHtml('pti') +
       (formErr ? '<div id="pti_err" style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ ' + esc(formErr) + '</div>' : '<div id="pti_err"></div>') +
       '<button type="button" class="btn primary" id="pti_file" style="width:100%">✍️ Sign &amp; file inspection</button>' +
       '<p class="note">Filed with the real time you tap — an inspection is never backdated. A copy reaches your connected boss/dispatcher by itself.</p></div>';
@@ -526,6 +628,14 @@
     bindText('pti_loc', 'loc'); bindText('pti_driver', 'driverName');
     var odoEl = body.querySelector('#pti_odo');
     if (odoEl) odoEl.addEventListener('input', function () { var dd = draft(); dd.odo = odoEl.value; saveDraft(dd); });
+
+    /* v170: the signature pad — every finished stroke saves the
+       drawing onto the draft; Clear wipes it. */
+    try {
+      wireSigPad(body, 'pti', d.sig || '', function (url) {
+        var dd = draft(); dd.sig = url; saveDraft(dd);
+      });
+    } catch (e) {}
 
     /* The dash photo — the shared fast pipeline (v142 race:
        cloud starts at capture, ~20 s ceiling). Fill-only into the
@@ -699,7 +809,7 @@
     }
     formErr = '';
     var rep = buildReport({
-      items: d.items, odo: d.odo, kind: d.kind,
+      items: d.items, odo: d.odo, kind: d.kind, sig: d.sig,
       carrier: d.carrier || '', carrierAddr: d.carrierAddr || '',
       unit: d.unit || '', plate: d.plate || '',
       loc: d.loc || '', lat: d.lat, lng: d.lng,
@@ -787,6 +897,8 @@
       (isSigned(r)
         ? '<div class="kv" style="margin-top:8px"><span>Signed</span><b>' + esc(r.signedName || r.driverName || '') + ' · ' + esc(fmtWhen(r.signedAt || r.filedAt)) + '</b></div>'
         : '<div class="kv" style="margin-top:8px"><span>Signed</span><b style="color:#b91c1c">NOT SIGNED</b></div>') +
+      /* v170: the drawn signature, on the report face */
+      (r.signature ? '<img src="' + r.signature + '" alt="Driver signature" style="width:220px;max-width:70%;border:1px solid #d7dce6;border-radius:8px;margin-top:6px;background:#fff">' : '') +
       '<div class="row" style="margin-top:12px"><button type="button" class="btn navy" id="pti_print" style="flex:1">🖨 Print / PDF</button>' +
       '<button type="button" class="btn ghost" id="pti_back" style="flex:1">← Back</button></div>' +
       '<div id="pti_print_note" class="note" style="margin-top:6px"></div>' +
@@ -796,21 +908,30 @@
     if (!isSigned(r) && !view.fromDot) {
       h += '<div class="card" style="border:2px solid #f59e0b;background:#fffbeb"><h3 style="margin-top:0">✍️ Sign this inspection</h3>' +
         '<label class="f">Your printed name</label><input id="pti_sign_name" value="' + esc(r.driverName || profile().driverName || '') + '">' +
+        sigPadHtml('pti2') +
         '<div id="pti_sign_err"></div>' +
         '<button type="button" class="btn primary" id="pti_sign" style="width:100%;margin-top:8px">✍️ Sign inspection</button>' +
         '<p class="note">Signing stamps the real time — it can’t be backdated.</p></div>';
     }
     body.innerHTML = h;
+    /* v170: the signing prompt opens the pad — the drawn
+       signature is what signs (with the printed name). */
+    var signSig = '';
+    try {
+      wireSigPad(body, 'pti2', '', function (url) { signSig = url; });
+    } catch (e) {}
     var signBtn = body.querySelector('#pti_sign');
     if (signBtn) signBtn.onclick = function () {
       var nmEl = body.querySelector('#pti_sign_name');
       var nm = nmEl ? String(nmEl.value || '').trim() : '';
       var eEl = body.querySelector('#pti_sign_err');
       if (!nm) { if (eEl) eEl.innerHTML = '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ Your printed name is needed to sign.</div>'; return; }
+      if (!signSig) { if (eEl) eEl.innerHTML = '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ Draw your signature in the box — signing needs your drawn signature.</div>'; return; }
       var reps2 = reports();
       for (var i = 0; i < reps2.length; i++) {
         if (reps2[i].id === r.id) {
           reps2[i].signed = true; reps2[i].signedAt = Date.now(); reps2[i].signedName = nm;
+          reps2[i].signature = signSig;
           if (!reps2[i].driverName) reps2[i].driverName = nm;
           r = reps2[i];
         }
