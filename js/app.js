@@ -278,7 +278,7 @@
      Navigation module survives only as the merged module's
      places component (its file still loads; the Navigator's
      front face renders it). No card, no drawer entry, no meta. */
-  var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
+  var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect'];
   /* MODULE-TITLE-BEGIN — harness-extractable (store + pure JS). */
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
@@ -287,6 +287,7 @@
     fuel:       { title: 'Fuel & Expense',    icon: '⛽', tier: 'basic' },
     pnl:        { title: 'P&L',               icon: '📈', tier: 'basic' },
     maintenance:{ title: 'Maintenance',       icon: '🔧', tier: 'basic' },
+    pti:        { title: 'Pre-Trip Inspection', icon: '🔍', tier: 'basic' },
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
@@ -326,19 +327,19 @@
   var USER_ROLES = ['driver', 'both', 'office'];
   var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
   var ROLE_MODULE_ORDER = {
-    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
+    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
     /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
        five tools IN BLUEPRINT ORDER — Connect first (his #1: his
        connection to his drivers), then Dispatch, Invoice, Maintenance,
        P&L. Everything else follows; nothing is removed. */
     office: ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator'],
-    both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']
+    both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
      other sidebar item keeps its current place after them. Nothing is
      removed — tuning is emphasis only. */
   var ROLE_SIDEBAR_LEAD = {
-    driver: ['dashboard', 'revenue', 'dispatch', 'navigator', 'fuel', 'maintenance', 'damage', 'manifest'],
+    driver: ['dashboard', 'revenue', 'dispatch', 'navigator', 'fuel', 'maintenance', 'pti', 'damage', 'manifest'],
     office: ['dashboard', 'connect', 'dispatch', 'invoice', 'maintenance', 'pnl'],
     both: ['dashboard']
   };
@@ -524,6 +525,7 @@
     ['fuel', '⛽', 'Fuel & Expense'],
     ['pnl', '📈', 'P&L'],
     ['maintenance', '🔧', 'Maintenance'],
+    ['pti', '🔍', 'Pre-Trip Inspection'],
     ['damage', '📸', 'Damage & Incident'],
     ['manifest', '📝', 'Manifest / Daily Log'],
     ['invoice', '🧾', 'Invoice'],

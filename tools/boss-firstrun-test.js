@@ -154,10 +154,13 @@ console.log('(b) office order — the boss five lead, Connect first (F4)');
      every order (ten modules). */
   deepEq('office module order: five lead, same ten modules (v119 merge)', w.sb.roleModuleOrder('office'),
     ['connect', 'dispatch', 'invoice', 'maintenance', 'pnl', 'manifest', 'revenue', 'fuel', 'damage', 'navigator']);
+  /* v162: 'pti' (Pre-Trip Inspection) joins the driver + both
+     orders after 'maintenance' — a driver-face module; the office
+     order above deliberately does NOT carry it. */
   deepEq('driver module order: merged order', w.sb.roleModuleOrder('driver'),
-    ['revenue', 'dispatch', 'fuel', 'maintenance', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']);
+    ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']);
   deepEq('both module order: merged order', w.sb.roleModuleOrder('both'),
-    ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect']);
+    ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']);
   const items = [['dashboard'], ['dispatch'], ['revenue'], ['fuel'], ['pnl'], ['maintenance'], ['damage'],
     ['manifest'], ['invoice'], ['reminders'], ['navigation'], ['connect'], ['preferences'], ['subscription']];
   const off = w.sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });

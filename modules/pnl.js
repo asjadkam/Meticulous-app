@@ -292,6 +292,30 @@
           (sv.cost ? ' · ' + money(sv.cost) : '') + '</b></div>';
       });
     }
+    /* v162: his PRE-TRIP INSPECTIONS (owner, Oct 18, 2026:
+       connected owners/dispatchers must SEE the driver's PTI) —
+       from the same sharedrecords doc (rec.pti, published by
+       CP.sharedPti), newest first. A MAJOR defect is painted so
+       it cannot be missed: the truck must not roll until it is
+       repaired, and the boss has to know the moment he looks. */
+    var ptiList = (rec.pti || []).filter(Boolean);
+    if (ptiList.length) {
+      h += '<div style="margin:8px 0 2px;font-weight:700">🔍 His pre-trip inspections</div>';
+      ptiList.slice(0, 5).forEach(function (r) {
+        var isMajor = r.result === 'major';
+        h += '<div class="kv"><span style="padding-left:14px">' + esc(r.date) +
+          (r.unit ? ' · Unit ' + esc(r.unit) : '') +
+          (r.odometer ? ' · odo ' + Number(r.odometer).toLocaleString('en-CA') + ' km' : '') +
+          '</span><b>' + (isMajor
+            ? '<span style="color:#b91c1c">🚨 MAJOR DEFECT</span>'
+            : (r.result === 'minor' ? '<span style="color:#92400e">⚠ Minor defect(s)</span>' : '✓ No defects')) + '</b></div>';
+        (r.defects || []).forEach(function (df) {
+          var maj = df.severity === 'major';
+          h += '<div style="padding-left:26px;margin:1px 0;' + (maj ? 'color:#b91c1c;font-weight:700' : 'color:#555') + '">' +
+            (maj ? '⛔ MAJOR — ' : '⚠ Minor — ') + esc(df.item) + (df.note ? ': ' + esc(df.note) : '') + '</div>';
+        });
+      });
+    }
   }
   /* v146: his PAY INVOICES billed to THIS payer (owner, Oct 17
      21:30 MDT) + the period manifests pairing with them

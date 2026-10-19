@@ -361,8 +361,10 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   eq('a: publishRecords writes', await CP().publishRecords(), true);
   const rec = recDoc();
   check('a: the records doc exists', !!rec);
+  /* v162: the records doc gains 'pti' — the driver's filed
+     pre-trip inspections, facts only (CP.sharedPti). */
   keysEq('a: records doc carries facts only (exact key set)', rec,
-    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'updatedAt']);
+    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'pti', 'updatedAt']);
   eq('a: viewers = my CURRENT connections, both payers', rec.viewers, ['uid-boss', 'uid-payer2']);
   eq('a: identity rides (name + business)', [rec.driverName, rec.driverBusiness], ['Asjad Kamal', 'Asjad Kamal']);
   eq('a: fuel newest first, 2 entries', rec.fuel.map((x) => x.date), [TODAY, OCT15]);
@@ -675,13 +677,13 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
-     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  check('i: version ships as 161', ver.webVersion === 161);
-  check('i: index loads the touched files at the 161 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=161') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=161') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=161') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=161') !== -1);
+     v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. v162 pin move: 161 -> 162, same convention. */
+  check('i: version ships as 162', ver.webVersion === 162);
+  check('i: index loads the touched files at the 162 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=162') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=162') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=162') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=162') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

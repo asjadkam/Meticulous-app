@@ -103,6 +103,16 @@
  *      from a day doc's viewers even when he was its last viewer
  *      (publishDay's write-once-with-empty-viewers, the records
  *      doc's v146 discipline carried to days).
+ *
+ *  v162 — THE SHARED PTI (owner, Oct 18, 2026): the driver's
+ *  filed Pre-Trip Inspections (modules/pti.js) ride THIS doc as
+ *  `pti` — newest 14, facts only (date, unit, plate, odometer,
+ *  location, result, defects with severity + note; photo bytes
+ *  never cross). Same viewers, same kind gates, same rules as
+ *  every other field here — a Limited peer is never named, so
+ *  no PTI ever reaches him. The boss's side paints them inside
+ *  his connected-driver records block (modules/pnl.js), majors
+ *  in red.
  */
 (function () {
   'use strict';
@@ -899,6 +909,42 @@
     };
   };
 
+  /* v162: my PRE-TRIP INSPECTIONS as shared facts (owner, Oct 18,
+     2026: connected owners/dispatchers must SEE the driver's PTI).
+     Rides inside sharedrecords, so it inherits that doc's exact
+     posture: named viewers only (sharePeers — Limited peers never
+     named), the readers' kind gate in fetchRecords, and the
+     rules' viewers door. FACTS ONLY — the report's fields and its
+     defects (item, severity, note); a defect's photo bytes never
+     cross, the same posture as the shared days' ticket photos.
+     Newest first, latest 14. */
+  CP.sharedPti = function () {
+    var st = store();
+    if (!st) return [];
+    return (st.get('pti_reports', []) || []).filter(Boolean).slice()
+      .sort(function (a, b) { return (parseFloat(b.filedAt) || 0) - (parseFloat(a.filedAt) || 0); })
+      .slice(0, 14)
+      .map(function (r) {
+        return {
+          date: r.date || '',
+          filedAt: parseFloat(r.filedAt) || 0,
+          unit: String(r.unit || ''),
+          plate: String(r.plate || ''),
+          odometer: parseFloat(r.odometer) || 0,
+          location: String(r.location || ''),
+          result: (r.result === 'major' || r.result === 'minor') ? r.result : 'pass',
+          driverName: String(r.driverName || ''),
+          defects: (Array.isArray(r.defects) ? r.defects : []).map(function (d) {
+            return {
+              item: String((d && d.item) || ''),
+              severity: (d && d.severity === 'major') ? 'major' : 'minor',
+              note: String((d && d.note) || '')
+            };
+          })
+        };
+      });
+  };
+
   /* An issued invoice's paid total — the Invoice module's own
      rule (payments list + the paidAmount/paid fields), restated
      here so the shared summary never invents a status. */
@@ -1069,6 +1115,7 @@
       fuel: fuel,
       expenses: expenses,
       maintenance: CP.sharedMaintenance(),
+      pti: CP.sharedPti(),
       updatedAt: Date.now()
     };
   };

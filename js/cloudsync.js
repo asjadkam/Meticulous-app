@@ -171,7 +171,7 @@
     ['fuel', 'a fuel entry'], ['rev', 'a revenue record'],
     ['pnl', 'a P&L record'], ['con_', 'a connection record'],
     ['odo_readings', 'an odometer reading'], ['mt_odo', 'your odometer'],
-    ['rem_', 'a reminder'], ['mani', 'a manifest record'],
+    ['rem_', 'a reminder'], ['pti_', 'a pre-trip inspection report'], ['mani', 'a manifest record'],
     ['dmg', 'a damage report'], ['tracker', 'your tracker settings'],
     ['livemiles', 'live miles tracking'], ['geoloads', 'load counting'],
     ['feedback', 'a feedback note'], ['dayarm', 'shift tracking'],

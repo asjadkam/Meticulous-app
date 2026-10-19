@@ -126,7 +126,11 @@ function roleSandbox(store) {
      are there 2 modules?"); the Navigator is the one door and
      the set is ten. */
   const ALL = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect'];
-  deepEq(sb.roleModuleOrder('both'), ALL, 'dashboard: both = the merged order (one Navigator door, no Navigation)');
+  /* v162: 'pti' (Pre-Trip Inspection) joins the DRIVER faces —
+     driver + both carry eleven modules; the office set stays the
+     ten above (no PTI card on the office face, owner Oct 18). */
+  const ALL_DRIVE = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect'];
+  deepEq(sb.roleModuleOrder('both'), ALL_DRIVE, 'dashboard: both = the merged order (one Navigator door, no Navigation)');
   /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
      blueprint — the office home leads with the boss's five tools,
      Connect FIRST, then Dispatch, Invoice, Maintenance, P&L. */
@@ -134,8 +138,9 @@ function roleSandbox(store) {
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
-    eq(ord.length, 10, 'dashboard ' + r + ': all 10 modules present (v119 merge: Navigation folded into Navigator)');
-    deepEq(ord.slice().sort(), ALL.slice().sort(), 'dashboard ' + r + ': same module set, reordered only');
+    const want = (r === 'office') ? ALL : ALL_DRIVE; // v162: PTI is a driver-face module
+    eq(ord.length, want.length, 'dashboard ' + r + ': all ' + want.length + ' modules present (v119 merge: Navigation folded into Navigator; v162: PTI on driver faces)');
+    deepEq(ord.slice().sort(), want.slice().sort(), 'dashboard ' + r + ': same module set, reordered only');
   });
 
   const KEYS = ['dashboard', 'revenue', 'dispatch', 'navigation', 'navigator', 'fuel', 'pnl', 'maintenance', 'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'feedback', 'logout'];

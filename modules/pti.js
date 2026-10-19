@@ -1,0 +1,663 @@
+/* Pre-Trip Inspection module — v162 (owner, Oct 18, 2026, 20:49 MDT:
+ * "I wanna do my pti on this app tomorrow... So make sure it's up and
+ * ready by then!"). The Alberta NSC Standard 13 / Schedule 1 daily
+ * vehicle inspection, as a module of its own on the DRIVER face:
+ *
+ *  - Pre-filled from Preferences: carrier (contracting company first,
+ *    else his own company) + address, truck unit #, plate if on file,
+ *    the driver's printed name; date/time is the real now — a filing
+ *    is stamped when it is filed, never backdated.
+ *  - THE ODOMETER IS CAPTURED INSIDE THE INSPECTION, off the dash
+ *    photo, through the app's ONE shared photo pipeline
+ *    (App._wirePhotoOCR — the v142 fast path: the cloud Power Read
+ *    starts the moment the photo is taken and races the on-device
+ *    read, ~20 s ceiling; the first confident answer fills the
+ *    field, the cloud answer corrects an untouched value or waits
+ *    as a tap-to-use chip). A read NEVER writes the master by
+ *    itself here: it lands in the form, the driver confirms it by
+ *    signing & filing, and ONLY the filing commits it — through
+ *    App._bumpOdometer(v, 'pti'), the same write every capture
+ *    point uses, so the confirmed reading becomes the inspection's
+ *    odometer, the dated odo_readings entry the manifest reads as
+ *    the day's start boundary, today's session startOdo where one
+ *    is missing, and the master odometer everything else
+ *    (Maintenance reminders, fuel distance) reads live. No parallel
+ *    odometer store exists.
+ *  - The checklist is Schedule 1 itself — the 23 systems, each OK
+ *    or Defect, one thumb. "No defects found" marks all OK in one
+ *    tap. A defect REQUIRES a severity (minor/major) and a note;
+ *    a photo is optional. A MAJOR defect is painted so it cannot
+ *    be missed — on the filed report, in the history, in the PDF,
+ *    and on the connected boss's copy.
+ *  - Sign-off: the driver's printed name + the attestation tap
+ *    ("Sign & file inspection") carrying the Schedule 1 statement.
+ *  - CONNECT: a filed report publishes with the driver's shared
+ *    records (js/connectpipe.js CP.sharedPti — facts only, photo
+ *    bytes never cross) and paints on the boss's side inside his
+ *    connected-driver records block (modules/pnl.js), majors first
+ *    in red. No office-face card: the office face is untouched.
+ *  - Schedule 1 ONLY (truck/tractor). Trailers (Schedule 2) come
+ *    later, per the owner's order.
+ *
+ * Store keys: pti_reports (filed reports), pti_draft (the
+ * in-progress inspection — leaving mid-checklist loses nothing).
+ */
+(function () {
+  'use strict';
+  var S = function (k, d) { return App._store.get('pti_' + k, d); };
+  var W = function (k, v) { App._store.set('pti_' + k, v); };
+  var esc = function (s) { return App._esc(s); };
+
+  /* ---------------- Schedule 1 (NSC Standard 13) ----------------
+     The 23 systems of Schedule 1 — trucks, tractors and trailers
+     drawn by them; this module files the TRUCK side. minor/major
+     are the Schedule's own defect columns, condensed to roadside
+     words; they print as the guidance inside a defect entry. */
+  var SCHED1 = [
+    { id: 'airbrake', name: 'Air Brake System', minor: 'Audible air leak · slow air pressure build-up', major: 'Pushrod stroke over the adjustment limit · air loss rate over the limit · tractor protection or low-air warning failed · service, parking or emergency brake not working' },
+    { id: 'cab', name: 'Cab', minor: 'Occupant door fails to open', major: 'Any cab or sleeper door fails to close securely' },
+    { id: 'cargo', name: 'Cargo Securement', minor: 'Insecure or improper load covering', major: 'Insecure cargo · absence, failure or deterioration of a required securement device or covering' },
+    { id: 'coupling', name: 'Coupling Devices', minor: 'Coupler or mounting has a loose or missing fastener', major: 'Coupler insecure or movement over the limit · coupling/locking mechanism damaged or fails to lock · defective, incorrect or missing safety chain or cable' },
+    { id: 'dg', name: 'Dangerous Goods', minor: '', major: 'Dangerous goods requirements not met' },
+    { id: 'controls', name: 'Driver Controls', minor: 'Accelerator pedal, clutch, gauges, audible/visual indicators or instruments fail to function properly', major: '' },
+    { id: 'seat', name: 'Driver Seat', minor: 'Seat is damaged or fails to remain in set position', major: 'Seatbelt or tether belt is insecure, missing or malfunctions' },
+    { id: 'ebrake', name: 'Electric Brake System', minor: 'Loose or insecure wiring or electrical connection', major: 'Inoperative breakaway device · inoperative brake' },
+    { id: 'emergency', name: 'Emergency Equipment and Safety Devices', minor: 'Emergency equipment is missing, damaged or defective', major: '' },
+    { id: 'exhaust', name: 'Exhaust System', minor: 'Exhaust leak', major: 'A leak that causes exhaust gas to enter the occupant compartment' },
+    { id: 'frame', name: 'Frame and Cargo Body', minor: 'Damaged frame or cargo body', major: 'Visibly shifted, cracked, collapsing or sagging frame member' },
+    { id: 'fuel', name: 'Fuel System', minor: 'Missing fuel tank cap', major: 'Insecure fuel tank · dripping fuel leak' },
+    { id: 'general', name: 'General', minor: '', major: 'Serious damage or deterioration that is noticeable and may affect the vehicle’s safe operation' },
+    { id: 'glass', name: 'Glass and Mirrors', minor: 'Required mirror or window glass fails to provide the required view (cracked, broken, damaged, missing or maladjusted) · broken or damaged attachments', major: '' },
+    { id: 'heater', name: 'Heater / Defroster', minor: 'Control or system failure', major: 'Defroster fails to provide an unobstructed view through the windshield' },
+    { id: 'horn', name: 'Horn', minor: 'Vehicle has no operative horn', major: '' },
+    { id: 'hydbrake', name: 'Hydraulic Brake System', minor: 'Brake fluid level below the indicated minimum · parking brake inoperative', major: 'Brake boost or power assist not operative · brake fluid leak · pedal fade or insufficient reserve · activated (non-ABS) warning device · reservoir less than ¼ full' },
+    { id: 'lamps', name: 'Lamps and Reflectors', minor: 'A required lamp does not function as intended · a required reflector is missing or partially missing', major: 'When lamps are required: both low-beam headlamps or both rearmost tail lamps fail · at all times: a rearmost turn-indicator lamp, or both rearmost brake lamps, fail' },
+    { id: 'steering', name: 'Steering', minor: 'Steering wheel lash (free-play) greater than normal', major: 'Steering wheel is insecure or does not respond normally · lash exceeds the prescribed limit' },
+    { id: 'suspension', name: 'Suspension System', minor: 'Air leak in the air suspension · a broken spring leaf · a suspension fastener loose, missing or broken', major: 'Damaged or deflated air bag · cracked or broken main spring leaf, or more than one broken leaf · part of a leaf or the suspension missing, shifted or touching another component · loose U-bolt' },
+    { id: 'tires', name: 'Tires', minor: 'Damaged tread or sidewall · tire leaking', major: 'Flat tire · tread depth less than the wear limit · tire touching another tire or a vehicle component · exposed cords · tire marked “Not for highway use”' },
+    { id: 'wheels', name: 'Wheels, Hubs and Fasteners', minor: 'Hub oil below minimum (sight glass) · leaking wheel seal', major: 'Loose, missing or ineffective wheel fastener · damaged, cracked or broken wheel, rim or attaching part · evidence of imminent wheel, hub or bearing failure' },
+    { id: 'wipers', name: 'Windshield Wiper / Washer', minor: 'Control or system malfunction · wiper blade damaged, missing or fails to adequately clear the driver’s field of vision', major: 'When wipers/washer are required: fails to adequately clear the driver’s field of vision on the driver’s side' }
+  ];
+  var ITEM_BY_ID = {};
+  SCHED1.forEach(function (it) { ITEM_BY_ID[it.id] = it; });
+
+  var ATTESTATION = 'I inspected this vehicle in accordance with Schedule 1 of the National Safety Code Standard 13, and this report is true and complete in substance.';
+  var NO_DEFECTS_STATEMENT = 'No major or minor defects were found during this inspection.';
+
+  /* ---------------- data ---------------- */
+
+  function reports() {
+    var r = S('reports', []);
+    return Array.isArray(r) ? r : [];
+  }
+  function profile() {
+    var o = {};
+    try { o = App._store.get('onboarding', {}) || {}; } catch (e) {}
+    return {
+      carrier: o.contractingCo || o.companyName || '',
+      carrierAddr: o.contractingAddr || o.companyAddr || '',
+      unit: o.truckNo || '',
+      plate: o.plate || o.plateNo || '',
+      driverName: ((o.firstName || '') + ' ' + (o.lastName || '')).trim()
+    };
+  }
+  function blankDraft() {
+    return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null };
+  }
+  function draft() {
+    var d = S('draft', null);
+    if (!d || typeof d !== 'object') d = blankDraft();
+    if (!d.items || typeof d.items !== 'object') d.items = {};
+    return d;
+  }
+  function saveDraft(d) { W('draft', d); }
+  /* A draft field: what the driver typed wins; until he types, the
+     Preferences profile fills it. null on the draft = untouched. */
+  function dVal(d, prof, key) {
+    return (d[key] !== null && d[key] !== undefined) ? d[key] : (prof[key] || '');
+  }
+
+  function defectsOf(items) {
+    var out = [];
+    SCHED1.forEach(function (it) {
+      var e = items && items[it.id];
+      if (e && e.r === 'defect') {
+        out.push({ id: it.id, item: it.name, severity: e.sev === 'major' ? 'major' : 'minor', note: String(e.note || ''), hasPhoto: !!e.photo });
+      }
+    });
+    return out;
+  }
+  function resultOf(defects) {
+    var major = false, minor = false;
+    (defects || []).forEach(function (d) { if (d.severity === 'major') major = true; else minor = true; });
+    return major ? 'major' : (minor ? 'minor' : 'pass');
+  }
+  function checkedCount(items) {
+    var n = 0;
+    SCHED1.forEach(function (it) { var e = items && items[it.id]; if (e && (e.r === 'ok' || e.r === 'defect')) n++; });
+    return n;
+  }
+
+  /* The filing rules, in one place (the form's error line and the
+     tests read the same words): the odometer must be captured,
+     every Schedule 1 system must be answered, and every defect
+     needs its severity and a note — a defect without them is not
+     a report an officer (or a boss) can act on. */
+  function validateDraft(d) {
+    var odo = parseFloat(d && d.odo);
+    if (!(odo > 0)) return 'Snap the dash photo to capture the odometer first — the inspection needs its reading.';
+    var n = checkedCount(d.items);
+    if (n < SCHED1.length) return 'Every item needs an answer — ' + n + ' of ' + SCHED1.length + ' checked so far. (One tap on “No defects found” answers them all.)';
+    var bad = null;
+    SCHED1.forEach(function (it) {
+      var e = d.items[it.id];
+      if (e && e.r === 'defect') {
+        if (e.sev !== 'minor' && e.sev !== 'major' && !bad) bad = it.name + ': pick Minor or Major.';
+        else if (!String(e.note || '').trim() && !bad) bad = it.name + ': a defect needs a note — what did you find?';
+      }
+    });
+    if (bad) return bad;
+    if (!String(d.driverNameEffective || '').trim()) return 'Your printed name is needed to sign the inspection.';
+    return '';
+  }
+
+  /* One filed report, built from the confirmed draft at the real
+     filing moment. Pure: the caller stamps nothing else onto it. */
+  function buildReport(d, nowMs) {
+    var ts = (typeof nowMs === 'number' && isFinite(nowMs) && nowMs > 0) ? nowMs : Date.now();
+    var dt = new Date(ts);
+    function z(n) { return ('0' + n).slice(-2); }
+    var date = dt.getFullYear() + '-' + z(dt.getMonth() + 1) + '-' + z(dt.getDate());
+    var defects = defectsOf(d.items);
+    var items = {};
+    SCHED1.forEach(function (it) {
+      var e = d.items[it.id] || {};
+      items[it.id] = (e.r === 'defect')
+        ? { r: 'defect', sev: e.sev === 'major' ? 'major' : 'minor', note: String(e.note || ''), photo: e.photo || '' }
+        : { r: 'ok' };
+    });
+    return {
+      id: 'pti' + ts,
+      schedule: 'Schedule 1',
+      filedAt: ts,
+      date: date,
+      carrier: String(d.carrier || ''), carrierAddr: String(d.carrierAddr || ''),
+      unit: String(d.unit || ''), plate: String(d.plate || ''),
+      location: String(d.loc || ''),
+      lat: (typeof d.lat === 'number') ? d.lat : null,
+      lng: (typeof d.lng === 'number') ? d.lng : null,
+      odometer: parseFloat(d.odo) || 0,
+      items: items,
+      defects: defects,
+      result: resultOf(defects),
+      driverName: String(d.driverNameEffective || ''),
+      attestation: ATTESTATION
+    };
+  }
+
+  /* The printed report as typed lines for the app's PDF engine
+     (MetPdf — the same line vocabulary the Manifest prints with).
+     Every field the law asks a daily inspection report to carry:
+     carrier name + address, plate, unit, date + time, location,
+     the inspector's printed name, the odometer, the defects (or
+     the no-defects statement), and the signed attestation. */
+  function reportLines(r) {
+    var lines = [];
+    lines.push({ k: 'title', a: 'DAILY VEHICLE INSPECTION REPORT — SCHEDULE 1 (TRUCK / TRACTOR)' });
+    lines.push({ k: 'note', a: 'National Safety Code Standard 13 · Schedule 1 daily inspection' });
+    lines.push({ k: 'rule' });
+    lines.push({ k: 'kv', a: 'Carrier', b: r.carrier || '—' });
+    if (r.carrierAddr) lines.push({ k: 'kv', a: 'Carrier address', b: r.carrierAddr });
+    lines.push({ k: 'kv', a: 'Date & time', b: new Date(r.filedAt).toLocaleString('en-CA') });
+    lines.push({ k: 'kv', a: 'Location', b: r.location || '—' });
+    lines.push({ k: 'kv', a: 'Truck unit #', b: r.unit || '—' });
+    lines.push({ k: 'kv', a: 'Licence plate', b: r.plate || '—' });
+    lines.push({ k: 'kv', a: 'Odometer', b: r.odometer ? Number(r.odometer).toLocaleString('en-CA') + ' km' : '—' });
+    lines.push({ k: 'kv', a: 'Inspected by', b: r.driverName || '—' });
+    lines.push({ k: 'rule' });
+    if (r.result === 'major') {
+      lines.push({ k: 'title', a: '⚠ MAJOR DEFECT FOUND — THIS VEHICLE MUST NOT BE OPERATED UNTIL THE DEFECT IS REPAIRED' });
+      lines.push({ k: 'rule' });
+    }
+    lines.push({ k: 'h', a: 'Inspection results' });
+    SCHED1.forEach(function (it) {
+      var e = (r.items || {})[it.id];
+      if (e && e.r === 'defect') {
+        lines.push({ k: 'kv', a: it.name, b: (e.sev === 'major' ? '⛔ MAJOR DEFECT' : '⚠ Minor defect') + (e.note ? ' — ' + e.note : '') });
+      } else {
+        lines.push({ k: 'kv', a: it.name, b: '✓ OK' });
+      }
+    });
+    lines.push({ k: 'rule' });
+    if (r.defects && r.defects.length) {
+      lines.push({ k: 'h', a: 'Defects found (' + r.defects.length + ')' });
+      r.defects.forEach(function (d) {
+        lines.push({ k: 'note', a: (d.severity === 'major' ? '⛔ MAJOR' : '⚠ Minor') + ' — ' + d.item + ': ' + d.note });
+      });
+    } else {
+      lines.push({ k: 'note', a: NO_DEFECTS_STATEMENT });
+    }
+    lines.push({ k: 'rule' });
+    lines.push({ k: 'note', a: r.attestation || ATTESTATION });
+    lines.push({ k: 'kv', a: 'Signed', b: (r.driverName || '') + ' · ' + new Date(r.filedAt).toLocaleString('en-CA') });
+    return lines;
+  }
+
+  /* ---------------- view state ---------------- */
+  var view = { mode: 'form', id: null };   // 'form' | 'report'
+  var formErr = '';
+  var lastOdoNote = '';   // the filing moment's odometer-commit note (confirmation line only, never stored on the report)
+
+  function todayStr() {
+    try { return App._today(); } catch (e) {}
+    var d = new Date();
+    function z(n) { return ('0' + n).slice(-2); }
+    return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
+  }
+  function fmtWhen(ts) {
+    try { return new Date(ts).toLocaleString('en-CA'); } catch (e) { return ''; }
+  }
+  function resultBadge(r) {
+    if (r.result === 'major') return '<span style="background:#b91c1c;color:#fff;font-weight:800;padding:2px 8px;border-radius:8px;">🚨 MAJOR DEFECT</span>';
+    if (r.result === 'minor') return '<span style="background:#fef3c7;color:#92400e;font-weight:700;padding:2px 8px;border-radius:8px;">⚠ Minor defect' + (r.defects.length === 1 ? '' : 's') + '</span>';
+    return '<span style="background:#dcfce7;color:#166534;font-weight:700;padding:2px 8px;border-radius:8px;">✓ No defects</span>';
+  }
+  function majorBanner() {
+    return '<div style="background:#b91c1c;color:#fff;border-radius:12px;padding:14px;margin-bottom:12px">' +
+      '<div style="font-size:19px;font-weight:800">🚨 MAJOR DEFECT FOUND</div>' +
+      '<div style="font-size:14px;margin-top:2px">This vehicle must NOT be operated until the defect is repaired.</div></div>';
+  }
+
+  /* ---------------- the form ---------------- */
+
+  function itemRowHtml(it, e) {
+    e = e || {};
+    var isOk = e.r === 'ok', isDef = e.r === 'defect';
+    var h = '<div style="padding:10px 0;border-bottom:1px solid #eef1f6">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      '<div style="flex:1;font-weight:600;color:var(--navy)">' + esc(it.name) + '</div>' +
+      '<button type="button" class="btn small ' + (isOk ? 'primary' : 'ghost') + '" data-pti-ok="' + it.id + '" style="min-width:64px">✓ OK</button>' +
+      '<button type="button" class="btn small ' + (isDef ? 'primary' : 'ghost') + '" data-pti-def="' + it.id + '" style="min-width:76px;' + (isDef ? 'background:#c2410c;border-color:#c2410c' : '') + '">⚠ Defect</button>' +
+      '</div>';
+    if (isDef) {
+      var sev = e.sev === 'major' ? 'major' : (e.sev === 'minor' ? 'minor' : '');
+      h += '<div style="margin-top:8px;padding:10px;border:1px solid ' + (sev === 'major' ? '#b91c1c' : '#f59e0b') + ';border-radius:10px;background:' + (sev === 'major' ? '#fef2f2' : '#fffbeb') + '">' +
+        '<div style="display:flex;gap:8px;margin-bottom:8px">' +
+        '<button type="button" class="btn small ' + (sev === 'minor' ? 'primary' : 'ghost') + '" data-pti-sev="minor:' + it.id + '" style="flex:1">Minor</button>' +
+        '<button type="button" class="btn small ' + (sev === 'major' ? 'primary' : 'ghost') + '" data-pti-sev="major:' + it.id + '" style="flex:1;' + (sev === 'major' ? 'background:#b91c1c;border-color:#b91c1c' : '') + '">⛔ Major</button></div>' +
+        (it.minor ? '<div class="note" style="margin:0 0 2px"><b>Minor:</b> ' + esc(it.minor) + '</div>' : '') +
+        (it.major ? '<div class="note" style="margin:0 0 6px"><b>Major:</b> ' + esc(it.major) + '</div>' : '') +
+        '<label class="f">What did you find? (required)</label>' +
+        '<textarea id="pti_note_' + it.id + '" placeholder="Describe the defect…" rows="2">' + esc(e.note || '') + '</textarea>' +
+        '<label class="f">📷 Photo of the defect (optional)</label>' +
+        '<input type="file" id="pti_ph_' + it.id + '" accept="image/*" capture="environment">' +
+        (e.photo ? '<img src="' + e.photo + '" style="width:100%;border-radius:8px;margin-top:6px">' +
+          '<button type="button" class="btn small ghost" data-pti-phdel="' + it.id + '">Remove photo</button>' : '') +
+        '</div>';
+    }
+    return h + '</div>';
+  }
+
+  function renderForm(body) {
+    var prof = profile();
+    var d = draft();
+    var reps = reports();
+    var today = todayStr();
+    var filedToday = null;
+    reps.forEach(function (r) { if (r.date === today && !filedToday) filedToday = r; });
+    var n = checkedCount(d.items);
+
+    var h = '';
+    if (filedToday) {
+      h += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><h3 style="margin-top:0">✅ Today’s inspection is filed</h3>' +
+        '<div class="kv"><span>' + esc(filedToday.date) + ' · ' + esc(fmtWhen(filedToday.filedAt)) + '</span><b>' + (filedToday.odometer ? Number(filedToday.odometer).toLocaleString('en-CA') + ' km' : '') + '</b></div>' +
+        '<div style="margin:6px 0">' + resultBadge(filedToday) + '</div>' +
+        '<button type="button" class="btn small navy" id="pti_view_today">View today’s report</button>' +
+        '<p class="note">The form below starts a NEW inspection.</p></div>';
+    }
+
+    h += '<div class="card"><h3 style="margin-top:0">🚛 Inspection — Schedule 1</h3>' +
+      '<label class="f">Carrier</label><input id="pti_carrier" value="' + esc(dVal(d, prof, 'carrier')) + '">' +
+      '<label class="f">Carrier address</label><input id="pti_caddr" value="' + esc(dVal(d, prof, 'carrierAddr')) + '">' +
+      '<div class="row"><div><label class="f">Truck unit #</label><input id="pti_unit" value="' + esc(dVal(d, prof, 'unit')) + '"></div>' +
+      '<div><label class="f">Licence plate</label><input id="pti_plate" value="' + esc(dVal(d, prof, 'plate')) + '" placeholder="If on file"></div></div>' +
+      '<div class="kv"><span>Date & time</span><b>' + esc(new Date().toLocaleString('en-CA')) + '</b></div>' +
+      '<label class="f">Location</label><input id="pti_loc" value="' + esc(d.loc || '') + '" placeholder="Where are you inspecting?">' +
+      '<div style="margin-top:6px"><button type="button" class="btn small ghost" id="pti_gps">📍 Use my location</button> <span class="note" id="pti_gps_note">' +
+      (typeof d.lat === 'number' ? 'GPS: ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5) : '') + '</span></div>' +
+      '</div>';
+
+    /* The odometer door — the shared pipeline's element contract
+       (prefix pti_odo: the field, _cam/_pick buttons, _cam_in/_in
+       file inputs, _prev preview, _status line). */
+    h += '<div class="card"><h3 style="margin-top:0">📸 Odometer</h3>' +
+      '<label class="f" for="pti_odo">Odometer (km)</label>' +
+      '<input id="pti_odo" type="number" inputmode="numeric" min="0" placeholder="Snap the dash — it fills itself" value="' + esc(d.odo || '') + '">' +
+      '<input type="file" id="pti_odo_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+      '<input type="file" id="pti_odo_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+      '<div class="row" style="margin-top:8px"><button type="button" class="btn secondary" id="pti_odo_cam" style="flex:1;">📷 Snap the dash</button>' +
+      '<button type="button" class="btn secondary" id="pti_odo_pick" style="flex:1;">📁 Choose file</button></div>' +
+      '<div id="pti_odo_prev"></div><div id="pti_odo_status" class="note" style="margin-top:6px"></div>' +
+      '<p class="note">The read takes seconds — keep inspecting while it lands; nothing is saved until you sign &amp; file below. Filing makes this reading the day’s start odometer and updates the truck’s odometer everywhere (service reminders included).</p></div>';
+
+    h += '<div class="card"><h3 style="margin-top:0">📋 Schedule 1 checklist</h3>' +
+      '<button type="button" class="btn primary" id="pti_allok" style="width:100%;margin-bottom:6px">✓ No defects found — mark everything OK</button>' +
+      '<p class="note" id="pti_prog">' + n + ' of ' + SCHED1.length + ' checked</p>' +
+      SCHED1.map(function (it) { return itemRowHtml(it, d.items[it.id]); }).join('') +
+      '</div>';
+
+    h += '<div class="card"><h3 style="margin-top:0">✍️ Sign &amp; file</h3>' +
+      '<div style="border:1px solid #d7dce6;border-radius:10px;padding:10px;background:#f8fafc;font-size:14px">' + esc(ATTESTATION) + '</div>' +
+      '<label class="f">Your printed name</label><input id="pti_driver" value="' + esc(dVal(d, prof, 'driverName')) + '">' +
+      (formErr ? '<div id="pti_err" style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ ' + esc(formErr) + '</div>' : '<div id="pti_err"></div>') +
+      '<button type="button" class="btn primary" id="pti_file" style="width:100%">✍️ Sign &amp; file inspection</button>' +
+      '<p class="note">Filed with the real time you tap — an inspection is never backdated. A copy reaches your connected boss/dispatcher by itself.</p></div>';
+
+    h += historyHtml(reps);
+    body.innerHTML = h;
+    wireForm(body);
+  }
+
+  function historyHtml(reps) {
+    var list = reps.slice().sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+    var h = '<div class="card"><h3 style="margin-top:0">📁 Past inspections</h3>';
+    if (!list.length) return h + '<div class="empty">No inspections filed yet.</div></div>';
+    h += list.slice(0, 30).map(function (r) {
+      return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
+        '<div class="a">' + esc(r.date) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
+        '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
+        (r.defects && r.defects.length ? '<br>' + r.defects.map(function (df) { return esc((df.severity === 'major' ? '⛔ ' : '') + df.item + ': ' + df.note); }).join('<br>') : '') +
+        '</div></div>';
+    }).join('');
+    if (list.length > 30) h += '<p class="note">Showing the newest 30 of ' + list.length + '.</p>';
+    return h + '</div>';
+  }
+
+  function wireForm(body) {
+    var d = draft();
+    function bindText(id, key) {
+      var elx = body.querySelector('#' + id);
+      if (!elx) return;
+      elx.addEventListener('input', function () { var dd = draft(); dd[key] = elx.value; saveDraft(dd); });
+    }
+    bindText('pti_carrier', 'carrier'); bindText('pti_caddr', 'carrierAddr');
+    bindText('pti_unit', 'unit'); bindText('pti_plate', 'plate');
+    bindText('pti_loc', 'loc'); bindText('pti_driver', 'driverName');
+    var odoEl = body.querySelector('#pti_odo');
+    if (odoEl) odoEl.addEventListener('input', function () { var dd = draft(); dd.odo = odoEl.value; saveDraft(dd); });
+
+    /* The dash photo — the shared fast pipeline (v142 race:
+       cloud starts at capture, ~20 s ceiling). Fill-only into the
+       form (the persist records the pipeline-confirmed value on
+       the DRAFT, never the master); Sign & file is the confirm. */
+    try {
+      if (App._wirePhotoOCR) {
+        App._wirePhotoOCR('pti_odo', 'odometer', function (kind, v) {
+          var dd = draft(); dd.odo = String(v); saveDraft(dd);
+        }, { origin: { module: 'pti', label: 'Pre-Trip Inspection' } });
+      }
+    } catch (e) {}
+
+    var gpsBtn = body.querySelector('#pti_gps');
+    if (gpsBtn) gpsBtn.onclick = function () {
+      var note = body.querySelector('#pti_gps_note');
+      if (!window.MeticulousGeo || !MeticulousGeo.getCurrent) { if (note) note.textContent = 'Location isn’t available on this device — type it above.'; return; }
+      if (note) note.textContent = 'Finding you…';
+      MeticulousGeo.getCurrent(10000).then(function (fix) {
+        if (!fix) { if (note) note.textContent = 'Couldn’t get a fix — type the location above.'; return; }
+        var dd = draft(); dd.lat = fix.latitude; dd.lng = fix.longitude;
+        if (!String(dd.loc || '').trim()) {
+          dd.loc = 'GPS ' + Number(fix.latitude).toFixed(5) + ', ' + Number(fix.longitude).toFixed(5);
+          var locEl = body.querySelector('#pti_loc'); if (locEl) locEl.value = dd.loc;
+        }
+        saveDraft(dd);
+        if (note) note.textContent = 'GPS: ' + Number(fix.latitude).toFixed(5) + ', ' + Number(fix.longitude).toFixed(5);
+      }).catch(function () { if (note) note.textContent = 'Couldn’t get a fix — type the location above.'; });
+    };
+
+    var vt = body.querySelector('#pti_view_today');
+    if (vt) vt.onclick = function () {
+      var t = todayStr(), reps = reports(), r = null;
+      reps.forEach(function (x) { if (x.date === t && !r) r = x; });
+      if (r) { view = { mode: 'report', id: r.id }; Meticulous.modules.pti.render(body); }
+    };
+
+    var allOk = body.querySelector('#pti_allok');
+    if (allOk) allOk.onclick = function () {
+      var dd = draft();
+      SCHED1.forEach(function (it) { dd.items[it.id] = { r: 'ok' }; });
+      saveDraft(dd); formErr = '';
+      Meticulous.modules.pti.render(body);
+    };
+
+    body.querySelectorAll('[data-pti-ok]').forEach(function (b) {
+      b.onclick = function () {
+        var dd = draft(); dd.items[b.getAttribute('data-pti-ok')] = { r: 'ok' }; saveDraft(dd);
+        Meticulous.modules.pti.render(body);
+      };
+    });
+    body.querySelectorAll('[data-pti-def]').forEach(function (b) {
+      b.onclick = function () {
+        var dd = draft();
+        var id = b.getAttribute('data-pti-def');
+        var cur = dd.items[id] || {};
+        dd.items[id] = { r: 'defect', sev: cur.sev || '', note: cur.note || '', photo: cur.photo || '' };
+        saveDraft(dd);
+        Meticulous.modules.pti.render(body);
+      };
+    });
+    body.querySelectorAll('[data-pti-sev]').forEach(function (b) {
+      b.onclick = function () {
+        var parts = b.getAttribute('data-pti-sev').split(':');
+        var dd = draft();
+        var e = dd.items[parts[1]] || { r: 'defect' };
+        e.r = 'defect'; e.sev = parts[0];
+        dd.items[parts[1]] = e; saveDraft(dd);
+        Meticulous.modules.pti.render(body);
+      };
+    });
+    SCHED1.forEach(function (it) {
+      var ta = body.querySelector('#pti_note_' + it.id);
+      if (ta) ta.addEventListener('input', function () {
+        var dd = draft(); var e = dd.items[it.id] || { r: 'defect' };
+        e.r = 'defect'; e.note = ta.value; dd.items[it.id] = e; saveDraft(dd);
+      });
+      var ph = body.querySelector('#pti_ph_' + it.id);
+      if (ph) ph.onchange = function () {
+        var f = ph.files && ph.files[0];
+        if (!f) return;
+        var keep = function (url) {
+          var dd = draft(); var e = dd.items[it.id] || { r: 'defect' };
+          e.r = 'defect'; e.photo = url; dd.items[it.id] = e; saveDraft(dd);
+          Meticulous.modules.pti.render(body);
+        };
+        var raw = new FileReader();
+        raw.onload = function () {
+          /* share-size rendition when the pipe's downscaler is
+             around (a full-res photo would bloat the record);
+             the raw frame otherwise. */
+          if (window.ConnectPipe && ConnectPipe._rendition) {
+            ConnectPipe._rendition(raw.result).then(function (u) { keep(u || raw.result); });
+          } else keep(raw.result);
+        };
+        raw.readAsDataURL(f);
+      };
+    });
+    body.querySelectorAll('[data-pti-phdel]').forEach(function (b) {
+      b.onclick = function () {
+        var dd = draft(); var e = dd.items[b.getAttribute('data-pti-phdel')];
+        if (e) { e.photo = ''; saveDraft(dd); }
+        Meticulous.modules.pti.render(body);
+      };
+    });
+    body.querySelectorAll('[data-pti-open]').forEach(function (row) {
+      row.onclick = function () { view = { mode: 'report', id: row.getAttribute('data-pti-open') }; Meticulous.modules.pti.render(body); };
+    });
+
+    var fileBtn = body.querySelector('#pti_file');
+    if (fileBtn) fileBtn.onclick = function () { fileInspection(body); };
+  }
+
+  /* Sign & file: validate → build the report at the real now →
+     save → commit the odometer through the ONE master path →
+     publish to connected peers → show the filed report. */
+  function fileInspection(body) {
+    var prof = profile();
+    var d = draft();
+    /* fold the live form into the draft (the field values are the
+       confirm — including a dash reading that landed while he
+       worked the checklist) */
+    function gv(id) { var e = body.querySelector('#' + id); return e ? e.value : null; }
+    var v;
+    if ((v = gv('pti_odo')) !== null) d.odo = v;
+    if ((v = gv('pti_carrier')) !== null) d.carrier = v;
+    if ((v = gv('pti_caddr')) !== null) d.carrierAddr = v;
+    if ((v = gv('pti_unit')) !== null) d.unit = v;
+    if ((v = gv('pti_plate')) !== null) d.plate = v;
+    if ((v = gv('pti_loc')) !== null) d.loc = v;
+    if ((v = gv('pti_driver')) !== null) d.driverName = v;
+    d.driverNameEffective = String((d.driverName !== null && d.driverName !== undefined && String(d.driverName).trim()) ? d.driverName : prof.driverName).trim();
+    saveDraft(d);
+
+    var err = validateDraft(d);
+    if (err) {
+      formErr = err;
+      Meticulous.modules.pti.render(body);
+      return;
+    }
+    formErr = '';
+    var rep = buildReport({
+      items: d.items, odo: d.odo,
+      carrier: d.carrier || '', carrierAddr: d.carrierAddr || '',
+      unit: d.unit || '', plate: d.plate || '',
+      loc: d.loc || '', lat: d.lat, lng: d.lng,
+      driverNameEffective: d.driverNameEffective
+    }, Date.now());
+
+    var reps = reports();
+    reps.push(rep);
+    if (reps.length > 400) reps = reps.slice(reps.length - 400);
+    W('reports', reps);
+    try { if (window.FB && FB.saveDoc) { var c = Object.assign({}, rep); FB.saveDoc('pti', rep.id, c); } } catch (e) {}
+
+    /* THE ODOMETER COMMIT — one write, three effects, all through
+       the app's existing paths: App._bumpOdometer raises the
+       master (mt_odo) and appends the dated odo_readings entry
+       (source 'pti') the manifest reads as the day's start
+       boundary; a running session for today that never got a
+       start reading takes this one as its startOdo. Maintenance
+       reminders and fuel distance read the master live — nothing
+       else to update, and no second odometer store is created. */
+    var odoNote = '';
+    try {
+      if (App._bumpOdometer) {
+        var bump = App._bumpOdometer(rep.odometer, 'pti');
+        if (bump && bump.refused === 'jump') odoNote = ' The reading is far past the truck’s recorded odometer, so the master odometer was left unchanged — check the number if that was real.';
+      }
+      var ss = App._store.get('sessions', []);
+      if (Array.isArray(ss)) {
+        var changed = false, t = todayStr();
+        ss.forEach(function (s) {
+          if (s && s.date === t && !(parseFloat(s.startOdo) > 0)) { s.startOdo = rep.odometer; changed = true; }
+        });
+        if (changed) App._store.set('sessions', ss);
+      }
+    } catch (e) {}
+    lastOdoNote = odoNote;
+
+    W('draft', blankDraft());
+    /* the filed report reaches connected owners/dispatchers with
+       the shared records (the pipe's publish cycle) */
+    try { if (window.ConnectPipe && ConnectPipe.publishRecords) ConnectPipe.publishRecords(); } catch (e) {}
+
+    view = { mode: 'report', id: rep.id, justFiled: true };
+    Meticulous.modules.pti.render(body);
+  }
+
+  /* ---------------- the filed report ---------------- */
+
+  function renderReport(body, id) {
+    var reps = reports(), r = null;
+    reps.forEach(function (x) { if (x.id === id) r = x; });
+    if (!r) { view = { mode: 'form', id: null }; renderForm(body); return; }
+    var h = '';
+    if (view.justFiled) {
+      h += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><b>✅ Filed</b> — ' + esc(fmtWhen(r.filedAt)) +
+        '. Your odometer now reads <b>' + Number(r.odometer).toLocaleString('en-CA') + ' km</b> everywhere in the app.' +
+        (lastOdoNote ? esc(lastOdoNote) : '') + '</div>';
+    }
+    if (r.result === 'major') h += majorBanner();
+    h += '<div class="card"><h3 style="margin-top:0">Daily Vehicle Inspection Report</h3>' +
+      '<div class="kv"><span>Carrier</span><b>' + esc(r.carrier || '—') + '</b></div>' +
+      (r.carrierAddr ? '<div class="kv"><span>Carrier address</span><b>' + esc(r.carrierAddr) + '</b></div>' : '') +
+      '<div class="kv"><span>Date & time</span><b>' + esc(fmtWhen(r.filedAt)) + '</b></div>' +
+      '<div class="kv"><span>Location</span><b>' + esc(r.location || '—') + '</b></div>' +
+      '<div class="kv"><span>Truck unit #</span><b>' + esc(r.unit || '—') + '</b></div>' +
+      '<div class="kv"><span>Licence plate</span><b>' + esc(r.plate || '—') + '</b></div>' +
+      '<div class="kv"><span>Odometer</span><b>' + (r.odometer ? Number(r.odometer).toLocaleString('en-CA') + ' km' : '—') + '</b></div>' +
+      '<div class="kv"><span>Result</span><b>' + resultBadge(r) + '</b></div>' +
+      '<h3>Schedule 1 results</h3>' +
+      SCHED1.map(function (it) {
+        var e = (r.items || {})[it.id];
+        if (e && e.r === 'defect') {
+          return '<div style="padding:8px 0;border-bottom:1px solid #eef1f6">' +
+            '<div><b>' + esc(it.name) + '</b> — ' + (e.sev === 'major'
+              ? '<span style="color:#b91c1c;font-weight:800">⛔ MAJOR DEFECT</span>'
+              : '<span style="color:#92400e;font-weight:700">⚠ Minor defect</span>') + '</div>' +
+            (e.note ? '<div class="note" style="margin:2px 0">' + esc(e.note) + '</div>' : '') +
+            (e.photo ? '<img src="' + e.photo + '" style="width:100%;border-radius:8px;margin-top:4px">' : '') +
+            '</div>';
+        }
+        return '<div class="kv"><span>' + esc(it.name) + '</span><b>✓ OK</b></div>';
+      }).join('') +
+      (r.defects && r.defects.length ? '' : '<p style="margin-top:10px">' + esc(NO_DEFECTS_STATEMENT) + '</p>') +
+      '<div style="border:1px solid #d7dce6;border-radius:10px;padding:10px;background:#f8fafc;font-size:14px;margin-top:12px">' + esc(r.attestation || ATTESTATION) + '</div>' +
+      '<div class="kv" style="margin-top:8px"><span>Signed</span><b>' + esc(r.driverName || '') + ' · ' + esc(fmtWhen(r.filedAt)) + '</b></div>' +
+      '<div class="row" style="margin-top:12px"><button type="button" class="btn navy" id="pti_print" style="flex:1">🖨 Print / PDF</button>' +
+      '<button type="button" class="btn ghost" id="pti_back" style="flex:1">← Back</button></div>' +
+      '<div id="pti_print_note" class="note" style="margin-top:6px"></div>' +
+      '</div>';
+    body.innerHTML = h;
+    var pb = body.querySelector('#pti_print');
+    if (pb) pb.onclick = function () {
+      var note = body.querySelector('#pti_print_note');
+      function say(m) { if (note) note.textContent = m; }
+      if (window.MetPdf && typeof MetPdf.savePdf === 'function') {
+        say('Making your PDF…');
+        MetPdf.savePdf({ title: 'Pre-Trip Inspection — ' + r.date, lines: reportLines(r) }, 'pti-' + r.date + '.pdf').then(
+          function (res) { say(res && res.message ? res.message : 'PDF saved.'); },
+          function () { say('The PDF could not be saved. Try again.'); });
+      } else {
+        say('PDF tools are still loading — close and reopen the app, then try again.');
+      }
+    };
+    var bk = body.querySelector('#pti_back');
+    if (bk) bk.onclick = function () { view = { mode: 'form', id: null, justFiled: false }; Meticulous.modules.pti.render(body); };
+  }
+
+  /* ---------------- the module ---------------- */
+
+  Meticulous.modules.pti = {
+    status: function () {
+      var t = todayStr(), reps = reports(), filed = null;
+      reps.forEach(function (r) { if (r.date === t && !filed) filed = r; });
+      if (!filed) return 'Today: not filed yet';
+      if (filed.result === 'major') return 'Today: 🚨 MAJOR DEFECT';
+      if (filed.result === 'minor') return 'Today: filed · minor defect';
+      return 'Today: filed ✓ no defects';
+    },
+    resetView: function () { view = { mode: 'form', id: null, justFiled: false }; },
+    render: function (body) {
+      if (view.mode === 'report' && view.id) renderReport(body, view.id);
+      else renderForm(body);
+    },
+    /* test hooks (the pnl _calc convention) */
+    _sched1: SCHED1,
+    _attestation: ATTESTATION,
+    _validate: validateDraft,
+    _buildReport: buildReport,
+    _reportLines: reportLines,
+    _resultOf: resultOf,
+    _defectsOf: defectsOf
+  };
+})();
