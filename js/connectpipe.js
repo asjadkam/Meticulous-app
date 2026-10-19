@@ -970,6 +970,8 @@
         return {
           date: r.date || '',
           filedAt: parseFloat(r.filedAt) || 0,
+          kind: r.kind === 'post' ? 'post' : 'pre',
+          signed: !!r.signed,
           unit: String(r.unit || ''),
           plate: String(r.plate || ''),
           odometer: parseFloat(r.odometer) || 0,

@@ -102,8 +102,19 @@
     };
   }
   function blankDraft() {
-    return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null };
+    return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null, kind: 'pre' };
   }
+  /* v165: an inspection is a PRE-TRIP or a POST-TRIP (owner,
+     Oct 18, 2026 21:48 MDT) — the choice lives in the form,
+     defaults to Pre-trip, and rides the filed report. */
+  function kindOf(r) { return (r && r.kind === 'post') ? 'post' : 'pre'; }
+  function kindLabel(r) { return kindOf(r) === 'post' ? 'Post-trip' : 'Pre-trip'; }
+  /* v165: a report is SIGNED when the driver attested it. Filing
+     through Sign & file signs by construction (the attestation
+     tap IS the signature); reports that predate the field (or
+     arrive unsigned) stay unsigned until the driver signs them —
+     the dashboard badge counts them and the module keeps asking. */
+  function isSigned(r) { return !!(r && r.signed); }
   function draft() {
     var d = S('draft', null);
     if (!d || typeof d !== 'object') d = blankDraft();
@@ -179,6 +190,9 @@
     return {
       id: 'pti' + ts,
       schedule: 'Schedule 1',
+      kind: (d.kind === 'post') ? 'post' : 'pre',
+      /* filed through the attestation tap = signed at filing */
+      signed: true, signedAt: ts, signedName: String(d.driverNameEffective || ''),
       filedAt: ts,
       date: date,
       carrier: String(d.carrier || ''), carrierAddr: String(d.carrierAddr || ''),
@@ -203,7 +217,7 @@
      the no-defects statement), and the signed attestation. */
   function reportLines(r) {
     var lines = [];
-    lines.push({ k: 'title', a: 'DAILY VEHICLE INSPECTION REPORT — SCHEDULE 1 (TRUCK / TRACTOR)' });
+    lines.push({ k: 'title', a: 'DAILY VEHICLE INSPECTION REPORT — SCHEDULE 1 (TRUCK / TRACTOR) · ' + (kindOf(r) === 'post' ? 'POST-TRIP' : 'PRE-TRIP') });
     lines.push({ k: 'note', a: 'National Safety Code Standard 13 · Schedule 1 daily inspection' });
     lines.push({ k: 'rule' });
     lines.push({ k: 'kv', a: 'Carrier', b: r.carrier || '—' });
@@ -239,14 +253,107 @@
     }
     lines.push({ k: 'rule' });
     lines.push({ k: 'note', a: r.attestation || ATTESTATION });
-    lines.push({ k: 'kv', a: 'Signed', b: (r.driverName || '') + ' · ' + new Date(r.filedAt).toLocaleString('en-CA') });
+    lines.push({ k: 'kv', a: 'Signed', b: isSigned(r)
+      ? (r.signedName || r.driverName || '') + ' · ' + new Date(r.signedAt || r.filedAt).toLocaleString('en-CA')
+      : 'NOT SIGNED' });
     return lines;
   }
 
   /* ---------------- view state ---------------- */
-  var view = { mode: 'form', id: null };   // 'form' | 'report'
+  var view = { mode: 'form', id: null };   // 'form' | 'report' | 'dot'
   var formErr = '';
+  var dotErr = '';
   var lastOdoNote = '';   // the filing moment's odometer-commit note (confirmation line only, never stored on the report)
+
+  /* ---------------- v165: DOT INSPECTION MODE ----------------
+     The officer-facing locked view (owner, Oct 18, 2026 21:48
+     MDT; the model is the Motive roadside view from his own
+     screenshots): hand the phone over and the officer sees the
+     filed PTIs from the LAST 14 DAYS ONLY — nothing else. The
+     state persists in the store (pti_dot) so a repaint or a
+     restart cannot slip out of it, and the SHELL honors it:
+     App.openModule / App.showDashboard route everything back
+     here while it is active. Leaving takes the driver's PIN
+     (set the first time he enters); the hash is a screen lock,
+     not a vault — a light FNV-1a, never the PIN itself. */
+  function dotState() {
+    var s = S('dot', null);
+    return (s && typeof s === 'object') ? s : { active: false, pinHash: '' };
+  }
+  function dotActive() { return !!dotState().active; }
+  function pinHash(pin) {
+    var h = 0x811c9dc5;
+    var s = 'pti-dot:' + String(pin || '');
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
+    return 'h' + h.toString(16);
+  }
+  /* The officer's window: filed reports from the last 14 days
+     (today + the 13 before), newest first. */
+  function dotReports() {
+    var cut = Date.now() - 13 * 86400000;
+    var startDay = new Date(cut);
+    startDay = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate()).getTime();
+    return reports()
+      .filter(function (r) { return (r.filedAt || 0) >= startDay; })
+      .sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+  }
+  /* Compliance counts for the dashboard badge: unsigned reports,
+     and days in the last 14 (before today) with no PRE-trip on
+     file — an inspection regime is judged on its pre-trips. */
+  function compliance() {
+    var reps = reports();
+    var unsigned = reps.filter(function (r) { return !isSigned(r); }).length;
+    if (!reps.length) return { unsigned: 0, gaps: 0 };
+    var preDays = {}, firstDate = null;
+    reps.forEach(function (r) {
+      if (kindOf(r) === 'pre' && r.date) preDays[r.date] = true;
+      if (r.date && (!firstDate || r.date < firstDate)) firstDate = r.date;
+    });
+    /* gap days count only back to his FIRST filing — days before
+       he ever filed (or before the app) aren't held against him */
+    var gaps = 0;
+    for (var i = 1; i <= 14; i++) {
+      var d = new Date(Date.now() - i * 86400000);
+      var ds = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      if (firstDate && ds < firstDate) continue;
+      if (!preDays[ds]) gaps++;
+    }
+    return { unsigned: unsigned, gaps: gaps };
+  }
+
+  function renderDot(body) {
+    var list = dotReports();
+    var h = '<div class="card" style="border:2px solid var(--navy)"><h3 style="margin-top:0">🛂 Vehicle Inspection Reports</h3>' +
+      '<p class="note" style="margin-top:0">For the inspecting officer: this driver’s filed pre-trip and post-trip inspections from the last 14 days. Tap a report to view it in full.</p>' +
+      (list.length ? list.map(function (r) {
+        return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
+          '<div class="a">' + esc(r.date) + ' · ' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
+          '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
+          (isSigned(r) ? '' : ' · <b style="color:#b91c1c">Not signed</b>') + '</div></div>';
+      }).join('') : '<div class="empty">No inspections filed in the last 14 days.</div>') +
+      '</div>';
+    h += '<div class="card"><h3 style="margin-top:0">🔒 Driver only</h3>' +
+      '<label class="f">Your PIN</label>' +
+      '<input id="pti_dot_pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">' +
+      (dotErr ? '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ ' + esc(dotErr) + '</div>' : '') +
+      '<button type="button" class="btn primary" id="pti_dot_exit" style="width:100%">Unlock &amp; exit Inspection Mode</button>' +
+      '<p class="note">The rest of the app stays locked until the driver unlocks it.</p></div>';
+    body.innerHTML = h;
+    body.querySelectorAll('[data-pti-open]').forEach(function (row) {
+      row.onclick = function () { view = { mode: 'report', id: row.getAttribute('data-pti-open'), fromDot: true }; Meticulous.modules.pti.render(body); };
+    });
+    var ex = body.querySelector('#pti_dot_exit');
+    if (ex) ex.onclick = function () {
+      var pinEl = body.querySelector('#pti_dot_pin');
+      var pin = pinEl ? String(pinEl.value || '') : '';
+      var st = dotState();
+      if (!pin || pinHash(pin) !== st.pinHash) { dotErr = 'That PIN doesn’t match — the app stays locked.'; renderDot(body); return; }
+      dotErr = '';
+      st.active = false; W('dot', st);
+      view = { mode: 'form', id: null };
+      Meticulous.modules.pti.render(body);
+    };
+  }
 
   function todayStr() {
     try { return App._today(); } catch (e) {}
@@ -303,20 +410,37 @@
     var d = draft();
     var reps = reports();
     var today = todayStr();
-    var filedToday = null;
-    reps.forEach(function (r) { if (r.date === today && !filedToday) filedToday = r; });
+    var todays = reps.filter(function (r) { return r.date === today; })
+      .sort(function (a, b) { return (a.filedAt || 0) - (b.filedAt || 0); });
     var n = checkedCount(d.items);
+    var comp = compliance();
 
     var h = '';
-    if (filedToday) {
-      h += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><h3 style="margin-top:0">✅ Today’s inspection is filed</h3>' +
-        '<div class="kv"><span>' + esc(filedToday.date) + ' · ' + esc(fmtWhen(filedToday.filedAt)) + '</span><b>' + (filedToday.odometer ? Number(filedToday.odometer).toLocaleString('en-CA') + ' km' : '') + '</b></div>' +
-        '<div style="margin:6px 0">' + resultBadge(filedToday) + '</div>' +
-        '<button type="button" class="btn small navy" id="pti_view_today">View today’s report</button>' +
+    /* v165: unsigned reports keep asking to be signed until they
+       are — the prompt lives here AND on the dashboard badge. */
+    var unsignedReps = reps.filter(function (r) { return !isSigned(r); });
+    if (unsignedReps.length) {
+      h += '<div class="card" style="border:2px solid #f59e0b;background:#fffbeb"><h3 style="margin-top:0">✍️ ' +
+        unsignedReps.length + ' inspection' + (unsignedReps.length === 1 ? ' is' : 's are') + ' not signed yet</h3>' +
+        unsignedReps.slice(0, 5).map(function (r) {
+          return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer"><div class="a">' +
+            esc(r.date) + ' · ' + esc(kindLabel(r)) + '</div><div class="b">Tap to open and sign it.</div></div>';
+        }).join('') + '</div>';
+    }
+    if (todays.length) {
+      h += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><h3 style="margin-top:0">✅ Today’s inspection' + (todays.length === 1 ? ' is' : 's are') + ' filed</h3>' +
+        todays.map(function (r) {
+          return '<div class="kv"><span>' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + '</span><b>' + (r.odometer ? Number(r.odometer).toLocaleString('en-CA') + ' km' : '') + '</b></div>' +
+            '<div style="margin:6px 0">' + resultBadge(r) + (isSigned(r) ? '' : ' <b style="color:#b91c1c">· Not signed</b>') + '</div>';
+        }).join('') +
+        '<button type="button" class="btn small navy" id="pti_view_today">View the latest report</button>' +
         '<p class="note">The form below starts a NEW inspection.</p></div>';
     }
 
     h += '<div class="card"><h3 style="margin-top:0">🚛 Inspection — Schedule 1</h3>' +
+      '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+      '<button type="button" class="btn ' + (kindOf(d) !== 'post' ? 'primary' : 'ghost') + '" data-pti-kind="pre" style="flex:1">🌅 Pre-trip</button>' +
+      '<button type="button" class="btn ' + (kindOf(d) === 'post' ? 'primary' : 'ghost') + '" data-pti-kind="post" style="flex:1">🌇 Post-trip</button></div>' +
       '<label class="f">Carrier</label><input id="pti_carrier" value="' + esc(dVal(d, prof, 'carrier')) + '">' +
       '<label class="f">Carrier address</label><input id="pti_caddr" value="' + esc(dVal(d, prof, 'carrierAddr')) + '">' +
       '<div class="row"><div><label class="f">Truck unit #</label><input id="pti_unit" value="' + esc(dVal(d, prof, 'unit')) + '"></div>' +
@@ -353,6 +477,22 @@
       '<button type="button" class="btn primary" id="pti_file" style="width:100%">✍️ Sign &amp; file inspection</button>' +
       '<p class="note">Filed with the real time you tap — an inspection is never backdated. A copy reaches your connected boss/dispatcher by itself.</p></div>';
 
+    /* v165: the DOT Inspection Mode door — the officer gets the
+       last 14 days and nothing else; the driver gets back in
+       with his PIN. First entry sets the PIN. */
+    var dot = dotState();
+    h += '<div class="card"><h3 style="margin-top:0">🛂 DOT Inspection Mode</h3>' +
+      '<p class="note" style="margin-top:0">Hand the phone to an officer: they see only your filed inspections from the last 14 days. The rest of the app stays locked until you unlock it with your PIN.</p>' +
+      (dot.pinHash
+        ? '<button type="button" class="btn navy" id="pti_dot_enter" style="width:100%">🛂 Enter Inspection Mode</button>'
+        : '<label class="f">Choose a PIN (4+ numbers) — you’ll need it to get back in</label>' +
+          '<input id="pti_dot_newpin" type="password" inputmode="numeric" autocomplete="off" placeholder="New PIN">' +
+          '<input id="pti_dot_newpin2" type="password" inputmode="numeric" autocomplete="off" placeholder="Same PIN again" style="margin-top:6px">' +
+          '<div id="pti_dot_seterr"></div>' +
+          '<button type="button" class="btn navy" id="pti_dot_set" style="width:100%;margin-top:8px">Set PIN &amp; enter Inspection Mode</button>') +
+      (comp.gaps ? '<p class="note" style="margin-top:8px">⚠️ ' + comp.gaps + ' day' + (comp.gaps === 1 ? '' : 's') + ' in the last 14 had no pre-trip inspection on file.</p>' : '') +
+      '</div>';
+
     h += historyHtml(reps);
     body.innerHTML = h;
     wireForm(body);
@@ -364,8 +504,9 @@
     if (!list.length) return h + '<div class="empty">No inspections filed yet.</div></div>';
     h += list.slice(0, 30).map(function (r) {
       return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
-        '<div class="a">' + esc(r.date) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
+        '<div class="a">' + esc(r.date) + ' · ' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
         '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
+        (isSigned(r) ? '' : ' <b style="color:#b91c1c">· Not signed — tap to sign</b>') +
         (r.defects && r.defects.length ? '<br>' + r.defects.map(function (df) { return esc((df.severity === 'major' ? '⛔ ' : '') + df.item + ': ' + df.note); }).join('<br>') : '') +
         '</div></div>';
     }).join('');
@@ -418,8 +559,36 @@
     var vt = body.querySelector('#pti_view_today');
     if (vt) vt.onclick = function () {
       var t = todayStr(), reps = reports(), r = null;
-      reps.forEach(function (x) { if (x.date === t && !r) r = x; });
+      reps.forEach(function (x) { if (x.date === t && (!r || (x.filedAt || 0) > (r.filedAt || 0))) r = x; });
       if (r) { view = { mode: 'report', id: r.id }; Meticulous.modules.pti.render(body); }
+    };
+
+    /* v165: Pre-trip / Post-trip choice (default Pre-trip) */
+    body.querySelectorAll('[data-pti-kind]').forEach(function (b) {
+      b.onclick = function () {
+        var dd = draft(); dd.kind = b.getAttribute('data-pti-kind') === 'post' ? 'post' : 'pre'; saveDraft(dd);
+        Meticulous.modules.pti.render(body);
+      };
+    });
+
+    /* v165: DOT Inspection Mode doors */
+    var dotEnter = body.querySelector('#pti_dot_enter');
+    if (dotEnter) dotEnter.onclick = function () {
+      var st = dotState(); st.active = true; W('dot', st); dotErr = '';
+      view = { mode: 'dot', id: null };
+      Meticulous.modules.pti.render(body);
+    };
+    var dotSet = body.querySelector('#pti_dot_set');
+    if (dotSet) dotSet.onclick = function () {
+      var p1 = body.querySelector('#pti_dot_newpin'), p2 = body.querySelector('#pti_dot_newpin2');
+      var e1 = body.querySelector('#pti_dot_seterr');
+      var a = p1 ? String(p1.value || '') : '', b2 = p2 ? String(p2.value || '') : '';
+      function bad(m) { if (e1) e1.innerHTML = '<div style="color:#c2410c;font-weight:600;margin-top:6px">⚠️ ' + m + '</div>'; }
+      if (!/^\d{4,}$/.test(a)) { bad('The PIN needs at least 4 numbers.'); return; }
+      if (a !== b2) { bad('The two PINs don’t match — try again.'); return; }
+      W('dot', { active: true, pinHash: pinHash(a) });
+      dotErr = ''; view = { mode: 'dot', id: null };
+      Meticulous.modules.pti.render(body);
     };
 
     var allOk = body.querySelector('#pti_allok');
@@ -527,7 +696,7 @@
     }
     formErr = '';
     var rep = buildReport({
-      items: d.items, odo: d.odo,
+      items: d.items, odo: d.odo, kind: d.kind,
       carrier: d.carrier || '', carrierAddr: d.carrierAddr || '',
       unit: d.unit || '', plate: d.plate || '',
       loc: d.loc || '', lat: d.lat, lng: d.lng,
@@ -587,7 +756,7 @@
         (lastOdoNote ? esc(lastOdoNote) : '') + '</div>';
     }
     if (r.result === 'major') h += majorBanner();
-    h += '<div class="card"><h3 style="margin-top:0">Daily Vehicle Inspection Report</h3>' +
+    h += '<div class="card"><h3 style="margin-top:0">Daily Vehicle Inspection Report — ' + esc(kindLabel(r)) + '</h3>' +
       '<div class="kv"><span>Carrier</span><b>' + esc(r.carrier || '—') + '</b></div>' +
       (r.carrierAddr ? '<div class="kv"><span>Carrier address</span><b>' + esc(r.carrierAddr) + '</b></div>' : '') +
       '<div class="kv"><span>Date & time</span><b>' + esc(fmtWhen(r.filedAt)) + '</b></div>' +
@@ -612,12 +781,42 @@
       }).join('') +
       (r.defects && r.defects.length ? '' : '<p style="margin-top:10px">' + esc(NO_DEFECTS_STATEMENT) + '</p>') +
       '<div style="border:1px solid #d7dce6;border-radius:10px;padding:10px;background:#f8fafc;font-size:14px;margin-top:12px">' + esc(r.attestation || ATTESTATION) + '</div>' +
-      '<div class="kv" style="margin-top:8px"><span>Signed</span><b>' + esc(r.driverName || '') + ' · ' + esc(fmtWhen(r.filedAt)) + '</b></div>' +
+      (isSigned(r)
+        ? '<div class="kv" style="margin-top:8px"><span>Signed</span><b>' + esc(r.signedName || r.driverName || '') + ' · ' + esc(fmtWhen(r.signedAt || r.filedAt)) + '</b></div>'
+        : '<div class="kv" style="margin-top:8px"><span>Signed</span><b style="color:#b91c1c">NOT SIGNED</b></div>') +
       '<div class="row" style="margin-top:12px"><button type="button" class="btn navy" id="pti_print" style="flex:1">🖨 Print / PDF</button>' +
       '<button type="button" class="btn ghost" id="pti_back" style="flex:1">← Back</button></div>' +
       '<div id="pti_print_note" class="note" style="margin-top:6px"></div>' +
       '</div>';
+    /* v165: an unsigned report carries its sign card — the
+       attestation + printed name, signed with the REAL time. */
+    if (!isSigned(r) && !view.fromDot) {
+      h += '<div class="card" style="border:2px solid #f59e0b;background:#fffbeb"><h3 style="margin-top:0">✍️ Sign this inspection</h3>' +
+        '<label class="f">Your printed name</label><input id="pti_sign_name" value="' + esc(r.driverName || profile().driverName || '') + '">' +
+        '<div id="pti_sign_err"></div>' +
+        '<button type="button" class="btn primary" id="pti_sign" style="width:100%;margin-top:8px">✍️ Sign inspection</button>' +
+        '<p class="note">Signing stamps the real time — it can’t be backdated.</p></div>';
+    }
     body.innerHTML = h;
+    var signBtn = body.querySelector('#pti_sign');
+    if (signBtn) signBtn.onclick = function () {
+      var nmEl = body.querySelector('#pti_sign_name');
+      var nm = nmEl ? String(nmEl.value || '').trim() : '';
+      var eEl = body.querySelector('#pti_sign_err');
+      if (!nm) { if (eEl) eEl.innerHTML = '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ Your printed name is needed to sign.</div>'; return; }
+      var reps2 = reports();
+      for (var i = 0; i < reps2.length; i++) {
+        if (reps2[i].id === r.id) {
+          reps2[i].signed = true; reps2[i].signedAt = Date.now(); reps2[i].signedName = nm;
+          if (!reps2[i].driverName) reps2[i].driverName = nm;
+          r = reps2[i];
+        }
+      }
+      W('reports', reps2);
+      try { if (window.FB && FB.saveDoc) FB.saveDoc('pti', r.id, Object.assign({}, r)); } catch (e) {}
+      try { if (window.ConnectPipe && ConnectPipe.publishRecords) ConnectPipe.publishRecords(); } catch (e) {}
+      Meticulous.modules.pti.render(body);
+    };
     var pb = body.querySelector('#pti_print');
     if (pb) pb.onclick = function () {
       var note = body.querySelector('#pti_print_note');
@@ -632,24 +831,51 @@
       }
     };
     var bk = body.querySelector('#pti_back');
-    if (bk) bk.onclick = function () { view = { mode: 'form', id: null, justFiled: false }; Meticulous.modules.pti.render(body); };
+    if (bk) bk.onclick = function () {
+      /* in Inspection Mode, Back returns to the officer's list —
+         never to the driver's form */
+      view = view.fromDot ? { mode: 'dot', id: null } : { mode: 'form', id: null, justFiled: false };
+      Meticulous.modules.pti.render(body);
+    };
   }
 
   /* ---------------- the module ---------------- */
 
+  var lastBody = null;
   Meticulous.modules.pti = {
+    /* v165: the dashboard card is the compliance badge — today's
+       state, then what is owed: unsigned inspections and days in
+       the last 14 with no pre-trip on file. */
     status: function () {
       var t = todayStr(), reps = reports(), filed = null;
-      reps.forEach(function (r) { if (r.date === t && !filed) filed = r; });
-      if (!filed) return 'Today: not filed yet';
-      if (filed.result === 'major') return 'Today: 🚨 MAJOR DEFECT';
-      if (filed.result === 'minor') return 'Today: filed · minor defect';
-      return 'Today: filed ✓ no defects';
+      reps.forEach(function (r) { if (r.date === t && kindOf(r) === 'pre' && !filed) filed = r; });
+      var base;
+      if (!filed) base = 'Today: not filed yet';
+      else if (filed.result === 'major') base = 'Today: 🚨 MAJOR DEFECT';
+      else if (filed.result === 'minor') base = 'Today: filed · minor defect';
+      else base = 'Today: filed ✓ no defects';
+      var c = compliance();
+      var extra = [];
+      if (c.unsigned) extra.push('⚠ ' + c.unsigned + ' unsigned');
+      if (c.gaps) extra.push(c.gaps + ' day' + (c.gaps === 1 ? '' : 's') + ' without a pre-trip (14d)');
+      return extra.length ? base + ' · ' + extra.join(' · ') : base;
     },
     resetView: function () { view = { mode: 'form', id: null, justFiled: false }; },
+    back: function () {
+      if (view.mode === 'report' && view.id) {
+        view = view.fromDot ? { mode: 'dot', id: null } : { mode: 'form', id: null, justFiled: false };
+        if (lastBody) Meticulous.modules.pti.render(lastBody);
+        return true;
+      }
+      return false;
+    },
     render: function (body) {
-      if (view.mode === 'report' && view.id) renderReport(body, view.id);
-      else renderForm(body);
+      lastBody = body;
+      if (view.mode === 'report' && view.id) { renderReport(body, view.id); return; }
+      /* Inspection Mode outranks every other view — while it is
+         active the module can only ever paint the officer's list */
+      if (dotActive()) { renderDot(body); return; }
+      renderForm(body);
     },
     /* test hooks (the pnl _calc convention) */
     _sched1: SCHED1,
@@ -658,6 +884,12 @@
     _buildReport: buildReport,
     _reportLines: reportLines,
     _resultOf: resultOf,
-    _defectsOf: defectsOf
+    _defectsOf: defectsOf,
+    _kindOf: kindOf,
+    _isSigned: isSigned,
+    _dotReports: dotReports,
+    _dotActive: dotActive,
+    _pinHash: pinHash,
+    _compliance: compliance
   };
 })();

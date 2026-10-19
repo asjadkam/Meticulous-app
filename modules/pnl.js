@@ -337,7 +337,7 @@
        repaired, and the boss has to know the moment he looks. */
     var ptiList = (rec.pti || []).filter(Boolean);
     if (ptiList.length) {
-      h += '<div style="margin:8px 0 2px;font-weight:700">🔍 His pre-trip inspections</div>';
+      h += '<div style="margin:8px 0 2px;font-weight:700">🔍 His PTIs</div>';
       ptiList.slice(0, 5).forEach(function (r) {
         var isMajor = r.result === 'major';
         h += '<div class="kv"><span style="padding-left:14px">' + esc(r.date) +

@@ -2701,6 +2701,16 @@
           doneMsg = 'Dispatch completed' + (revEntry ? ' — $' + revEntry.amount + ' logged to Revenue' : '') + '. ' + plan.disclosure;
         }
         if (shiftClosed) doneMsg += ' Your shift was closed with it — the tracker is stopped.';
+        /* v165: closing a day asks for the day's PTI until one is
+           on file (owner, Oct 18, 2026 21:48 MDT) — one plain
+           line in the close confirmation, never a block: the
+           close itself always stands. */
+        try {
+          var ptiReps = App._store.get('pti_reports', []);
+          var closeDate = dspRecordDate(cur);
+          var hasPti = Array.isArray(ptiReps) && ptiReps.some(function (r) { return r && r.date === closeDate; });
+          if (!hasPti) doneMsg += ' No PTI filed for ' + closeDate + ' yet — open PTI to file it.';
+        } catch (e) {}
         /* v132: the closed day flows UP the pipe to his connected
            peers by itself — facts only (ConnectPipe.buildDay holds
            no rates and no money; the boss prices the same record

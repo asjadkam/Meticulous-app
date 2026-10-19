@@ -287,7 +287,7 @@
     fuel:       { title: 'Fuel & Expense',    icon: '⛽', tier: 'basic' },
     pnl:        { title: 'P&L',               icon: '📈', tier: 'basic' },
     maintenance:{ title: 'Maintenance',       icon: '🔧', tier: 'basic' },
-    pti:        { title: 'Pre-Trip Inspection', icon: '🔍', tier: 'basic' },
+    pti:        { title: 'PTI', icon: '🔍', tier: 'basic' },
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
@@ -525,7 +525,7 @@
     ['fuel', '⛽', 'Fuel & Expense'],
     ['pnl', '📈', 'P&L'],
     ['maintenance', '🔧', 'Maintenance'],
-    ['pti', '🔍', 'Pre-Trip Inspection'],
+    ['pti', '🔍', 'PTI'],
     ['damage', '📸', 'Damage & Incident'],
     ['manifest', '📝', 'Manifest / Daily Log'],
     ['invoice', '🧾', 'Invoice'],
@@ -581,7 +581,18 @@
     App._modKey = null;
   }
 
+  /* v165: DOT INSPECTION MODE LOCK (owner, Oct 18, 2026 21:48
+     MDT) — while the PTI module's officer view is active (the
+     pti_dot store flag, owned by modules/pti.js), the shell
+     routes EVERYTHING back to it: no dashboard, no other
+     module, until the driver unlocks with his PIN inside PTI. */
+  function dotLockActive() {
+    try { var s = App._store.get('pti_dot', null); return !!(s && s.active); } catch (e) { return false; }
+  }
+  App._dotLockActive = dotLockActive;
+
   App.showDashboard = function () {
+    if (dotLockActive()) { App.openModule('pti'); return; }
     teardownModule();
     el('dashView').classList.remove('hidden');
     el('modView').classList.add('hidden');
@@ -611,6 +622,8 @@
   };
 
   App.openModule = function (key) {
+    /* v165: the DOT Inspection Mode lock — see dotLockActive. */
+    if (key !== 'pti' && dotLockActive()) key = 'pti';
     /* v119: the retired 'navigation' door routes into the merged
        Navigator — on its front (places) face, which is where the
        Navigator's resetView lands it. */

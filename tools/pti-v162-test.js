@@ -176,13 +176,15 @@ ok('buildRecords publishes pti', read('js/connectpipe.js').indexOf('pti: CP.shar
 
 /* ---------------- registration + wiring (source) ---------------- */
 const appSrc = read('js/app.js');
-ok('MODULE_META names the module', /pti:\s*\{\s*title: 'Pre-Trip Inspection'/.test(appSrc));
+/* v165 rename (owner, Oct 18, 2026 21:48 MDT): the module's face
+   name is PTI — the v162 'Pre-Trip Inspection' title pin superseded. */
+ok('MODULE_META names the module', /pti:\s*\{\s*title: 'PTI'/.test(appSrc));
 const roleBlock = appSrc.slice(appSrc.indexOf('ROLE_MODULE_ORDER = {'), appSrc.indexOf('};', appSrc.indexOf('ROLE_MODULE_ORDER = {')));
 ok('driver face carries the PTI card', /driver: \[[^\]]*'pti'/.test(roleBlock));
 ok('both face carries the PTI card', /both: \[[^\]]*'pti'/.test(roleBlock));
 ok('office face carries NO PTI card', !/office: \[[^\]]*'pti'/.test(roleBlock));
 ok('MODULE_ORDER carries pti', /MODULE_ORDER = \[[^\]]*'pti'/.test(appSrc));
-ok('sidebar carries pti', appSrc.indexOf("['pti', '🔍', 'Pre-Trip Inspection']") >= 0);
+ok('sidebar carries pti', appSrc.indexOf("['pti', '🔍', 'PTI']") >= 0);
 
 const ptiSrc = read('modules/pti.js');
 ok('PTI wires the shared dash-photo pipeline', ptiSrc.indexOf("App._wirePhotoOCR('pti_odo', 'odometer'") >= 0);
@@ -194,10 +196,10 @@ ok('filing publishes to connected peers', ptiSrc.indexOf('ConnectPipe.publishRec
 ok('PTI prints through MetPdf', ptiSrc.indexOf('MetPdf.savePdf') >= 0);
 
 const pnlSrc = read('modules/pnl.js');
-ok('the boss’s records block paints PTI', pnlSrc.indexOf('rec.pti') >= 0 && pnlSrc.indexOf('His pre-trip inspections') >= 0);
+ok('the boss’s records block paints PTI', pnlSrc.indexOf('rec.pti') >= 0 && pnlSrc.indexOf('His PTIs') >= 0);
 ok('the boss’s PTI paint shouts majors', pnlSrc.indexOf('🚨 MAJOR DEFECT') >= 0);
 
-ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=164') >= 0);
+ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=165') >= 0);
 ok('sharedrecords rules exist for the ride', read('firestore.rules').indexOf('match /sharedrecords/{driverId}') >= 0);
 
 console.log('pti-v162 test: ' + pass + ' passed, ' + fail + ' failed');
