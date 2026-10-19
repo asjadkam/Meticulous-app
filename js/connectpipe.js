@@ -917,7 +917,7 @@
     var nsOdo = parseFloat(st.get('mt_nextServiceOdo', '')) || 0;
     var nsDate = st.get('mt_nextServiceDate', '') || '';
     var annual = st.get('mt_annualDate', '') || '';
-    var services = (st.get('mt_events', []) || []).filter(Boolean).slice(-12).reverse().map(function (e) {
+    var services = (st.get('mt_events', []) || []).filter(Boolean).slice(-60).reverse().map(function (e) {
       return {
         date: e.date || '', type: String(e.type || ''),
         odo: parseFloat(e.odo) || 0, cost: parseFloat(e.cost) || 0,
@@ -1145,10 +1145,16 @@
     if (!f || !st) return null;
     var idn = { name: '', business: '' };
     try { if (window.ConnectLive) idn = ConnectLive.identity(); } catch (e) {}
+    /* v168: the caps are COMPLETE-HISTORY ceilings now (owner,
+       Oct 18, 2026 13:47 MDT: Full access shows everything, past
+       and present) — set far above any real book (600 fills ≈
+       years of fuel; 300 expense lines) while still bounding the
+       doc; the old 40/60 slices silently amputated older history
+       from a Full peer's view. */
     var fuel = (st.get('fuel_fills', []) || []).filter(Boolean).slice()
-      .sort(byDateDesc).slice(0, 40).map(CP.sharedFill);
+      .sort(byDateDesc).slice(0, 600).map(CP.sharedFill);
     var expenses = (st.get('fuel_expenses', []) || []).filter(Boolean).slice()
-      .sort(byDateDesc).slice(0, 60).map(function (x) {
+      .sort(byDateDesc).slice(0, 300).map(function (x) {
         return { date: x.date || '', what: String(x.what || ''), cost: parseFloat(x.cost) || 0 };
       });
     return {
@@ -1387,7 +1393,7 @@
     var currentKeys = {};
     photoFills.forEach(function (fl) { currentKeys[CP.fillKey(fl)] = true; });
     var viewersKey = recDoc.viewers.slice().sort().join(',');
-    var jobs = photoFills.slice().sort(byDateDesc).slice(0, 24).map(function (fl) {
+    var jobs = photoFills.slice().sort(byDateDesc).slice(0, 120).map(function (fl) {
       var key = CP.fillKey(fl);
       var guard = key + '|' + viewersKey + '|' + String(fl.photo).length +
         '|' + String(fl.photo).slice(-24);
@@ -1529,11 +1535,80 @@
     return Promise.resolve(true);
   };
 
+  /* ---------------- v168: COMPLETE HISTORY for a new Full peer --
+     (owner, Oct 18, 2026 13:47 MDT: "It should show everything!
+     Past and present! That's the full access.") Until now a pair
+     only ever carried what closed AFTER it formed (publishRecent
+     = today + yesterday; days before the pair existed never
+     crossed, and the records slices quietly capped fuel at the
+     latest 40). Now: when a peer is NEW to my share list — a pair
+     just formed, a kind raised to Full, a viewer added — the
+     next publishAll runs ONE complete-history sweep: every date
+     with data on this device publishes its day doc, and the
+     records/billing set (already whole-history by construction
+     after the cap lifts above) republishes with him named. The
+     known set persists in the store (cp_hist_peers), so the
+     sweep runs once per peer, not per launch; the day docs'
+     own content guards keep every later publish cheap. A peer
+     whose kind drops to Limited leaves sharePeers — if he ever
+     returns to Full he is new again and history re-runs, which
+     is correct: while limited he was revoked. */
+
+  /* Every date this device holds work for: my dispatches (list +
+     active), my sessions, my revenue entries. */
+  CP.historyDates = function () {
+    var st = store();
+    if (!st) return [];
+    var set = {};
+    function add(d) { if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) set[d] = true; }
+    (st.get('dsp_list', []) || []).forEach(function (d) { if (d) add(CP.recordDate(d)); });
+    var act = st.get('dsp_active', null);
+    if (act) add(CP.recordDate(act));
+    (st.get('sessions', []) || []).forEach(function (s) { if (s) add(s.date); });
+    (st.get('rev_entries', []) || []).forEach(function (e) { if (e) add(e.date); });
+    return Object.keys(set).sort();
+  };
+
+  /* Publish EVERY day with data, oldest first (the day docs are
+     content-guarded: an unchanged day is never rewritten). */
+  CP.publishHistory = function () {
+    var chain = Promise.resolve(true);
+    CP.historyDates().forEach(function (ds) {
+      chain = chain.then(function () { return CP.publishDay(ds); });
+    });
+    return chain;
+  };
+
+  /* The trigger: any share peer not in the persisted known set
+     runs the sweep once, then joins the set. The FIRST pass
+     after this ships treats every current peer as new — a pair
+     formed before the fix (his own first pair included) gets
+     its missing history on the next launch. */
+  CP.publishHistoryIfNewPeers = function () {
+    var f = fb(), st = store();
+    if (!f || !st) return Promise.resolve(false);
+    var now = CP.sharePeers().map(function (c) { return c.uid; }).sort();
+    if (!now.length) return Promise.resolve(false);
+    var known = st.get('cp_hist_peers', null);
+    var fresh = !Array.isArray(known)
+      ? now.slice()
+      : now.filter(function (u) { return known.indexOf(u) === -1; });
+    if (!fresh.length) return Promise.resolve(false);
+    return CP.publishHistory().then(function () {
+      try { st.set('cp_hist_peers', now); } catch (e) {}
+      return true;
+    }).catch(function () { return false; });
+  };
+
   /* Publish everything of mine that crosses: recent days, then
-     the records/billing/photos set. The one call the lifecycle
-     and the Connect screen make on entry. */
+     the records/billing/photos set, then — for a peer who is new
+     to Full — the complete-history sweep. The one call the
+     lifecycle and the Connect screen make on entry. */
   CP.publishAll = function () {
-    return CP.publishRecent().then(function () { return CP.publishRecords(); });
+    return CP.publishRecent()
+      .then(function () { return CP.publishRecords(); })
+      .then(function () { return CP.publishHistoryIfNewPeers(); })
+      .catch(function () { return false; });
   };
 
   /* ---------------- lifecycle ---------------- */
