@@ -116,45 +116,100 @@
       return p.removeWatcher({ id: id }).catch(function () {});
     },
 
+    /* v169: ONE-TAP LOCATION, LAYERED (owner, Oct 19, 2026
+       06:52 MDT — his first real PTI filing: "PTI location —
+       couldn't get a fix", indoors at home, while the phone
+       itself held a good position). The old getCurrent was
+       native-plugin-only and REJECTED on the first error: on
+       the web copy it could never succeed at all, and indoors
+       a single strict watcher attempt gave up while a coarse
+       or cached fix sat unused. Now, in order:
+         1. a FRESH cached fix (≤5 min old) — instant;
+         2. the native plugin watcher (one attempt);
+         3. the plugin again — ONE retry (a first attempt can
+            die on a cold GPS radio);
+         4. the browser/WebView geolocation, COARSE
+            (enableHighAccuracy off — Wi-Fi/cell fixes are fast
+            indoors, which is exactly where a fine fix starves);
+         5. the last-known fix at any age, marked stale.
+       It RESOLVES (fix | stale fix | null) instead of rejecting:
+       no caller may dead-end on location, and location NEVER
+       blocks the work it decorates (a PTI files with a typed
+       location exactly as before). */
     getCurrent: function (timeoutMs) {
-      var p = plugin();
-      if (!p) return Promise.reject(new Error('Live location is not available in this build.'));
       var ms = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 15000;
-      return new Promise(function (resolve, reject) {
-        var done = false;
-        var wid = null;
-        var timer = setTimeout(function () {
-          if (done) return;
-          done = true;
-          if (wid !== null) { try { p.removeWatcher({ id: wid }); } catch (e) {} }
-          reject(new Error('Timed out waiting for a location fix.'));
-        }, ms);
-        p.addWatcher(
-          { requestPermissions: true, stale: true, distanceFilter: 0 },
-          function (location, error) {
+      var fresh = lastFix;
+      if (fresh && (Date.now() - (fresh.time || 0)) <= 5 * 60 * 1000) {
+        return Promise.resolve(fresh);
+      }
+      function pluginAttempt() {
+        var p = plugin();
+        if (!p) return Promise.resolve(null);
+        return new Promise(function (resolve) {
+          var done = false;
+          var wid = null;
+          function fin(fix) {
             if (done) return;
-            if (error) {
-              done = true;
-              clearTimeout(timer);
-              if (wid !== null) { try { p.removeWatcher({ id: wid }); } catch (e) {} }
-              reject(error);
+            done = true;
+            clearTimeout(timer);
+            if (wid !== null) { try { p.removeWatcher({ id: wid }); } catch (e) {} }
+            resolve(fix || null);
+          }
+          var timer = setTimeout(function () { fin(null); }, ms);
+          try {
+            p.addWatcher(
+              { requestPermissions: true, stale: true, distanceFilter: 0 },
+              function (location, error) {
+                if (error) { fin(null); return; }
+                if (location) fin(record(location));
+              }
+            ).then(function (id) {
+              wid = id;
+              if (done) { try { p.removeWatcher({ id: id }); } catch (e) {} }
+            }).catch(function () { fin(null); });
+          } catch (e) { fin(null); }
+        });
+      }
+      function w3cAttempt() {
+        return new Promise(function (resolve) {
+          try {
+            if (!navigator || !navigator.geolocation || !navigator.geolocation.getCurrentPosition) {
+              resolve(null);
               return;
             }
-            if (location) {
-              done = true;
-              clearTimeout(timer);
-              var fix = record(location);
-              if (wid !== null) { try { p.removeWatcher({ id: wid }); } catch (e) {} }
-              resolve(fix);
-            }
-          }
-        ).then(function (id) {
-          wid = id;
-          if (done) { try { p.removeWatcher({ id: id }); } catch (e) {} }
-        }).catch(function (err) {
-          if (!done) { done = true; clearTimeout(timer); reject(err); }
+            navigator.geolocation.getCurrentPosition(
+              function (pos) {
+                if (!pos || !pos.coords) { resolve(null); return; }
+                resolve(record({
+                  latitude: pos.coords.latitude,
+                  longitude: pos.coords.longitude,
+                  accuracy: pos.coords.accuracy,
+                  altitude: pos.coords.altitude,
+                  speed: pos.coords.speed,
+                  bearing: pos.coords.heading,
+                  time: pos.timestamp || Date.now()
+                }));
+              },
+              function () { resolve(null); },
+              { enableHighAccuracy: false, timeout: ms, maximumAge: 60000 }
+            );
+          } catch (e) { resolve(null); }
         });
-      });
+      }
+      return pluginAttempt()
+        .then(function (fix) { return fix || pluginAttempt(); })
+        .then(function (fix) { return fix || w3cAttempt(); })
+        .then(function (fix) {
+          if (fix) return fix;
+          if (lastFix) {
+            var stale = {};
+            for (var k in lastFix) stale[k] = lastFix[k];
+            stale.stale = true;
+            return stale;
+          }
+          return null;
+        })
+        .catch(function () { return lastFix; });
     },
 
     /* Free address -> coordinates lookup (OpenStreetMap Nominatim; no

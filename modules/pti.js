@@ -552,7 +552,10 @@
           var locEl = body.querySelector('#pti_loc'); if (locEl) locEl.value = dd.loc;
         }
         saveDraft(dd);
-        if (note) note.textContent = 'GPS: ' + Number(fix.latitude).toFixed(5) + ', ' + Number(fix.longitude).toFixed(5);
+        /* v169: a last-known fix is labelled as one — it is still
+           his position for the report, never silently "fresh" */
+        if (note) note.textContent = (fix.stale ? 'Last known position: ' : 'GPS: ') +
+          Number(fix.latitude).toFixed(5) + ', ' + Number(fix.longitude).toFixed(5);
       }).catch(function () { if (note) note.textContent = 'Couldn’t get a fix — type the location above.'; });
     };
 
