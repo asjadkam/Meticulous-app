@@ -420,8 +420,12 @@ function extract(src, beginMark, endMark) {
     board.indexOf('$520.00') !== -1 && board.indexOf('$319.00') !== -1);
   check('f: the wage line names the model (foreman + travel)', board.indexOf('foreman + travel') !== -1);
   check('f: the driver-declared job shows its source', board.indexOf('declared by the driver') !== -1 && board.indexOf('fleet manager') !== -1);
-  check('f: the working driver shows as working, with the set-pay door (he has no pay entry)',
-    board.indexOf('Umar Works') !== -1 && board.indexOf('Working now') !== -1 && board.indexOf('data-pipesetpay="uid-driver2"') !== -1);
+  /* v163 SUPERSEDES the v132 set-pay pin: the boss never sets a
+     connected driver's pay (settled design, Oct 18, 2026) — the
+     board shows the wage state read-only instead of a door. */
+  check('f: the working driver shows as working, wage state read-only (no set-pay door)',
+    board.indexOf('Umar Works') !== -1 && board.indexOf('Working now') !== -1 &&
+    board.indexOf('data-pipesetpay') === -1 && board.indexOf('set by him') !== -1);
   const send = sb.sendHtml();
   check('f: the send card defaults to TOMORROW for the picked driver',
     send.indexOf('id="dp_send_date" value="' + TOMORROW + '"') !== -1 && send.indexOf('Asjad Kamal') !== -1);

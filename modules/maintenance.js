@@ -228,16 +228,31 @@
     ms = ms || mileageStats();
     var log = [];
     try { log = App._store.get('odo_readings', []) || []; } catch (e) {}
-    var earliest = null;
-    (Array.isArray(log) ? log : []).forEach(function (r) {
-      if (!r || !r.date || !(parseFloat(r.value) > 0)) return;
-      var cand = { date: String(r.date), value: parseFloat(r.value), ts: parseFloat(r.ts) || 0 };
-      if (!earliest || cand.date < earliest.date ||
-          (cand.date === earliest.date && cand.ts < earliest.ts)) earliest = cand;
-    });
     var master = null;
     try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
     if (!(master > 0)) { var co = currentOdo(); master = co > 0 ? co : null; }
+    /* v163 HARDENING (the Oct 18 regression: the face printed a
+       790 km fragment again with the note claiming readings
+       "start 2026-10-13", over a log whose honest bookends give
+       thousands): the earliest pick now applies the SAME poison
+       discipline as every other odometer reader — a reading the
+       app's gate calls a 'jump' past the master (a receipt
+       invoice number wearing an odometer's clothes) is not
+       evidence, and neither is any reading ABOVE the master.
+       The bookend rule itself is unchanged: current master
+       minus the earliest surviving dated reading. */
+    var earliest = null;
+    (Array.isArray(log) ? log : []).forEach(function (r) {
+      if (!r || !r.date || !(parseFloat(r.value) > 0)) return;
+      var v = parseFloat(r.value);
+      if (master !== null && v > master) return;
+      try {
+        if (window.App && App._odoImplausible && App._odoImplausible(v) === 'jump') return;
+      } catch (e) {}
+      var cand = { date: String(r.date), value: v, ts: parseFloat(r.ts) || 0 };
+      if (!earliest || cand.date < earliest.date ||
+          (cand.date === earliest.date && cand.ts < earliest.ts)) earliest = cand;
+    });
     if (!earliest || master === null || master < earliest.value) {
       return {
         ok: false, earliest: earliest, master: master, distance: 0,
@@ -489,7 +504,10 @@
               : '<div class="kv"><span>Lifetime distance</span><b>—</b></div>') +
             '<div class="kv"><span>Lifetime fuel</span><b>' + ms.totalLitres.toFixed(1) + ' L</b></div>' +
             (lt.ok && lt.windowLitres > 0 ? '<div class="kv"><span>Lifetime economy</span><b>' + ltEcon.value + ' ' + ltEcon.unit + '</b></div>' : '') +
-            (ms.legs > 0 ? '<div class="kv"><span>Between fill-ups (legs)</span><b>' + kmStr(ms.kmTracked) + ' · ' + ms.legs + ' leg' + (ms.legs === 1 ? '' : 's') + ' · ' + msEcon.value + ' ' + msEcon.unit + '</b></div>' : '') +
+            /* v163: the "Between fill-ups (legs)" line is DELETED
+               (owner, Oct 18, 2026 20:56 MDT) — not fixed, gone.
+               The leg math still runs inside mileageStats (the
+               fuel trend reads it); it simply has no row here. */
             '<p class="note">' + lifetimeNote(ms, lt) + '</p>'
           : '') +
         '<p class="note">Fuel figures come from your Fuel &amp; Expense fill-ups. Add fill-ups there to sharpen these numbers.</p>' +

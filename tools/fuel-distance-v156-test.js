@@ -263,10 +263,13 @@ console.log('\n— (a) lifetime distance = the bookends, not the leg fragment �
   ok('Total fuel spend prints untouched', h.indexOf('$10,114.52') >= 0 || h.indexOf('$10114.52') >= 0);
   const leAt = h.indexOf('Lifetime economy');
   ok('Lifetime economy is the bookend economy (2.7 km/L)', leAt >= 0 && h.slice(leAt, leAt + 120).indexOf('2.7 km/L') >= 0, h.slice(leAt, leAt + 120));
-  ok('the false 5.0 survives ONLY on the labelled legs line',
-    h.indexOf('5.0 km/L') >= 0 && h.indexOf('5.0 km/L') > h.indexOf('(legs)'),
-    'legs at ' + h.indexOf('(legs)') + ', 5.0 at ' + h.indexOf('5.0 km/L'));
-  ok('the legs line names its own facts (790 km · 1 leg)', h.indexOf('790 km') >= 0 && h.indexOf('1 leg') >= 0);
+  /* v163 SUPERSEDES the v156 legs-line pins: the owner ordered
+     the "Between fill-ups (legs)" line DELETED outright (Oct 18,
+     2026 20:56 MDT) — the leg fragment (790 km, the false 5.0)
+     now appears NOWHERE on the Maintenance face. */
+  ok('v163: the legs line is deleted — the 790 fragment appears nowhere',
+    h.indexOf('(legs)') < 0 && h.indexOf('790 km') < 0 && h.indexOf('5.0 km/L') < 0,
+    'legs at ' + h.indexOf('(legs)') + ', 790 at ' + h.indexOf('790 km'));
   ok('the footer names the partial span (readings start 2026-10-01)', h.indexOf('readings start 2026-10-01') >= 0, h.slice(h.indexOf('Lifetime —'), h.indexOf('Lifetime —') + 400));
   ok('the footer keeps the records span (2026-06-25 → 2026-10-17, 56 fill-ups)',
     h.indexOf('2026-06-25 → 2026-10-17') >= 0 && h.indexOf('56 fill-ups') >= 0);
@@ -285,7 +288,7 @@ console.log('\n— (c) no dated readings → no lifetime number —');
   ok('Lifetime distance prints no number', ltAt >= 0 && h.slice(ltAt, ltAt + 120).indexOf('790') < 0 && h.slice(ltAt, ltAt + 120).indexOf('3,169') < 0, h.slice(ltAt, ltAt + 120));
   ok('Lifetime economy does not print at all', h.indexOf('Lifetime economy') < 0);
   ok('the honest state is said out loud', h.indexOf('none are on record yet') >= 0, h.slice(h.indexOf('Lifetime —'), h.indexOf('Lifetime —') + 400));
-  ok('the legs line still carries the leg facts, labelled', h.indexOf('(legs)') >= 0 && h.indexOf('790 km') >= 0);
+  ok('v163: no legs line here either — deleted, not fixed', h.indexOf('(legs)') < 0 && h.indexOf('790 km') < 0);
 }
 
 /* ============ (d) READING PREDATES THE FUEL WINDOW ============ */

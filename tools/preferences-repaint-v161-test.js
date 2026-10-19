@@ -288,7 +288,7 @@ function fireChange(el) {
 
     eq('a: the change still persists the moment it lands (v149)', w.store.get('onboarding', {}).accountType, 'Owner-Operator');
     has('a: THE SAME PAGE now carries the billing field', body.innerHTML, 'id="pf_billrate"');
-    has('a: ...and the two-books wage label', body.innerHTML, 'My wage rate ($/hour)</label>');
+    has('a: ...and the two-books wage label', body.innerHTML, 'Driver wage rate ($/hour)</label>');
     hasnt('a: ...and the driver-only label is gone', body.innerHTML, 'Your pay rate ($/hour)</label>');
     eq('a: his unsaved typing survived the repaint', body.querySelector('#pf_cname').value, 'Typed Haul Co');
 

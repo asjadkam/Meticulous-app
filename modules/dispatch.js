@@ -1074,7 +1074,7 @@
           (cl.travelHours > 0 ? ' + ' + dspFmtH(cl.travelHours) + ' travel' : '') +
           (cl.bonusHours > 0 ? ' + ' + dspFmtH(cl.bonusHours) + ' bonus' : '') + '</span><b></b></div>' +
           '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
-          '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel' + (cl.bonusHours > 0 ? ' + bonus' : '') + ', your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+          '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel' + (cl.bonusHours > 0 ? ' + bonus' : '') + ', his own rate)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
         return;
       }
       var sd = r.dispatch;
@@ -1095,15 +1095,19 @@
           h += '<div class="kv"><span style="padding-left:14px">Hours — ' + dspFmtH(sd.foremanHours) + ' foreman' +
             (sd.travelHours > 0 ? ' + ' + dspFmtH(sd.travelHours) + ' travel' : '') + '</span><b></b></div>' +
             '<div class="kv"><span style="padding-left:14px">↳ Revenue (your client rate)</span><b>' + pipeMoney(pr.revenue) + '</b></div>' +
-            '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel, your rate for him)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
+            '<div class="kv"><span style="padding-left:14px">↳ His pay (foreman + travel, his own rate)</span><b>' + pipeMoney(pr.wage) + '</b></div>';
         }
       }
     });
     h += '<div class="kv"><span><b>Day revenue</b></span><b>' + pipeMoney(priced.revenue) + '</b></div>' +
       '<div class="kv"><span><b>Day wages</b></span><b>' + pipeMoney(priced.wage) + '</b></div>' +
       (priced.margin !== null ? '<div class="kv"><span><b>Margin</b></span><b>' + pipeMoney(priced.margin) + '</b></div>' : '') +
+      /* v163: NO boss-side pay door (settled wage design,
+         Oct 18, 2026): a connected driver's wage is set by the
+         driver on his own side and crosses in his records; all
+         this board can do is say so, read-only. */
       (!pricing.wage
-        ? '<div style="margin-top:6px"><button class="btn small navy" data-pipesetpay="' + esc(day.driver) + '" data-pipename="' + esc(day.driverName || '') + '">Set his pay rate</button></div>'
+        ? '<div class="b" style="margin-top:4px">His pay is not priced yet — his wage is set by him, on his own side; his days price here once it crosses.</div>'
         : '') +
       (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences (the Pay card).</div>');
     /* v146: a one-line strip from his shared RECORDS (fuel /
@@ -1190,17 +1194,8 @@
       '<div id="dp_sentlist">' + sentHtml() + '</div>';
   }
   function wirePipe(body) {
-    body.querySelectorAll('[data-pipesetpay]').forEach(function (b) {
-      b.onclick = function () {
-        try {
-          window.__mtPnlPrefillDriver = {
-            uid: b.getAttribute('data-pipesetpay'),
-            name: b.getAttribute('data-pipename') || ''
-          };
-        } catch (e) {}
-        if (window.App && App.openModule) App.openModule('pnl');
-      };
-    });
+    /* v163: the set-pay wiring is gone with its button — the
+       boss never sets a connected driver's pay rate. */
     var sendBtn = body.querySelector('#dp_send_btn');
     if (sendBtn) sendBtn.onclick = function () {
       var to = body.querySelector('#dp_send_to');

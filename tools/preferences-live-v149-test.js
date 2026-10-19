@@ -347,7 +347,7 @@ function fireChange(el) {
     has('c: OO face keeps the billing field', html, 'id="pf_billrate"');
     has('c: OO face keeps the wage field', html, 'id="pf_wagerate"');
     has('c: OO billing placeholder unchanged', html, 'placeholder="Blank = your wage rate"');
-    has('c: OO wage label unchanged', html, 'My wage rate ($/hour)</label>');
+    has('c: OO wage label unchanged', html, 'Driver wage rate ($/hour)</label>');
     has('c: OO two-books note unchanged', html, 'If you own the truck AND drive it, a closed haul card posts both sides of your books');
     check('c: OO wage field still shows his effective $29', /id="pf_wagerate"[^>]*value="29"/.test(html));
     /* and its Save still writes both rates, setup rate untouched */

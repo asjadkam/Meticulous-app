@@ -641,7 +641,10 @@ function partE() {
   ok('the card shows Lifetime distance', h.indexOf('Lifetime distance') >= 0 && h.indexOf('656') >= 0);
   ok('the card shows Lifetime fuel (432.8 L)', h.indexOf('Lifetime fuel') >= 0 && h.indexOf('432.8 L') >= 0);
   ok('the card shows Lifetime economy', h.indexOf('Lifetime economy') >= 0);
-  ok('the legs live on their own labelled line', h.indexOf('Between fill-ups (legs)') >= 0 && h.indexOf('3 legs') >= 0);
+  /* v163 SUPERSEDES this v127 pin: the owner ordered the
+     "Between fill-ups (legs)" line DELETED (Oct 18, 2026 20:56
+     MDT) — it must not appear on the face at all. */
+  ok('v163: the legs line is deleted from the face', h.indexOf('Between fill-ups (legs)') < 0);
   ok('the span is labelled honestly (records, first → last, count, bookend basis)',
     h.indexOf('2026-10-13 → 2026-10-16 (5 fill-ups)') >= 0 &&
     h.indexOf('Distance runs from your earliest odometer reading') >= 0 &&

@@ -192,7 +192,7 @@
            card posts BOTH sides of his own P&L — v137 framing:
            shown only to an owner-operator, as HIS two rates. */
         h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="Blank = your wage rate">' +
-          '<label class="f">My wage rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
+          '<label class="f">Driver wage rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
           '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave the billing rate blank to bill at your wage rate.</p>';
       } else if (!pfOfficeFace) {
         h += '<label class="f">Your pay rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +

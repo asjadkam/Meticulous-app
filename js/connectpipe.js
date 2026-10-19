@@ -22,10 +22,15 @@
  *      Billable = foreman hours; the travel hour joins ONLY when
  *      the ticket's travelBillable flag says the customer agreed
  *      to pay it (default NO — the Oct 14 travel rule).
- *    WAGES (out):   (foreman + travel) x the pay rate THE BOSS
- *      sets for that driver (his own P&L driver entry). The travel
- *      hour is part of the driver's pay — the haul-card model:
- *      10.0 foreman + 1 travel = 11.0 h x his rate.
+ *    WAGES (out):   (foreman + travel) x the DRIVER'S OWN wage
+ *      rate. v163 (the owner's settled design, Oct 18, 2026):
+ *      the driver sets his wage on his own side; it travels in
+ *      his records doc and prices his days on the boss's books
+ *      as an expense at HIS rate — the boss never sets driver
+ *      wages. (The v132 boss-set P&L entry survives only as the
+ *      fallback for a driver whose own wage has not crossed
+ *      yet.) The travel hour is part of the driver's pay — the
+ *      haul-card model: 10.0 foreman + 1 travel = 11.0 h x rate.
  *  The driver's rates never leave his account; the boss's client
  *  rate never reaches the driver. Nothing priced is ever written
  *  back into the shared record.
@@ -664,22 +669,59 @@
       });
   };
 
+  /* v163: MY OWN WAGE, as I publish it (owner's settled wage
+     design, Oct 18, 2026 20:40 MDT: "each DRIVER fills in his
+     OWN wage rate on his own side; it travels via Connect and
+     posts in the boss's app as an expense at the driver's own
+     rate — the boss NEVER sets driver wages"). My wage lives in
+     MY Preferences Pay card (ownWageRate, with the v137 payRate
+     fallback) under MY pay standard; this is the one wage fact
+     about me that crosses — so a boss's books can price my days
+     as an expense at MY rate. Null while I have set no wage. */
+  CP.sharedWage = function () {
+    var st = store();
+    if (!st) return null;
+    var o = st.get('onboarding', {}) || {};
+    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    if (!(rate > 0)) return null;
+    var std = String(o.payStandard || 'hourly').toLowerCase();
+    var payType = std === 'miles' ? 'permile' : (std === 'trip' ? 'perload' : 'hourly');
+    return { payType: payType, rate: rate };
+  };
+
   /* My prices for one driver's shared facts — read from MY OWN
      books only: my client rate (my billingRate; v137 chain: my
      wage rate, then the setup rate, as its standing fallbacks)
-     and the pay terms I set for this driver in P&L (the
-     pnl_drivers entry carrying his uid). Either may be unset —
-     pricing then says so honestly instead of inventing a number. */
+     and the driver's wage. v163 SUPERSEDES the v132 wage source
+     for connected drivers (the settled Oct 18 design above):
+     the wage is the DRIVER'S OWN, received via Connect (his
+     records doc's driverWage, cached locally by the P&L crew
+     fetch under '__peer_wages') — never a rate the boss typed
+     for him. The pnl_drivers entry carrying his uid remains
+     ONLY as the fallback for a driver whose own wage has not
+     crossed yet (a pair formed before v163 whose records have
+     not re-published), and for hand-added local drivers, who
+     have no account to publish from. Either may be unset —
+     pricing then says so honestly instead of inventing a
+     number. */
   CP.pricingFor = function (driverUid) {
     var st = store();
-    var out = { clientRate: 0, wage: null, entryId: '' };
+    var out = { clientRate: 0, wage: null, entryId: '', wageSource: '' };
     if (!st) return out;
     var o = st.get('onboarding', {}) || {};
     out.clientRate = parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    var peer = null;
+    try { peer = (st.get('__peer_wages', {}) || {})[driverUid] || null; } catch (e) { peer = null; }
+    if (peer && parseFloat(peer.rate) > 0) {
+      out.wage = { payType: peer.payType || 'hourly', rate: parseFloat(peer.rate) || 0 };
+      out.wageSource = 'driver';
+      return out;
+    }
     (st.get('pnl_drivers', []) || []).forEach(function (d) {
       if (d && d.uid && d.uid === driverUid && !out.wage) {
         out.wage = { payType: d.payType || 'hourly', rate: parseFloat(d.rate) || 0 };
         out.entryId = d.id || '';
+        out.wageSource = 'local';
       }
     });
     return out;
@@ -1116,6 +1158,9 @@
       expenses: expenses,
       maintenance: CP.sharedMaintenance(),
       pti: CP.sharedPti(),
+      /* v163: my own wage rides the records doc (see sharedWage) —
+         the boss's books price my days at MY rate, never his */
+      driverWage: CP.sharedWage(),
       updatedAt: Date.now()
     };
   };

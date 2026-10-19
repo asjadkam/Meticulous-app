@@ -188,7 +188,7 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
   hasnt('OO face: NO universal Rate field (pf_rate is gone)', html, 'id="pf_rate"');
   hasnt('OO face: no "Same as rate" placeholder anywhere', html, 'Same as rate');
   has('OO face: labels carry no "— owner-operators" tail', html, 'Client billing rate ($/foreman hour)</label>');
-  has('OO face: wage label is "My wage rate"', html, 'My wage rate ($/hour)</label>');
+  has('OO face: wage label is "Driver wage rate" (v163 rename, owner Oct 18 18:10)', html, 'Driver wage rate ($/hour)</label>');
   ok(/id="pf_wagerate"[^>]*value="29"/.test(html), 'OO face: the wage field SHOWS his effective $29 (from the setup rate), not a blank');
   has('OO face: billing placeholder speaks the chain', html, 'placeholder="Blank = your wage rate"');
   has('travel note is the generic rewrite (mandated wording)', html,

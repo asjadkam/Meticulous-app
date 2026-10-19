@@ -2879,6 +2879,44 @@
         if (parseFloat(s.endOdo) > 0) consider(s.endOdo, endMs, 'seed-session');
       });
     }
+    /* v163: TWO MORE DATED SOURCES the app already holds —
+       maintenance service events (mt_events carry the dash
+       reading the service was logged at, with their date) and
+       filed PTI reports (pti_reports carry the inspection's
+       odometer with their filing moment). Both are walked as
+       ONE ascending chain under the fills' own discipline (a
+       stamp that runs backwards, leaps more than 50,000 km, or
+       sits more than the jump gate past the master is skipped),
+       so a service or inspection reading from before the log
+       existed can open the lifetime window the way a fill can —
+       the Oct 18 face claimed readings "start 2026-10-13" while
+       older dated evidence sat unseeded in these two stores. */
+    var extra = [];
+    var mtEvents = store.get('mt_events', []);
+    if (Array.isArray(mtEvents)) {
+      mtEvents.forEach(function (e) {
+        if (!e || !(parseFloat(e.odo) > 0)) return;
+        var t = dayTs(e.date, '');
+        if (t !== null) extra.push({ v: parseFloat(e.odo), ts: t, source: 'seed-event' });
+      });
+    }
+    var ptiReports = store.get('pti_reports', []);
+    if (Array.isArray(ptiReports)) {
+      ptiReports.forEach(function (r) {
+        if (!r || !(parseFloat(r.odometer) > 0)) return;
+        var t = (typeof r.filedAt === 'number' && isFinite(r.filedAt) && r.filedAt > 0)
+          ? r.filedAt : dayTs(r.date, '');
+        if (t !== null && t !== undefined) extra.push({ v: parseFloat(r.odometer), ts: t, source: 'seed-pti' });
+      });
+    }
+    extra.sort(function (a, b) { return a.ts - b.ts; });
+    var lastX = 0;
+    extra.forEach(function (c) {
+      if (master !== null && c.v > master + ODO_MAX_JUMP_KM) return;
+      if (lastX > 0 && (c.v < lastX || c.v - lastX > 50000)) return;
+      lastX = c.v;
+      consider(c.v, c.ts, c.source);
+    });
     if (!added.length) return 0;
     var merged = log.concat(added);
     merged.sort(function (a, b) { return (parseFloat(a.ts) || 0) - (parseFloat(b.ts) || 0); });

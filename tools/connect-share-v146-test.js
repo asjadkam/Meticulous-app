@@ -362,9 +362,15 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   const rec = recDoc();
   check('a: the records doc exists', !!rec);
   /* v162: the records doc gains 'pti' — the driver's filed
-     pre-trip inspections, facts only (CP.sharedPti). */
+     pre-trip inspections, facts only (CP.sharedPti).
+     v163: it gains 'driverWage' — the driver's OWN wage (his
+     Preferences Pay card), the one rate of his that crosses so
+     the boss's books can post his days as an expense at HIS
+     rate (settled design, Oct 18, 2026 20:40 MDT). */
   keysEq('a: records doc carries facts only (exact key set)', rec,
-    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'pti', 'updatedAt']);
+    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'pti', 'driverWage', 'updatedAt']);
+  eq('a: v163 — the driver\u2019s own wage rides the doc (29/hr, set on HIS side)',
+    rec.driverWage, { payType: 'hourly', rate: 29 });
   eq('a: viewers = my CURRENT connections, both payers', rec.viewers, ['uid-boss', 'uid-payer2']);
   eq('a: identity rides (name + business)', [rec.driverName, rec.driverBusiness], ['Asjad Kamal', 'Asjad Kamal']);
   eq('a: fuel newest first, 2 entries', rec.fuel.map((x) => x.date), [TODAY, OCT15]);
@@ -536,9 +542,13 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
     crewHtmlOut.indexOf('data-pnlman="uid-driver:' + OCT1 + '_' + OCT15 + '"') !== -1);
   check('e: the other customer\u2019s invoice is NOT on this payer\u2019s card',
     crewHtmlOut.indexOf('#2000') === -1 && crewHtmlOut.indexOf('Other Customer') === -1);
+  /* v163: the repainted breakdown carries the ONE fixed Driver
+     wages line with the crew wage attributed under it (the old
+     separate "Connected crew wages" line is folded in — an
+     amount inside the total must always have its line). */
   check('e: after the fetch lands, the totals repaint WITH the crew wages attributed',
-    pnlBody._html.indexOf('Connected crew wages') !== -1 &&
-    pnlBody._html.indexOf('Asjad Kamal (Connect)') !== -1);
+    pnlBody._html.indexOf('Driver wages') !== -1 &&
+    pnlBody._html.indexOf('Asjad Kamal (Connect \u2014 his own rate)') !== -1);
 
   /* ============ (f) the P&L pay-expense leg ============ */
   console.log('(f) P&L leg — derived crew wages in the expense totals');
@@ -564,7 +574,16 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   eq('f: a corrected day RE-prices (8+1+1 × $29 = 290, not 203.29 + 290)', calcBoss().crewWages, 290);
   const driversSave = users.boss.store.get('pnl_drivers', []);
   users.boss.store.set('pnl_drivers', []);
-  eq('f: rate unset -> $0, exactly as the board shows', [calcBoss().crewWages, calcBoss().expenses], [0, 0]);
+  /* v163 SUPERSEDES the v146 "rate unset" pin: the wage that
+     prices this driver is the DRIVER'S OWN (seeded ownWageRate
+     29), cached from his records doc by the (e) fetch — the
+     boss emptying his OWN local entries no longer unprices the
+     day, because the rate was never his to set. */
+  eq('f: v163 — boss\u2019s local entries emptied, the driver\u2019s own wage still prices', calcBoss().crewWages, 290);
+  const peerSave = users.boss.store.get('__peer_wages', {});
+  users.boss.store.set('__peer_wages', {});
+  eq('f: no wage crossed and none set -> $0, exactly as the board shows', [calcBoss().crewWages, calcBoss().expenses], [0, 0]);
+  users.boss.store.set('__peer_wages', peerSave);
   users.boss.store.set('pnl_drivers', driversSave);
   eq('f: rate set again -> priced again', calcBoss().crewWages, 290);
   /* non-Connect account: identical local books, no pipe at all */

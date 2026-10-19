@@ -62,12 +62,31 @@
     { key: 'irp', label: 'IRP escrow', auto: null },
     { key: 'parking', label: 'Parking', auto: null },
     { key: 'repair', label: 'Repair', auto: null },
-    { key: 'natl', label: 'NATL', auto: null },
+    /* v163: the NATL line is DELETED (owner, Oct 18, 2026 21:06
+       MDT) — NATL is one specific benefits package, not a
+       generic expense line, so it never belonged on the
+       standard list. A saved 'natl' amount in pnl_detail is
+       simply no longer read: the row is gone from the face and
+       from every total. */
     { key: 'maintenance', label: 'Maintenance', auto: 'maintenance' },
     { key: 'misc', label: 'Misc.', auto: null },
     { key: 'elog', label: 'Elog', auto: null },
     { key: 'insurance', label: 'Truck insurance', auto: null }
   ];
+
+  /* v163: CUSTOM expense lines (owner, Oct 18, 2026 21:06 MDT:
+     a "+" at the end of the line items for any generic expense
+     not pre-listed). The user's own lines live in
+     pnl_custom_cats ([{key, label}]); their amounts ride the
+     same pnl_detail store as the standard lines, so a custom
+     line behaves exactly like a built-in manual line — typed
+     amount per month, counted in the detail total. */
+  function customCats() {
+    var l = S('custom_cats', []);
+    return (Array.isArray(l) ? l : []).filter(function (c) { return c && c.key && c.label; })
+      .map(function (c) { return { key: c.key, label: c.label, auto: null, custom: true }; });
+  }
+  function allDetailCats() { return DETAIL_CATS.concat(customCats()); }
 
   function detailStore() { return S('detail', {}); }
   function detailRates() { return S('detail_rates', {}); }
@@ -84,7 +103,7 @@
     });
     var out = {};
     var wc = wcInfo(); /* dynamic workers' comp label + default rate */
-    DETAIL_CATS.forEach(function (c) {
+    allDetailCats().forEach(function (c) {
       var sv = saved[c.key] || {};
       var amount = 0, auto = !!c.auto, rate = null;
       var defRate = c.wc ? wc.defRate : c.defRate;
@@ -104,7 +123,7 @@
         amount = parseFloat(sv.amount) || 0;
         auto = false;
       }
-      out[c.key] = { amount: amount, auto: auto, rate: rate, label: label, sub: c.sub };
+      out[c.key] = { amount: amount, auto: auto, rate: rate, label: label, sub: c.sub, custom: !!c.custom };
     });
     return out;
   }
@@ -121,40 +140,51 @@
     W('detail', all);
   }
 
-  /* Total miles for a month — the SUM of the month's odometer
-     LEGS between consecutive fill readings (which telescopes to
-     last − first when every leg is honest), with manual override.
-     v118: the old max − min trusted EVERY stamp, so the poisoned
-     Oct 15 stamp (519,326 — a receipt invoice number the v109
-     fill gate now refuses) still set the max from beyond the
-     grave and P&L printed "Total miles 350,816" against a
-     169,166 master (519,326 − 168,510). A leg counts only when
-     it is plausible (forward, ≤ 50,000 km — the v109 leg rule):
-     the legs into and out of a poisoned stamp both fail it, so
-     the stamp contributes nothing and the honest legs remain.
-     Falls back to revenue miles if no odometer data. */
+  /* Total miles for a month — v163: FROM THE ODOMETER ONLY
+     (owner, Oct 18, 2026 18:26 + 21:06 MDT: the card read "241
+     miles" off fill stamps while the truck had driven the
+     month; and "Miles are NOT a text box — trucks are driving,
+     miles are moving, no ifs and buts"). The month's miles are
+     the truck's own bookends for the month, read off the dated
+     odometer log (odo_readings — the same log Maintenance's
+     lifetime figure reads): the latest reading on or before the
+     month's end, minus the latest reading on or before the
+     month's start (the earliest in-month reading when nothing
+     precedes the month). NO manual override exists any more —
+     the pnl_miles input and the 'miles_<month>' store are gone
+     from this path — and NO fallback to typed revenue miles:
+     miles are a fixed fact from the truck, never typed.
+     Poison discipline is the v118 lesson kept: a reading the
+     app's own gate calls a 'jump' past the master (the 519,326
+     receipt invoice number) is not evidence and never counts.
+     No usable readings → 0, stated as no figure on the face. */
   function totalMiles(m) {
-    var manual = S('miles_' + m, null);
-    if (manual != null && manual !== '') return parseFloat(manual) || 0;
-    var odos = [];
-    (App._store.get('fuel_fills', []) || []).forEach(function (f) {
-      if (!inMonth(f.date, m) || !f.odo) return;
-      var v = parseFloat(f.odo);
-      if (isFinite(v) && v > 0) odos.push({ d: String(f.date || ''), v: v });
+    var log = [];
+    try { log = App._store.get('odo_readings', []) || []; } catch (e) { log = []; }
+    var master = null;
+    try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
+    var startBound = m + '-01', endBound = m + '-31';
+    var before = null, atEnd = null, firstIn = null;
+    (Array.isArray(log) ? log : []).forEach(function (r) {
+      if (!r || !r.date) return;
+      var v = parseFloat(r.value);
+      if (!(v > 0)) return;
+      try {
+        if (window.App && App._odoImplausible && App._odoImplausible(v) === 'jump') return;
+      } catch (e) {}
+      var d = String(r.date), ts = parseFloat(r.ts) || 0;
+      var cand = { d: d, v: v, ts: ts };
+      function newerThan(inc) { return !inc || cand.d > inc.d || (cand.d === inc.d && cand.ts >= inc.ts); }
+      if (d < startBound && newerThan(before)) before = cand;
+      if (d <= endBound && newerThan(atEnd)) atEnd = cand;
+      if (d >= startBound && d <= endBound &&
+          (!firstIn || cand.d < firstIn.d || (cand.d === firstIn.d && cand.ts <= firstIn.ts))) firstIn = cand;
     });
-    odos.sort(function (a, b) { return a.d < b.d ? -1 : (a.d > b.d ? 1 : a.v - b.v); });
-    var miles = 0, legs = 0;
-    for (var i = 1; i < odos.length; i++) {
-      var leg = odos[i].v - odos[i - 1].v;
-      if (leg > 0 && leg <= 50000) { miles += leg; legs++; }
-    }
-    if (legs > 0) return miles;
-    var revMiles = 0;
-    (App._store.get('rev_entries', []) || []).forEach(function (e) {
-      if (!inMonth(e.date, m)) return;
-      revMiles += parseFloat(e.miles) || 0;
-    });
-    return revMiles;
+    if (!atEnd) return 0;
+    var startVal = before ? before.v : (firstIn ? firstIn.v : null);
+    if (startVal === null) return 0;
+    var miles = atEnd.v - startVal;
+    return miles > 0 ? Math.round(miles * 100) / 100 : 0;
   }
 
   function monthLabel(m) {
@@ -242,6 +272,13 @@
      record, read-only, from his sharedrecords doc. */
   var rec = recs && recs[uid];
   if (rec) {
+    /* v163: his OWN wage, as it crossed in his records — shown
+       read-only with him (the office Preferences door shows the
+       same); it prices his days in these books as an expense. */
+    if (rec.driverWage && parseFloat(rec.driverWage.rate) > 0) {
+      var wu = rec.driverWage.payType === 'permile' ? '/mile' : (rec.driverWage.payType === 'perload' ? '/load' : (rec.driverWage.payType === 'salary' ? '/month' : '/hour'));
+      h += '<div class="kv"><span style="padding-left:14px">His wage — set by him</span><b>' + money(parseFloat(rec.driverWage.rate)) + wu + '</b></div>';
+    }
     var mfuel = (rec.fuel || []).filter(function (x) { return inMonth(x.date, month); });
     if (mfuel.length) {
       h += '<div style="margin:8px 0 2px;font-weight:700">⛽ His fuel — ' + esc(monthLabel(month)) + '</div>';
@@ -384,12 +421,20 @@
       });
       if (nRev) { tRev += rev; anyRev = true; }
       if (nWage) { tWage += wage; anyWage = true; }
+      /* v163: wages price at the DRIVER'S OWN rate (settled
+         design, Oct 18, 2026) — the "Set his pay rate" door is
+         GONE: the boss never sets a connected driver's wage.
+         His wage state shows read-only, exactly as it crossed. */
+      var wageUnit = pricing.wage ? (pricing.wage.payType === 'permile' ? '/mile' : (pricing.wage.payType === 'perload' ? '/load' : (pricing.wage.payType === 'salary' ? '/month' : '/hour'))) : '';
+      var wageLine = pricing.wage
+        ? '<div class="kv"><span style="padding-left:14px">His wage — set by him</span><b>' + money(pricing.wage.rate) + wageUnit + '</b></div>'
+        : '<div class="kv"><span style="padding-left:14px">His wage — not set on his side yet</span><b>—</b></div>';
       h += '<div class="kv"><span>' + esc(g.name) + ' — ' + g.days.length + ' day' + (g.days.length === 1 ? '' : 's') +
         ' · ' + (Math.round(hrs * 10) / 10) + ' h' + (loads > 0 ? ' · ' + loads + ' loads' : '') + '</span><b></b></div>' +
         '<div class="kv"><span style="padding-left:14px">Revenue (your client rate)</span><b>' + (nRev ? money(rev) : '—') + '</b></div>' +
-        '<div class="kv"><span style="padding-left:14px">Wages (foreman + travel, your rate for him)</span><b>' + (nWage ? money(wage) : '—') + '</b></div>' +
-        (nRev && nWage ? '<div class="kv"><span style="padding-left:14px">Margin</span><b>' + money(rev - wage) + '</b></div>' : '') +
-        (!pricing.wage ? '<div style="margin:4px 0 8px"><button class="btn small navy" data-pnlsetpay="' + esc(uid) + '" data-pipename="' + esc(g.name) + '">Set his pay rate</button></div>' : '');
+        '<div class="kv"><span style="padding-left:14px">Wages (foreman + travel, his own rate)</span><b>' + (nWage ? money(wage) : '—') + '</b></div>' +
+        wageLine +
+        (nRev && nWage ? '<div class="kv"><span style="padding-left:14px">Margin</span><b>' + money(rev - wage) + '</b></div>' : '');
       h += pnlDriverRecordsHtml(uid, recs, bills, month);
     });
     if (days.length) {
@@ -675,12 +720,12 @@
     var det = detailAmounts(m, income, dw.total);
     var detTotal = 0;
     var detRows = [];
-    DETAIL_CATS.forEach(function (c) {
+    allDetailCats().forEach(function (c) {
       var d = det[c.key];
       var amt = d.amount || 0;
       detTotal += amt;
       detRows.push({
-        key: c.key, label: d.label, sub: c.sub,
+        key: c.key, label: d.label, sub: c.sub, custom: !!c.custom,
         amount: amt, auto: d.auto, rate: d.rate,
         perMile: miles > 0 ? amt / miles : 0,
         pct: income > 0 ? amt / income * 100 : 0
@@ -693,6 +738,11 @@
       fuel: fuel, fuelOther: fuelOther, biz: biz, bizByCat: bizByCat,
       wages: dw.total, wagesByDriver: dw.per,
       crewWages: cw.total, crewWagesByDriver: cw.byDriver,
+      /* v163: ONE wages figure for the fixed Driver wages line —
+         local drivers + connected crew (at their OWN rates) */
+      wagesTotal: Math.round((dw.total + cw.total) * 100) / 100,
+      wagesTotalPerMile: miles > 0 ? (dw.total + cw.total) / miles : 0,
+      wagesTotalPct: income > 0 ? (dw.total + cw.total) / income * 100 : 0,
       miles: miles,
       detail: detRows, detailTotal: detTotal,
       fuelPerMile: miles > 0 ? fuel / miles : 0,
@@ -719,6 +769,8 @@
     _totalMiles: totalMiles,
     _detailAmounts: detailAmounts,
     _DETAIL_CATS: DETAIL_CATS,
+    _customCats: customCats, /* v163 */
+    _allDetailCats: allDetailCats, /* v163 */
 
     status: function () {
       try {
@@ -780,26 +832,41 @@
       Object.keys(c.bizByCat).forEach(function (k) {
         h += '<div class="kv"><span>' + esc(k) + '</span><b>' + money(c.bizByCat[k]) + '</b></div>';
       });
-      if (c.wages > 0) h += '<div class="kv"><span>👥 Driver wages</span><b>' + money(c.wages) + '</b></div>';
-      /* v146: connected crew wages — attributed per driver */
-      if (c.crewWages > 0) {
-        h += '<div class="kv"><span>🤝 Connected crew wages</span><b>' + money(c.crewWages) + '</b></div>';
-        Object.keys(c.crewWagesByDriver || {}).forEach(function (uid) {
-          var g = c.crewWagesByDriver[uid];
-          if (g && g.wage > 0) {
-            h += '<div class="kv"><span style="padding-left:14px">↳ ' + esc(g.name) + ' (Connect)</span><b>' + money(g.wage) + '</b></div>';
-          }
-        });
-      }
+      /* v163: DRIVER WAGES — A FIXED LINE, like fuel (owner,
+         Oct 18, 2026 18:26 + 21:06 MDT: the P&L showed NO wages
+         line while an unexplained $84.19 sat inside the expense
+         total — that was the priced crew wage, in the total
+         with no line of its own). The line is ALWAYS here,
+         auto-computed, and never hand-editable: local drivers'
+         wages + connected drivers' wages at EACH DRIVER'S OWN
+         rate (his rate, set on his side, received via Connect —
+         the boss never sets it), each named on its own sub-line,
+         so every dollar inside Total expenses has a line. */
+      h += '<div class="kv"><span>👥 Driver wages</span><b>' + money(c.wagesTotal) + '</b></div>';
+      Object.keys(c.wagesByDriver || {}).forEach(function (id) {
+        var d = c.wagesByDriver[id];
+        if (d && d.wage > 0) {
+          h += '<div class="kv"><span style="padding-left:14px">↳ ' + esc(d.name) + '</span><b>' + money(d.wage) + '</b></div>';
+        }
+      });
+      Object.keys(c.crewWagesByDriver || {}).forEach(function (uid) {
+        var g = c.crewWagesByDriver[uid];
+        if (g && g.wage > 0) {
+          h += '<div class="kv"><span style="padding-left:14px">↳ ' + esc(g.name) + ' (Connect — his own rate)</span><b>' + money(g.wage) + '</b></div>';
+        }
+      });
       h += '<div class="kv"><span><b>Total expenses</b></span><b>' + money(c.expenses) + '</b></div>';
       h += '<p class="note">Fuel costs pull automatically from Fuel &amp; Expense. Add other business costs below.</p></div>';
 
       /* Detailed monthly analysis — the owner's spreadsheet format:
          each line shows amount, $/mile, and % of revenue */
       h += '<div class="card"><h3>📊 Monthly analysis</h3>';
-      h += '<div class="row"><div><label class="f">Total miles</label>' +
-        '<input id="pnl_miles" type="number" inputmode="decimal" min="0" step="0.01" value="' + (c.miles || '') + '" placeholder="Auto from odometer">' +
-        '<div class="note">Auto from fuel odometer readings — override if needed.</div></div></div>';
+      /* v163: miles are a FACT, not a field (owner, Oct 18, 2026:
+         "Miles are NOT a text box") — the total is read off the
+         truck's dated odometer log and printed as a value; there
+         is no input here any more, and nothing to override. */
+      h += '<div class="kv"><span>Total miles (from the odometer)</span><b>' +
+        (c.miles > 0 ? c.miles.toLocaleString('en-CA') + ' km' : 'No odometer readings this month') + '</b></div>';
       h += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">' +
         '<tr style="color:#888;border-bottom:1px solid #eee"><td></td>' +
         '<td style="text-align:right"><b>Totals</b></td>' +
@@ -814,19 +881,12 @@
           '<td style="text-align:right">' + c.fuelPerMile.toFixed(5) + '</td>' +
           '<td style="text-align:right">' + c.fuelPct.toFixed(2) + '</td></tr>';
       }
-      /* Salaries (driver wages) line */
-      if (c.wages > 0) {
-        h += '<tr><td>Total salaries</td><td style="text-align:right">' + money(c.wages) + '</td>' +
-          '<td style="text-align:right">' + c.wagesPerMile.toFixed(5) + '</td>' +
-          '<td style="text-align:right">' + c.wagesPct.toFixed(2) + '</td></tr>';
-      }
-      /* v146: connected crew wages line — the same expense,
-         attributed in the analysis table as well */
-      if (c.crewWages > 0) {
-        h += '<tr><td>Crew wages (Connect)</td><td style="text-align:right">' + money(c.crewWages) + '</td>' +
-          '<td style="text-align:right">' + (c.miles > 0 ? (c.crewWages / c.miles).toFixed(5) : '') + '</td>' +
-          '<td style="text-align:right">' + (c.income > 0 ? (c.crewWages / c.income * 100).toFixed(2) : '') + '</td></tr>';
-      }
+      /* Salaries — v163: the SAME fixed Driver wages figure as
+         the breakdown card (local + connected crew at their own
+         rates), always printed, never an input. */
+      h += '<tr><td>Total salaries (driver wages)</td><td style="text-align:right">' + money(c.wagesTotal) + '</td>' +
+        '<td style="text-align:right">' + c.wagesTotalPerMile.toFixed(5) + '</td>' +
+        '<td style="text-align:right">' + c.wagesTotalPct.toFixed(2) + '</td></tr>';
       /* Detailed categories */
       c.detail.forEach(function (r) {
         h += '<tr data-pnldetrow="' + r.key + '"><td>' + esc(r.label) +
@@ -835,6 +895,7 @@
             ' <span class="note">(<input data-pnlrate="' + r.key + '" type="number" inputmode="decimal" min="0" step="0.01" ' +
             'value="' + r.rate + '" title="Change the auto % rate" ' +
             'style="width:52px;text-align:right;border:1px solid #ddd;border-radius:6px;padding:2px 4px">%)</span>' : '') +
+          (r.custom ? ' <button class="btn small ghost" data-pnldelcat="' + r.key + '" title="Remove this line">✕</button>' : '') +
           '</td>' +
           '<td style="text-align:right"><input data-pnldet="' + r.key + '" type="number" inputmode="decimal" min="0" step="0.01" ' +
           'value="' + (r.amount ? r.amount.toFixed(2) : '') + '" placeholder="0.00" ' +
@@ -842,6 +903,12 @@
           '<td style="text-align:right">' + r.perMile.toFixed(5).replace(/\.?0+$/, '') + '</td>' +
           '<td style="text-align:right">' + r.pct.toFixed(2) + '</td></tr>';
       });
+      /* v163: the "+" — add a custom expense line of your own
+         (owner, Oct 18, 2026 21:06 MDT) */
+      h += '<tr><td colspan="4"><div class="row" style="align-items:flex-end;margin-top:6px">' +
+        '<div style="flex:1"><label class="f">＋ Add an expense line</label>' +
+        '<input id="pnl_newcat" placeholder="e.g. Truck wash"></div>' +
+        '<button class="btn small navy" id="pnl_addcat">Add line</button></div></td></tr>';
       h += '<tr><td colspan="4" style="height:6px"></td></tr>';
       h += '<tr style="border-top:2px solid #333"><td><b>Total expenses</b></td>' +
         '<td style="text-align:right"><b>' + money(c.expenses) + '</b></td>' +
@@ -911,7 +978,7 @@
       if ((App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
         h += '<div class="card"><h3>🤝 Connected crew — ' + esc(monthLabel(m)) + '</h3>' +
           '<div id="pnl_crew"><p class="note">Loading your crew\u2019s shared days…</p></div>' +
-          '<p class="note">From your drivers\u2019 own records, priced with your rates only — their rates never cross to you, and yours never cross to them. Their priced wages are counted in your Total expenses above — don\u2019t log the same work by hand.</p></div>';
+          '<p class="note">From your drivers\u2019 own records. Revenue is priced at your client rate; wages are priced at each driver\u2019s own rate — the wage he set on his own side, which is the one rate of his that crosses to you. Your client rate never crosses to them. Their priced wages are counted in your Total expenses above — don\u2019t log the same work by hand.</p></div>';
       }
 
       /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
@@ -928,7 +995,7 @@
          status line (PNL_INVITE_NOTE, reworded for the live era). */
       h += '<div class="card"><h3>＋ Add driver</h3>' +
         '<button class="btn primary big" id="pnl_connect_open" style="width:100%">🤝 Connect a driver</button>' +
-        '<p class="note">For a driver who uses Meticulous — Connect finds them by name, and their identity comes from their own account, not from typing. When they accept, you are connected; what you pay them is set below and never crosses to their side.</p>' +
+        '<p class="note">For a driver who uses Meticulous — Connect finds them by name, and their identity comes from their own account, not from typing. When they accept, you are connected. A connected driver\u2019s wage is set by the driver himself, on his own side — it crosses to your books as an expense at his rate, and there is nothing here for you to set. The manual form below is for drivers who are not on the app.</p>' +
         '<button class="btn ghost" id="pnl_manual_open" style="margin-top:10px">Add manually instead</button>' +
         '<div id="pnl_manual_wrap" style="display:' + (pnlManualOpen ? 'block' : 'none') + ';margin-top:8px">' +
         (pnlPrefill ? '<p class="note" style="color:var(--navy);font-weight:600">Setting the pay rate for ' + esc(pnlPrefill.name || 'your driver') + ' — it prices his shared days on your books, and it never crosses to him.</p>' : '') +
@@ -945,7 +1012,7 @@
           return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
             '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
             pnlInviteLine(d) +
-            (d.uid ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected — his shared days price from this rate</div>' : '') +
+            (d.uid ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected — his days price at his own wage once it crosses; this rate is only the fallback until then</div>' : '') +
             '<div class="row" style="margin-top:6px;align-items:flex-end"><div style="flex:1"><label class="f">Travel hrs/day owed</label><input type="number" inputmode="decimal" min="0" step="0.25" data-pnltravel="' + esc(d.id) + '" value="' + (parseFloat(d.travelHours) || 0) + '"></div>' +
             '<button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
         }).join('') + '</div></div>';
@@ -1001,13 +1068,28 @@
       body.querySelector('#pnl_prev').onclick = function () { W('month', shiftMonth(m, -1)); api.render(body); };
       body.querySelector('#pnl_next').onclick = function () { W('month', shiftMonth(m, 1)); api.render(body); };
 
-      /* Monthly analysis: total miles override */
-      var milesIn = body.querySelector('#pnl_miles');
-      if (milesIn) milesIn.onchange = function () {
-        var v = parseFloat(milesIn.value);
-        W('miles_' + m, isNaN(v) ? '' : v);
+      /* v163: custom expense lines — the "+" adds one, ✕ removes
+         one. (The old #pnl_miles override handler is GONE with
+         its input: miles come from the odometer only.) */
+      var addCatBtn = body.querySelector('#pnl_addcat');
+      if (addCatBtn) addCatBtn.onclick = function () {
+        var inp = body.querySelector('#pnl_newcat');
+        var label = inp ? inp.value.trim() : '';
+        if (!label) { if (inp) inp.focus(); return; }
+        var l = customCats().map(function (c) { return { key: c.key, label: c.label }; });
+        l.push({ key: 'c' + Date.now().toString(36), label: label });
+        W('custom_cats', l);
         api.render(body);
       };
+      body.querySelectorAll('[data-pnldelcat]').forEach(function (b) {
+        b.onclick = function () {
+          if (!confirm('Remove this expense line? Its typed amounts stay saved but the line leaves the list.')) return;
+          var key = b.getAttribute('data-pnldelcat');
+          W('custom_cats', customCats().filter(function (c) { return c.key !== key; })
+            .map(function (c) { return { key: c.key, label: c.label }; }));
+          api.render(body);
+        };
+      });
 
       /* Monthly analysis: detailed category amounts (type to override auto) */
       body.querySelectorAll('[data-pnldet]').forEach(function (inp) {
@@ -1146,14 +1228,18 @@
           var bills = (r[1] && r[1].billing) || {};
           var mans = (r[1] && r[1].manifests) || {};
           cacheCrewDays(m, days);
+          /* v163: cache each connected driver's OWN wage (from
+             his records doc) where ConnectPipe.pricingFor reads
+             it — his days then price at HIS rate on these books */
+          try {
+            var pw = {};
+            Object.keys(recs).forEach(function (uid) {
+              var w = recs[uid] && recs[uid].driverWage;
+              if (w && parseFloat(w.rate) > 0) pw[uid] = { payType: w.payType || 'hourly', rate: parseFloat(w.rate) || 0 };
+            });
+            App._store.set('__peer_wages', pw);
+          } catch (e) {}
           crewEl.innerHTML = pnlCrewHtml(days, recs, bills, mans, m);
-          crewEl.querySelectorAll('[data-pnlsetpay]').forEach(function (b) {
-            b.onclick = function () {
-              pnlPrefill = { uid: b.getAttribute('data-pnlsetpay'), name: b.getAttribute('data-pipename') || '' };
-              pnlManualOpen = true;
-              api.render(body);
-            };
-          });
           /* v146: the shared documents + receipt photos */
           crewEl.querySelectorAll('[data-pnlinv]').forEach(function (b) {
             b.onclick = function () {

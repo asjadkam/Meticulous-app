@@ -265,10 +265,14 @@ const OCT_FUEL = [
     }
     throw new Error('fn unbalanced: ' + name);
   }
-  const mem = { fuel_fills: [], rev_entries: [] };
+  const mem = { fuel_fills: [], rev_entries: [], odo_readings: [], mt_odo: '169300' };
   const sb = {
     console: console,
-    App: { _store: { get: (k, d) => (k in mem ? mem[k] : d), set: (k, v) => { mem[k] = v; } } }
+    App: {
+      _store: { get: (k, d) => (k in mem ? mem[k] : d), set: (k, v) => { mem[k] = v; } },
+      _masterOdometer: function () { const v = parseFloat(mem.mt_odo); return v > 0 ? v : null; },
+      _odoImplausible: function (v) { return (v > 0 && v > 169300 + 1000) ? 'jump' : null; }
+    }
   };
   sb.window = sb;
   const vm2 = require('vm');
@@ -277,23 +281,33 @@ const OCT_FUEL = [
     'var S = function (k, d) { return App._store.get(\'pnl_\' + k, d); };\n' +
     xFn(pnlSrc, 'inMonth') + '\n' + xFn(pnlSrc, 'totalMiles') + '\n__tm = totalMiles;', sb);
   const tm = sb.__tm;
-  mem.fuel_fills = [
-    { date: '2026-10-03', odo: '168510' },
-    { date: '2026-10-14', odo: '168759' },
-    { date: '2026-10-15', odo: '519326' },
-    { date: '2026-10-16', odo: '169166' }
+  /* v163 SUPERSEDES the v118 miles pins below the line: miles no
+     longer come from fill stamps at all — they are the month's
+     ODOMETER BOOKENDS off the dated log (odo_readings), the
+     manual override is abolished ("Miles are NOT a text box",
+     owner, Oct 18, 2026 21:06 MDT), and typed revenue miles
+     never substitute. The v118 poison lesson stands inside the
+     new derivation: a 'jump' reading is not evidence. */
+  mem.odo_readings = [
+    { ts: 1, date: '2026-10-03', value: 168510 },
+    { ts: 2, date: '2026-10-14', value: 168759 },
+    { ts: 3, date: '2026-10-15', value: 519326 },
+    { ts: 4, date: '2026-10-16', value: 169166 }
   ];
-  eq('v118 miles: the poisoned stamp contributes nothing — October total is the honest legs only', tm('2026-10'), 249);
-  ok('v118 miles: the total is a plausible four-figure-class number, not 350,816', tm('2026-10') < 10000 && tm('2026-10') !== 350816);
-  mem.fuel_fills = [
-    { date: '2026-10-03', odo: '168510' },
-    { date: '2026-10-14', odo: '168759' },
-    { date: '2026-10-16', odo: '169166' }
+  eq('v163 miles: bookends off the dated log (169166 - 168510 = 656)', tm('2026-10'), 656);
+  ok('v163 miles: the total is a plausible four-figure-class number, not 350,816', tm('2026-10') < 10000 && tm('2026-10') !== 350816);
+  mem.odo_readings = [
+    { ts: 1, date: '2026-10-03', value: 168510 },
+    { ts: 4, date: '2026-10-16', value: 169166 },
+    { ts: 5, date: '2026-10-20', value: 519326 }
   ];
-  eq('v118 miles: clean data still telescopes to last − first (656 km)', tm('2026-10'), 656);
+  eq('v163 miles: a poisoned LAST reading is skipped — the honest bookend stands', tm('2026-10'), 656);
   mem['pnl_miles_2026-10'] = '1234';
-  eq('v118 miles: a manual override still wins outright', tm('2026-10'), 1234);
+  eq('v163 miles: the abolished manual override is ignored outright', tm('2026-10'), 656);
   delete mem['pnl_miles_2026-10'];
+  mem.odo_readings = [];
+  mem.rev_entries = [{ date: '2026-10-05', miles: 9999 }];
+  eq('v163 miles: no readings -> 0; typed revenue miles never substitute', tm('2026-10'), 0);
 }
 
 /* ---------- v120: Connect a driver (owner, Oct 16 22:00) ----------
