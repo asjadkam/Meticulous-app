@@ -134,13 +134,13 @@ console.log('— 1. ONE transformed element: the bounded plane —');
     navSrc.indexOf('nv-drive-tilt') < 0 && navSrc.indexOf('nv-drive-spin') < 0 &&
     navSrc.indexOf('nv-drive-mapbox') < 0 && navSrc.indexOf('nvd_spin') < 0);
   const plane = ruleBody('.nv-drive-plane');
-  check('the plane is bounded: 190% x 190%, centred on the anchor by its offsets (left:-45% = 50 - 190/2, top:-31% = 64 - 190/2)',
-    !!plane && /width:190%/.test(plane) && /height:190%/.test(plane) &&
-    /left:-45%/.test(plane) && /top:-31%/.test(plane) && /transform-origin:50% 50%/.test(plane),
+  check('the plane is bounded: 230% x 230%, centred on the anchor by its offsets (left:-65% = 50 - 230/2, top:-51% = 64 - 230/2) — v178 re-pin (A1)',
+    !!plane && /width:230%/.test(plane) && /height:230%/.test(plane) &&
+    /left:-65%/.test(plane) && /top:-51%/.test(plane) && /transform-origin:50% 50%/.test(plane),
     String(plane));
-  const sizePct = 190;
-  check('the raster budget: the plane area is under a third of the v135 340% plane ((190/340)^2 < 0.32)',
-    Math.pow(sizePct / 340, 2) < 0.32, String(Math.pow(sizePct / 340, 2)));
+  const sizePct = 230; /* v178 re-pin (A1): plane grew 190 -> 230 for corner coverage; budget claim re-based below */
+  check('the raster budget: the plane area stays under HALF of the v135 340% plane ((230/340)^2 < 0.5) — v178 re-pin: A1 corner coverage bought with a bounded raster increase, still ~2.2x cheaper than v135',
+    Math.pow(sizePct / 340, 2) < 0.5, String(Math.pow(sizePct / 340, 2)));
   check('340% exists nowhere in the drive CSS any more',
     !rules.some(function (r) { return r.body.indexOf('340%') >= 0; }));
   check('the viewport is a plain overflow-hidden box: NO perspective property, NO transform',

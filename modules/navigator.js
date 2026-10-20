@@ -882,6 +882,13 @@
         '<div class="nv-drive-toptext">' +
         '<div class="nv-drive-inst" id="nvd_inst"></div>' +
         '<div class="nv-drive-road" id="nvd_road"></div></div></div>' +
+        /* v178 (F2): the turn inset — a Rand McNally style pop-up
+           that appears as a turn approaches: a big arrow bent by
+           the route's own geometry at that turn (see
+           turnDeltaDeg) over the distance + instruction. Lane
+           data is NOT in the routing response (see BUGS.md), so
+           the inset shows the turn, never invented lanes. */
+        '<div class="nv-drive-inset hidden" id="nvd_inset"></div>' +
         '<div class="nv-drive-viewport">' +
         '<div class="nv-drive-plane" id="nvd_plane"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
         '</div>' +
@@ -1353,7 +1360,7 @@
           lastNavDest = S.destLabel || (S.dest ? S.dest[0].toFixed(5) + ', ' + S.dest[1].toFixed(5) : '');
           if (S.map) {
             if (S.routeLine) S.map.removeLayer(S.routeLine);
-            S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 5, opacity: 0.9 }).addTo(S.map);
+            S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 8, opacity: 0.9 }).addTo(S.map);
             S.map.fitBounds(S.routeLine.getBounds(), { padding: [30, 30] });
           }
           var st = body.querySelector('#nv_steps');
@@ -1571,6 +1578,42 @@
         return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
       }
 
+      /* v178 (F2): how sharply the route bends at maneuver
+         idx+1's turn, in degrees (negative = left, positive =
+         right), measured off the route line's own geometry —
+         the bearing in (60→25 m before the turn point) against
+         the bearing out (25→60 m past it). Honest geometry: the
+         inset arrow bends exactly as the road does. */
+      function turnDeltaDeg(plan, line, idx) {
+        if (!plan || !line || !plan.maneuvers[idx]) return 0;
+        var m = plan.maneuvers[idx].cumEndKm * 1000;
+        var a1 = pointAlongLine(line, Math.max(0, m - 60)), a2 = pointAlongLine(line, Math.max(0, m - 25));
+        var b1 = pointAlongLine(line, m + 25), b2 = pointAlongLine(line, m + 60);
+        if (!a1 || !a2 || !b1 || !b2) return 0;
+        var din = bearingDeg(a1, a2), dout = bearingDeg(b1, b2);
+        return ((dout - din + 540) % 360) - 180;
+      }
+
+      /* v178 (F2): chevron icons for the arrows ON the route
+         line, cached by 15° bearing bucket — an SVG polygon
+         rotated by a transform ATTRIBUTE (never a CSS transform,
+         never a .style write: the v139 layer budget is untouched).
+         The glyph points along the route in map space; the plane
+         carries it to screen orientation like everything else on
+         the map. */
+      var arrowIconCache = {};
+      function arrowIcon(bearing) {
+        var bucket = ((Math.round(bearing / 15) * 15) % 360 + 360) % 360;
+        if (arrowIconCache[bucket]) return arrowIconCache[bucket];
+        var ic = L.divIcon({
+          className: 'nv-route-arrow', iconSize: [34, 34], iconAnchor: [17, 17],
+          html: '<svg viewBox="0 0 34 34" width="34" height="34"><g transform="rotate(' + bucket + ' 17 17)">' +
+            '<polygon points="17,3 27,29 17,22 7,29" fill="#ffffff" stroke="#1a56db" stroke-width="2.5" stroke-linejoin="round"/></g></svg>'
+        });
+        arrowIconCache[bucket] = ic;
+        return ic;
+      }
+
       /* v124: the route line is the DOMINANT element on the drive
          map — a white casing under a heavy coloured core, so the
          road ahead reads at a glance against any tile. Before, a
@@ -1581,8 +1624,8 @@
          one shade from the basemap's own road colours). */
       function makeDriveLine() {
         return L.layerGroup([
-          L.polyline(S.line, { color: '#ffffff', weight: 17, opacity: 0.9 }),
-          L.polyline(S.line, { color: '#1a56db', weight: 12, opacity: 1 })
+          L.polyline(S.line, { color: '#ffffff', weight: 24, opacity: 0.9 }),
+          L.polyline(S.line, { color: '#1a56db', weight: 18, opacity: 1 })
         ]);
       }
 
@@ -1623,7 +1666,7 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
-        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null };
+        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null };
         /* v135: hold the screen awake for the drive (see
            driveWake) and re-hold it after any foreground return.
            The handler rides on S so teardown can remove it too. */
@@ -1655,10 +1698,23 @@
                  every recenter, which over a continuous drive
                  reads as constant flicker. Tiles now land whole. */
               fadeAnimation: false
-            }).setView(S.pos || S.line[0], 17);
+            }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
             var tspec = driveTileSpec();
             L.tileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
             S.driveLine = makeDriveLine().addTo(S.driveMap);
+            /* v178 (F2): the route-arrow pool — ten chevron
+               markers created ONCE here and only ever MUTATED
+               (setLatLng / setIcon / setOpacity) by the tick's
+               remainder redraw, on that redraw's existing ~10 m
+               cadence. No per-tick layer traffic (v128 rule). */
+            try {
+              if (L.marker && L.divIcon && S.drive) {
+                S.drive.arrows = [];
+                for (var ai = 0; ai < 10; ai++) {
+                  S.drive.arrows.push(L.marker(S.line[0], { icon: arrowIcon(0), interactive: false, opacity: 0, keyboard: false }).addTo(S.driveMap));
+                }
+              }
+            } catch (e) {}
             /* v104: the position marker joins the settle pass
                below, not this first paint — the same un-settled-
                size balloon the planning map grew (see the map
@@ -1697,6 +1753,8 @@
            arrival hand-back — spends the arm: no re-route for
            this destination will auto-enter again. */
         S.driveAutoSpent = true;
+        /* v178 (A2): the smoothing loop dies with the drive. */
+        try { if (S.drive.animId !== null && S.drive.animId !== undefined && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(S.drive.animId); } catch (e) {}
         S.drive = null;
         /* v135: the drive wake lock ends with the drive. */
         driveWake(false);
@@ -1821,6 +1879,26 @@
             rrEl.textContent = S.rerouting ? 'Rerouting…' : 'Off route';
           }
         }
+        /* v178 (F2): the turn inset — appears for the last
+           400 m before a turn, repainted only when the maneuver
+           or the 50 m distance bucket changes (the v133
+           write-on-change discipline; the arrow is an SVG
+           transform attribute, not a style write). */
+        var insetEl = body.querySelector('#nvd_inset');
+        if (insetEl) {
+          var showInset = !!dp.next && dp.toTurnM <= 400;
+          var insetKey = showInset ? (dp.idx + ':' + Math.round(dp.toTurnM / 50)) : '';
+          if (S.drive.insetKey !== insetKey) {
+            S.drive.insetKey = insetKey;
+            insetEl.classList.toggle('hidden', !showInset);
+            if (showInset) {
+              var dDeg = Math.round(turnDeltaDeg(S.plan, S.line, dp.idx));
+              insetEl.innerHTML = '<svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
+                '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
+                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div>';
+            }
+          }
+        }
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);
         if (S.driveMap) {
@@ -1859,6 +1937,24 @@
               S.drive.remSeg = rem.seg; S.drive.remAlong = rem.along;
               var layers = S.driveLine.getLayers();
               for (var li = 0; li < layers.length; li++) layers[li].setLatLngs(rem.points);
+              /* v178 (F2): lay the chevrons along the road ahead —
+                 one every ~120 m of remainder, pointing along
+                 their segment's bearing; unused pool markers fade
+                 out. Mutations only, on this redraw's cadence. */
+              if (S.drive.arrows && rem.points.length > 1) {
+                var placed = 0, acc = 0;
+                for (var pi = 0; pi + 1 < rem.points.length && placed < S.drive.arrows.length; pi++) {
+                  var segLen = haversineM(rem.points[pi], rem.points[pi + 1]);
+                  if (acc + segLen >= 120) {
+                    var mk2 = S.drive.arrows[placed++];
+                    mk2.setLatLng(rem.points[pi + 1]);
+                    mk2.setIcon(arrowIcon(bearingDeg(rem.points[pi], rem.points[pi + 1])));
+                    mk2.setOpacity(1);
+                    acc = 0;
+                  } else acc += segLen;
+                }
+                for (var pj = placed; pj < S.drive.arrows.length; pj++) S.drive.arrows[pj].setOpacity(0);
+              }
             }
           } catch (e) {}
         }
@@ -1886,9 +1982,71 @@
           var hdg = (S.heading !== null && S.heading !== undefined)
             ? S.heading : (S.drive.headingApplied || 0);
           S.drive.headingApplied = hdg;
-          plane.style.transform = planeTransform(hdg);
+          paintPlane(hdg);
         }
+        driveAnimKick();
         return say;
+      }
+
+      /* v178 (A2): THE PLANE'S ONE WRITER + THE SMOOTHING LOOP.
+         paintPlane holds the single .style.transform assignment
+         in this module (the v139 pin) — the tick's gated write
+         and the animator both come through here, so the layer
+         contract is unchanged: one element, one writer.
+         driveAnim is the fluency the owner asked for (Oct 19:
+         the map "steps/jumps like an early-2000s GPS"): between
+         GPS fixes (~1 Hz) a requestAnimationFrame loop eases the
+         applied heading toward the real heading along the
+         shortest arc (never a 350° sweep the long way round) and
+         eases the map centre toward the latest fix, so rotation
+         and travel flow instead of stepping fix-to-fix. It writes
+         only while something is actually moving (a settled view
+         costs no frames), it is bounded per frame (heading step
+         ≤3°, centre closes at most half the gap), and it dies
+         with the drive (exitDrive cancels it; every frame
+         re-checks S.drive). Where rAF does not exist (test
+         harnesses, old WebViews) Drive behaves exactly as before. */
+      function paintPlane(hdg) {
+        var plane = body.querySelector('#nvd_plane');
+        if (plane) plane.style.transform = planeTransform(hdg);
+      }
+      function driveAnim() {
+        if (!S || !S.drive) return;
+        S.drive.animId = null;
+        var moving = false;
+        try {
+          if (S.heading !== null && S.heading !== undefined &&
+              S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) {
+            var dh = ((S.heading - S.drive.headingApplied + 540) % 360) - 180;
+            if (Math.abs(dh) > 0.3) {
+              var step = Math.max(-3, Math.min(3, dh * 0.22));
+              S.drive.headingApplied = (S.drive.headingApplied + step + 360) % 360;
+              paintPlane(S.drive.headingApplied);
+              moving = true;
+            }
+          }
+          if (S.driveMap && S.pos && S.driveMap.getCenter) {
+            var ctr = S.driveMap.getCenter();
+            if (ctr) {
+              var gap = haversineM([ctr.lat, ctr.lng], S.pos);
+              if (gap > 0.5) {
+                var f = gap > 8 ? 0.5 : 0.3;
+                S.driveMap.panTo([ctr.lat + (S.pos[0] - ctr.lat) * f,
+                                  ctr.lng + (S.pos[1] - ctr.lng) * f], { animate: false });
+                moving = true;
+              }
+            }
+          }
+        } catch (e) {}
+        if (moving && typeof requestAnimationFrame === 'function') {
+          S.drive.animId = requestAnimationFrame(driveAnim);
+        }
+      }
+      function driveAnimKick() {
+        if (!S || !S.drive) return;
+        if (S.drive.animId !== null && S.drive.animId !== undefined) return;
+        if (typeof requestAnimationFrame !== 'function') return;
+        S.drive.animId = requestAnimationFrame(driveAnim);
       }
 
       /* Arrival owns the drive screen briefly, then drive mode

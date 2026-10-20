@@ -80,8 +80,8 @@ console.log('\n— (a) the map fills its area —');
    viewport's perspective property and the CSS 52° tilt layer
    are GONE — replaced by ONE bounded plane carrying a composed
    transform. The sky-gradient backstop keeps its job. */
-ok('v139: the map rides ONE bounded plane — 190% × 190%, centred on the anchor by its offsets (was: the 340% mapbox of v125)',
-  /\.nv-drive-plane\{[^}]*width:190%;height:190%;left:-45%;top:-31%/.test(css) &&
+ok('v139+v178: the map rides ONE bounded plane — 230% × 230% (v178 A1 re-pin: 190% left the top corners short at diagonal headings), centred on the anchor by its offsets',
+  /\.nv-drive-plane\{[^}]*width:230%;height:230%;left:-65%;top:-51%/.test(css) &&
   !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
 ok('v139: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform',
   !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&
@@ -106,8 +106,8 @@ ok('the ETA text carries the first destination segment only',
 ok('v125: the ETA stack renders a visible placeholder from Drive open (never blank)',
   nav.indexOf('id="nvd_eta_main">--:--</div>') >= 0 &&
   nav.indexOf('Getting your arrival time…') >= 0);
-ok('v125: the drive route line is cased white 17 under a deep BLUE core 12 (owner spec: bold, a colour no road uses — was orange #e67e00 at 11)',
-  nav.indexOf("color: '#1a56db', weight: 12") >= 0 && nav.indexOf('weight: 17') >= 0 &&
+ok('v125+v178: the drive route line is cased white 24 under a deep BLUE core 18 (v178 A3 re-pin: thicker still — readable at a glance; colour unchanged, a colour no road uses)',
+  nav.indexOf("color: '#1a56db', weight: 18") >= 0 && nav.indexOf('weight: 24') >= 0 &&
   nav.indexOf('function makeDriveLine()') >= 0);
 ok('v125: the route line RETRACTS as travelled (driveTick redraws from the projected position)',
   nav.indexOf('routeRemainder(S.line, S.pos)') >= 0 &&

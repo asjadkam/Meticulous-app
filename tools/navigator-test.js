@@ -605,8 +605,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     wD.reg.nv_route.className === 'btn ghost big', String(wD.reg.nv_route.className));
   wD.reg.nv_drive.onclick();
   check('Drive tap opens the drive screen', !wD.reg.nv_drive_screen.classList.contains('hidden'));
-  check('drive map centres on the truck at navigation zoom (17)',
-    wD.calls.views.some(function (v) { return v[1] === 17; }), JSON.stringify(wD.calls.views));
+  check('drive map centres on the truck at navigation zoom (18 — v178 A3 re-pin: one zoom closer so road names read bigger)',
+    wD.calls.views.some(function (v) { return v[1] === 18; }), JSON.stringify(wD.calls.views));
   const sbD = { console };
   vm.createContext(sbD);
   vm.runInContext(extract(navSrc, 'NAVPURE-BEGIN', 'NAVPURE-END'), sbD);

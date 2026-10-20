@@ -383,7 +383,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     !/\.nv-drive-bar\{[^}]*(transform:|will-change)/.test(cssSrc));
   check('v139 (supersedes the v133 tilt pins): the tilt/spin/mapbox layers are GONE from the CSS — one bounded plane instead',
     !/\.nv-drive-tilt\{/.test(cssSrc) && !/\.nv-drive-spin\{/.test(cssSrc) && !/\.nv-drive-mapbox\{/.test(cssSrc) &&
-    /\.nv-drive-plane\{[^}]*width:190%/.test(cssSrc));
+    /\.nv-drive-plane\{[^}]*width:230%/.test(cssSrc));
   const tickSrc = navSrc.slice(navSrc.indexOf('function driveTick()'), navSrc.indexOf('function driveArrived()'));
   check('v133: driveTick writes chrome text ONLY through the cached writer (no direct textContent assignment to the five nodes)',
     tickSrc.indexOf('driveText(') >= 0 &&
