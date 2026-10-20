@@ -427,6 +427,30 @@
     return null;
   }
 
+  /* v176 (F1, owner Oct 19 drive): EVERY TURN ANNOUNCED, NONE
+     SKIPPED. On his Oct 19 drive the guidance jumped from the
+     Beddington Trail exit straight to the next turn — a short
+     intermediate maneuver (an exit ramp + immediate merge) was
+     crossed between two GPS fixes, the maneuver index jumped
+     past it, and its instruction was never spoken: drivePrompt
+     only ever looks at idx+1, and trackProgress spoke only the
+     landing maneuver's line. skippedLines is the catch-up half
+     of the guarantee: given an index jump fromIdx -> toIdx, it
+     returns the instruction lines of every maneuver STRICTLY
+     BETWEEN them (the landing maneuver keeps its own existing
+     announcement path), in route order, so the caller can speak
+     them as one combined line — no turn on the route is ever
+     passed in silence. */
+  function skippedLines(plan, fromIdx, toIdx) {
+    var out = [];
+    if (!plan || !plan.maneuvers) return out;
+    for (var j = fromIdx + 1; j < toIdx; j++) {
+      var m = plan.maneuvers[j];
+      if (m && (m.instruction || m.verbalPre)) out.push(m.instruction || m.verbalPre);
+    }
+    return out;
+  }
+
   function fmtDist(m) {
     if (m === null || m === undefined || !isFinite(m)) return '';
     if (m < 1000) return Math.round(m / 10) * 10 + ' m';
@@ -1412,8 +1436,28 @@
         var idx = currentManeuverIndex(S.plan, pr.along);
         if (idx !== S.manIdx) {
           var prev = S.plan.maneuvers[S.manIdx];
+          var oldIdx = S.manIdx;
           S.manIdx = idx;
-          if (prev && prev.verbalPost) speak(prev.verbalPost);
+          /* v176 (F1): an index JUMP (oldIdx -> idx, more than one
+             step) crossed whole maneuvers between two fixes —
+             their turns were never announced. Speak the skipped
+             lines FIRST, combined with the landing line, as one
+             utterance (speak() cancels, so separate calls would
+             eat each other), and mark the skipped maneuvers said
+             in the drive flag bag so drivePrompt never fires them
+             late, out of sequence. */
+          var skipped = (idx > oldIdx + 1) ? skippedLines(S.plan, oldIdx, idx) : [];
+          if (skipped.length) {
+            if (S.drive && S.drive.said) {
+              for (var sj = oldIdx + 1; sj < idx; sj++) {
+                S.drive.said['far:' + sj] = 1; S.drive.said['near:' + sj] = 1;
+              }
+            }
+            var landCur = S.plan.maneuvers[idx];
+            var landLine = (prev && prev.verbalPost) ? '' :
+              (landCur ? (landCur.verbalPre || landCur.instruction || '') : '');
+            speak(skipped.join(' Then ') + (landLine ? ' Then ' + landLine : ''));
+          } else if (prev && prev.verbalPost) speak(prev.verbalPost);
           else {
             var cur = S.plan.maneuvers[idx];
             /* v101: in drive mode the far/near prompts (drivePrompt)
