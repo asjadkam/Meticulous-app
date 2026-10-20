@@ -81,7 +81,7 @@
      truck costing hugs the designated network (use_truck_route 1.0)
      and prices no-access (Restricted) edges at a heavy FINITE penalty
      (100000), so a destination on such a street stays reachable. */
-  function buildRouteRequest(origin, dest, profile, mode) {
+  function buildRouteRequest(origin, dest, profile, mode, opts) {
     var req = {
       locations: [
         { lon: origin[1], lat: origin[0], type: 'break' },
@@ -106,8 +106,31 @@
         }
       };
     }
+    /* v177 (F4): the route preference from the Navigator's own
+       settings menu. 'fastest' (the default) adds NOTHING — the
+       request stays byte-identical to the proven step-3/4 shape.
+       'economical' asks Valhalla for the shortest path instead
+       (its per-costing `shortest` switch: fewer kilometres,
+       less fuel, possibly slower) — an honest engine-level
+       preference, not a relabelled fastest route. */
+    if (opts && opts.routePref === 'economical') {
+      if (!req.costing_options) req.costing_options = {};
+      if (!req.costing_options[req.costing]) req.costing_options[req.costing] = {};
+      req.costing_options[req.costing].shortest = true;
+    }
     return req;
   }
+
+  /* v177 (A4/F4): the drive view mode — '3d' (the v175 chase
+     perspective) or '2d' (flat heading-up). A driver OPTION in
+     the Navigator settings menu, never a compulsion. Kept as a
+     NAVPURE variable so planeTransform — whose call site and
+     3D string are pinned by the v139 suite — stays a one-arg
+     pure function of the heading; loadSettings sets this from
+     the stored choice on every render. */
+  var navViewMode = '3d';
+  function setNavViewMode(m) { navViewMode = (m === '2d') ? '2d' : '3d'; }
+  function getNavViewMode() { return navViewMode; }
 
   /* Valhalla shapes are precision-6 polylines. Returns [[lat,lon],…]. */
   function decodeShape(shape, precision) {
@@ -585,15 +608,28 @@
   function loadSettings() {
     var s = {};
     try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-    return {
+    var out = {
       profile: navProfile(s.profile),
       serverUrl: NAV_DEFAULT_SERVER_URL,
       muted: !!s.muted,
       mode: s.mode === 'car' ? 'car' : 'truck',
       /* v135: the drive avatar (see avatarGlyph) — the stored
          choice, defaulting to the dump truck. */
-      avatar: AVATAR_KINDS.indexOf(s.avatar) >= 0 ? s.avatar : 'dump'
+      avatar: AVATAR_KINDS.indexOf(s.avatar) >= 0 ? s.avatar : 'dump',
+      /* v177 (F4): the Navigator's OWN settings (its gear menu):
+         route preference, the 3D/2D view option (A4), and the
+         speedometer / speed-limit overlay toggles. One settings
+         object in the one 'navigator' store — the Preferences
+         door and the in-Navigator gear open the SAME menu over
+         this same object, never a copy. Defaults: fastest,
+         3D chase, both overlays on. */
+      routePref: s.routePref === 'economical' ? 'economical' : 'fastest',
+      viewMode: s.viewMode === '2d' ? '2d' : '3d',
+      showSpeed: s.showSpeed === undefined ? true : !!s.showSpeed,
+      showSpeedLimit: s.showSpeedLimit === undefined ? true : !!s.showSpeedLimit
     };
+    setNavViewMode(out.viewMode);
+    return out;
   }
   function saveSettings(patch) {
     var s = {};
@@ -753,7 +789,14 @@
          screen (below) layers over this shell. */
       var h = '<div class="nv-shell">' +
         '<div class="nv-shell-head"><button class="btn ghost small" id="nv_back">← Back</button>' +
-        '<span class="nv-shell-title">🧭 Navigator</span></div>' +
+        '<span class="nv-shell-title">🧭 Navigator</span>' +
+        /* v177 (F4): THE GEAR — the Navigator's own settings menu
+           lives inside the module now (see nvSettingsHTML below).
+           The same menu is reachable from Preferences through a
+           door that sets nav_open_settings and lands here — one
+           menu, two doors, one settings object. */
+        '<button class="btn ghost small" id="nv_gear" style="margin-left:auto" aria-label="Navigator settings">⚙️ Settings</button></div>' +
+        '<div id="nv_settings" class="nv-settings hidden"></div>' +
         '<div class="nv-mapzone">' +
         '<div id="nv_map" class="nv-map"></div>' +
         '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
@@ -857,6 +900,16 @@
         }).join('') +
         '</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div>' +
+        /* v177 (F4): the on-screen speedometer + speed-limit
+           badge — overlays the settings toggles show/hide. The
+           speed is the GPS stream's own speed; the limit badge
+           only ever shows a limit the route data actually
+           carries (none today — see BUGS.md: the Valhalla
+           response carries no per-edge maxspeed, so the badge
+           stays hidden rather than inventing a number). */
+        '<div class="nv-drive-speed" id="nvd_speedwrap">' +
+        '<div class="nv-drive-speedo" id="nvd_speed">–</div>' +
+        '<div class="nv-drive-limit hidden" id="nvd_limit"></div></div>' +
         '<div class="nv-drive-bar">' +
         /* v125: the ETA stack is NEVER blank — it renders with a
            visible placeholder from the moment Drive opens, and
@@ -867,6 +920,7 @@
         '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main">--:--</div>' +
         '<div class="nv-drive-eta-sub" id="nvd_eta_sub">Getting your arrival time…</div></div>' +
         '<button class="btn ghost nv-mute' + (settings.muted ? ' muted' : '') + '" id="nvd_mute" aria-pressed="' + (settings.muted ? 'true' : 'false') + '" aria-label="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '" title="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '">' + muteIcon(settings.muted) + '</button>' +
+        '<button class="btn ghost" id="nvd_gear" aria-label="Navigator settings">⚙️</button>' +
         '<button class="btn primary" id="nvd_exit">End drive</button>' +
         '</div></div></div>';
       body.innerHTML = h;
@@ -1334,7 +1388,7 @@
         }
 
         function requestRoute(excludePts) {
-          var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode);
+          var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode, { routePref: S.settings.routePref });
           if (excludePts && excludePts.length) {
             reqBody.exclude_locations = excludePts.map(function (p) { return { lat: p[0], lon: p[1] }; });
           }
@@ -1510,6 +1564,10 @@
          element, one raster, one writer (the drive tick, ≥2°
          deadband). */
       function planeTransform(headingDeg) {
+        /* v177 (A4): 2D is a flat heading-up view — same spin,
+           no pitch, no perspective. 3D (default) is the v139
+           composed chase transform, byte-identical to before. */
+        if (getNavViewMode() === '2d') return 'rotate(' + (-headingDeg) + 'deg)';
         return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
       }
 
@@ -1740,6 +1798,11 @@
         var etaMain = body.querySelector('#nvd_eta_main');
         driveTextKeep(etaMain, 'etaMain', fmtClock(driveEtaInfo(S.plan, pr.along, Date.now()).arriveAt));
         var etaSub = body.querySelector('#nvd_eta_sub');
+        /* v177 (F4): the speedometer overlay reads the GPS
+           stream's own speed (m/s -> km/h), through the cached
+           writer like every other drive-chrome text. */
+        var spdEl = body.querySelector('#nvd_speed');
+        if (spdEl && S.settings.showSpeed) driveText(spdEl, 'speed', (S.speed !== null && S.speed !== undefined && isFinite(S.speed)) ? String(Math.max(0, Math.round(S.speed * 3.6))) : '–');
         driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(dp.etaMin) + ' · ' + fmtDist(dp.leftM) + ' left' +
           /* v107: the bar shows the destination's first segment
              only — a full address would crowd the line (the CSS
@@ -1962,6 +2025,136 @@
       if (muteBtn) muteBtn.onclick = toggleMute;
       var dMute = body.querySelector('#nvd_mute');
       if (dMute) dMute.onclick = toggleMute;
+      /* ---------- v177 (F4): THE NAVIGATOR SETTINGS MENU ----------
+         One menu, two doors: the ⚙️ here (plan face + drive face)
+         and the door in Preferences (which sets nav_open_settings
+         and lands on this face — render consumes it below). The
+         menu edits the ONE settings object (loadSettings /
+         saveSettings over the 'navigator' store); truck dimensions
+         LIVE HERE now (moved from Preferences — the same profile
+         object routing already reads). Every control applies at
+         the change: route preference re-routes an active route,
+         view mode repaints the plane on the next tick, overlay
+         toggles show/hide at once. */
+      function nvSettingsHTML() {
+        var st = S.settings, p = st.profile;
+        function seg(id, val, opts) {
+          return '<div class="row" id="' + id + '" style="gap:6px">' + opts.map(function (o) {
+            return '<button class="btn small ' + (val === o[0] ? 'navy' : 'ghost') + '" data-seg="' + o[0] + '" style="flex:1">' + o[1] + '</button>';
+          }).join('') + '</div>';
+        }
+        return '<div class="card" style="margin:10px">' +
+          '<div class="row"><h3 style="flex:1;margin:0">⚙️ Navigator settings</h3>' +
+          '<button class="btn ghost small" id="nvs_close">✕ Close</button></div>' +
+          '<label class="f">Map view</label>' + seg('nvs_view', st.viewMode, [['3d', '🏔️ 3D chase'], ['2d', '🗺️ 2D flat']]) +
+          '<label class="f">Route preference</label>' + seg('nvs_route', st.routePref, [['fastest', '⚡ Fastest'], ['economical', '⛽ Most economical']]) +
+          '<label class="chk" style="display:block;margin-top:12px"><input type="checkbox" id="nvs_speed"' + (st.showSpeed ? ' checked' : '') + '> Speedometer on screen</label>' +
+          '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_limit"' + (st.showSpeedLimit ? ' checked' : '') + '> Speed limit on screen (shows when the route data carries one)</label>' +
+          '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_mute"' + (st.muted ? ' checked' : '') + '> Voice guidance muted</label>' +
+          '<h3 style="margin:16px 0 4px">🚛 Your truck</h3>' +
+          '<p class="note" style="margin-top:0">Routes keep you legal for a truck of this size and weight.</p>' +
+          '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '">' +
+          '<label class="f">Width (m)</label><input id="nvs_width" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.width) + '">' +
+          '<label class="f">Length (m)</label><input id="nvs_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.length) + '">' +
+          '<label class="f">Weight (tonnes)</label><input id="nvs_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.weight) + '">' +
+          '<label class="f">Axle load (tonnes)</label><input id="nvs_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.axleLoad) + '">' +
+          '<label class="f">Axles</label><input id="nvs_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(p.axles) + '">' +
+          '<label class="chk" style="display:block;margin-top:10px"><input type="checkbox" id="nvs_hazmat"' + (p.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +
+          '<p class="note" id="nvs_note">Saves as you change it.</p></div>';
+      }
+      function paintSpeedOverlay() {
+        var w = body.querySelector('#nvd_speedwrap');
+        if (w) w.style.display = S.settings.showSpeed ? '' : 'none';
+        var lim = body.querySelector('#nvd_limit');
+        if (lim) {
+          var v = (S.settings.showSpeedLimit && S.limitKmh) ? String(S.limitKmh) : '';
+          lim.textContent = v;
+          lim.classList.toggle('hidden', !v);
+        }
+      }
+      function openNavSettings(inDrive) {
+        var panel = body.querySelector('#nv_settings');
+        if (!panel) return;
+        /* one node, moved to whichever face opened it — the
+           drive face paints above the shell, so the panel rides
+           into the drive screen when opened from there. */
+        var host = inDrive ? body.querySelector('#nv_drive_screen') : body.querySelector('.nv-shell');
+        if (host && panel.parentNode !== host) host.appendChild(panel);
+        panel.innerHTML = nvSettingsHTML();
+        panel.classList.remove('hidden');
+        wireNavSettings(panel);
+        var c = panel.querySelector('#nvs_close');
+        if (c) c.onclick = function () { panel.classList.add('hidden'); };
+      }
+      function wireNavSettings(panel) {
+        function segWire(id, apply) {
+          var seg = panel.querySelector('#' + id);
+          if (!seg) return;
+          seg.querySelectorAll('[data-seg]').forEach(function (b) {
+            b.onclick = function () {
+              apply(b.getAttribute('data-seg'));
+              seg.querySelectorAll('[data-seg]').forEach(function (b2) {
+                b2.className = 'btn small ' + (b2.getAttribute('data-seg') === b.getAttribute('data-seg') ? 'navy' : 'ghost');
+                b2.style.flex = '1';
+              });
+            };
+          });
+        }
+        segWire('nvs_view', function (v) {
+          S.settings.viewMode = v; setNavViewMode(v);
+          saveSettings({ viewMode: v });
+          if (S.drive) S.drive.headingApplied = null; /* next tick repaints the plane in the new mode */
+        });
+        segWire('nvs_route', function (v) {
+          S.settings.routePref = v;
+          saveSettings({ routePref: v });
+          if (S.dest && S.plan) doRoute();
+          else if (S.dest && S.settings.serverUrl) { S.autoWanted = true; maybeAutoRoute(); }
+        });
+        var sp = panel.querySelector('#nvs_speed');
+        if (sp) sp.onchange = function () { S.settings.showSpeed = !!sp.checked; saveSettings({ showSpeed: S.settings.showSpeed }); paintSpeedOverlay(); };
+        var li = panel.querySelector('#nvs_limit');
+        if (li) li.onchange = function () { S.settings.showSpeedLimit = !!li.checked; saveSettings({ showSpeedLimit: S.settings.showSpeedLimit }); paintSpeedOverlay(); };
+        var mu = panel.querySelector('#nvs_mute');
+        if (mu) mu.onchange = function () { if (mu.checked !== S.settings.muted) toggleMute(); };
+        var profIds = { height: 'nvs_height', width: 'nvs_width', length: 'nvs_length', weight: 'nvs_weight', axleLoad: 'nvs_axleload', axles: 'nvs_axles' };
+        function saveProfile() {
+          var cur = S.settings.profile, p = {}, k, el;
+          for (k in profIds) {
+            el = panel.querySelector('#' + profIds[k]);
+            if (el && el.value !== '') p[k] = Number(el.value);
+            else if (cur[k] !== undefined) p[k] = cur[k];
+          }
+          var hz = panel.querySelector('#nvs_hazmat');
+          p.hazmat = hz ? !!hz.checked : !!cur.hazmat;
+          S.settings.profile = navProfile(p);
+          saveSettings({ profile: S.settings.profile });
+          var n = panel.querySelector('#nvs_note');
+          if (n) n.textContent = '✓ Saved — routes now use this truck.';
+          if (S.dest && S.plan) doRoute();
+        }
+        Object.keys(profIds).forEach(function (k) {
+          var el = panel.querySelector('#' + profIds[k]);
+          if (el) el.onchange = saveProfile;
+        });
+        var hzEl = panel.querySelector('#nvs_hazmat');
+        if (hzEl) hzEl.onchange = saveProfile;
+      }
+      var gearBtn = body.querySelector('#nv_gear');
+      if (gearBtn) gearBtn.onclick = function () { openNavSettings(false); };
+      var dGear = body.querySelector('#nvd_gear');
+      if (dGear) dGear.onclick = function () { openNavSettings(true); };
+      /* the Preferences door: it set nav_open_settings before
+         landing here — open the same menu, then clear the flag
+         so a later plain entry does not reopen it. */
+      try {
+        if (App._store.get('nav_open_settings', null)) {
+          App._store.set('nav_open_settings', null);
+          openNavSettings(false);
+        }
+      } catch (e) {}
+      paintSpeedOverlay();
+
       /* v103: the mode pair lives in the quiet row — the active
          mode paints navy, never the loud primary orange. */
       function paintMode() {

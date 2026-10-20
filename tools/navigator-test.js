@@ -910,7 +910,14 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('index.html loads the Leaflet library', idxSrc.indexOf('leaflet@1.9.4/dist/leaflet.js') >= 0 && idxSrc.indexOf('leaflet@1.9.4/dist/leaflet.css') >= 0);
   check('app.js registers the Navigator module meta', appSrc.indexOf("navigator:  { title: 'Navigator'") >= 0);
   check('app.js runs module teardown on exit (v77 hook)', appSrc.indexOf('function teardownModule()') >= 0 && appSrc.indexOf('prev.teardown()') >= 0);
-  check('preferences has the Navigator profile card', prefSrc.indexOf('pf_nv_height') >= 0 && prefSrc.indexOf('pf_nv_hazmat') >= 0);
+  /* v177 deliberate pin move (F4, owner Oct 19): the truck
+     dimensions MOVED from Preferences into the Navigator's own
+     settings menu — the old "profile card in Preferences" pin is
+     INVERTED: Preferences now carries only the DOOR to that menu
+     (pf_nv_open + nav_open_settings), and no dimension inputs. */
+  check('v177: Preferences carries the Navigator settings DOOR, not the dimension inputs (they moved into the Navigator)',
+    prefSrc.indexOf('pf_nv_open') >= 0 && prefSrc.indexOf('nav_open_settings') >= 0 &&
+    prefSrc.indexOf('pf_nv_height') < 0 && prefSrc.indexOf('pf_nv_hazmat') < 0);
   /* v137 deliberate pin move: the "preferences Advanced has the
      Navigator server URL" pin is INVERTED — the editable address
      is gone from every user-facing surface (owner, Oct 17). */

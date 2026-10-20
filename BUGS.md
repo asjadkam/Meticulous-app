@@ -1,4 +1,8 @@
 
+## Navigator overhaul — Oct 20, 2026 (v176– )
+- KNOWN DATA GAP (F4 speed-limit overlay): the self-hosted Valhalla response the app consumes carries NO per-edge maxspeed, so the Navigator's speed-limit badge (v177) can only show a limit when route data carries one — today it stays hidden rather than inventing a number. A real limit source (e.g. OSM maxspeed extract baked into the nav server) is a server-side follow-up.
+- KNOWN DATA GAP (F2 lane guidance): Valhalla maneuvers in the current response carry no lane array, so the v178 lane inset is built from maneuver geometry/type (turn arrow + street), not true per-lane data. It never fabricates lanes.
+
 ## Field report — Oct 14, 2026 (evening, owner screenshots)
 - MANIFEST (phone): PDF/preview shows dispatch as bare name only; Start Time "Invalid Date"; End Time "5:38:00 p.m." (owner: wrong — he never stopped the session; app wrote an end by itself or mislabels one). Start existed 3 ways (ticket 8:00, auto-start 8:00, manual edit 8:00) yet collect() produced Invalid Date. Investigate what stored record the phone manifest reads (orphaned session from force-close key-shift?) vs current-source collect(). ALSO: phone preview layout differs from current build (per-dispatch Start/End/Miles rows) — phone bundle may lag OTA; cold-restart test queued for home.
 - REVENUE: no way to expand ONE day to see or edit its entries (owner screenshot 18:04). Needs a per-day drill-down (tap a day/bar -> day detail with editable entries).

@@ -372,19 +372,14 @@
          Navigator module, with no user-editable surface anywhere
          (the old Advanced text box is gone: one altered character
          used to break routing silently). */
-      var nvSet = (window.MeticulousNav && MeticulousNav.loadSettings) ? MeticulousNav.loadSettings()
-        : { profile: { height: 3.9, width: 2.6, length: 9.0, weight: 24, axleLoad: 10, axles: 3, hazmat: false } };
-      var nvp = nvSet.profile;
+      /* v177 (F4, owner Oct 19): the truck dimensions MOVED into
+         the Navigator's own settings menu (its ⚙️ gear). This card
+         is the DOOR to that same menu — one menu, two doors, the
+         same settings object in the same 'navigator' store. The
+         dimension inputs no longer live here. */
       h += '<div class="card"><h3>🧭 Navigator</h3>' +
-        '<p class="note" style="margin-top:0">Your truck, as the Navigator sees it. Truck routes keep you legal for a truck of this size and weight.</p>' +
-        '<label class="f">Height (m)</label><input id="pf_nv_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.height) + '">' +
-        '<label class="f">Width (m)</label><input id="pf_nv_width" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.width) + '">' +
-        '<label class="f">Length (m)</label><input id="pf_nv_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(nvp.length) + '">' +
-        '<label class="f">Weight (tonnes)</label><input id="pf_nv_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(nvp.weight) + '">' +
-        '<label class="f">Axle load (tonnes)</label><input id="pf_nv_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(nvp.axleLoad) + '">' +
-        '<label class="f">Axles</label><input id="pf_nv_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(nvp.axles) + '">' +
-        '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_nv_hazmat"' + (nvp.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +
-        '<p class="note" id="pf_nv_note">Saves as you type.</p></div>';
+        '<p class="note" style="margin-top:0">Truck size, route preference, map view and guidance overlays now live in the Navigator\'s own settings — one menu, opened from here or from the ⚙️ inside the Navigator.</p>' +
+        '<button class="btn navy big" id="pf_nv_open">⚙️ Open Navigator settings</button></div>';
 
       /* v54 (owner, Oct 14): the standalone Notifications card is gone —
          "Updates and notifications should also be in advanced features!
@@ -936,38 +931,14 @@
          routing address anywhere. The address is a baked-in
          constant inside MeticulousNav.loadSettings. */
       (function () {
-        function navLoad() {
-          if (window.MeticulousNav && MeticulousNav.loadSettings) return MeticulousNav.loadSettings();
-          var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-          return { profile: s.profile || {} };
-        }
-        function navSave(patch) {
-          if (window.MeticulousNav && MeticulousNav.saveSettings) { MeticulousNav.saveSettings(patch); return; }
-          var s = {}; try { s = App._store.get('navigator', {}) || {}; } catch (e) {}
-          for (var k in patch) s[k] = patch[k];
-          try { App._store.set('navigator', s); } catch (e) {}
-        }
-        var profIds = { height: 'pf_nv_height', width: 'pf_nv_width', length: 'pf_nv_length', weight: 'pf_nv_weight', axleLoad: 'pf_nv_axleload', axles: 'pf_nv_axles' };
-        var nvNote = body.querySelector('#pf_nv_note');
-        function saveProfile() {
-          var cur = navLoad().profile || {};
-          var p = {}, k, el;
-          for (k in profIds) {
-            el = body.querySelector('#' + profIds[k]);
-            if (el && el.value !== '') p[k] = Number(el.value);
-            else if (cur[k] !== undefined) p[k] = cur[k];
-          }
-          var hz = body.querySelector('#pf_nv_hazmat');
-          p.hazmat = hz ? !!hz.checked : !!cur.hazmat;
-          navSave({ profile: p });
-          if (nvNote) nvNote.textContent = '✓ Truck profile saved — the Navigator routes for this truck.';
-        }
-        Object.keys(profIds).forEach(function (k) {
-          var el = body.querySelector('#' + profIds[k]);
-          if (el) el.onchange = saveProfile;
-        });
-        var hzEl = body.querySelector('#pf_nv_hazmat');
-        if (hzEl) hzEl.onchange = saveProfile;
+        /* v177 (F4): the door — flag the menu open and land in
+           the Navigator, whose render consumes the flag and
+           opens the SAME settings menu its own ⚙️ opens. */
+        var door = body.querySelector('#pf_nv_open');
+        if (door) door.onclick = function () {
+          try { App._store.set('nav_open_settings', 1); } catch (e) {}
+          App.openModule('navigator');
+        };
       })();
       // v24: pf_wipe handler removed (button removed above)
     }
