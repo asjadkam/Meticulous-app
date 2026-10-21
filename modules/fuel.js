@@ -60,6 +60,7 @@
      tap opens THIS, not the edit form; Edit lives on the page as
      a quiet secondary action. */
   var detailFillIdx = null;
+  var fxView = false; // v202 FUEL-TAB: the Other-expenses view is open (its tab on the face opens it)
   var detailDelArm = false;
   var fuShowAll = false; /* v177 (D6): Fill-ups shows the latest 3 until asked for more (the Entries pattern) */
   /* v118: receipt precision — litres carry 3 decimals, money 2.
@@ -166,6 +167,120 @@
     }
     return out;
   }
+
+  /* v202 FUEL-TAB (owner, Oct 21, 2026 10:02 MDT): the Other-
+     expenses form gets a tab of its own (see renderFxView below).
+     wireFx is the form's wiring — the v42 receipt-photo OCR block
+     and the Add handler, moved VERBATIM out of the face render:
+     same fields, same photo pipeline, same save. It runs only
+     where the form actually is — its own view now. */
+  function wireFx(body) {
+      /* v42: receipt photo → OCR on the Other-expenses card — same
+         shared pipeline as the fill-up form above (1600px rendition +
+         rotation retry). Fills only untouched fields; a date read from
+         the receipt is used for the saved entry (this card has no date
+         field of its own). Never silent. */
+      ['#fx_what', '#fx_cost'].forEach(function (id) {
+        var e = body.querySelector(id);
+        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
+      });
+      function fxFillField(id, v) {
+        var e = body.querySelector(id);
+        if (!e || !v) return;
+        if (e.getAttribute('data-touched')) return;
+        if (e.value) return;
+        e.value = v;
+      }
+      var fxOcrDate = '';
+      var fxCamInput = body.querySelector('#fx_img_cam');
+      var fxPickInput = body.querySelector('#fx_img');
+      body.querySelector('#fx_cam').onclick = function () { fxCamInput.click(); };
+      body.querySelector('#fx_pick').onclick = function () { fxPickInput.click(); };
+      var fxOcrToken = 0;
+      function fxSetRead(html) { var d = body.querySelector('#fx_read'); if (d) d.innerHTML = html; }
+      function fxHandlePhoto(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        var token = ++fxOcrToken;
+        var r = new FileReader();
+        r.onload = function () { body.querySelector('#fx_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
+        r.readAsDataURL(file);
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseExpenseReceipt) {
+          fxSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
+          return;
+        }
+        fxSetRead('📖 Reading receipt…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (token !== fxOcrToken) return;
+          if (!ocrUrl) { fxSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+            if (token !== fxOcrToken) return;
+            try { fxSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
+          }).then(function (text) {
+            if (token !== fxOcrToken) return;
+            var parsed = TicketOCR.parseExpenseReceipt(text);
+            var rep = TicketOCR.describeExpenseRead(parsed);
+            fxFillField('#fx_cost', parsed.total);
+            fxFillField('#fx_what', parsed.vendor);
+            if (parsed.date) fxOcrDate = parsed.date;
+            if (rep.found.length) {
+              fxSetRead('🧾 Read: ' + esc(rep.found.join(' · ')) +
+                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+            } else {
+              fxSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
+            }
+          }).catch(function () {
+            if (token !== fxOcrToken) return;
+            fxSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
+          });
+        });
+      }
+      fxCamInput.onchange = fxHandlePhoto;
+      fxPickInput.onchange = fxHandlePhoto;
+
+      body.querySelector('#fx_add').onclick = function () {
+        var what = body.querySelector('#fx_what').value.trim(), cost = body.querySelector('#fx_cost').value;
+        if (!what || !cost) return;
+        var x = S('expenses', []); x.push({ what: what, cost: cost, date: fxOcrDate || App._today() }); W('expenses', x);
+        Meticulous.modules.fuel.render(body);
+      };
+  }
+
+  /* v202 FUEL-TAB: the Other-expenses VIEW — opened from the
+     small tab at the top of the Fuel & Expense face, the same
+     pattern as Revenue's tabs (v201). The card below is the
+     pre-v202 face card verbatim (form + the past-expenses list:
+     history rides with its form, behind the tap). A save
+     re-renders this view (the new expense lands in the list)
+     and republishes the shared records, exactly as the face
+     render did (v146). */
+  function renderFxView(body) {
+    fuelBody = body;
+    var h = '<button class="btn small ghost" id="fx_back" style="margin-bottom:10px">‹ Back</button>';
+    h += '<div class="card"><h3>🧾 Other expenses</h3>' +
+      '<div class="row"><div><label class="f">What</label><input id="fx_what" placeholder="e.g. DEF fluid"></div>' +
+      '<div><label class="f">Cost $</label><input id="fx_cost" type="number" inputmode="decimal"></div></div>' +
+      '<label class="f">📷 Receipt photo</label>' +
+      '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
+      '<button type="button" class="btn secondary" id="fx_cam" style="flex:1;">📷 Take photo</button>' +
+      '<button type="button" class="btn secondary" id="fx_pick" style="flex:1;">📁 Choose file</button>' +
+      '</div>' +
+      '<input type="file" id="fx_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+      '<input type="file" id="fx_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+      '<div id="fx_prev"></div>' +
+      '<div id="fx_read" style="font-size:13px;margin-top:4px;"></div>' +
+      '<button class="btn navy" id="fx_add">Add expense</button>' +
+      '<div id="fx_list">' + S('expenses', []).slice().reverse().map(function (x) {
+        return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
+      }).join('') + '</div></div>';
+    body.innerHTML = h;
+    body.querySelector('#fx_back').onclick = function () {
+      fxView = false;
+      Meticulous.modules.fuel.render(body);
+    };
+    wireFx(body);
+    try { if (window.ConnectPipe) ConnectPipe.publishRecords(); } catch (e) {}
+  }
+
 
   Meticulous.modules.fuel = {
     _masterOnSave: masterOnSave,
@@ -274,6 +389,10 @@
           return;
         }
       }
+      /* v202 FUEL-TAB: the Other-expenses view replaces the face
+         while it is open (Back returns). The details view above
+         still wins when a fill-up is open. */
+      if (fxView) { renderFxView(body); return; }
       /* v127: the trend card tells the truth about what it is.
          (c) HONESTY — under 3 legs there is no trend: the figure
          is the LAST LEG and is labelled as such (owner, Oct 17
@@ -334,22 +453,10 @@
         '<button class="btn primary" id="fu_add">' + (editRec ? '💾 Save changes' : 'Save fill-up') + '</button>' +
         (editRec ? '<button class="btn ghost" id="fu_cancel_edit" style="margin-left:8px">Cancel edit</button>' : '') + '</div>';
 
-      h += '<div class="card"><h3>🧾 Other expenses</h3>' +
-        '<div class="row"><div><label class="f">What</label><input id="fx_what" placeholder="e.g. DEF fluid"></div>' +
-        '<div><label class="f">Cost $</label><input id="fx_cost" type="number" inputmode="decimal"></div></div>' +
-        '<label class="f">📷 Receipt photo</label>' +
-        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
-        '<button type="button" class="btn secondary" id="fx_cam" style="flex:1;">📷 Take photo</button>' +
-        '<button type="button" class="btn secondary" id="fx_pick" style="flex:1;">📁 Choose file</button>' +
-        '</div>' +
-        '<input type="file" id="fx_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<input type="file" id="fx_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<div id="fx_prev"></div>' +
-        '<div id="fx_read" style="font-size:13px;margin-top:4px;"></div>' +
-        '<button class="btn navy" id="fx_add">Add expense</button>' +
-        '<div id="fx_list">' + S('expenses', []).slice().reverse().map(function (x) {
-          return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
-        }).join('') + '</div></div>';
+      /* v202 FUEL-TAB: the Other-expenses card no longer stacks
+         on this face — it lives on its own view behind the tab
+         at the top (renderFxView). The face keeps the trend, the
+         Fuel-up form and the Fill-ups list. */
 
       /* v75: rows are TAPPABLE — a tap opens the entry in the form
          above (edit mode), and the tap scrolls the form into view
@@ -372,7 +479,16 @@
             (fuShowAll ? 'Show less' : 'Show more — ' + (flAll.length - 3) + ' more fill-up' + (flAll.length - 3 === 1 ? '' : 's')) + '</button>'
           : '') + '</div>';
 
-      body.innerHTML = h;
+      /* v202 FUEL-TAB: the face's top strip — one small tab for
+         Other expenses (the Revenue-tab pattern, v201), above
+         everything the page is for. */
+      var fxTabHtml = '<div class="row" style="margin-bottom:10px">' +
+        '<button class="btn small ghost" id="fx_tab">🧾 Other expenses ›</button></div>';
+      body.innerHTML = fxTabHtml + h;
+      body.querySelector('#fx_tab').onclick = function () {
+        fxView = true;
+        Meticulous.modules.fuel.render(body);
+      };
 
       /* v75: edit-mode prefill — the form opens holding the tapped
          entry's own values. Fields are marked touched so a stray
@@ -970,74 +1086,6 @@
         if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {
           try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(rec)); } catch (e) {}
         }
-        Meticulous.modules.fuel.render(body);
-      };
-      /* v42: receipt photo → OCR on the Other-expenses card — same
-         shared pipeline as the fill-up form above (1600px rendition +
-         rotation retry). Fills only untouched fields; a date read from
-         the receipt is used for the saved entry (this card has no date
-         field of its own). Never silent. */
-      ['#fx_what', '#fx_cost'].forEach(function (id) {
-        var e = body.querySelector(id);
-        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
-      });
-      function fxFillField(id, v) {
-        var e = body.querySelector(id);
-        if (!e || !v) return;
-        if (e.getAttribute('data-touched')) return;
-        if (e.value) return;
-        e.value = v;
-      }
-      var fxOcrDate = '';
-      var fxCamInput = body.querySelector('#fx_img_cam');
-      var fxPickInput = body.querySelector('#fx_img');
-      body.querySelector('#fx_cam').onclick = function () { fxCamInput.click(); };
-      body.querySelector('#fx_pick').onclick = function () { fxPickInput.click(); };
-      var fxOcrToken = 0;
-      function fxSetRead(html) { var d = body.querySelector('#fx_read'); if (d) d.innerHTML = html; }
-      function fxHandlePhoto(ev) {
-        var file = ev.target.files && ev.target.files[0]; if (!file) return;
-        var token = ++fxOcrToken;
-        var r = new FileReader();
-        r.onload = function () { body.querySelector('#fx_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
-        r.readAsDataURL(file);
-        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseExpenseReceipt) {
-          fxSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
-          return;
-        }
-        fxSetRead('📖 Reading receipt…');
-        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
-          if (token !== fxOcrToken) return;
-          if (!ocrUrl) { fxSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
-          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
-            if (token !== fxOcrToken) return;
-            try { fxSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
-          }).then(function (text) {
-            if (token !== fxOcrToken) return;
-            var parsed = TicketOCR.parseExpenseReceipt(text);
-            var rep = TicketOCR.describeExpenseRead(parsed);
-            fxFillField('#fx_cost', parsed.total);
-            fxFillField('#fx_what', parsed.vendor);
-            if (parsed.date) fxOcrDate = parsed.date;
-            if (rep.found.length) {
-              fxSetRead('🧾 Read: ' + esc(rep.found.join(' · ')) +
-                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
-            } else {
-              fxSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
-            }
-          }).catch(function () {
-            if (token !== fxOcrToken) return;
-            fxSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
-          });
-        });
-      }
-      fxCamInput.onchange = fxHandlePhoto;
-      fxPickInput.onchange = fxHandlePhoto;
-
-      body.querySelector('#fx_add').onclick = function () {
-        var what = body.querySelector('#fx_what').value.trim(), cost = body.querySelector('#fx_cost').value;
-        if (!what || !cost) return;
-        var x = S('expenses', []); x.push({ what: what, cost: cost, date: fxOcrDate || App._today() }); W('expenses', x);
         Meticulous.modules.fuel.render(body);
       };
       /* v146: my shared records republish on this module's own

@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 201,
-  "notes": "v201: REV-CLEAN + CHART-DATES + NO-SCROLL (owner, Oct 21, 2026 09:50-09:59 MDT) — the Revenue face is clean again: the Manual entry and Extras forms leave the face and live on their own views behind two small tabs at the top (Add rev. manually / Add extras; forms verbatim, saves unchanged, a save returns to the face); the Daily earnings chart is the first content card, the page's highlight; auto-start sits behind its own quiet menu button (the shared settings card unfolds under it, Preferences untouched). CHART-DATES: every day of the period is labelled, standing vertical under its bar, sized to the bar slot — no skipping, no crowding, no clipped final label. The Entries list stays as the face's scrollable history.",
+  "webVersion": 202,
+  "notes": "v202: FUEL-TAB (owner, Oct 21, 2026 10:02 MDT) — the Fuel & Expense face no longer stacks two forms: Other expenses moves behind a small tab of its own at the top of the face (the Revenue-tab pattern), opening its own view with the form and the past-expenses list; fields, receipt-photo OCR and save behavior are verbatim (the wiring moved, unchanged). The face keeps the trend, the Fuel-up form and the Fill-ups list.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",

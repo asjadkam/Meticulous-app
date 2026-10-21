@@ -123,11 +123,12 @@ sb.App = {
 };
 vm.createContext(sb);
 vm.runInContext(read('modules/fuel.js'), sb, { filename: 'modules/fuel.js' });
+const fxTabEl = stubEl();
 const body = {
   _html: '',
   set innerHTML(v) { this._html = String(v); },
   get innerHTML() { return this._html; },
-  querySelector: function () { return stubEl(); },
+  querySelector: function (sel) { return sel === '#fx_tab' ? fxTabEl : stubEl(); },
   querySelectorAll: function () { return []; }
 };
 let renderErr = null;
@@ -136,7 +137,12 @@ ok('fuel renders without error', !renderErr, renderErr && renderErr.message);
 const html = body.innerHTML;
 ok('fill-ups list rendered', html.indexOf('Fill-ups') >= 0);
 ok('the monster unbroken station string flowed into the row', html.indexOf(MONSTER) >= 0);
-ok('other-expenses row rendered', html.indexOf('DEF (Petro-Canada Langdon)') >= 0);
+/* v202 FUEL-TAB SUPERSEDES the face-level expense-row check:
+   the row lives in the Other-expenses VIEW now — open the tab
+   and check the same row (and its overflow behavior) there. */
+ok('other-expenses off the face, behind its tab (v202)', html.indexOf('DEF (Petro-Canada Langdon)') === -1 && html.indexOf('id="fx_tab"') >= 0);
+if (fxTabEl.onclick) fxTabEl.onclick();
+ok('other-expenses row rendered (in its own view)', body.innerHTML.indexOf('DEF (Petro-Canada Langdon)') >= 0);
 (function () {
   const bad = [];
   const re = /style="[^"]*?(?:^|[;"\s])(width|min-width)\s*:\s*(\d+)px/g;
