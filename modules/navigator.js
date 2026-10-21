@@ -995,6 +995,21 @@
   var voiceKeep = null;
   function speak(text) {
     if (!text || !S || S.settings.muted) return;
+    /* v212 (NATIVE TTS — Stage E): in the Android shell the
+       NATIVE speech engine says the line (ShiftTrack.speakText).
+       It is not bound by the WebView speechSynthesis failure
+       modes the v183 post-mortem catalogued (same-tick cancel
+       drops, GC'd utterances, a parked synth), and it keeps
+       talking with the app backgrounded or in PiP. The shim
+       returns true only when the native side took the line;
+       everywhere else — browser, iPhone, old shells, a dead
+       engine — the WebView voice below runs exactly as before. */
+    try {
+      if (window.ShiftTrack && ShiftTrack.speakNative && ShiftTrack.speakNative(text)) {
+        if (S) S.voiceSpokeAt = Date.now();
+        return;
+      }
+    } catch (e) {}
     try {
       if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { S.voiceMissing = true; return; }
       var synth = window.speechSynthesis;
@@ -2356,7 +2371,10 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
-        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null };
+        S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null, trayKey: '' };
+        /* v212: arm the shell's drive bridges — PiP on leave,
+           tray readout updates from the tick. Inert off-shell. */
+        try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(true); } catch (e) {}
         /* v135: hold the screen awake for the drive (see
            driveWake) and re-hold it after any foreground return.
            The handler rides on S so teardown can remove it too. */
@@ -2469,6 +2487,12 @@
 
       function exitDrive() {
         if (!S || !S.drive) return;
+        /* v212: the shell's drive bridges stand down with the
+           drive — PiP disarmed, tray readout cleared, any native
+           line in flight stopped. Inert off-shell. */
+        try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(false); } catch (e) {}
+        try { if (window.ShiftTrack && ShiftTrack.navNotifyClear) ShiftTrack.navNotifyClear(); } catch (e) {}
+        try { if (window.ShiftTrack && ShiftTrack.stopNativeSpeak) ShiftTrack.stopNativeSpeak(); } catch (e) {}
         /* v183: free-look state dies with the drive. */
         if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
         S.driveFree = false;
@@ -2593,6 +2617,23 @@
              only — a full address would crowd the line (the CSS
              ellipsizes the sub-line; the main line never wraps). */
           (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : ''));
+        /* v212 (TRAY READOUT — Stage E): the same next-turn
+           facts, mirrored to the notification tray through the
+           shell bridge, so they stay readable while the app is
+           minimized. Change-gated on the composed line — the
+           bridge hears about a new instruction or distance, not
+           a per-tick stream. Inert off-shell. */
+        try {
+          if (window.ShiftTrack && ShiftTrack.navNotify) {
+            var trayInst = showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : '');
+            var trayDist = fmtDist(showNext ? dp.toTurnM : dp.leftM);
+            var trayKey = trayInst + '|' + trayDist;
+            if (trayInst && S.drive.trayKey !== trayKey) {
+              S.drive.trayKey = trayKey;
+              ShiftTrack.navNotify(trayInst, trayDist + (dp.road ? ' · On ' + dp.road : '') + ' · ' + fmtDist(dp.leftM) + ' left');
+            }
+          }
+        } catch (e) {}
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
           var showRr = S.rerouting || pr.dist > 60;

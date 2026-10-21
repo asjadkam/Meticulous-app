@@ -534,6 +534,58 @@
     openAppSettings: function () {
       var p = plugin();
       if (p) { try { p.openAppSettings(); } catch (e) {} }
+    },
+
+    /* ---------------- v212 (native v36) bridges ----------------
+       Each is feature-detected against the v36 plugin surface:
+       on the v35 shell (or no shell at all) the native method is
+       simply not there and every wrapper below is inert. */
+
+    /* NATIVE TTS: speakNative returns true when the line was
+       handed to the native engine — the caller (the Navigator's
+       speak) then skips the WebView voice. The engine's health
+       is learned from the plugin's answers: a resolution saying
+       the engine could not speak flips _ttsDead, and later lines
+       fall back to the web voice instead of vanishing. */
+    _ttsDead: false,
+    speakNative: function (text) {
+      var p = plugin();
+      if (!p || typeof p.speakText !== 'function' || ShiftTrack._ttsDead || !text) return false;
+      try {
+        p.speakText({ text: String(text) }).then(function (r) {
+          if (r && r.ok === false) ShiftTrack._ttsDead = true;
+        }).catch(function () {});
+      } catch (e) { return false; }
+      return true;
+    },
+    stopNativeSpeak: function () {
+      var p = plugin();
+      if (p && typeof p.stopSpeak === 'function') { try { p.stopSpeak(); } catch (e) {} }
+    },
+    /* TRAY READOUT: the drive's next-turn line, kept in the
+       notification tray while the app is minimized. */
+    navNotify: function (title, text) {
+      var p = plugin();
+      if (p && typeof p.navNotify === 'function') { try { p.navNotify({ title: String(title || ''), text: String(text || '') }); } catch (e) {} }
+    },
+    navNotifyClear: function () {
+      var p = plugin();
+      if (p && typeof p.navNotifyClear === 'function') { try { p.navNotifyClear(); } catch (e) {} }
+    },
+    /* PiP ARM: while a drive is live, leaving the app drops the
+       drive screen into picture-in-picture (MainActivity reads
+       this flag in onUserLeaveHint). */
+    setDriving: function (on) {
+      var p = plugin();
+      if (p && typeof p.setDriving === 'function') { try { p.setDriving({ on: !!on }); } catch (e) {} }
+    },
+    /* WIDGET: the home-screen widget mirrors the composed
+       lines; the web side change-gates before calling. */
+    pushWidgetState: function (state) {
+      var p = plugin();
+      if (p && typeof p.widgetState === 'function' && state) {
+        try { p.widgetState({ status: String(state.status || ''), primary: String(state.primary || ''), secondary: String(state.secondary || '') }); } catch (e) {}
+      }
     }
   };
 

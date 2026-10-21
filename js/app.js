@@ -1189,6 +1189,30 @@
   /* DYN-TRACKER-END */
 
   var _heroSig = '';
+  /* v212 (WIDGET — Stage E): the Android home-screen widget is a
+     dumb mirror of this hero, carried there by the shell's
+     ShiftTrack bridge. The composed lines are exactly the
+     dashboard's own facts (status word, the pay-method readout,
+     the sub line + live miles). Change-gated on its own
+     signature, so the bridge hears about a new minute / load /
+     mile — never a per-second stream. Inert everywhere the
+     bridge is absent (browser, iPhone, old shells). */
+  var _widgetSig = '';
+  function pushWidgetState(m) {
+    try {
+      if (!window.ShiftTrack || !ShiftTrack.pushWidgetState) return;
+      var status = App.tracker.status === 'running' ? 'Working…' :
+        App.tracker.status === 'paused' ? 'Paused' : 'Ready to work';
+      var milesEl = el('trkMiles');
+      var milesTxt = (milesEl && !milesEl.classList.contains('hidden')) ? (milesEl.textContent || '') : '';
+      var secondary = [m.showSub ? m.sub : '', milesTxt].filter(function (x) { return !!x; }).join(' · ');
+      var primary = m.big + (m.unit ? ' ' + m.unit : '');
+      var sig = status + '|' + primary + '|' + secondary;
+      if (sig === _widgetSig) return;
+      _widgetSig = sig;
+      ShiftTrack.pushWidgetState({ status: status, primary: primary, secondary: secondary });
+    } catch (e) {}
+  }
   function paintHero(sec) {
     var clock = el('trkClock');
     if (!clock) return;
@@ -1206,6 +1230,7 @@
         sub.textContent = m.showSub ? m.sub : '';
         sub.classList.toggle('hidden', !m.showSub);
       }
+      pushWidgetState(m);
     }
     paintTrackerExtra(m.mode);
   }
