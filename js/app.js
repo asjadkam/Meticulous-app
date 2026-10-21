@@ -3476,6 +3476,10 @@
       rd.onload = function () {
         var dataUrl = rd.result;
         if (token !== _onbOcrToken) return;
+        /* v182 (P1): a host may ask for the photo itself to be
+           KEPT on its record (downloadable copy) — stored under
+           opts.keepKey the moment it is taken. */
+        try { if (opts && opts.keepKey) store.set(opts.keepKey, dataUrl); } catch (e) {}
         if (prevEl) prevEl.innerHTML = '<img src="' + dataUrl + '" style="width:100%;border-radius:8px;margin:8px 0" alt="Photo">';
         if (!window.TicketOCR) { onbSetStatus(prefix, '⚠️ Photo reader not ready — enter it manually below.'); return; }
         onbSetStatus(prefix, '📖 Reading photo… 0%');
@@ -4599,6 +4603,16 @@
   App._parseStickerExpiry = parseStickerExpiry;
   App._parseOdometerReading = parseOdometerReading; // v39: reused by Fuel odometer photo
   App._masterOdometer = masterOdometer; // v39: the single master odometer (mt_odo)
+  /* v182 (P1, owner Oct 20, 2026 16:06 MDT): EVERY PHOTO THAT FEEDS
+     THE APP KEEPS A DOWNLOADABLE COPY ON ITS RECORD. This is the
+     one download door every record view uses: an anchor on the
+     record's own stored photo (a data URL), named for the record.
+     Modules guard on its presence, like every App helper. */
+  App._photoDl = function (photo, label) {
+    if (!photo || typeof photo !== 'string' || photo.indexOf('data:') !== 0) return '';
+    var name = 'meticulous-' + String(label || 'photo').replace(/[^A-Za-z0-9._-]+/g, '-') + '.jpg';
+    return '<a class="btn small ghost" href="' + photo + '" download="' + name + '" style="display:inline-block;margin-top:6px;text-decoration:none">\u2B07 Download this photo</a>';
+  };
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
   App._logOdoReading = logOdoReading; // v122: the dated readings log (odo_readings) — every master write path appends
   App._seedOdoReadings = seedOdoReadings; // v127: seed the dated log from the app's own dated records (fills + sessions)

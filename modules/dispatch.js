@@ -1569,7 +1569,8 @@
           (a.amount ? '<div class="kv"><span>Amount</span><b>$' + esc(a.amount) + '</b></div>' : '') +
           (a.notes ? '<div class="kv"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
           (isOffice ? '' : '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>') +
-          (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' : '') +
+          (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
+            (App._photoDl ? App._photoDl(dspPhotoFor(a), 'ticket-' + (a.date || '')) : '') : '') +
           '<div id="dp_close_note"></div>' +
           /* v124 (owner, Oct 17 07:47 — "why are they so mismatched,
              why is it not consistent"): ONE primary on this card —
@@ -1624,7 +1625,8 @@
           (face.rateSource ? '<div class="kv"><span>Rate set by</span><b>' + esc(face.rateSource) + '</b></div>' : '') +
           (face.payer ? '<div class="kv"><span>Paid by</span><b>' + esc(face.payer) + '</b></div>' : '') +
           (face.notes ? '<div class="kv"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
-          face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">'; }).join('') +
+          face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
+            (App._photoDl ? App._photoDl(p, 'ticket-' + (face.date || '')) : ''); }).join('') +
           '<div class="row" style="margin-top:10px">' +
           '<button class="btn ghost small" id="dp_view_edit">✏️ Edit this record</button>' +
           '<button class="btn ghost small" id="dp_view_done">Done</button></div></div>';
@@ -1775,7 +1777,8 @@
             (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
             (d.amount ? ' · $' + esc(d.amount) : '') +
             (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
-            (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' : '') +
+            (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' +
+            (App._photoDl ? App._photoDl(dspPhotoFor(d), 'ticket-' + (d.date || '')) : '') : '') +
             /* v103: Delete is a two-step IN-APP confirm — the
                armed row swaps its buttons for one clear red
                Delete + Cancel strip (see pendingDelId). */
@@ -3054,7 +3057,8 @@
         }
         wrap.innerHTML =
           '<div class="card" style="border:2px solid var(--orange);margin-top:10px"><h3>✅ Check the close</h3>' +
-          (t.photo ? '<img src="' + t.photo + '" style="width:100%;border-radius:10px;margin-bottom:8px" alt="Ticket photo">' : '') +
+          (t.photo ? '<img src="' + t.photo + '" style="width:100%;border-radius:10px;margin-bottom:8px" alt="Ticket photo">' +
+          (App._photoDl ? App._photoDl(t.photo, 'ticket-' + (t.date || '')) : '') : '') +
           /* v143: the photo stays replaceable until Confirm — a
              wrong snap (or a hand-typed close that turns out to
              have the card after all) goes back to the capture

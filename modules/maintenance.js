@@ -627,6 +627,8 @@
         '<div class="row"><button type="button" class="btn secondary" id="mt_ns_cam" style="flex:1;">📷 Take photo</button>' +
         '<button type="button" class="btn secondary" id="mt_ns_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<div id="mt_ns_read"></div>' +
+        (S('ns_sticker_photo', '') ? '<img src="' + esc(S('ns_sticker_photo', '')) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Service sticker photo">' +
+          (App._photoDl ? App._photoDl(S('ns_sticker_photo', ''), 'service-sticker') : '') : '') +
         '<div class="row"><button class="btn navy" id="mt_ns_save">Save next service</button>' +
         ((nsNow.odo > 0 || nsNow.date) ? '<button class="btn ghost" id="mt_ns_clear">Clear</button>' : '') +
         '</div></div>';
@@ -661,6 +663,8 @@
         '<div class="row"><button type="button" class="btn secondary" id="mt_safety_cam" style="flex:1;">📷 Take photo</button>' +
         '<button type="button" class="btn secondary" id="mt_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<div id="mt_safety_prev"></div><div id="mt_safety_status" class="note"></div>' +
+        (App._store.get('mt_safety_photo', '') ? '<img src="' + esc(App._store.get('mt_safety_photo', '')) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Safety sticker photo">' +
+          (App._photoDl ? App._photoDl(App._store.get('mt_safety_photo', ''), 'safety-sticker') : '') : '') +
         '<label class="f">Expiry date</label><input id="mt_safety" type="date" value="' + esc(sfNow) + '">' +
         '<div class="row" style="margin-top:8px"><button class="btn navy" id="mt_safety_save">Save expiry</button></div></div>';
 
@@ -750,6 +754,9 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== nsOcrToken) return;
           if (!ocrUrl) { nsSetRead('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>'); return; }
+          /* v182 (P1): the sticker photo is KEPT on the record —
+             a downloadable copy lives with the next-service fact. */
+          try { W('ns_sticker_photo', ocrUrl); } catch (e) {}
           /* v142: the cloud read starts NOW, in parallel with the
              local read, on its own smaller rendition. */
           var race = { odo: null, date: null, delivered: false, prImg: null };
@@ -966,7 +973,7 @@
          any screen can resurrect a stale date. */
       try {
         if (App._wirePhotoOCR) {
-          App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } });
+          App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: 'mt_safety_photo' });
         }
       } catch (e) {}
       var sfSaveBtn = body.querySelector('#mt_safety_save');

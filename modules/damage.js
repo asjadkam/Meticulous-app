@@ -26,7 +26,8 @@
       h += '<div class="card"><h3>📁 ' + (t === 'load' ? 'Load' : 'Equipment') + ' reports</h3>' +
         (mine.length ? mine.slice().reverse().map(function (r) {
           return '<div class="listitem">' +
-            (r.photo ? '<img src="' + r.photo + '" style="width:100%;border-radius:8px;margin-bottom:8px">' : '') +
+            (r.photo ? '<img src="' + r.photo + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
+              (App._photoDl ? App._photoDl(r.photo, 'damage-' + (r.date || '')) : '') : '') +
             '<div class="a">' + esc(r.at) + '</div><div class="b">' + esc(r.desc) + (r.dispatch ? '<br>Dispatch: ' + esc(r.dispatch) : '') + '</div></div>';
         }).join('') : '<div class="empty">No reports yet.</div>') + '</div>';
 

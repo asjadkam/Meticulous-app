@@ -516,39 +516,40 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
     [canReadBill(billDoc('uid-payer2'), 'uid-payer2'), canReadBill(billDoc('uid-payer2'), 'uid-boss')],
     [true, false]);
 
-  /* ============ (e) payer surface — the P&L crew card ============ */
-  console.log('(e) payer surface — P&L crew card from the shared records');
+  /* ============ (e) payer surface — D5: NO crew card on P&L ============
+     v182 SUPERSEDES the v146 crew-card checks that stood here.
+     D5 REDEFINED (owner, Oct 20, 2026 19:53-19:54): the P&L face
+     keeps ONLY the Monthly analysis — the crew card, its fuel
+     rows, receipt-photo doors, expense items, maintenance record
+     and invoice doors are GONE from P&L (they live in Connect /
+     Fuel / Maintenance). What must still hold on this face: the
+     shared records still CROSS to the payer (pipe level), the
+     crew-books fetch still runs silently, and the repainted
+     analysis carries the crew wages inside Total salaries. */
+  console.log('(e) payer surface — D5: records cross, P&L shows only the analysis');
   asUser(users.driver);
   eq('e: the driver publishes today\u2019s day', await CP().publishDay(TODAY), true);
   asUser(users.boss);
+  const frE = await CP().fetchRecords();
+  check('e: the shared records still cross to the payer (they live in Connect now)',
+    !!(frE.records && frE.records['uid-driver'] && (frE.records['uid-driver'].fuel || []).length));
   const pnlBody = new FakeEl('body');
   sb.Meticulous.modules.pnl.render(pnlBody);
   await flush();
-  const crewHtmlOut = (pnlBody._kids['#pnl_crew'] || {})._html || '';
-  check('e: crew card names the driver + priced day (revenue at client rate, wages at his pay rate)',
-    crewHtmlOut.indexOf('Asjad Kamal') !== -1 && crewHtmlOut.indexOf('$520.00') !== -1 && crewHtmlOut.indexOf('$319.00') !== -1);
-  check('e: his fuel rows — the full receipt data',
-    crewHtmlOut.indexOf('Petro-Canada 4949 Barlow Tr SE') !== -1 &&
-    crewHtmlOut.indexOf('64.096 L') !== -1 && crewHtmlOut.indexOf('$146.72') !== -1 &&
-    crewHtmlOut.indexOf('$2.289/L') !== -1);
-  check('e: the receipt photo is one tap away', crewHtmlOut.indexOf('data-pnlphoto="uid-driver:') !== -1);
-  check('e: his expenses itemized', crewHtmlOut.indexOf('Truck wash') !== -1 && crewHtmlOut.indexOf('$25.00') !== -1);
-  check('e: his maintenance record — odometer, next service, annual expiry',
-    crewHtmlOut.indexOf('169,300 km') !== -1 && crewHtmlOut.indexOf('175,429 km') !== -1 &&
-    crewHtmlOut.indexOf('2027-05-31') !== -1 && crewHtmlOut.indexOf('Oil change') !== -1);
-  check('e: his pay invoice billed to this payer — row + view/print + manifest doors',
-    crewHtmlOut.indexOf('Invoice #1151') !== -1 && crewHtmlOut.indexOf('$3610.50') !== -1 &&
-    crewHtmlOut.indexOf('data-pnlinv="uid-driver:inv1"') !== -1 &&
-    crewHtmlOut.indexOf('data-pnlman="uid-driver:' + OCT1 + '_' + OCT15 + '"') !== -1);
-  check('e: the other customer\u2019s invoice is NOT on this payer\u2019s card',
+  const crewHtmlOut = pnlBody._html || '';
+  check('e: NO crew card on the P&L face (D5)',
+    crewHtmlOut.indexOf('Connected crew') === -1 && crewHtmlOut.indexOf('pnl_crew') === -1 &&
+    crewHtmlOut.indexOf('data-pnlphoto') === -1 && crewHtmlOut.indexOf('data-pnlinv') === -1 &&
+    crewHtmlOut.indexOf('data-pnlman=') === -1);
+  check('e: NO fuel record dump on the P&L face',
+    crewHtmlOut.indexOf('Petro-Canada 4949 Barlow Tr SE') === -1 && crewHtmlOut.indexOf('His fuel') === -1);
+  check('e: NO invoice dump on the P&L face',
+    crewHtmlOut.indexOf('Invoice #1151') === -1 && crewHtmlOut.indexOf('His pay invoices') === -1 &&
     crewHtmlOut.indexOf('#2000') === -1 && crewHtmlOut.indexOf('Other Customer') === -1);
-  /* v163: the repainted breakdown carries the ONE fixed Driver
-     wages line with the crew wage attributed under it (the old
-     separate "Connected crew wages" line is folded in — an
-     amount inside the total must always have its line). */
-  check('e: after the fetch lands, the totals repaint WITH the crew wages attributed',
-    pnlBody._html.indexOf('Driver wages') !== -1 &&
-    pnlBody._html.indexOf('Asjad Kamal (Connect \u2014 his own rate)') !== -1);
+  check('e: the Monthly analysis IS the face',
+    crewHtmlOut.indexOf('Monthly analysis') !== -1 && crewHtmlOut.indexOf('Total salaries (driver wages)') !== -1);
+  check('e: after the fetch lands, the analysis repaints WITH the crew wages in Total salaries',
+    crewHtmlOut.indexOf('Total salaries (driver wages)') !== -1 && crewHtmlOut.indexOf('$319.00') !== -1);
 
   /* ============ (f) the P&L pay-expense leg ============ */
   console.log('(f) P&L leg — derived crew wages in the expense totals');
@@ -697,12 +698,12 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. v162 pin move: 161 -> 162, same convention. */
-  check('i: version ships as 181', ver.webVersion === 181); // v177 standing pin move
-  check('i: index loads the touched files at the 181 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=181') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=181') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=181') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=181') !== -1);
+  check('i: version ships as 182', ver.webVersion === 182); // v177 standing pin move
+  check('i: index loads the touched files at the 182 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=182') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=182') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=182') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=182') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

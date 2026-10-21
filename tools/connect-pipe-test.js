@@ -466,8 +466,13 @@ function extract(src, beginMark, endMark) {
   check('g: Dispatch — the close publishes the day up the pipe', dspSrc.indexOf('ConnectPipe.publishDay(dspRecordDate(cur))') !== -1);
   check('g: Dispatch — the board + send cards are BOSS-face gated in source',
     dspSrc.indexOf("!== 'driver' && window.ConnectPipe") !== -1 && dspSrc.indexOf('id="dp_crew"') !== -1 && dspSrc.indexOf('id="dp_send"') !== -1);
-  check('g: P&L — the crew books card + the uid-stamping prefill exist',
-    pnlSrc.indexOf('Connected crew') !== -1 && pnlSrc.indexOf('__mtPnlPrefillDriver') !== -1 && pnlSrc.indexOf('rec.uid = pnlPrefill.uid') !== -1);
+  /* v182 SUPERSEDES the crew-card half of this pin (D5 REDEFINED,
+     owner Oct 20, 2026 19:53–19:54): there is NO crew card on the
+     P&L face any more — the crew-books fetch is silent plumbing.
+     The uid-stamping prefill (Dispatch board -> P&L manual form)
+     is untouched and still pinned. */
+  check('g: P&L — NO crew books card (D5); the uid-stamping prefill exists',
+    pnlSrc.indexOf('Connected crew') === -1 && pnlSrc.indexOf('__mtPnlPrefillDriver') !== -1 && pnlSrc.indexOf('rec.uid = pnlPrefill.uid') !== -1);
   check('g: app funnel runs the pipe on auth', appSrc.indexOf('ConnectPipe.onAuth(user)') !== -1);
   check('g: index loads the pipe engine at the shipped version', idxSrc.indexOf('js/connectpipe.js?v=' + ver.webVersion) !== -1);
   check('g: publishing is gated on having viewers (no connection, no share)',

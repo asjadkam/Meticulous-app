@@ -182,8 +182,8 @@ console.log('— 3. the assets: keyed, exact, and read as a REAR view —');
 });
 
 console.log('— 4. ship pins —');
-check('ships as webVersion 181, and index.html loads the navigator at the 181 pin',
-  ver.webVersion === 181 && idxSrc.indexOf('src="modules/navigator.js?v=181"') >= 0,
+check('ships as webVersion 182, and index.html loads the navigator at the 182 pin',
+  ver.webVersion === 182 && idxSrc.indexOf('src="modules/navigator.js?v=182"') >= 0,
   'webVersion=' + ver.webVersion);
 check('version.json carries all three chase renders in the OTA manifest',
   ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

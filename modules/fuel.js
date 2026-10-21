@@ -243,7 +243,8 @@
             (dRec.fuelType ? kv('Fuel type', dRec.fuelType) : '') +
             (dRec.note ? kv('Note', dRec.note) : '') +
             (dRec.photo
-              ? '<img id="fu_det_photo" src="' + dRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">'
+              ? '<img id="fu_det_photo" src="' + dRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">' +
+                (App._photoDl ? App._photoDl(dRec.photo, 'fuel-receipt-' + (dRec.date || '')) : '')
               : '<div class="empty" style="margin-top:10px">No photo for this entry</div>') +
             '<div class="row" style="margin-top:12px">' +
             '<button class="btn ghost" id="fu_det_edit" style="flex:1">✏️ Edit</button>' +

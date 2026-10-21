@@ -663,8 +663,11 @@ function partB() {
   ok('static: the card exists', mtSrc.indexOf('🛡️ Annual safety inspection') >= 0);
   ['mt_safety_cam', 'mt_safety_pick', 'mt_safety_cam_in', 'mt_safety_in', 'mt_safety_prev', 'mt_safety_status', 'mt_safety', 'mt_safety_save']
     .forEach(function (id) { ok('static: markup has #' + id, mtSrc.indexOf('id="' + id + '"') >= 0); });
+  /* v182 (P1): the wire call gained keepKey: 'mt_safety_photo' — the
+     sticker photo is kept on its record (downloadable copy); the
+     read itself stays fill-only, exactly as pinned before. */
   ok('static: wired fill-only through the shared pipeline, maintenance origin',
-    mtSrc.indexOf("App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' } })") >= 0);
+    mtSrc.indexOf("App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: 'mt_safety_photo' })") >= 0);
 
   const w = makeModuleWorld({
     maint: true,

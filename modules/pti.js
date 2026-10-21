@@ -416,6 +416,7 @@
         '<label class="f">📷 Photo of the defect (optional)</label>' +
         '<input type="file" id="pti_ph_' + it.id + '" accept="image/*" capture="environment">' +
         (e.photo ? '<img src="' + e.photo + '" style="width:100%;border-radius:8px;margin-top:6px">' +
+          (App._photoDl ? App._photoDl(e.photo, 'pti-defect') : '') +
           '<button type="button" class="btn small ghost" data-pti-phdel="' + it.id + '">Remove photo</button>' : '') +
         '</div>';
     }
@@ -892,7 +893,8 @@
               ? '<span style="color:#b91c1c;font-weight:800">⛔ MAJOR DEFECT</span>'
               : '<span style="color:#92400e;font-weight:700">⚠ Minor defect</span>') + '</div>' +
             (e.note ? '<div class="note" style="margin:2px 0">' + esc(e.note) + '</div>' : '') +
-            (e.photo ? '<img src="' + e.photo + '" style="width:100%;border-radius:8px;margin-top:4px">' : '') +
+            (e.photo ? '<img src="' + e.photo + '" style="width:100%;border-radius:8px;margin-top:4px">' +
+              (App._photoDl ? App._photoDl(e.photo, 'pti-defect') : '') : '') +
             '</div>';
         }
         return '<div class="kv"><span>' + esc(it.name) + '</span><b>✓ OK</b></div>';
