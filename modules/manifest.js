@@ -70,6 +70,42 @@
     return new Date(+p[0], +p[1] - 1, +p[2], h, parseInt(m[2], 10)).getTime();
   }
 
+  /* v184 (M-route, owner Oct 20 19:55 MDT): WHERE THE TRUCK
+     ACTUALLY WENT — from the session GPS trail itself (the
+     livemiles breadcrumb record), whether or not the driver ever
+     navigated. Crumbs drop only when the truck has moved ≥50 m
+     (js/miles.js), so a stop reads as a long, slow segment: two
+     consecutive crumbs ≥4 minutes apart and ≤400 m apart mean
+     the truck was stopped (or crawling at a site) between them.
+     trailStops returns those stops in time order —
+     [{t, lat, lng, mins}] — pure, so the suite drives it. */
+  function trailDistM(a1, o1, a2, o2) {
+    var R = 6371000, dLa = (a2 - a1) * Math.PI / 180, dLo = (o2 - o1) * Math.PI / 180;
+    var s = Math.sin(dLa / 2) * Math.sin(dLa / 2) +
+      Math.cos(a1 * Math.PI / 180) * Math.cos(a2 * Math.PI / 180) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+  function trailStops(crumbs) {
+    if (!crumbs || crumbs.length < 2) return [];
+    var cs = crumbs.filter(function (c) { return c && isFinite(c.a) && isFinite(c.o) && c.t > 0; })
+      .slice().sort(function (x, y) { return x.t - y.t; });
+    var out = [];
+    for (var i = 0; i + 1 < cs.length; i++) {
+      var dt = cs[i + 1].t - cs[i].t;
+      if (dt < 240000) continue;
+      var dist = trailDistM(cs[i].a, cs[i].o, cs[i + 1].a, cs[i + 1].o);
+      if (dist > 400) continue;
+      var last = out[out.length - 1];
+      if (last && cs[i].t - last.t <= last.mins * 60000 + 120000 &&
+          trailDistM(last.lat, last.lng, cs[i].a, cs[i].o) <= 400) {
+        last.mins += Math.round(dt / 60000);
+      } else {
+        out.push({ t: cs[i].t, lat: cs[i].a, lng: cs[i].o, mins: Math.round(dt / 60000) });
+      }
+    }
+    return out;
+  }
+
   /* v87: ONE Odometer line for the day (owner, Oct 15: there were
      "no Odos on the manifest either… even though I gave you the
      starting and ending" — his own sheet carries the pair every
@@ -474,7 +510,42 @@
         if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
       }
     }
-    return { dispatches: dispatches, navLog: navLog, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
+    /* v184 (M-route): the day's actual travel from the session
+       GPS trail (livemiles crumbs for this date — navigation is
+       NOT the gate; the trail exists from driving itself). Stop
+       names come only from facts on record: the day's GPS site
+       pair (within 200 m) or a navigation entry at that time;
+       anything else prints as its coordinates — never a guessed
+       name. */
+    var routeStops = [];
+    try {
+      var lmDays = (G('livemiles', { days: {} }) || {}).days || {};
+      var allCrumbs = [];
+      Object.keys(lmDays).forEach(function (k) {
+        var rec = lmDays[k];
+        if (rec && rec.date === d && rec.crumbs) allCrumbs = allCrumbs.concat(rec.crumbs);
+      });
+      routeStops = trailStops(allCrumbs).map(function (s) {
+        var label = '';
+        if (geoDay && geoDay.sites) {
+          [['load', geoDay.sites.load], ['dump', geoDay.sites.dump]].forEach(function (pair) {
+            var site = pair[1];
+            if (!label && site && isFinite(site.lat) && isFinite(site.lng) &&
+                trailDistM(s.lat, s.lng, Number(site.lat), Number(site.lng)) <= 200) {
+              label = site.label || (pair[0] === 'load' ? 'Load site' : 'Dump site');
+            }
+          });
+        }
+        if (!label) {
+          for (var ni = 0; ni < navLog.length; ni++) {
+            var nt = stampMs(navLog[ni].at);
+            if (nt !== null && Math.abs(nt - s.t) <= 15 * 60000 && navLog[ni].name) { label = navLog[ni].name; break; }
+          }
+        }
+        return { at: new Date(s.t).toISOString(), label: label, lat: s.lat, lng: s.lng, mins: s.mins };
+      });
+    } catch (e) { routeStops = []; }
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -550,6 +621,15 @@
       L.push({ k: 'h', a: 'Work travel' });
       c.navLog.forEach(function (x) {
         L.push({ k: 'kv', a: x.name, b: fmtStamp(x.at) });
+      });
+    }
+    /* v184 (M-route): the trail's own record — printed whenever
+       the truck drove, navigated or not. */
+    if (t.nav && c.routeStops && c.routeStops.length) {
+      L.push({ k: 'h', a: 'Where the truck went (from its GPS trail)' });
+      c.routeStops.forEach(function (s) {
+        L.push({ k: 'kv', a: s.label || ('Stop — ' + Number(s.lat).toFixed(5) + ', ' + Number(s.lng).toFixed(5)),
+          b: fmtStamp(s.at) + ' · ' + s.mins + ' min' });
       });
     }
     if (t.expense && (c.fills.length || c.expenses.length)) {
@@ -651,17 +731,35 @@
   }
 
   function saveManifestPdf(body, d, c, t) {
+    saveManifestLines(body, 'Manifest — ' + d, docLines(d, c, t), 'manifest-' + d + '.pdf');
+  }
+  function saveManifestLines(body, title, lines, filename) {
     var msgEl = null;
     try { msgEl = body.querySelector('#mn_msg'); } catch (e) {}
     function say(txt) { if (msgEl) msgEl.textContent = txt; }
     if (window.MetPdf && typeof MetPdf.savePdf === 'function') {
       say('Making your PDF…');
-      MetPdf.savePdf({ title: 'Manifest — ' + d, lines: docLines(d, c, t) }, 'manifest-' + d + '.pdf').then(
+      MetPdf.savePdf({ title: title, lines: lines }, filename).then(
         function (r) { say(r.message); },
         function () { say('The PDF could not be saved. Try again.'); });
     } else {
       say('PDF tools are still loading — close and reopen the app, then try again.');
     }
+  }
+  /* v184: every date in a From→To range, inclusive, local days,
+     capped at 62 — the same honest bound a pay period needs. */
+  function eachDayInRange(from, to) {
+    var out = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) return out;
+    if (from > to) { var tmp = from; from = to; to = tmp; }
+    var p = from.split('-'), cur = new Date(+p[0], +p[1] - 1, +p[2]);
+    for (var i = 0; i < 62; i++) {
+      var ds = cur.getFullYear() + '-' + ('0' + (cur.getMonth() + 1)).slice(-2) + '-' + ('0' + cur.getDate()).slice(-2);
+      if (ds > to) break;
+      out.push(ds);
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
   }
 
   Meticulous.modules.manifest = {
@@ -672,6 +770,7 @@
        never a rebuild from the payer's stores. */
     _collectDay: collect,
     _docLines: docLines,
+    _trailStops: trailStops,
     _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is
        the tracker COMPLEMENT, not a repeat: the hero card counts
@@ -737,13 +836,47 @@
     },
     render: function (body) {
       var d = dayStr(), c = collect(d), t = toggles();
+      /* v184: the custom period — the Manifest gains the From/To
+         range the Revenue and P&L screens already carry (the
+         confirmed gap, owner Oct 20). Day stays the default; a
+         range shows every day in it and prints them as one
+         document. The choice is remembered like the toggles. */
+      var mnMode = G('mani_mode', 'day') === 'range' ? 'range' : 'day';
+      var mnFrom = G('mani_from', d), mnTo = G('mani_to', d);
+      var rangeDays = mnMode === 'range' ? eachDayInRange(mnFrom, mnTo) : [];
       var h = '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';
+      h += '<div class="row" style="gap:6px;margin:4px 0">' +
+        '<button class="btn small ' + (mnMode === 'day' ? 'navy' : 'ghost') + '" id="mn_mode_day" style="flex:1">One day</button>' +
+        '<button class="btn small ' + (mnMode === 'range' ? 'navy' : 'ghost') + '" id="mn_mode_range" style="flex:1">Date range</button></div>';
+      if (mnMode === 'range') {
+        h += '<div class="row"><div><label class="f">From</label><input type="date" id="mn_from" value="' + esc(mnFrom) + '"></div>' +
+          '<div><label class="f">To</label><input type="date" id="mn_to" value="' + esc(mnTo) + '"></div></div>' +
+          '<div class="note">The manifest covers every day from From to To — on screen and in the PDF.</div>';
+      }
       h += '<div class="note">Choose what shows on your manifest — the app remembers your choice.</div>';
       SECTIONS.forEach(function (s) {
         h += '<div class="toggle"><span>' + s[1] + '</span><label class="switch"><input type="checkbox" data-tg="' + s[0] + '"' + (t[s[0]] ? ' checked' : '') + '><span class="knob"></span></label></div>';
       });
       h += '</div>';
 
+      if (mnMode === 'range') {
+        var totEarned = 0, totLoads = 0, totKm = 0;
+        h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(mnFrom) + ' → ' + esc(mnTo) + '</h3><div id="mn_doc">';
+        if (!rangeDays.length) h += '<div class="empty">Pick a From and a To date above.</div>';
+        rangeDays.forEach(function (rd) {
+          var rc = collect(rd);
+          totEarned += rc.earned || 0; totLoads += rc.loads || 0; totKm += rc.liveKmAny ? rc.liveKm : 0;
+          var bits = [];
+          if (rc.loads > 0) bits.push(rc.loads + ' loads');
+          if (rc.liveKmAny) bits.push((Math.round(rc.liveKm * 10) / 10).toFixed(1) + ' km');
+          if (rc.routeStops && rc.routeStops.length) bits.push(rc.routeStops.length + ' stops');
+          h += '<div class="kv"><span>' + esc(rd) + (bits.length ? ' — ' + esc(bits.join(' · ')) : '') + '</span><b>$' + (rc.earned || 0).toFixed(2) + '</b></div>';
+        });
+        if (rangeDays.length) {
+          h += '<div class="kv"><span><b>Period total</b></span><b>$' + totEarned.toFixed(2) + ' · ' + totLoads + ' loads · ' + (Math.round(totKm * 10) / 10).toFixed(1) + ' km</b></div>';
+        }
+        h += '</div>';
+      } else {
       h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(d) + '</h3><div id="mn_doc">';
       if (t.dispatch && c.dispatches.length) {
         h += '<h3>Dispatches</h3>' + c.dispatches.map(function (x) {
@@ -778,6 +911,16 @@
         h += '<h3>Work travel</h3>' + c.navLog.map(function (x) {
           return '<div class="kv"><span>' + esc(x.name) + '</span><b>' + esc(fmtStamp(x.at)) + '</b></div>';
         }).join('');
+      }
+      /* v184 (M-route): where the truck actually went — the GPS
+         trail's stops for the day, shown whether or not the
+         driver navigated anywhere. */
+      if (t.nav && c.routeStops && c.routeStops.length) {
+        h += '<h3>🗺️ Where the truck went</h3>' + c.routeStops.map(function (s) {
+          return '<div class="kv"><span>' + esc(s.label || ('Stop — ' + Number(s.lat).toFixed(5) + ', ' + Number(s.lng).toFixed(5))) + '</span><b>' +
+            esc(fmtStamp(s.at)) + ' · ' + s.mins + ' min</b></div>';
+        }).join('') +
+        '<div class="note" style="margin:2px 0 6px">From the truck\'s own GPS trail today — it is recorded by driving, whether or not you navigated.</div>';
       }
       if (t.expense && (c.fills.length || c.expenses.length)) {
         h += '<h3>Fuel & expenses</h3>' + c.fills.map(function (x) {
@@ -859,6 +1002,7 @@
          blame (see the v87 note where GEOLOAD_BLOCKED used to be). */
       if (t.earned) h += '<div class="kv"><span>' + (c.live ? 'Income earned today so far' : 'Total Earned Income') + '</span><b>$' + c.earned.toFixed(2) + '</b></div>';
       h += '</div>';
+      } /* v184: end of the one-day preview (range drew its own above) */
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
         '<button class="btn ghost" id="mn_dl">⬇️ Download</button></div>' +
         '<div class="note" id="mn_msg"></div></div>';
@@ -880,11 +1024,40 @@
          the device Documents folder via js/pdfexport.js. In a plain
          browser, Print keeps the system print dialog exactly as
          before and Download saves the same PDF as a file. */
+      /* v184: mode + range wiring. */
+      var modeDayBtn = body.querySelector('#mn_mode_day');
+      if (modeDayBtn) modeDayBtn.onclick = function () { App._store.set('mani_mode', 'day'); Meticulous.modules.manifest.render(body); };
+      var modeRangeBtn = body.querySelector('#mn_mode_range');
+      if (modeRangeBtn) modeRangeBtn.onclick = function () {
+        App._store.set('mani_mode', 'range');
+        if (!G('mani_from', '')) App._store.set('mani_from', d);
+        if (!G('mani_to', '')) App._store.set('mani_to', d);
+        Meticulous.modules.manifest.render(body);
+      };
+      var fromEl = body.querySelector('#mn_from');
+      if (fromEl) fromEl.onchange = function (e) { App._store.set('mani_from', e.target.value); Meticulous.modules.manifest.render(body); };
+      var toEl = body.querySelector('#mn_to');
+      if (toEl) toEl.onchange = function (e) { App._store.set('mani_to', e.target.value); Meticulous.modules.manifest.render(body); };
+      function rangeLines() {
+        var lines = [{ k: 'title', a: 'MANIFEST — ' + mnFrom + ' → ' + mnTo }];
+        rangeDays.forEach(function (rd) {
+          docLines(rd, collect(rd), t).forEach(function (ln) { lines.push(ln); });
+        });
+        return lines;
+      }
       body.querySelector('#mn_print').onclick = function () {
+        if (mnMode === 'range') {
+          if (window.MetPdf && MetPdf.isNativeShell()) saveManifestLines(body, 'Manifest — ' + mnFrom + ' to ' + mnTo, rangeLines(), 'manifest-' + mnFrom + '-to-' + mnTo + '.pdf');
+          else window.print();
+          return;
+        }
         if (window.MetPdf && MetPdf.isNativeShell()) saveManifestPdf(body, d, c, t);
         else window.print();
       };
-      body.querySelector('#mn_dl').onclick = function () { saveManifestPdf(body, d, c, t); };
+      body.querySelector('#mn_dl').onclick = function () {
+        if (mnMode === 'range') { saveManifestLines(body, 'Manifest — ' + mnFrom + ' to ' + mnTo, rangeLines(), 'manifest-' + mnFrom + '-to-' + mnTo + '.pdf'); return; }
+        saveManifestPdf(body, d, c, t);
+      };
     }
   };
 })();

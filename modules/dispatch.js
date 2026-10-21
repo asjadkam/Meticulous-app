@@ -1091,6 +1091,10 @@
      Opening a completed dispatch lands on its read-complete
      summary — this id is that view's only state; null = closed. */
   var viewCompletedId = null;
+  /* v184 (HIST-3, owner Oct 20 20:34 MDT): a working screen's
+     history holds at most 3 records; this flag is the one-tap
+     door to the full list on the same screen. */
+  var dspHistAll = false;
   var dspBody = null; // v116: last render target, for api.back's re-render
 
   /* ================= DSP-PIPE-BEGIN =================
@@ -1649,7 +1653,22 @@
       }
 
       /* ---- New dispatch form (v56: the same form is the EDIT form
-           when editingId is set — one form, prefilled either way) ---- */
+           when editingId is set — one form, prefilled either way) ----
+           v184 (DSP-look / DSP-role / DSP-edit, owner Oct 20 20:29–
+           20:33 MDT): on a DRIVER face the screen is his own day +
+           "Add from a message" — the standing form is GONE from
+           the first glance. It lives behind ONE quiet door (below)
+           and opens on its own only when there is something to
+           confirm or edit: a draft (a suggestion he tapped Use on)
+           or an edit he started by tapping a dispatch. Crew today
+           and Send a dispatch were already office-only (v132) and
+           stay off this face. Office/both faces keep their tools
+           standing, as ordered. */
+      var dspDoorMode = ((App.userRole ? App.userRole() : 'driver') === 'driver') && !editingId && !draft0;
+      if (dspDoorMode) {
+        h += '<button class="btn ghost" id="dp_form_door" style="width:100%;margin:2px 0 10px">✏️ Type a dispatch in myself</button>' +
+          '<div id="dp_form_wrap" style="display:none">';
+      }
       h += '<div class="card" id="dp_form_card"><h3>' + (editingId ? '✏️ Edit dispatch' : '＋ New dispatch') + '</h3>' +
         '<div id="dp_draft_note"></div>' +
         '<div id="dp_draft_warn"></div>' +
@@ -1724,6 +1743,7 @@
             '<p class="note" style="margin-top:8px">Saving here keeps the dispatch on this device. To send one to a connected driver, use “📤 Send a dispatch” above — it lands in his app.</p></div>' :
             '<div class="row" style="margin-top:10px"><button class="btn primary" id="dp_add">Save dispatch</button>' +
             '<button class="btn navy" id="dp_addstart">Save & start</button></div></div>');
+      if (dspDoorMode) h += '</div>'; /* v184: close #dp_form_wrap */
 
       /* ---- History ---- */
       var hist = list().slice().reverse();
@@ -1752,8 +1772,11 @@
         if (da === db) return 0;
         return da < db ? 1 : -1;
       });
+      /* v184 (HIST-3): at most 3 records stand on this working
+         screen; the rest are one tap away on the same card. */
+      var histRender = dspHistAll ? histShown : histShown.slice(0, 3);
       h += '<div class="card"><h3>📋 History</h3>' +
-        (histShown.length ? histShown.map(function (it) {
+        (histShown.length ? histRender.map(function (it) {
           var d = it.d, i = it.i;
           var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
                    d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
@@ -1798,7 +1821,11 @@
                 '<button class="btn small primary" data-view="' + i + '">👁 View</button>' :
                 '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>') +
               '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
-        }).join('') : '<div class="empty">' + (hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : 'No dispatches yet. Create one above.') + '</div>') + '</div>';
+        }).join('') : '<div class="empty">' + (hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : 'No dispatches yet. Create one above.') + '</div>') +
+        /* v184 (HIST-3): the door to the full history, and back. */
+        (histShown.length > 3 ?
+          '<button class="btn ghost" id="dp_hist_more" style="width:100%;margin-top:8px">' +
+          (dspHistAll ? 'Show less' : 'Show full history (' + histShown.length + ')') + '</button>' : '') + '</div>';
 
       body.innerHTML = h;
 
@@ -2732,6 +2759,17 @@
       if (cancelEditBtn) cancelEditBtn.onclick = function () { dspClearDraft(); api.render(body); };
       var editActiveBtn = body.querySelector('#dp_edit_active');
       if (editActiveBtn) editActiveBtn.onclick = function () { startEdit(active()); };
+      /* v184: the driver face's one form door + the history door. */
+      var formDoorBtn = body.querySelector('#dp_form_door');
+      if (formDoorBtn) formDoorBtn.onclick = function () {
+        var wrap = body.querySelector('#dp_form_wrap');
+        if (wrap) wrap.style.display = '';
+        formDoorBtn.style.display = 'none';
+        var site = body.querySelector('#dp_site');
+        if (site && site.scrollIntoView) site.scrollIntoView({ block: 'start' });
+      };
+      var histMoreBtn = body.querySelector('#dp_hist_more');
+      if (histMoreBtn) histMoreBtn.onclick = function () { dspHistAll = !dspHistAll; api.render(body); };
       /* v129: the completed face's own actions — Edit (secondary,
          into the one form) and Done (close the face). */
       var viewEditBtn = body.querySelector('#dp_view_edit');
