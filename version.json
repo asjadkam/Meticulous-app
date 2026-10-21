@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 198,
-  "notes": "v198: PNL-CLEAN-2 — P&L is the Monthly analysis, full stop. The three sections that still sat under it (Add driver / Connect a driver, Log driver work, and the Business expense form) are removed from the P&L screen, per the owner's ruling (Oct 20, reaffirmed Oct 21: 'I thought I asked you to clean up everything?'). Nothing underneath changed: drivers still live in Connect, expenses in Fuel & Expense, and every figure in the analysis is untouched.",
+  "webVersion": 199,
+  "notes": "v199: ACCT-DRIVER-CLEAN \u2014 the Oct 13 'his account carries all features' exception is retired (owner, Oct 21, 2026 09:48 MDT: he has a separate tester account for the owner side now, and his own account is a Driver account). The two modules he named himself \u2014 P&L and Maintenance \u2014 come OFF Driver accounts: pnlAllowed()/maintAllowed() answer by account type again (P&L was always the owner's book by the Oct 12 product law; Maintenance gets the same treatment by his explicit naming). Dashboard cards and the sidebar read the gates; Owner-Operator and Fleet Manager accounts keep both. Nothing underneath changed: the modules, their data and every calculation stay exactly as they are.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",

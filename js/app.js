@@ -427,15 +427,34 @@
   App.userRole = function () { return provisionalRole(store.get('onboarding', {}) || {}); };
   /* ================= ROLE-END ================= */
 
-  /* P&L gate REMOVED (owner, Oct 13): He is a Driver but needs access to everything. */
+  /* ================= ACCT-GATE-BEGIN =================
+     v199 (ACCT-DRIVER-CLEAN, owner, Oct 21, 2026 09:48 MDT): the
+     Oct 13 exception ("He is a Driver but needs access to
+     everything") is RETIRED — he has a separate tester account
+     for the owner side now, and his own account is a Driver
+     account. He named the two modules himself: "take off owners
+     stuff off my account namely pnl and maintainance". P&L was
+     already the owner's book by product law (Oct 12: P&L follows
+     account type — a Driver never gets it, regardless of tier);
+     Maintenance gets the same account-type treatment by his
+     explicit naming today. On a Driver account both come OFF
+     every surface that lists modules — buildDashboard and
+     buildSidebar read these two gates, and they are the only
+     places modules are surfaced. Owner-Operator and Fleet
+     Manager keep both. NOTHING underneath changes: the modules,
+     their data and every calculation stay exactly as they are.
+     Harness-extractable: uses only `store` + pure JS. */
+  function acctTypeNow() {
+    try { return (store.get('onboarding', {}) || {}).accountType || 'Driver'; }
+    catch (e) { return 'Driver'; }
+  }
   function pnlAllowed() {
-    return true;
+    return acctTypeNow() !== 'Driver';
   }
-
-  /* Maintenance gate REMOVED (owner, Oct 13): He is a Driver but needs access to everything. */
   function maintAllowed() {
-    return true;
+    return acctTypeNow() !== 'Driver';
   }
+  /* ================= ACCT-GATE-END ================= */
 
   function modStatus(key) {
     try {
@@ -467,8 +486,8 @@
     var tc = el('trkCard');
     if (tc) tc.style.display = roleShowsTracker(role) ? '' : 'none';
     roleModuleOrder(role).forEach(function (key) {
-      if (key === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
-      if (key === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
+      if (key === 'pnl' && !pnlAllowed()) return; // v199: Driver accounts never surface P&L
+      if (key === 'maintenance' && !maintAllowed()) return; // v199: Driver accounts never surface Maintenance
       var meta = MODULE_META[key];
       var ok = App.tierAllows(meta.tier);
       html += '<div class="modcard' + (ok ? '' : ' locked') + '" data-mod="' + key + '">' +
@@ -586,8 +605,8 @@
     var nav = el('sbNav');
     var html = '';
     roleSidebarOrder(App.userRole(), SIDEBAR_ITEMS).forEach(function (it) {
-      if (it[0] === 'pnl' && !pnlAllowed()) return; // gate removed — everyone sees P&L
-      if (it[0] === 'maintenance' && !maintAllowed()) return; // gate removed — everyone sees Maintenance
+      if (it[0] === 'pnl' && !pnlAllowed()) return; // v199: Driver accounts never surface P&L
+      if (it[0] === 'maintenance' && !maintAllowed()) return; // v199: Driver accounts never surface Maintenance
       html += '<button data-act="' + it[0] + '"><span>' + it[1] + '</span> ' + (it[0] === 'invoice' ? moduleTitle('invoice') : it[2]) + '</button>';
     });
     nav.innerHTML = html;

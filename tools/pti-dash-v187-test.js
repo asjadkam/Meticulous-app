@@ -140,9 +140,9 @@ ok('shell exposes App.paintPtiFlag', appSrc.indexOf('App.paintPtiFlag = paintPti
 }
 ok('the filing call repaints the flag', ptiSrc.indexOf('App.paintPtiFlag()') !== -1);
 ok('status() derives from filedFor (one source)', ptiSrc.indexOf('var t = todayStr(), filed = filedFor(t);') !== -1);
-eq('ships as webVersion 188', ver.webVersion, 198);
-ok('index loads pti + app at the 198 pin',
-  idxSrc.indexOf('modules/pti.js?v=198') !== -1 && idxSrc.indexOf('js/app.js?v=198') !== -1);
+eq('ships as webVersion 188', ver.webVersion, 199);
+ok('index loads pti + app at the 199 pin',
+  idxSrc.indexOf('modules/pti.js?v=199') !== -1 && idxSrc.indexOf('js/app.js?v=199') !== -1);
 
 console.log('\npti-dash v187: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
