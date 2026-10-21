@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 196,
-  "notes": "v196: Lane guidance in the turn pop-up. As a turn nears, the pop-up now shows a lane strip for the road you are on — one cell per lane, with the lane you need lit up and its arrow bent the way you will turn (right turn, rightmost lane; left turn, leftmost; straight on, all lanes). The lane counts come from OpenStreetMap data for that road; on roads where no lane count is recorded, no strip shows rather than a guessed one.",
+  "webVersion": 197,
+  "notes": "v197: Dispatch opens on TODAY. Your current dispatch now stands at the top of the Dispatch screen in its own card — no longer buried as the first entry of History. History now holds past days only (still three at a glance, with the full-history door).",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "dd258fda10fb2bb8c9fad7d83d11ee03dd809fb83a287dd2ad278b4b9f2577a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "15b350c1a1f870edeccf33d71fd8990e58b4720e3a4efdb4e56edcc814858763",
+    "index.html": "6ec749c4a5ecee7317fba1f9143e23cdc8223d4c69a70d1cb747a48527b5e5b8",
     "js/app.js": "38576c57474a4e9ebb9453e65adaa96e3f7546d0864b39d8c74e02af2e84974c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
@@ -40,7 +40,7 @@
     "modules/autostart.js": "6e751e87252fb430cb2f03634fccb4f9652b0a0d5bf2af8cf313f0b96d2bdb02",
     "modules/connect.js": "247e21edfe673e97cfd7a01dbd5ba1cd6d79e46db8bad11703fb2974ea269282",
     "modules/damage.js": "d9d0d88e25d863cf548b98d05f2536bed062fc0c66fb17f931d03a7f8bef097e",
-    "modules/dispatch.js": "fd4b3162de5794c357f8ae31ee9266ac628c9b8f7d604bc97041844b2e024b86",
+    "modules/dispatch.js": "e4d84d35d15dde1258c188c43a33b528b3f6133d5e1ecdf80ebaec70be74afb5",
     "modules/fuel.js": "3c1e90e104695f01a53eaf2540499c9596951349b9ab17e2e699f7226025e7a5",
     "modules/invoice.js": "a51eeaacd7f6c8e2a91064a819bd30a286f3ab21e437785d9510fc06b4c55c06",
     "modules/maintenance.js": "fe194a36505035dd237ab7305d65ceeb5b24eacb62fef890874eb69b1a18d86c",

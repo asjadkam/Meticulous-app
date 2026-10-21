@@ -1655,6 +1655,93 @@
            Filled and wired by paintIngest() at the end of render. When
            there are no suggestions the card is just the quiet paste
            box; suggestions never touch the form until "Use". */
+
+      /* ---- v197: ONE row builder for every dispatch list on
+         this screen (Today's card + History), factored out of
+         the History map so the lists can never drift apart in
+         what a row shows or does. ---- */
+      function dspRowHtml(it) {
+        var d = it.d, i = it.i;
+        var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
+                 d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
+        return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
+          /* v153: the card's date line is the derived day
+             (scheduled date wins) — never the raw stored date
+             that could disagree with the 🕗 line beside it. */
+          '<div class="b">' + esc(dspRecordDate(d) || '') +
+          (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
+          (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
+          (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
+            /* v150: the pin's action is our Navigator (wired at
+               render end via data-nav); an office face — which
+               never drives — keeps a plain pin line, no button.
+               v172: a FUTURE dispatch's pin is not a navigate
+               suggestion yet (dspNavDayOk) — plain line until
+               its own day. */
+            (isOffice || !dspNavDayOk(d) ? ' · 📍 Pin set' :
+              ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
+          (d.material ? ' · ' + esc(d.material) : '') +
+          (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
+          (d.amount ? ' · $' + esc(d.amount) : '') +
+          (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
+          (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' +
+          (App._photoDl ? App._photoDl(dspPhotoFor(d), 'ticket-' + (d.date || '')) : '') : '') +
+          /* v103: Delete is a two-step IN-APP confirm — the
+             armed row swaps its buttons for one clear red
+             Delete + Cancel strip (see pendingDelId). */
+          (pendingDelId && d.id === pendingDelId ?
+            '<div style="margin-top:8px;border:2px solid #c0392b;background:#fdecea;border-radius:10px;padding:8px 10px">' +
+            '<b>Delete this dispatch?</b> <span class="b">This cannot be undone.</span>' +
+            '<div class="row" style="margin-top:6px">' +
+            '<button class="btn small" data-delconfirm="' + i + '" style="background:#c0392b;color:#fff;flex:1">Delete</button>' +
+            '<button class="btn small ghost" data-delcancel="1" style="flex:1">Cancel</button></div></div>' :
+            '<div class="row" style="margin-top:8px">' +
+            (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
+            /* v129: a completed dispatch opens on its FACE
+               (data-view), never straight into the edit form —
+               Edit lives inside the face as "Edit this record".
+               Open records keep their row Edit as before. */
+            (d.status === 'completed' ?
+              '<button class="btn small primary" data-view="' + i + '">👁 View</button>' :
+              '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>') +
+            '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
+      }
+
+      /* ---- v197 (DSP-TODAY-TOP, owner, Oct 21, 2026 08:23 MDT,
+         his screenshot): today's dispatch (Aecon Inf, dated
+         today, status saved) stood as the FIRST entry inside
+         History. His ruling: today's dispatch is NOT history —
+         it is the current dispatch, the first thing on this
+         screen; History contains past days only. So today's
+         records stand in their own card here — under the
+         Active card when one is running (that card is the
+         active record's one presence; it is excluded below),
+         under a Completed face he has open, and never the
+         record open in the edit form (v117's one-presence
+         rule). The date truth is the module's own
+         (dspRecordDate); a dateless record is today's, as it
+         always was. Future-dated records keep their History
+         place below (v172's ruling stands — see the filter
+         there; the choice is named in the ship report for
+         the owner's overrule, per the Oct 21 scope + design
+         rules — no new home was invented for them). ---- */
+      var dspTodayStr = ''; try { dspTodayStr = App._today(); } catch (e) {}
+      var todayItems = [];
+      (function () {
+        var lst = list();
+        for (var ti = lst.length - 1; ti >= 0; ti--) {
+          var td = lst[ti];
+          if (editingId && td.id === editingId) continue;
+          if (a && td.id === a.id) continue;
+          if (viewRec && td.id === viewRec.id) continue;
+          if ((dspRecordDate(td) || dspTodayStr) === dspTodayStr) todayItems.push({ d: td, i: ti });
+        }
+      })();
+      if (todayItems.length) {
+        h += '<div class="card" id="dp_today_card"><h3>🚛 Today\'s dispatch</h3>' +
+          todayItems.map(dspRowHtml).join('') + '</div>';
+      }
+
       h += '<div id="dp_ingest"></div>';
 
       /* ---- v132: THE PIPE — crew board + send (boss faces) ----
@@ -1787,56 +1874,23 @@
         if (da === db) return 0;
         return da < db ? 1 : -1;
       });
+      /* v197 (DSP-TODAY-TOP): today's records leave History —
+         they stand in their own card at the top of the screen
+         (built above). Future-dated records KEEP their place
+         here, pin plainly marked (v172's ruling, Oct 18 —
+         tomorrow's dispatch still shows; its Navigate offer
+         waits for its day). Where item 12's "past days only"
+         meets v172, the earlier specific ruling for future
+         records stands — the choice is named in the ship
+         report for the owner's overrule. */
+      histShown = histShown.filter(function (it) {
+        return (dspRecordDate(it.d) || dspTodayStr) !== dspTodayStr;
+      });
       /* v184 (HIST-3): at most 3 records stand on this working
          screen; the rest are one tap away on the same card. */
       var histRender = dspHistAll ? histShown : histShown.slice(0, 3);
       h += '<div class="card"><h3>📋 History</h3>' +
-        (histShown.length ? histRender.map(function (it) {
-          var d = it.d, i = it.i;
-          var st = d.status === 'completed' ? '<span class="pill">completed</span>' :
-                   d.status === 'cancelled' ? '<span class="pill">cancelled</span>' : '<span class="pill">saved</span>';
-          return '<div class="listitem"><div class="a">' + esc(d.jobSite || d.pickup || 'Dispatch') + ' ' + st + '</div>' +
-            /* v153: the card's date line is the derived day
-               (scheduled date wins) — never the raw stored date
-               that could disagree with the 🕗 line beside it. */
-            '<div class="b">' + esc(dspRecordDate(d) || '') +
-            (d.scheduledAt ? ' · 🕗 ' + esc(String(d.scheduledAt).replace('T', ' ')) : '') +
-            (d.equipment ? ' · 🚛 ' + esc(d.equipment) : '') +
-            (d.lat !== null && d.lat !== undefined && d.lng !== null && d.lng !== undefined ?
-              /* v150: the pin's action is our Navigator (wired at
-                 render end via data-nav); an office face — which
-                 never drives — keeps a plain pin line, no button.
-                 v172: a FUTURE dispatch's pin is not a navigate
-                 suggestion yet (dspNavDayOk) — plain line until
-                 its own day. */
-              (isOffice || !dspNavDayOk(d) ? ' · 📍 Pin set' :
-                ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
-            (d.material ? ' · ' + esc(d.material) : '') +
-            (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
-            (d.amount ? ' · $' + esc(d.amount) : '') +
-            (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
-            (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' +
-            (App._photoDl ? App._photoDl(dspPhotoFor(d), 'ticket-' + (d.date || '')) : '') : '') +
-            /* v103: Delete is a two-step IN-APP confirm — the
-               armed row swaps its buttons for one clear red
-               Delete + Cancel strip (see pendingDelId). */
-            (pendingDelId && d.id === pendingDelId ?
-              '<div style="margin-top:8px;border:2px solid #c0392b;background:#fdecea;border-radius:10px;padding:8px 10px">' +
-              '<b>Delete this dispatch?</b> <span class="b">This cannot be undone.</span>' +
-              '<div class="row" style="margin-top:6px">' +
-              '<button class="btn small" data-delconfirm="' + i + '" style="background:#c0392b;color:#fff;flex:1">Delete</button>' +
-              '<button class="btn small ghost" data-delcancel="1" style="flex:1">Cancel</button></div></div>' :
-              '<div class="row" style="margin-top:8px">' +
-              (d.status === 'saved' && !isOffice ? '<button class="btn small primary" data-start="' + i + '">Start</button>' : '') +
-              /* v129: a completed dispatch opens on its FACE
-                 (data-view), never straight into the edit form —
-                 Edit lives inside the face as "Edit this record".
-                 Open records keep their row Edit as before. */
-              (d.status === 'completed' ?
-                '<button class="btn small primary" data-view="' + i + '">👁 View</button>' :
-                '<button class="btn small ghost" data-edit="' + i + '">✏️ Edit</button>') +
-              '<button class="btn small ghost" data-del="' + i + '">Delete</button></div>') + '</div>';
-        }).join('') : '<div class="empty">' + (hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : 'No dispatches yet. Create one above.') + '</div>') +
+        (histShown.length ? histRender.map(dspRowHtml).join('') : '<div class="empty">' + (editingId && hist.length ? 'No other dispatches yet — the one you are editing is in the form above.' : (hist.length ? 'No past dispatches yet.' : 'No dispatches yet. Create one above.')) + '</div>') +
         /* v184 (HIST-3): the door to the full history, and back. */
         (histShown.length > 3 ?
           '<button class="btn ghost" id="dp_hist_more" style="width:100%;margin-top:8px">' +
