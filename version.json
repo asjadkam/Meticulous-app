@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 188,
-  "notes": "v188: P&L Monthly analysis adds up over ALL your days now. Total salaries prices every day in the period (paid hours × wage) off the same day records as revenue — October's salaries read the full month, not just the days that carried a posting — and a fill-up recorded twice counts once, so the doubled Oct 15 Mobil fill no longer inflates Total fuel.",
+  "webVersion": 189,
+  "notes": "v189: The Revenue Daily earnings card now shows EVERY day of the period you picked — pick Oct 16–31 and all 16 days are on the card, days still ahead included as empty bars. The readout still opens on today.",
   "files": {
     "assets/avatar-dump.png": "1934435a537f58a5946965bc2691585823e4377898de5bbce21a7c28a93d0091",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "134e90ffafe14c630f7e1aea4dcfa49ba1fab41361149320d8aa2c544fa3781d",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "99739f6b3d499c344ab7f0da91db39344e7204df4fdc743533d874073e931b24",
+    "index.html": "6b17d1fc2afdb596cef897cf1a5ee03374fe0abcd0b47fa24eb57c5f50018f1e",
     "js/app.js": "38576c57474a4e9ebb9453e65adaa96e3f7546d0864b39d8c74e02af2e84974c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
@@ -51,7 +51,7 @@
     "modules/preferences.js": "51c3f1a226753abaf711a778747ea88d4e2d3f05458065555197b363ff264a49",
     "modules/pti.js": "9872cbb56a228fcfd39caa0253a3b23eaa1afeb4fd2d5e6374876fab27b81412",
     "modules/reminders.js": "80d3d3a2183aec785382ed33941e1f3dc200cfac0c7627439faaccbc0fb427e0",
-    "modules/revenue.js": "ec6ed11261539bad77d5b39c5507a1035d4a6158b2988278145dca66fe4d2a72",
+    "modules/revenue.js": "903e9bbe13ca04f1a94c3b97ab94a4c54423cb3784cd74d5ec7e74028b914b1e",
     "modules/subscription.js": "01dd11e907315691195288407cd54d3a0077026435ccb25924b369a4304e4faf",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

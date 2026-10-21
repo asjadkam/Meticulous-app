@@ -125,7 +125,9 @@ function makeWorld() {
   vm.runInContext(extractCommentRegion(invSrc, 'INV-CYCLE-BEGIN', 'INV-CYCLE-END'), sandbox);
   vm.runInContext('var Meticulous = window.Meticulous;', sandbox);
   let code = helpersSlice() + '\nvar graphSel = null;\n';
-  ['chartDates', 'drawChart', 'chartLabelIdx', 'graphTap', 'dayLoadsFor', 'paintGraphPreview'].forEach(function (fn) {
+  /* v189: chartMarkDate joins the extraction list — drawChart and
+     paintGraphPreview resolve the default mark through it now. */
+  ['chartDates', 'chartMarkDate', 'drawChart', 'chartLabelIdx', 'graphTap', 'dayLoadsFor', 'paintGraphPreview'].forEach(function (fn) {
     const body = extractFn(revSrc, fn);
     if (body) code += '\n' + body + '\n';
   });
@@ -314,8 +316,8 @@ console.log('— v151: ship pins —');
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('ships as webVersion 188', ver.webVersion, 188);
-  ok('index loads revenue at the 188 pin', idxSrc.indexOf('modules/revenue.js?v=188') !== -1);
+  eq('ships as webVersion 188', ver.webVersion, 189);
+  ok('index loads revenue at the 189 pin', idxSrc.indexOf('modules/revenue.js?v=189') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 

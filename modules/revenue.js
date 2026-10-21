@@ -459,11 +459,18 @@
      buckets are exactly the period's own dates: walk back by
      CALENDAR days from the period's end (customB for a custom
      period, else today) while inPeriod() — the totals' own
-     rule — says the day belongs, cap 62; future tail days of a
-     custom period are dropped (never draw the future) unless
-     the whole period is future. Every bar's date is the date
-     string itself, so a bar, its label, its tap target and the
-     preview all name the same day by construction. */
+     rule — says the day belongs, cap 62. Every bar's date is the
+     date string itself, so a bar, its label, its tap target and
+     the preview all name the same day by construction.
+     v189 CHART-ALL (owner, Oct 21, 2026 07:21 MDT, his Revenue
+     screenshot: period Oct 16–31 chosen, the card drew only the
+     ~6 days up to today): "show ALL the days." The v164 future-
+     tail pop is REVERSED — the card now enumerates the WHOLE
+     selected period, future days included as empty bars, so the
+     period on the card is the period the totals beside it use.
+     The default mark/preview stays on the latest day that is
+     today or earlier (chartMarkDate) — the future is drawn, it
+     is just never the day the readout opens on. */
   function chartDates() {
     function fmt(d) {
       return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
@@ -483,8 +490,20 @@
       out.unshift(ds);
       d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12);
     }
-    while (out.length > 1 && out[out.length - 1] > todayS) out.pop();
     return out;
+  }
+
+  /* v189 CHART-ALL: the day the chart marks (and the preview
+     readout opens on) when nothing is tapped — the latest chart
+     date that is today or earlier; if the whole period is still
+     ahead, the period's first day. */
+  function chartMarkDate(dates) {
+    if (!dates || !dates.length) return null;
+    var n = new Date();
+    var todayS = n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2);
+    var mark = null;
+    for (var i = 0; i < dates.length; i++) { if (dates[i] <= todayS) mark = dates[i]; }
+    return mark || dates[0];
   }
 
   function drawChart(cv) {
@@ -516,7 +535,7 @@
        until a tap (or after a stale selection falls away) the
        most recent day, so the chart never sits unmarked with an
        empty readout. */
-    var mark = (graphSel && dates.indexOf(graphSel) >= 0) ? graphSel : dates[dates.length - 1];
+    var mark = (graphSel && dates.indexOf(graphSel) >= 0) ? graphSel : chartMarkDate(dates);
     buckets.forEach(function (v, i) {
       var h = (v / max) * (H - 70);
       /* v116: the two-tap SELECTED day paints navy — the same navy
@@ -581,7 +600,7 @@
     var sel = graphSel;
     if (!sel) {
       var cv = body.querySelector('#revChart');
-      if (cv && cv._dayDates && cv._dayDates.length) sel = cv._dayDates[cv._dayDates.length - 1];
+      if (cv && cv._dayDates && cv._dayDates.length) sel = chartMarkDate(cv._dayDates);
     }
     if (!sel) { host.innerHTML = ''; return; }
     var a = dayAgg()[sel] || { hours: 0, amount: 0, duplicate: false };

@@ -103,8 +103,11 @@ function makeDatesWorld(seed) {
 }
 {
   const w = makeDatesWorld({ rev_period: 'custom', rev_customA: dstr(-3), rev_customB: dstr(5) });
-  eq('A2 custom period: bars are the period\u2019s own days, future tail dropped',
-    w.chartDates(), [dstr(-3), dstr(-2), dstr(-1), dstr(0)]);
+  /* PIN MOVED by v189 CHART-ALL (owner, Oct 21, 2026 07:21 MDT):
+     the v164 "future tail dropped" law is reversed — the card
+     shows the WHOLE selected period, future days included. */
+  eq('A2 custom period: bars are the period\u2019s own days, ALL of them (v189 CHART-ALL)',
+    w.chartDates(), [dstr(-3), dstr(-2), dstr(-1), dstr(0), dstr(1), dstr(2), dstr(3), dstr(4), dstr(5)]);
 }
 {
   const w = makeDatesWorld({ rev_period: 'custom', rev_customA: dstr(-20), rev_customB: dstr(-10) });
