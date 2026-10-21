@@ -118,8 +118,8 @@ function seedWith(postingDates, fills) {
   eq('a different second fill still counts', pnl._calc('2026-10').fuel, 1270.53);
 }
 
-eq('ships as webVersion 188', ver.webVersion, 190);
-ok('index loads pnl at the 190 pin', idxSrc.indexOf('modules/pnl.js?v=190') !== -1);
+eq('ships as webVersion 188', ver.webVersion, 191);
+ok('index loads pnl at the 191 pin', idxSrc.indexOf('modules/pnl.js?v=191') !== -1);
 
 console.log('\npnl-d4 v188: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

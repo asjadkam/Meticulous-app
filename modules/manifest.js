@@ -79,6 +79,25 @@
      the truck was stopped (or crawling at a site) between them.
      trailStops returns those stops in time order —
      [{t, lat, lng, mins}] — pure, so the suite drives it. */
+  /* v191 (MANIFEST-EDIT): apply one day's saved edit (see
+     collect's top layer) to the day's {odoEnd, milesIssues} —
+     pure, so the suite drives it. No edit → the state back
+     untouched with an empty note. */
+  function applyDayEdit(state, dayEdit) {
+    var out = { odoEnd: state.odoEnd, milesIssues: state.milesIssues, dayNote: '' };
+    if (!dayEdit) return out;
+    var editEnd = parseFloat(dayEdit.endOdo);
+    if (editEnd > 0) {
+      out.odoEnd = editEnd;
+      out.milesIssues = (state.milesIssues || []).filter(function (s) {
+        var se = parseFloat(s && s.endOdo) || 0;
+        return se >= editEnd;
+      });
+    }
+    if (typeof dayEdit.note === 'string' && dayEdit.note.trim()) out.dayNote = dayEdit.note.trim();
+    return out;
+  }
+
   function trailDistM(a1, o1, a2, o2) {
     var R = 6371000, dLa = (a2 - a1) * Math.PI / 180, dLo = (o2 - o1) * Math.PI / 180;
     var s = Math.sin(dLa / 2) * Math.sin(dLa / 2) +
@@ -584,7 +603,26 @@
     } catch (e) { routeStops = []; }
     /* v190: home is not a work stop (see homePin/dropHomeStops). */
     routeStops = dropHomeStops(routeStops, homePin());
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
+    /* v191 (MANIFEST-EDIT, owner, Oct 21, 2026 06:15 MDT): the
+       day's own corrections, applied LAST — the top layer over
+       every derivation above. He forgot last night's end-of-day
+       odometer photo and had NO way to fix the day after the
+       fact. A past day's preview now carries a quiet Edit door
+       (see render) that writes mft_day_edits[date] = {endOdo,
+       note, editedAt} plus a dated odo_readings entry (source
+       'manifest-edit') at the day's end, so the corrected end
+       also chains into the NEXT day's start the way his sheet
+       chains. Here: an edited end replaces the day's end
+       outright (the driver's own word outranks every inference),
+       a stored miles verdict computed against a lower end is
+       dropped (the v177 pattern), and the day's note rides the
+       record so the preview and the PDF both print it. */
+    var dayEdit = null;
+    try { dayEdit = (G('mft_day_edits', {}) || {})[d] || null; } catch (e) { dayEdit = null; }
+    var edited = applyDayEdit({ odoEnd: odoEnd, milesIssues: milesIssues }, dayEdit);
+    odoEnd = edited.odoEnd; milesIssues = edited.milesIssues;
+    var dayNote = edited.dayNote;
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -766,6 +804,10 @@
       L.push({ k: 'rule' });
       L.push({ k: 'kv', a: c.live ? 'Income earned today so far' : 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
     }
+    /* v191 (MANIFEST-EDIT): the day's own note, written through
+       the Edit door — an explicit driver note always prints,
+       behind no section toggle. */
+    if (c.dayNote) L.push({ k: 'note', a: 'Day note: ' + c.dayNote });
     return L;
   }
 
@@ -811,6 +853,7 @@
     _docLines: docLines,
     _trailStops: trailStops,
     _dropHomeStops: dropHomeStops, /* v190: the home-stop filter, exported for the suite */
+    _applyDayEdit: applyDayEdit, /* v191: the manifest-edit layer, exported for the suite */
     _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is
        the tracker COMPLEMENT, not a repeat: the hero card counts
@@ -1041,6 +1084,23 @@
       /* v87: no blocked-reason note here anymore — silence over
          blame (see the v87 note where GEOLOAD_BLOCKED used to be). */
       if (t.earned) h += '<div class="kv"><span>' + (c.live ? 'Income earned today so far' : 'Total Earned Income') + '</span><b>$' + c.earned.toFixed(2) + '</b></div>';
+      /* v191 (MANIFEST-EDIT): the day's own note, when the Edit
+         door wrote one, shows on the face of the day. */
+      if (c.dayNote) h += '<div class="note" style="margin-top:6px">📝 ' + esc(c.dayNote) + '</div>';
+      /* v191: the Edit door — PAST days only, and quiet by the
+         LOOK-TWICE rule: one small ghost button under the day,
+         the form behind the tap. Print stays the primary. */
+      if (d < App._today()) {
+        h += '<div class="row" style="margin-top:8px"><button class="btn small ghost" id="mn_edit_btn" style="flex:1">✏️ Edit this day</button></div>' +
+          '<div id="mn_edit_wrap" style="display:none;margin-top:8px">' +
+          '<label class="f">End odometer (km)</label>' +
+          '<input id="mn_edit_odo" type="number" inputmode="decimal" min="0" step="1" value="' + (c.odoEnd !== null && c.odoEnd !== undefined ? esc(c.odoEnd) : '') + '">' +
+          '<label class="f">Day note</label>' +
+          '<textarea id="mn_edit_note" rows="2" style="width:100%">' + esc(c.dayNote || '') + '</textarea>' +
+          '<button class="btn navy" id="mn_edit_save" style="width:100%;margin-top:6px">Save the day\'s fix</button>' +
+          '<div class="note" style="margin-top:6px">Fixes this day after the fact. The end reading also becomes the next morning\'s starting point, the way your sheet chains.</div>' +
+          '</div>';
+      }
       h += '</div>';
       } /* v184: end of the one-day preview (range drew its own above) */
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
@@ -1074,6 +1134,46 @@
         if (!G('mani_to', '')) App._store.set('mani_to', d);
         Meticulous.modules.manifest.render(body);
       };
+      /* v191 (MANIFEST-EDIT): the Edit door's wiring — toggle the
+         form, and on save write the day's record through the
+         same stores collect() reads: mft_day_edits (the top
+         layer) + a dated odo_readings entry at the day's end
+         (source 'manifest-edit') so the corrected end chains
+         into the next day's start. Re-saving replaces the day's
+         earlier manifest-edit reading; clearing both fields
+         removes the day's edit entirely. */
+      var editBtn = body.querySelector('#mn_edit_btn');
+      if (editBtn) {
+        var editWrap = body.querySelector('#mn_edit_wrap');
+        editBtn.onclick = function () {
+          if (editWrap) editWrap.style.display = (editWrap.style.display === 'none') ? '' : 'none';
+        };
+        body.querySelector('#mn_edit_save').onclick = function () {
+          var msgEl2 = body.querySelector('#mn_msg');
+          var odoRaw = String((body.querySelector('#mn_edit_odo') || {}).value || '').trim();
+          var noteRaw = String((body.querySelector('#mn_edit_note') || {}).value || '').trim();
+          var endOdo = (odoRaw === '') ? null : parseFloat(odoRaw);
+          if (endOdo !== null && !(endOdo > 0)) {
+            if (msgEl2) msgEl2.textContent = 'That end odometer is not a number — nothing saved.';
+            return;
+          }
+          var edits = G('mft_day_edits', {}) || {};
+          if (endOdo === null && !noteRaw) delete edits[d];
+          else edits[d] = { endOdo: endOdo, note: noteRaw, editedAt: Date.now() };
+          App._store.set('mft_day_edits', edits);
+          if (endOdo !== null) {
+            var rl2 = G('odo_readings', []) || [];
+            var dp2 = String(d).split('-');
+            var ts2 = new Date(+dp2[0], +dp2[1] - 1, +dp2[2], 23, 59, 59).getTime();
+            rl2 = rl2.filter(function (r) { return !(r && r.source === 'manifest-edit' && r.date === d); });
+            rl2.push({ ts: ts2, date: d, value: endOdo, source: 'manifest-edit' });
+            App._store.set('odo_readings', rl2);
+          }
+          Meticulous.modules.manifest.render(body);
+          var msgEl3 = body.querySelector('#mn_msg');
+          if (msgEl3) msgEl3.textContent = 'Saved — this day now carries your fix.';
+        };
+      }
       var fromEl = body.querySelector('#mn_from');
       if (fromEl) fromEl.onchange = function (e) { App._store.set('mani_from', e.target.value); Meticulous.modules.manifest.render(body); };
       var toEl = body.querySelector('#mn_to');
