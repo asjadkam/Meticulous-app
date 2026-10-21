@@ -304,6 +304,50 @@
     return line[line.length - 1].slice();
   }
 
+  /* v192 (NAV-UTURN, owner, Oct 21, 2026 07:38 MDT, live drive
+     to Ivor East Pond on 17 Ave SE / HWY-1A): the route DOUBLED
+     BACK on itself — out on one carriageway, back on the
+     parallel one — and the next-step inset drew a turn-around
+     arrow over the words "Continue on 17 Avenue SE". No
+     type-12/13 maneuver anywhere: the engine's second way of
+     telling a truck to turn around is pure GEOMETRY, and the
+     v135 layers only read the words. A crossover does not
+     reverse at a point — it reverses over ~200 m of travel
+     (across the median link), so the measure is SUSTAINED: the
+     bearing of travel over the stretch ending 120 m before a
+     maneuver boundary (from 260 m out) against the stretch
+     starting 120 m past it (to 260 m out); |delta| ≥ 150°
+     means the road there points the truck back at itself.
+     planReversals returns the indexes of the maneuvers that
+     START at such a boundary — the same indexing planUturns
+     uses — so doRoute feeds them into the very same exclusion
+     re-request (layer 1): the next answer must loop the block
+     or take the next legal forward turn, exactly as for a
+     typed U-turn. Within ~120 m of the line's ends there is
+     not enough road to judge, and the measure honestly says 0. */
+  function reversalDeltaDeg(plan, line, i) {
+    if (!plan || !plan.maneuvers || !plan.maneuvers[i] || !line || line.length < 2) return 0;
+    var total = 0, k;
+    for (k = 0; k + 1 < line.length; k++) total += haversineM(line[k], line[k + 1]);
+    var b = plan.maneuvers[i].cumEndKm * 1000;
+    var lo = Math.max(0, b - 260), li = Math.max(0, b - 120);
+    var ro = Math.min(total, b + 120), ri = Math.min(total, b + 260);
+    if (li - lo < 60 || ri - ro < 60) return 0;
+    var a1 = pointAlongLine(line, lo), a2 = pointAlongLine(line, li);
+    var b1 = pointAlongLine(line, ro), b2 = pointAlongLine(line, ri);
+    if (!a1 || !a2 || !b1 || !b2) return 0;
+    var din = bearingDeg(a1, a2), dout = bearingDeg(b1, b2);
+    return ((dout - din + 540) % 360) - 180;
+  }
+  function planReversals(plan, line) {
+    var out = [];
+    if (!plan || !plan.maneuvers || !line || line.length < 2) return out;
+    for (var i = 0; i + 1 < plan.maneuvers.length; i++) {
+      if (Math.abs(reversalDeltaDeg(plan, line, i)) >= 150) out.push(i + 1);
+    }
+    return out;
+  }
+
   /* v135 layer 2 — the presentation guarantee. If every
      U-turn-free re-request failed and a plan STILL carries a
      U-turn, the maneuver is rewritten before anything can show
@@ -1655,6 +1699,14 @@
               var plan = maneuverPlan(data.trip);
               if (truckMode) {
                 var uts = planUturns(plan);
+                /* v192 (NAV-UTURN): geometry reversals join the
+                   typed U-turns in the SAME exclusion re-request —
+                   a route that doubles back on a divided highway
+                   is re-planned around the block, never presented
+                   as a turn-around. */
+                planReversals(plan, line).forEach(function (ri) {
+                  if (uts.indexOf(ri) === -1) uts.push(ri);
+                });
                 if (uts.length && attempt < 2) {
                   var pts = [];
                   uts.forEach(function (i) {
@@ -2202,12 +2254,20 @@
         var insetEl = body.querySelector('#nvd_inset');
         if (insetEl) {
           var showInset = !!dp.next && dp.toTurnM <= 400;
+          /* v192 (NAV-UTURN): a turn-around arrow IS a U-turn
+             instruction. If the route the engine finally gave
+             still doubles back at this maneuver (every exclusion
+             round spent), the inset does not draw it — the banner
+             keeps the plain continuation words and no arrow ever
+             points the truck back at itself. */
+          var dDeg = showInset ? Math.round(turnDeltaDeg(S.plan, S.line, dp.idx)) : 0;
+          if (showInset && (Math.abs(dDeg) >= 150 ||
+              Math.abs(reversalDeltaDeg(S.plan, S.line, dp.idx)) >= 150)) showInset = false;
           var insetKey = showInset ? (dp.idx + ':' + Math.round(dp.toTurnM / 50)) : '';
           if (S.drive.insetKey !== insetKey) {
             S.drive.insetKey = insetKey;
             insetEl.classList.toggle('hidden', !showInset);
             if (showInset) {
-              var dDeg = Math.round(turnDeltaDeg(S.plan, S.line, dp.idx));
               insetEl.innerHTML = '<svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div>';
