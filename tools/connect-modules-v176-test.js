@@ -59,7 +59,9 @@ function loadWorld(seed) {
 {
   const { CL } = loadWorld({});
   eq('a: module keys', CL.MODULE_KEYS,
-    ['dispatch', 'manifest', 'fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl']);
+    /* v207: 'navigation' joined the vocabulary (CONNECT-PICK
+       part 3 — destinations are shareable over Connect). */
+    ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'invoices', 'pnl']);
   eq('a: sanitize drops junk + dupes', CL.sanitizeModules(['fuel', 'bogus', 'fuel', 'pnl']), ['fuel', 'pnl']);
   eq('a: sanitize non-array', CL.sanitizeModules('fuel'), null);
   eq('a: sanitize empty array stays empty list', CL.sanitizeModules([]), []);

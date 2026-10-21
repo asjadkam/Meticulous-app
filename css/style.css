@@ -167,6 +167,13 @@ img{max-width:100%;}
   top:3px;left:3px;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
 .switch input:checked + .knob{background:var(--orange);}
 .switch input:checked + .knob:before{left:23px;}
+/* v207 (CONNECT-PICK): the Connect module tick row — ONE full-width
+   tap target per module; the tick box sits in a single right-hand
+   column on every row, so the eye reads one column of ticks. */
+.cn-modrow{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;margin-top:6px;padding:10px 12px;background:#fff;border:1.5px solid #ccd4e8;border-radius:12px;font-size:15px;color:var(--navy);cursor:pointer;}
+.cn-modrow .cn-modbox{flex:none;width:24px;height:24px;border:2px solid #9aa7c7;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;background:#fff;}
+.cn-modrow[aria-pressed="true"]{border-color:var(--navy);}
+.cn-modrow[aria-pressed="true"] .cn-modbox{background:var(--orange);border-color:var(--orange);}
 .empty{text-align:center;color:var(--muted);padding:26px 10px;font-size:14px;}
 
 /* ---------- onboarding ---------- */

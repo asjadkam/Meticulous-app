@@ -202,7 +202,7 @@
      beyond the kind itself); 'limited' -> the ticked list, or
      the legacy preset ['dispatch','manifest'] when none was ever
      ticked (every pre-v176 pair). */
-  CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl'];
+  CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'invoices', 'pnl'];
   CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl'];
   CP.modulesFor = function (uid) {
     var st = store();
@@ -569,6 +569,10 @@
       scheduledAt: String(fields.scheduledAt || ''),
       equipment: String(fields.equipment || ''), material: String(fields.material || ''),
       notes: String(fields.notes || ''),
+      /* v207: a DESTINATION share (sendDestination) rides this
+         same doc, flagged — never a job: navShare + the pin. */
+      navShare: !!fields.navShare,
+      navLat: Number(fields.navLat) || 0, navLng: Number(fields.navLng) || 0,
       status: 'sent', sentAt: Date.now(), deliveredAt: 0, seenAt: 0
     };
     return f.db.collection('pipedispatches').doc(id).set(doc)
@@ -584,6 +588,28 @@
         return 'sent';
       })
       .catch(function () { return 'error'; });
+  };
+
+  /* v207 (CONNECT-PICK part 3): send a DESTINATION to a connected
+     party — "I can share directions on where to go" (owner,
+     Oct 21, 2026 13:19 MDT). The destination rides the dispatch
+     channel as a flagged doc (same collection, same rules, same
+     delivery ticks); pullInbox lands it in the receiver's
+     nav_shares inbox — NOT his dispatch list — and only when
+     the pair allows the 'navigation' module. The place name is
+     the jobSite, the address rides notes, the pin rides
+     navLat/navLng (0/0 when the place carries only an address —
+     the receiver's Navigator resolves it like any saved place). */
+  CP.sendDestination = function (peerUid, place) {
+    if (!place || !(place.name || place.address)) return Promise.resolve('error');
+    var today = '';
+    try { today = App._today(); } catch (e) {}
+    return CP.sendDispatch(peerUid, {
+      jobSite: String(place.name || ''), date: today,
+      scheduledAt: '', equipment: '', material: '',
+      notes: String(place.address || ''),
+      navShare: true, navLat: Number(place.lat) || 0, navLng: Number(place.lng) || 0
+    });
   };
 
   function rowsOf(snap) {
@@ -628,7 +654,30 @@
       if (!fresh.length) { CP._pulling = false; return 0; }
       var list = st.get('dsp_list', []) || [];
       var changedDates = {};
+      var landedCount = 0;
       fresh.forEach(function (d) {
+        /* v207: a DESTINATION share lands in the nav_shares
+           inbox — never the dispatch list — and only when the
+           pair allows 'navigation'. Not allowed: NOT landed, so
+           a later kind change can still deliver it (the same
+           posture as the reader gates). */
+        if (d.navShare) {
+          if (!CP.allowsModule(d.from, 'navigation')) return;
+          var shares = st.get('nav_shares', []) || [];
+          shares.unshift({
+            pipeId: d.id, name: d.jobSite || 'Destination', address: d.notes || '',
+            lat: Number(d.navLat) || 0, lng: Number(d.navLng) || 0,
+            fromName: d.fromName || '', fromUid: d.from, sentAt: d.sentAt || 0, at: Date.now()
+          });
+          st.set('nav_shares', shares.slice(0, 20));
+          landed[d.id] = 'nav';
+          landedCount++;
+          try {
+            f.db.collection('pipedispatches').doc(d.id)
+              .update({ status: 'delivered', deliveredAt: Date.now() }).catch(function () {});
+          } catch (e) {}
+          return;
+        }
         var dateStr = CP.recordDate(d);
         var conflict = list.some(function (x) {
           return x && CP.recordDate(x) === dateStr && x.status !== 'completed' && x.status !== 'cancelled';
@@ -644,6 +693,7 @@
         };
         list.push(rec);
         landed[d.id] = rec.id;
+        landedCount++;
         changedDates[dateStr] = true;
         /* two ticks: it has landed in my app */
         try {
@@ -657,7 +707,9 @@
       /* my day now includes the boss-sent job — it flows back up
          with its origin on it, so his board expects the ticket */
       Object.keys(changedDates).forEach(function (ds) { try { CP.publishDay(ds); } catch (e) {} });
-      return fresh.length;
+      /* v207: the count is what actually LANDED — a destination
+         held back by the navigation gate is not a landing. */
+      return landedCount;
     }).catch(function () { CP._pulling = false; return 0; });
   };
 

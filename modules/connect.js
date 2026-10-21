@@ -61,8 +61,8 @@
   var W = function (k, v) { App._store.set('con_' + k, v); };
   var esc = function (s) { return App._esc(s); };
 
-  var TYPE_ICON = { dispatch: '🚚', damage: '📸', manifest: '📋', location: '📍', doc: '📎' };
-  var TYPE_LABEL = { dispatch: 'Dispatch', damage: 'Damage photo', manifest: 'Manifest', location: 'Location', doc: 'Document' };
+  var TYPE_ICON = { dispatch: '🚚', damage: '📸', manifest: '📋', location: '📍', doc: '📎', destination: '📍' };
+  var TYPE_LABEL = { dispatch: 'Dispatch', damage: 'Damage photo', manifest: 'Manifest', location: 'Location', doc: 'Document', destination: 'Destination' };
   var DOC_TYPES = ['damage', 'manifest', 'location'];
 
   /* v171: the list the FACE reads is deduped by account — one
@@ -159,12 +159,37 @@
   var MODULE_FALLBACK = [
     { key: 'dispatch', label: 'Dispatches' }, { key: 'manifest', label: 'Manifests' },
     { key: 'fuel', label: 'Fuel' }, { key: 'expenses', label: 'Expenses & receipts' },
-    { key: 'maintenance', label: 'Maintenance' }, { key: 'pti', label: 'PTI inspections' },
+    { key: 'navigation', label: 'Navigation' }, { key: 'maintenance', label: 'Maintenance' },
+    { key: 'pti', label: 'PTI inspections' },
     { key: 'invoices', label: 'Invoices' }, { key: 'pnl', label: 'P&L money picture' }
   ];
   function moduleList() {
     try { if (window.ConnectLive && ConnectLive.MODULES) return ConnectLive.MODULES; } catch (e) {}
     return MODULE_FALLBACK;
+  }
+  /* v207 (CONNECT-PICK, owner Oct 21, 2026 13:17 MDT): the picker
+     offers only the modules THIS account actually has — the same
+     account-type truth that decides the account's own face
+     (app.js ACCT-GATE: pnlAllowed/maintAllowed are false for a
+     Driver account). "pnl and maintenance are not even driver
+     module... Why is that even showing on the list?" A Driver
+     account never offers P&L or Maintenance; Navigation IS a
+     driver module (destinations are shareable) and stays. The
+     account whose modules are being picked is the one on THIS
+     screen — the approver/sender sharing his own modules. */
+  function localAccountType() {
+    try { return (App._store.get('onboarding', {}) || {}).accountType || 'Driver'; }
+    catch (e) { return 'Driver'; }
+  }
+  function shareableModules() {
+    var list = moduleList();
+    if (localAccountType() !== 'Driver') return list;
+    return list.filter(function (m) { return m.key !== 'pnl' && m.key !== 'maintenance'; });
+  }
+  function sanitizeTicks(keys) {
+    var ok = {};
+    shareableModules().forEach(function (m) { ok[m.key] = 1; });
+    return (keys || []).filter(function (k) { return !!ok[k]; });
   }
   function modulesOfThing(x) {
     try { if (window.ConnectLive && ConnectLive.modulesOf) return ConnectLive.modulesOf(x); } catch (e) {}
@@ -176,45 +201,62 @@
     moduleList().forEach(function (m) { labels[m.key] = m.label; });
     return (keys || []).map(function (k) { return labels[k] || k; }).join(', ');
   }
+  /* v207: may destinations cross this pair? Full access — yes;
+     Limited/One-time — only when Navigation was ticked. */
+  function pairNavAllowed(c) {
+    var k = kindOfConn(c);
+    if (k !== 'limited' && k !== 'once') return true;
+    var mods = modulesOfThing(c);
+    return !!mods && mods.indexOf('navigation') !== -1;
+  }
   var uiModPick = null;     // v176: ticks in the send picker (session only)
   var uiModChoice = {};     // v176: reqId -> ticks chosen on an accept row
   function defaultTicks(kind, proposed) {
-    if (Array.isArray(proposed) && proposed.length) return proposed.slice();
+    /* v207: a proposal can name modules this account does not
+       have (a fleet manager proposing P&L to a driver) — the seed
+       is filtered to the shareable list, so an invisible tick
+       can never be submitted. */
+    if (Array.isArray(proposed) && proposed.length) return sanitizeTicks(proposed.slice());
     return kind === 'once' ? ['dispatch', 'manifest'] : ['dispatch', 'manifest'];
+  }
+  /* v207 (CONNECT-PICK, owner Oct 21, 2026 13:16 MDT): the tick
+     rows are rebuilt as what they must be — ONE full-width tap
+     target per module (a real <button>), the tick box in a
+     single right-hand column (.cn-modrow in style.css), and the
+     tick state held in uiModPick / uiModChoice and RENDERED from
+     it. The v180 <label><input> rows neither aligned (the bare
+     input floated off the label) nor kept a tap: nothing wired
+     the accept rows at all, and the send rows read a DOM the
+     next repaint replaced. Now a tap flips STATE, the repaint
+     shows the state, and Accept/Send submit the state — the
+     tick the user sees is the tick that crosses. */
+  function modRowHtml(attrName, attrVal, keyAttr, m, on) {
+    return '<button type="button" class="cn-modrow" ' + attrName + '="' + attrVal + '"' +
+      (keyAttr ? ' data-cn-modkey="' + m.key + '"' : '') +
+      ' aria-pressed="' + (on ? 'true' : 'false') + '">' +
+      '<span>' + esc(m.label) + '</span>' +
+      '<span class="cn-modbox">' + (on ? '✓' : '') + '</span></button>';
   }
   function moduleTicksHtml(attr, selected) {
     var sel = selected || [];
     var h = '<div style="margin:4px 0 2px"><div class="note" style="font-weight:600">Tick exactly what they can see — nothing else crosses:</div>';
-    moduleList().forEach(function (m) {
-      h += '<label style="display:block;margin-top:4px"><input type="checkbox" ' + attr + '="' + m.key + '"' +
-        (sel.indexOf(m.key) !== -1 ? ' checked' : '') + '> ' + esc(m.label) + '</label>';
+    shareableModules().forEach(function (m) {
+      h += modRowHtml(attr, m.key, false, m, sel.indexOf(m.key) !== -1);
     });
     return h + '</div>';
-  }
-  function readTicks(root, attr) {
-    var out = [];
-    if (!root) return out;
-    root.querySelectorAll('input[' + attr + ']').forEach(function (cb) {
-      if (cb.checked) out.push(cb.getAttribute(attr));
-    });
-    return out;
   }
   function moduleTicksHtmlFor(reqId, selected) {
     var sel = selected || [];
     var h = '<div style="margin:4px 0 2px">';
-    moduleList().forEach(function (m) {
-      h += '<label style="display:block;margin-top:4px"><input type="checkbox" data-cn-modacc="' + esc(reqId) + '" data-cn-modkey="' + m.key + '"' +
-        (sel.indexOf(m.key) !== -1 ? ' checked' : '') + '> ' + esc(m.label) + '</label>';
+    shareableModules().forEach(function (m) {
+      h += modRowHtml('data-cn-modacc', esc(reqId), true, m, sel.indexOf(m.key) !== -1);
     });
     return h + '</div>';
   }
-  function readTicksFor(root, reqId) {
-    var out = [];
-    if (!root) return out;
-    root.querySelectorAll('input[data-cn-modacc]').forEach(function (cb) {
-      if (cb.getAttribute('data-cn-modacc') === reqId && cb.checked) out.push(cb.getAttribute('data-cn-modkey'));
-    });
-    return out;
+  function flipTick(list, key) {
+    var i = list.indexOf(key);
+    if (i === -1) list.push(key); else list.splice(i, 1);
+    return list;
   }
 
   function dispatchName(d) {
@@ -272,8 +314,26 @@
       var o = App._store.get('onboarding', {});
       out.push({ id: 'base', label: 'Base — ' + (o.baseLocation || 'not set'), content: { base: o.baseLocation || '' } });
       out.push({ id: 'current', label: 'My current location (when shared)', content: { current: true } });
+    } else if (type === 'destination') {
+      /* v207: the places this driver can send — the Navigation
+         module's own list (built-ins + his saved places). */
+      destinationPlaces().forEach(function (p, i) {
+        out.push({
+          id: 'nav' + i,
+          label: p.name + (p.address ? ' — ' + p.address : ''),
+          content: { name: p.name, address: p.address || '', lat: p.lat || 0, lng: p.lng || 0 }
+        });
+      });
     }
     return out;
+  }
+
+  function destinationPlaces() {
+    try {
+      var nm = window.Meticulous && Meticulous.modules.navigation;
+      if (nm && nm.shareablePlaces) return nm.shareablePlaces();
+    } catch (e) {}
+    return [];
   }
 
   function queueShare(connIdx, type, item) {
@@ -302,6 +362,7 @@
     if (o.type === 'damage') return c.title || c.desc || '';
     if (o.type === 'manifest') return c.text || '';
     if (o.type === 'location') return c.base ? 'Base — ' + c.base : (c.current ? 'Current location' : '');
+    if (o.type === 'destination') return (c.name || '') + (c.address ? ' · ' + c.address : '');
     return '';
   }
 
@@ -430,6 +491,12 @@
       var qMods = modulesOfThing(q);
       var askLine = (kindOfReq(q) === 'once' && qMods)
         ? '<div class="b">Asking for: <b>' + esc(moduleNames(qMods)) + '</b></div>' : '';
+      /* v207: the row's ticks are seeded ONCE into state (the
+         filtered proposal, or the default) and from then on the
+         state is what renders and what Accept submits. */
+      if ((kSel === 'limited' || kSel === 'once') && !uiModChoice[q.id]) {
+        uiModChoice[q.id] = defaultTicks(kSel, q.modules);
+      }
       var tickSel = uiModChoice[q.id] || defaultTicks(kSel, q.modules);
       h += '<div class="listitem"><div class="a">' + esc(q.fromName || 'Meticulous user') + '</div>' +
         '<div class="b">' + esc(q.fromRole || '') + (q.fromBusiness && q.fromBusiness !== q.fromName ? ' · ' + esc(q.fromBusiness) : '') +
@@ -493,6 +560,23 @@
       /* ============ CARD: Requests (v131, LIVE) ============ */
       h += '<div class="card"><h3>🤝 Requests</h3><div id="cn_req_wrap">' + requestsHtml() + '</div></div>';
 
+      /* ============ CARD: Destinations shared with you (v207) ============
+         What the 'navigation' module share lands: destinations a
+         connected party sent this driver (nav_shares, written by
+         ConnectPipe.pullInbox). Navigate hands the place to the
+         Navigator through the same nav_pending door every other
+         hand-off uses; Dismiss clears the item. */
+      var navShares = [];
+      try { navShares = App._store.get('nav_shares', []) || []; } catch (e) {}
+      if (navShares.length) {
+        h += '<div class="card"><h3>📍 Destinations shared with you</h3>' + navShares.map(function (s, si) {
+          return '<div class="listitem"><div class="a">' + esc(s.name || 'Destination') + '</div>' +
+            '<div class="b">From ' + esc(s.fromName || 'a connection') + (s.address ? ' · ' + esc(s.address) : '') + '</div>' +
+            '<div class="row" style="margin-top:8px"><button class="btn small primary" data-cn-navgo="' + si + '">🧭 Navigate</button>' +
+            '<button class="btn small ghost" data-cn-navdel="' + si + '">Dismiss</button></div></div>';
+        }).join('') + '</div>';
+      }
+
       /* ============ CARD 1: Current connections ============ */
       h += '<div class="card"><h3>👥 Current connections (' + list.length + ')</h3>' +
         /* the sharing honesty: ONE quiet line, not a banner card.
@@ -545,14 +629,21 @@
             (shareable
               ? '<div class="row" style="margin-top:8px">' +
                 '<button class="btn small navy" data-quick="dispatch" data-i="' + i + '">📋 Send dispatch</button>' +
-                '<button class="btn small navy" data-quick="doc" data-i="' + i + '">📎 Send doc</button></div>'
+                '<button class="btn small navy" data-quick="doc" data-i="' + i + '">📎 Send doc</button>' +
+                /* v207: destinations cross only over a live linked
+                   pair that allows the navigation module — the
+                   button exists exactly when the share can land. */
+                ((linked && c.status === 'connected' && pairNavAllowed(c))
+                  ? '<button class="btn small navy" data-quick="destination" data-i="' + i + '">📍 Send destination</button>' : '') +
+                '</div>'
               : '');
           /* the share picker lives ON the connection (v76) */
           if (uiPicker && uiPicker.conn === i) {
             var isDsp = uiPicker.type === 'dispatch';
+            var isDest = uiPicker.type === 'destination';
             h += '<div style="border-top:1px solid #e3e3e3;margin-top:10px;padding-top:8px">' +
-              '<div style="font-weight:700;margin-bottom:6px">' + (isDsp ? '📋 Send a dispatch to ' : '📎 Send a document to ') + esc(c.name) + '</div>';
-            if (!isDsp) {
+              '<div style="font-weight:700;margin-bottom:6px">' + (isDsp ? '📋 Send a dispatch to ' : isDest ? '📍 Send a destination to ' : '📎 Send a document to ') + esc(c.name) + '</div>';
+            if (!isDsp && !isDest) {
               h += '<label class="f">Kind</label><select id="cn_ptype">' +
                 DOC_TYPES.map(function (t) {
                   return '<option value="' + t + '"' + (uiPicker.type === t ? ' selected' : '') + '>' + TYPE_ICON[t] + ' ' + TYPE_LABEL[t] + '</option>';
@@ -689,9 +780,10 @@
         b.onclick = function () {
           var i = +b.getAttribute('data-i');
           var t = b.getAttribute('data-quick');
-          uiPicker = (uiPicker && uiPicker.conn === i && ((t === 'dispatch') === (uiPicker.type === 'dispatch')))
+          var nt = t === 'dispatch' ? 'dispatch' : t === 'destination' ? 'destination' : 'damage';
+          uiPicker = (uiPicker && uiPicker.conn === i && uiPicker.type === nt)
             ? null
-            : { conn: i, type: t === 'dispatch' ? 'dispatch' : 'damage' };
+            : { conn: i, type: nt };
           uiConfirmDel = -1;
           rerender();
         };
@@ -713,6 +805,35 @@
              entry is marked Sent. Documents, and anything aimed
              at a manual (unlinked) connection, still prepare
              locally in History, exactly as before. */
+          /* v207: a DESTINATION picked for a connected connection
+             goes down the pipe as a flagged destination doc — it
+             lands in their Connect inbox ("Destinations shared
+             with you"), never their work board. */
+          if (item && c && uiPicker.type === 'destination' && c.uid && c.status === 'connected' &&
+              window.ConnectPipe && ConnectPipe.sendDestination) {
+            var dContent = item.content || {};
+            var dName = c.name, dConnId = c.id || '';
+            uiPicker = null;
+            ConnectPipe.sendDestination(c.uid, {
+              name: dContent.name || '', address: dContent.address || '',
+              lat: dContent.lat || 0, lng: dContent.lng || 0
+            }).then(function (r) {
+              if (r === 'sent') {
+                var o2 = outbox();
+                o2.push({
+                  type: 'destination', label: 'Destination — ' + item.label,
+                  to: dName, connId: dConnId, refId: item.id,
+                  content: item.content || null, ts: Date.now(), note: '', sent: true
+                });
+                W('outbox', o2);
+                uiFlash = 'Destination sent to ' + dName + ' ✓ — it lands in their Connect.';
+              } else {
+                uiFlash = 'Could not send that destination — check your connection and try again. Nothing was sent.';
+              }
+              rerender();
+            });
+            return;
+          }
           if (item && c && uiPicker.type === 'dispatch' && c.uid && c.status === 'connected' &&
               window.ConnectPipe) {
             var content = item.content || {};
@@ -750,6 +871,34 @@
       });
       var pCancel = body.querySelector('#cn_pcancel');
       if (pCancel) pCancel.onclick = function () { uiPicker = null; rerender(); };
+
+      /* v207: the received destinations — Navigate hands the
+         place to the Navigator through the same nav_pending
+         one-shot every other door uses (a pin when the share
+         carried one; the address as the query when it didn't —
+         the Navigator resolves a known place from there). */
+      body.querySelectorAll('[data-cn-navgo]').forEach(function (b) {
+        b.onclick = function () {
+          var shares = [];
+          try { shares = App._store.get('nav_shares', []) || []; } catch (e) {}
+          var s = shares[+b.getAttribute('data-cn-navgo')];
+          if (!s) return;
+          var pend = { name: s.name || 'Destination', ts: Date.now() };
+          if (s.lat && s.lng) { pend.lat = s.lat; pend.lng = s.lng; }
+          else pend.query = s.address ? s.address : s.name;
+          App._store.set('nav_pending', pend);
+          App.openModule('navigator');
+        };
+      });
+      body.querySelectorAll('[data-cn-navdel]').forEach(function (b) {
+        b.onclick = function () {
+          var shares = [];
+          try { shares = App._store.get('nav_shares', []) || []; } catch (e) {}
+          shares.splice(+b.getAttribute('data-cn-navdel'), 1);
+          try { App._store.set('nav_shares', shares); } catch (e) {}
+          rerender();
+        };
+      });
 
       body.querySelectorAll('[data-obdel]').forEach(function (a) {
         a.onclick = function (e) {
@@ -793,14 +942,21 @@
             paintResults();
           };
         });
-        body.querySelectorAll('input[data-cn-modpick]').forEach(function (cb) {
-          cb.onchange = function () { uiModPick = readTicks(body, 'data-cn-modpick'); };
+        /* v207: a tap on a module row flips the tick in STATE;
+           the repaint renders the state (see moduleTicksHtml). */
+        body.querySelectorAll('[data-cn-modpick]').forEach(function (rb) {
+          rb.onclick = function () {
+            if (!uiKindPick) return;
+            if (!uiModPick) uiModPick = defaultTicks(uiKindPick.kind, null);
+            uiModPick = flipTick(uiModPick.slice(), rb.getAttribute('data-cn-modpick'));
+            paintResults();
+          };
         });
         var kSend = body.querySelector('#cn_kind_send');
         if (kSend) kSend.onclick = function () {
           if (!CL || !uiKindPick) return;
           var p = uiKindPick.peer, k = uiKindPick.kind;
-          var mods = (k === 'limited' || k === 'once') ? readTicks(body, 'data-cn-modpick') : undefined;
+          var mods = (k === 'limited' || k === 'once') ? (uiModPick || defaultTicks(k, null)) : undefined;
           if ((k === 'limited' || k === 'once') && !mods.length) mods = defaultTicks(k, null);
           uiKindPick = null; uiModPick = null;
           kSend.disabled = true;
@@ -830,6 +986,21 @@
             paintRequests();
           };
         });
+        /* v207: the accept row's module rows — a tap flips the
+           tick in uiModChoice (seeded at render from the filtered
+           proposal); the repaint shows it and Accept submits it. */
+        body.querySelectorAll('[data-cn-modacc]').forEach(function (rb) {
+          rb.onclick = function () {
+            var rid = rb.getAttribute('data-cn-modacc');
+            if (!uiModChoice[rid]) {
+              var q0 = null;
+              (uiReqs ? uiReqs.incoming : []).forEach(function (x) { if (x.id === rid) q0 = x; });
+              uiModChoice[rid] = defaultTicks(uiKindChoice[rid] || 'limited', q0 ? q0.modules : null);
+            }
+            uiModChoice[rid] = flipTick(uiModChoice[rid].slice(), rb.getAttribute('data-cn-modkey'));
+            paintRequests();
+          };
+        });
         body.querySelectorAll('[data-cn-accept]').forEach(function (b) {
           b.onclick = function () {
             if (!CL || !uiReqs) return;
@@ -847,9 +1018,10 @@
               catch (e) { ak = kindOfReq(q) || 'all'; }
             }
             /* v176 (L1/L2): the approver's ticks on THIS row are
-               what crosses — read them at Accept, never the
+               what crosses — v207: read them from the row's tick
+               STATE (what the repaint showed him), never the
                requester's proposal alone. */
-            var amods = (ak === 'limited' || ak === 'once') ? readTicksFor(body, q.id) : undefined;
+            var amods = (ak === 'limited' || ak === 'once') ? (uiModChoice[q.id] || defaultTicks(ak, q.modules)) : undefined;
             if ((ak === 'limited' || ak === 'once') && amods && !amods.length) amods = defaultTicks(ak, q.modules);
             CL.respond(q, true, ak, ak === 'once' ? (q.onceDate || kindDateOfMs(q.createdAt) || kindToday()) : undefined, amods).then(function () {
               delete uiKindChoice[q.id]; delete uiModChoice[q.id];

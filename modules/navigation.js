@@ -461,6 +461,25 @@
     navigateToPin: function (name, lat, lng) {
       goNavigate({ name: name || '', lat: lat, lng: lng }, 'work');
     },
+    /* v207 (CONNECT-PICK part 3): every place this driver could
+       send a connection — built-ins + his work + personal
+       favorites, names resolved the picker's way, duplicates
+       (the same place on both tabs / a built-in twin) folded.
+       The Connect destination share reads it. */
+    shareablePlaces: function () {
+      var out = [], seen = {};
+      ['work', 'personal'].forEach(function (kind) {
+        placesFor(kind).forEach(function (e) {
+          var p = e.place || {};
+          var nm = displayPlaceName(p);
+          var key = nm.toLowerCase() + '|' + (p.lat || '') + ',' + (p.lng || '');
+          if (!nm || seen[key]) return;
+          seen[key] = 1;
+          out.push({ name: nm, address: p.address || '', lat: p.lat ? Number(p.lat) : 0, lng: p.lng ? Number(p.lng) : 0 });
+        });
+      });
+      return out;
+    },
     status: function () {
       var d = data();
       return d.work.length ? d.work.length + ' work places' : 'No favorites yet';

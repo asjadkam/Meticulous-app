@@ -267,6 +267,13 @@
     { key: 'manifest', label: 'Manifests' },
     { key: 'fuel', label: 'Fuel' },
     { key: 'expenses', label: 'Expenses & receipts' },
+    /* v207 (CONNECT-PICK part 3, owner Oct 21, 2026 13:19 MDT):
+       Navigation — a connected party can send the driver a
+       destination ("I can share directions on where to go").
+       The share rides the pipe's dispatch channel as a flagged
+       destination doc (ConnectPipe.sendDestination); it lands
+       in the receiver's Connect inbox, never the work board. */
+    { key: 'navigation', label: 'Navigation' },
     { key: 'maintenance', label: 'Maintenance' },
     { key: 'pti', label: 'PTI inspections' },
     { key: 'invoices', label: 'Invoices' },
