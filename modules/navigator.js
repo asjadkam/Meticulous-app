@@ -738,6 +738,55 @@
      timed cascade) is DELETED outright — owner ruling, Oct 16,
      2026: navigation never leaves the app. There is deliberately
      NO external-link builder in this region any more. */
+
+  /* v210 (NAV-GESTURES, owner Oct 21, 2026 13:14 MDT — "no 2
+     fingers to rotate and change orientation or 2 fingers to
+     change the angle like with other gps's"): the two-finger
+     gesture math for the drive view — pure, so the thresholds
+     are provable. A two-pointer gesture is described by the
+     vector between its pointers: angle (deg, screen coords,
+     y down), distance (px), and the midpoint's Y. */
+  function gestureVec(a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    return {
+      angle: Math.atan2(dy, dx) * 180 / Math.PI,
+      dist: Math.sqrt(dx * dx + dy * dy),
+      midY: (a.y + b.y) / 2
+    };
+  }
+  function gestureAngDelta(from, to) {
+    return ((to - from + 540) % 360) - 180;
+  }
+  /* Which channel a gesture belongs to, judged start→now.
+     PINCH is judged first and on its own threshold: a pinch
+     must never read as a rotate (the owner's stated fear when
+     asking for this). Below pinch, rotate and tilt compete by
+     DOMINANCE (each signal against its own threshold — a real
+     twist is >=12°, a real vertical slide >=28 px), so the
+     small cross-talk of a real gesture (a tilt's few degrees
+     of skew, a twist's few px of midY drift) never steals the
+     channel. Anything under both thresholds is nothing yet. */
+  function gestureClass(start, cur) {
+    if (Math.abs(cur.dist - start.dist) >= 40) return 'pinch';
+    var rot = Math.abs(gestureAngDelta(start.angle, cur.angle)) / 12;
+    var tilt = Math.abs(cur.midY - start.midY) / 28;
+    if (rot < 1 && tilt < 1) return null;
+    return rot >= tilt ? 'rotate' : 'tilt';
+  }
+  /* Fingers slide UP (midY falls) → the view pitches UP toward
+     the horizon; slide DOWN → it flattens toward top-down.
+     0.25° per px, clamped to the sane band. */
+  function tiltPitchFrom(basePitch, dMidY) {
+    var p = basePitch - dMidY * 0.25;
+    return Math.max(0, Math.min(65, Math.round(p * 10) / 10));
+  }
+  /* Fingers twist clockwise (screen angle grows) → the map
+     turns clockwise with them. The plane's CSS rotate is
+     -(heading + offset), so the offset moves AGAINST the
+     twist for the map to follow the fingers. */
+  function gestureRotOffset(baseOffset, startAngle, curAngle) {
+    return baseOffset - gestureAngDelta(startAngle, curAngle);
+  }
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -1038,6 +1087,10 @@
            once per arm: driveAutoSpent is set by the entry itself
            and by any Drive exit, and reset by a NEW destination. */
         goNowKey: '', pendGoNow: false, driveAutoSpent: false,
+        /* v210: the driver's manual drive-view adjustments —
+           two-finger rotate (deg offset) + tilt (pitch deg,
+           null = the posture default). Both zero on snap-back. */
+        viewRot: 0, viewPitch: null,
         speed: null,
         /* v104: position paints on the planning map wait for the
            settle pass (mapSettled) — see the map init below. */
@@ -2053,8 +2106,23 @@
         /* v177 (A4): 2D is a flat heading-up view — same spin,
            no pitch, no perspective. 3D (default) is the v139
            composed chase transform, byte-identical to before. */
-        if (getNavViewMode() === '2d') return 'rotate(' + (-headingDeg) + 'deg)';
-        return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
+        /* v210 (NAV-GESTURES): a manual two-finger rotate adds
+           S.viewRot to the bearing; a two-finger tilt overrides
+           the composed pitch with S.viewPitch (null = the
+           posture default). AT REST (no adjustment in play) the
+           function returns the v139/v177 literals above
+           verbatim — the driving view IS that composition; only
+           while an adjustment is active does it compose from
+           parts. */
+        var off = (S && S.viewRot) || 0;
+        var hasPitch = !!(S && S.viewPitch !== null && S.viewPitch !== undefined);
+        if (!off && !hasPitch) {
+          if (getNavViewMode() === '2d') return 'rotate(' + (-headingDeg) + 'deg)';
+          return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
+        }
+        if (getNavViewMode() === '2d') return 'rotate(' + (-(headingDeg + off)) + 'deg)';
+        var pitch = hasPitch ? S.viewPitch : 45;
+        return 'perspective(1100px) rotateX(' + pitch + 'deg) rotate(' + (-(headingDeg + off)) + 'deg)';
       }
 
       /* v178 (F2): how sharply the route bends at maneuver
@@ -2157,9 +2225,98 @@
         if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
         if (on) {
           S.driveFreeTimer = setTimeout(function () { setDriveFree(false); }, 15000);
-        } else if (S.driveMap && S.pos) {
-          try { S.driveMap.panTo(S.pos, { animate: false }); } catch (e) {}
+        } else {
+          /* v210: snap-back restores the DRIVING VIEW too — a
+             manual two-finger rotate/tilt zeroes out and the
+             pure heading-up chase composition returns, the way
+             other GPS apps hand the view back. */
+          if (S.viewRot || (S.viewPitch !== null && S.viewPitch !== undefined)) {
+            S.viewRot = 0; S.viewPitch = null;
+            if (S.drive) paintPlane((S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) ? S.drive.headingApplied : (S.heading || 0));
+          }
+          if (S.driveMap && S.pos) {
+            try { S.driveMap.panTo(S.pos, { animate: false }); } catch (e) {}
+          }
         }
+      }
+
+      /* v210 (NAV-GESTURES): two-finger rotate + tilt on the
+         drive view. Pointer events are OBSERVED only (passive,
+         never prevented) — Leaflet keeps pinch zoom and
+         one-finger pan exactly as they were; the NAVPURE
+         gestureClass decides the channel with pinch judged
+         first, so a pinch never reads as a rotate. Engaging
+         rotate/tilt enters free-look like any other manual
+         look (setDriveFree above); the view state composes
+         into the plane's ONE transform via planeTransform,
+         repaints go through paintPlane (the one writer), and
+         the Re-center snap-back zeroes both adjustments. */
+      function driveGesturePaint() {
+        if (S && S.drive) paintPlane((S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) ? S.drive.headingApplied : (S.heading || 0));
+      }
+      function attachDriveGestures() {
+        var mapEl = body.querySelector('#nv_drive_map');
+        if (!mapEl || !mapEl.addEventListener) return;
+        if (S._gestEl === mapEl) return;
+        detachDriveGestures();
+        S._gestEl = mapEl;
+        S._pointers = {};
+        S._gestStart = null; S._gestLock = null;
+        S._gestBaseRot = 0; S._gestBasePitch = 45;
+        var ptrs = function () {
+          return Object.keys(S._pointers).map(function (k) { return S._pointers[k]; });
+        };
+        S._gDown = function (ev) {
+          if (!ev || ev.pointerId === undefined || ev.pointerId === null) return;
+          S._pointers[ev.pointerId] = { x: ev.clientX || 0, y: ev.clientY || 0 };
+          if (ptrs().length === 2) {
+            var ps = ptrs();
+            S._gestStart = gestureVec(ps[0], ps[1]);
+            S._gestLock = null;
+            S._gestBaseRot = S.viewRot || 0;
+            S._gestBasePitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 45;
+          }
+        };
+        S._gMove = function (ev) {
+          if (!ev || ev.pointerId === undefined || ev.pointerId === null) return;
+          if (!S._pointers[ev.pointerId]) return;
+          S._pointers[ev.pointerId] = { x: ev.clientX || 0, y: ev.clientY || 0 };
+          var ps = ptrs();
+          if (ps.length !== 2 || !S._gestStart) return;
+          var cur = gestureVec(ps[0], ps[1]);
+          if (!S._gestLock) S._gestLock = gestureClass(S._gestStart, cur);
+          if (S._gestLock === 'rotate') {
+            S.viewRot = gestureRotOffset(S._gestBaseRot, S._gestStart.angle, cur.angle);
+            if (!S.driveFree) setDriveFree(true);
+            driveGesturePaint();
+          } else if (S._gestLock === 'tilt') {
+            S.viewPitch = tiltPitchFrom(S._gestBasePitch, cur.midY - S._gestStart.midY);
+            if (!S.driveFree) setDriveFree(true);
+            driveGesturePaint();
+          }
+          /* 'pinch' is Leaflet's zoom — observed, never acted on. */
+        };
+        S._gUp = function (ev) {
+          if (!ev || ev.pointerId === undefined || ev.pointerId === null) return;
+          delete S._pointers[ev.pointerId];
+          if (ptrs().length < 2) { S._gestStart = null; S._gestLock = null; }
+        };
+        mapEl.addEventListener('pointerdown', S._gDown, { passive: true });
+        mapEl.addEventListener('pointermove', S._gMove, { passive: true });
+        mapEl.addEventListener('pointerup', S._gUp, { passive: true });
+        mapEl.addEventListener('pointercancel', S._gUp, { passive: true });
+      }
+      function detachDriveGestures() {
+        var mapEl = S && S._gestEl;
+        if (mapEl && mapEl.removeEventListener) {
+          try {
+            mapEl.removeEventListener('pointerdown', S._gDown);
+            mapEl.removeEventListener('pointermove', S._gMove);
+            mapEl.removeEventListener('pointerup', S._gUp);
+            mapEl.removeEventListener('pointercancel', S._gUp);
+          } catch (e) {}
+        }
+        if (S) { S._gestEl = null; S._pointers = {}; S._gestStart = null; S._gestLock = null; }
       }
 
       /* v183 (N-limit): THE SPEED LIMIT under the truck, from
@@ -2248,6 +2405,9 @@
               S.driveMap.on('dragstart', function () { setDriveFree(true); });
               S.driveMap.on('zoomstart', function () { setDriveFree(true); });
             } catch (e) {}
+            /* v210: two-finger rotate/tilt observers (passive;
+               Leaflet's own gestures are untouched). */
+            try { attachDriveGestures(); } catch (e) {}
             S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v178 (F2): the route-arrow pool — ten chevron
                markers created ONCE here and only ever MUTATED
@@ -2312,6 +2472,10 @@
         /* v183: free-look state dies with the drive. */
         if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
         S.driveFree = false;
+        /* v210: gesture observers + the manual view die too —
+           the next drive opens on the pure chase view. */
+        try { detachDriveGestures(); } catch (e) {}
+        S.viewRot = 0; S.viewPitch = null;
         /* v104: leaving Drive — by the driver's tap or by the
            arrival hand-back — spends the arm: no re-route for
            this destination will auto-enter again. */
