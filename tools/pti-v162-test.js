@@ -39,6 +39,27 @@ function eq(name, got, want) {
   ok(name, String(got) === String(want), 'got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
 }
 
+/* ---------------- the frozen clock (v209, Stage D) ----------------
+ * This suite lives on Mon Oct 19, 2026: App._today is pinned to
+ * that date below, and the fixture reports are filed that day.
+ * But compliance() counts gap days back from the GLOBAL clock
+ * (Date.now), so with only _today pinned, every real day after
+ * Oct 19 added a phantom "day without a pre-trip" to status()
+ * and the exact status string drifted (the standing baseline
+ * failure). The app behavior is correct — in the real app both
+ * clocks are the same clock. The fixture now pins BOTH: a Date
+ * whose no-arg constructor and now() return Oct 19, 2026 noon
+ * local, while dated constructions delegate untouched. */
+const RealDate = Date;
+const FROZEN_MS = new RealDate(2026, 9, 19, 12, 0, 0).getTime();
+function FrozenDate(...args) {
+  return args.length ? new RealDate(...args) : new RealDate(FROZEN_MS);
+}
+FrozenDate.now = () => FROZEN_MS;
+FrozenDate.parse = RealDate.parse;
+FrozenDate.UTC = RealDate.UTC;
+FrozenDate.prototype = RealDate.prototype;
+
 /* ---------------- in-memory store + App stub ---------------- */
 function makeStore(seed) {
   const data = Object.assign({}, seed || {});
@@ -58,7 +79,7 @@ function makeApp(store) {
 
 /* ---------------- modules/pti.js ---------------- */
 const store1 = makeStore({ onboarding: { firstName: 'Asjad', lastName: 'Kamal', contractingCo: 'AI Trucking', contractingAddr: '1506 16 St NE, Calgary, AB', companyName: 'Asjad Kamal', truckNo: '07' } });
-const sb1 = { console, Meticulous: { modules: {} }, App: makeApp(store1), window: {} };
+const sb1 = { console, Date: FrozenDate, Meticulous: { modules: {} }, App: makeApp(store1), window: {} };
 sb1.window = sb1;
 vm.createContext(sb1);
 vm.runInContext(read('modules/pti.js'), sb1);
@@ -165,7 +186,7 @@ const store2 = makeStore({
   ],
   con_list: []
 });
-const sb2 = { console, App: makeApp(store2), Meticulous: { modules: {} }, FB: null };
+const sb2 = { console, Date: FrozenDate, App: makeApp(store2), Meticulous: { modules: {} }, FB: null };
 sb2.window = sb2;
 vm.createContext(sb2);
 vm.runInContext(read('js/connectpipe.js'), sb2);
