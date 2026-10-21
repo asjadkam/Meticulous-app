@@ -728,6 +728,31 @@
      from the SAME collect() result and the SAME toggle set as the
      on-screen preview, under the same conditions, so the PDF can
      never disagree with what the driver sees. */
+  /* v211 (MANIFEST-MULTIDAY): the period totals — ONE reducer
+     (sumCollected) under both faces: the screen preview sums the
+     collects it already made for the day blocks; the printed
+     document sums through rangeTotals. Same math, so the screen
+     and the PDF can never disagree. Hours = the day's session
+     span: closed-session seconds plus the live hours figure —
+     the same facts the day blocks show. Miles keep the v184
+     basis (live km, days that have it). */
+  function sumCollected(list) {
+    var earned = 0, loads = 0, km = 0, hours = 0;
+    (list || []).forEach(function (rc) {
+      if (!rc) return;
+      earned += rc.earned || 0;
+      loads += rc.loads || 0;
+      km += rc.liveKmAny ? (rc.liveKm || 0) : 0;
+      var secs = 0;
+      (rc.sessions || []).forEach(function (s) { secs += (s && s.seconds) || 0; });
+      hours += secs / 3600 + ((rc.live && rc.live.hours) || 0);
+    });
+    return { earned: earned, loads: loads, km: km, hours: hours };
+  }
+  function rangeTotals(days) {
+    return sumCollected((days || []).map(function (rd) { return collect(rd); }));
+  }
+
   function docLines(d, c, t) {
     var L = [{ k: 'title', a: 'MANIFEST — ' + d }];
     if (c.live) L.push({ k: 'note', a: 'Shift still in progress — the end time and final numbers land when the shift is stopped.' });
@@ -995,36 +1020,17 @@
       h += '<div class="row" style="gap:6px;margin:4px 0">' +
         '<button class="btn small ' + (mnMode === 'day' ? 'navy' : 'ghost') + '" id="mn_mode_day" style="flex:1">One day</button>' +
         '<button class="btn small ' + (mnMode === 'range' ? 'navy' : 'ghost') + '" id="mn_mode_range" style="flex:1">Date range</button></div>';
-      if (mnMode === 'range') {
-        h += '<div class="row"><div><label class="f">From</label><input type="date" id="mn_from" value="' + esc(mnFrom) + '"></div>' +
-          '<div><label class="f">To</label><input type="date" id="mn_to" value="' + esc(mnTo) + '"></div></div>' +
-          '<div class="note">The manifest covers every day from From to To — on screen and in the PDF.</div>';
-      }
-      h += '<div class="note">Choose what shows on your manifest — the app remembers your choice.</div>';
-      SECTIONS.forEach(function (s) {
-        h += '<div class="toggle"><span>' + s[1] + '</span><label class="switch"><input type="checkbox" data-tg="' + s[0] + '"' + (t[s[0]] ? ' checked' : '') + '><span class="knob"></span></label></div>';
-      });
-      h += '</div>';
-
-      if (mnMode === 'range') {
-        var totEarned = 0, totLoads = 0, totKm = 0;
-        h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(mnFrom) + ' → ' + esc(mnTo) + '</h3><div id="mn_doc">';
-        if (!rangeDays.length) h += '<div class="empty">Pick a From and a To date above.</div>';
-        rangeDays.forEach(function (rd) {
-          var rc = collect(rd);
-          totEarned += rc.earned || 0; totLoads += rc.loads || 0; totKm += rc.liveKmAny ? rc.liveKm : 0;
-          var bits = [];
-          if (rc.loads > 0) bits.push(rc.loads + ' loads');
-          if (rc.liveKmAny) bits.push((Math.round(rc.liveKm * 10) / 10).toFixed(1) + ' km');
-          if (rc.routeStops && rc.routeStops.length) bits.push(rc.routeStops.length + ' stops');
-          h += '<div class="kv"><span>' + esc(rd) + (bits.length ? ' — ' + esc(bits.join(' · ')) : '') + '</span><b>$' + (rc.earned || 0).toFixed(2) + '</b></div>';
-        });
-        if (rangeDays.length) {
-          h += '<div class="kv"><span><b>Period total</b></span><b>$' + totEarned.toFixed(2) + ' · ' + totLoads + ' loads · ' + (Math.round(totKm * 10) / 10).toFixed(1) + ' km</b></div>';
-        }
-        h += '</div>';
-      } else {
-      h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(d) + '</h3><div id="mn_doc">';
+      /* v211 (MANIFEST-MULTIDAY): ONE builder for a day's
+         preview body. The single-day preview and every per-day
+         block of a date-range preview are this same chain, so a
+         range day shows exactly the facts the single-day
+         manifest shows — dispatches, work travel, route stops,
+         fuel & expenses, incidents, times, odometer (+ its P1
+         photo doors), miles, loads, GPS loads, earnings, the
+         day's note. The v191 Edit door is NOT part of it; it
+         stays single-day only, below the call. */
+      function dayBodyHtml(dd, cc, tt) {
+        var d = dd, c = cc, t = tt, h = '';
       if (t.dispatch && c.dispatches.length) {
         h += '<h3>Dispatches</h3>' + c.dispatches.map(function (x) {
           var dh = '<div class="kv"><span>' + esc(x.jobSite || x.pickup || 'Dispatch') + '</span><b>' + esc(x.material || '') + '</b></div>';
@@ -1159,6 +1165,31 @@
       /* v191 (MANIFEST-EDIT): the day's own note, when the Edit
          door wrote one, shows on the face of the day. */
       if (c.dayNote) h += '<div class="note" style="margin-top:6px">📝 ' + esc(c.dayNote) + '</div>';
+        return h;
+      }
+
+      if (mnMode === 'range') {
+        h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(mnFrom) + ' → ' + esc(mnTo) + '</h3><div id="mn_doc">';
+        if (!rangeDays.length) h += '<div class="empty">Pick a From and a To date above.</div>';
+        var rcs = [];
+        rangeDays.forEach(function (rd) {
+          var rc = collect(rd);
+          rcs.push(rc);
+          /* v211: the day's FULL block (dayBodyHtml — the same
+             facts the single-day manifest shows), headed by its
+             date. The v184 one-line summary rows are gone: a
+             period manifest reads like the daily ones stacked. */
+          h += '<h3>' + esc(rd) + '</h3>' + dayBodyHtml(rd, rc, t);
+        });
+        if (rangeDays.length) {
+          var rtS = sumCollected(rcs);
+          h += '<div class="kv"><span><b>Period total</b></span><b>$' + rtS.earned.toFixed(2) + ' · ' + rtS.loads + ' loads · ' + (Math.round(rtS.km * 10) / 10).toFixed(1) + ' km · ' + (Math.round(rtS.hours * 10) / 10).toFixed(1) + ' h</b></div>';
+        }
+        h += '</div>';
+      } else {
+      h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(d) + '</h3><div id="mn_doc">';
+      h += dayBodyHtml(d, c, t);
+
       /* v191: the Edit door — PAST days only, and quiet by the
          LOOK-TWICE rule: one small ghost button under the day,
          the form behind the tap. Print stays the primary. */
@@ -1255,6 +1286,17 @@
         rangeDays.forEach(function (rd) {
           docLines(rd, collect(rd), t).forEach(function (ln) { lines.push(ln); });
         });
+        /* v211: the period totals close the document — computed
+           by rangeTotals, the same reducer the screen preview
+           totals with, hours included. */
+        if (rangeDays.length) {
+          var rtP = rangeTotals(rangeDays);
+          lines.push({ k: 'h', a: 'PERIOD TOTAL' });
+          lines.push({ k: 'kv', a: 'Total Earned Income', b: '$' + rtP.earned.toFixed(2) });
+          lines.push({ k: 'kv', a: 'Loads', b: '' + rtP.loads });
+          lines.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(rtP.km * 10) / 10).toFixed(1) + ' km' });
+          lines.push({ k: 'kv', a: 'Hours', b: (Math.round(rtP.hours * 10) / 10).toFixed(1) + ' h' });
+        }
         return lines;
       }
       body.querySelector('#mn_print').onclick = function () {

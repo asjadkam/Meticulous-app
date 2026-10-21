@@ -237,8 +237,8 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
   console.log('— pins —');
   ok('the reset sits in startDrive before paintMute',
     /VOICE-ON-AT-DRIVE-START[\s\S]{0,900}?saveSettings\(\{ muted: false \}\)/.test(navSrc));
-  eq('webVersion is 208', ver.webVersion, 210);
-  ok('index.html pins the v208 build', idxSrc.indexOf('?v=210') >= 0 && idxSrc.indexOf('?v=' + '207') < 0);
+  eq('webVersion is 208', ver.webVersion, 211);
+  ok('index.html pins the v208 build', idxSrc.indexOf('?v=211') >= 0 && idxSrc.indexOf('?v=' + '207') < 0);
 
   console.log('\nnav-voice-start-v208 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
