@@ -677,6 +677,7 @@
         var roleSel = body.querySelector('#pf_role');
         if (roleSel) roleSel.onchange = function () {
           o.userRole = roleSel.value;
+          o.roleStamped = 'answer'; /* v177 (D7): a genuine pick, never the old default stamp */
           App._store.set('onboarding', o);
           var rn = body.querySelector('#pf_role_note');
           if (rn) rn.innerHTML = 'Your answer now: <b>' + esc(ROLE_LABEL[roleSel.value]) + '</b>. Changing it re-tunes your home screen right away.';

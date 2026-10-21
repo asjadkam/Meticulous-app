@@ -40,11 +40,32 @@
     return { id: id, name: id, km: 0 };
   }
 
+  /* v177 (D9, owner Oct 20, 2026): EVERY interval follows the PM
+     service (A/B) interval by default. An item the owner sets to
+     a different number becomes INDEPENDENT (recorded in
+     mt_follow as id -> false) and keeps his number until he
+     resets it to "follow PM". The Annual safety inspection is
+     date-based and NEVER follows PM — it keeps its own date. */
+  function followMap() {
+    var f = S('follow', {});
+    return (f && typeof f === 'object') ? f : {};
+  }
   function intervals() {
     var d = {};
     TYPES.forEach(function (t) { d[t.id] = t.km; });
     var saved = S('intervals', {});
     Object.keys(saved).forEach(function (k) { d[k] = parseInt(saved[k], 10) || 0; });
+    var pm = d.pm;
+    var fol = followMap();
+    TYPES.forEach(function (t) {
+      if (t.id === 'pm' || t.dateBased || !(t.km > 0)) return;
+      /* A SAVED number is the owner's own (it was set, by him or
+         by an older build's save) — independent. No saved number
+         and no independent marker: the item follows PM. */
+      if (fol[t.id] === false) return;
+      if (Object.prototype.hasOwnProperty.call(saved, t.id)) return;
+      d[t.id] = pm;
+    });
     return d;
   }
 
@@ -664,12 +685,18 @@
 
       /* --- Intervals --- */
       var iv = intervals();
+      var folNow = followMap();
       h += '<div class="card"><h3>⚙️ Service intervals</h3>' +
-        '<p class="note">How many km between services. Set 0 to turn a reminder off.</p>';
+        '<p class="note">How many km between services. Every item follows the PM service interval — change one and it keeps your number instead; tap “Follow PM” to go back. Set 0 to turn a reminder off. The annual inspection keeps its own date below — it never follows PM.</p>';
+      var savedNow = S('intervals', {});
       TYPES.forEach(function (t) {
         if (t.dateBased) return;
-        h += '<div class="kv"><span>' + t.name + '</span>' +
-          '<span><input type="number" inputmode="numeric" min="0" step="100" data-mtint="' + t.id + '" value="' + (iv[t.id] || 0) + '" style="width:110px"> km</span></div>';
+        var follows = t.id !== 'pm' && t.km > 0 && folNow[t.id] !== false &&
+          !Object.prototype.hasOwnProperty.call(savedNow, t.id);
+        h += '<div class="kv"><span>' + t.name + (t.id === 'pm' ? '' : (follows ? ' <span class="note">· follows PM</span>' : ' <span class="note">· your own number</span>')) + '</span>' +
+          '<span><input type="number" inputmode="numeric" min="0" step="100" data-mtint="' + t.id + '" value="' + (iv[t.id] || 0) + '" style="width:110px"> km' +
+          ((t.id !== 'pm' && t.km > 0 && !follows) ? ' <button class="btn small ghost" data-mtfollow="' + t.id + '">Follow PM</button>' : '') +
+          '</span></div>';
       });
       h += '<div class="kv"><span>Annual safety inspection due</span>' +
         '<span><input type="date" id="mt_annual" value="' + esc(S('annualDate', '')) + '"></span></div>' +
@@ -1141,12 +1168,36 @@
         };
       });
 
+      /* v177 (D9): "Follow PM" resets — the item drops its
+         independent marker AND its saved number, and reads at
+         the PM interval again. */
+      body.querySelectorAll('[data-mtfollow]').forEach(function (b) {
+        b.onclick = function () {
+          var id = b.getAttribute('data-mtfollow');
+          var f = followMap();
+          delete f[id];
+          W('follow', f);
+          var sv = S('intervals', {});
+          if (sv && Object.prototype.hasOwnProperty.call(sv, id)) { delete sv[id]; W('intervals', sv); }
+          api.render(body);
+        };
+      });
       body.querySelector('#mt_save_int').onclick = function () {
         var nv = {};
         body.querySelectorAll('[data-mtint]').forEach(function (inp) {
           nv[inp.getAttribute('data-mtint')] = parseInt(inp.value, 10) || 0;
         });
         W('intervals', nv);
+        /* v177 (D9): an item saved AT the PM number follows PM;
+           an item saved at any other number is the owner's own
+           and stays independent until reset. */
+        var folSave = followMap();
+        TYPES.forEach(function (t) {
+          if (t.id === 'pm' || t.dateBased || !(t.km > 0)) return;
+          if ((nv[t.id] || 0) === (nv.pm || 0)) delete folSave[t.id];
+          else folSave[t.id] = false;
+        });
+        W('follow', folSave);
         var annualV = body.querySelector('#mt_annual').value || '';
         W('annualDate', annualV);
         /* v118: keep the two stores of this one fact in step at

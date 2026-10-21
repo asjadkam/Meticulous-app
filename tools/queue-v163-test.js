@@ -207,9 +207,12 @@ function makePnl(seed) {
 }
 
 /* --- A7: face statics — the fixed line, the dead input, the + door --- */
-ok('A7 breakdown prints the fixed Driver wages line off wagesTotal',
-  pnlSrc.indexOf('\uD83D\uDC65 Driver wages</span><b>\' + money(c.wagesTotal)') !== -1 ||
-  pnlSrc.indexOf('Driver wages</span>') !== -1 && pnlSrc.indexOf('money(c.wagesTotal)') !== -1);
+/* v181 (D5 REDEFINED, owner Oct 20, 2026 19:53–19:54) SUPERSEDES the
+   breakdown-line pin: the Expense breakdown card is OFF the P&L face —
+   the Monthly analysis's Total salaries row (next check) is the one
+   wages face, still printed off the same fixed wagesTotal figure. */
+ok('A7 no breakdown Driver wages line remains on the face (D5)',
+  pnlSrc.indexOf('Expense breakdown') === -1 && pnlSrc.indexOf('money(c.wagesTotal)') !== -1);
 ok('A7 the miles text box is gone from the face', pnlSrc.indexOf('id="pnl_miles"') === -1);
 ok('A7 no handler writes a miles override any more', pnlSrc.indexOf("W('miles_' + m") === -1);
 ok('A7 the + add-line door renders', pnlSrc.indexOf('id="pnl_addcat"') !== -1);

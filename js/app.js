@@ -370,7 +370,25 @@
      old migration behaviour; an answered pick is never overridden. */
   function provisionalRole(o) {
     o = o || {};
-    if (isUserRole(o.userRole)) return o.userRole;
+    /* v177 (D7, owner Oct 20, 2026): THE STAMP HEAL. Builds
+       before v76 STAMPED the accountType default into userRole
+       at onboarding finish — an unanswered Owner-Operator /
+       Fleet Manager carries 'both' that was never an answer,
+       and because a stored value reads as an answer forever,
+       the office prune never reaches those accounts (the
+       office-only tester still got the tracker + driver cards).
+       A Fleet Manager's own default is 'office', so a 'both'
+       stored beside that type with no genuine-answer marker
+       (roleStamped — written when a person actually picks, in
+       onboarding or Preferences) is the old stamp, not a pick:
+       the face resolves office. A marked 'both' is a real
+       answer and always wins. */
+    if (isUserRole(o.userRole)) {
+      if (o.userRole === 'both' && o.accountType === 'Fleet Manager' && o.roleStamped !== 'answer') {
+        return 'office';
+      }
+      return o.userRole;
+    }
     var d = roleDefaultFor(o.accountType);
     return d === 'both' ? 'office' : d;
   }
@@ -2951,7 +2969,7 @@
       d.onclick = function () {
         var v = d.getAttribute('data-v');
         if (st.key === 'pay') o.payStandard = v; else o[st.key] = v;
-        if (st.key === 'userRole') _onbRoleNudge = false; // answered — the gate is satisfied
+        if (st.key === 'userRole') { _onbRoleNudge = false; o.roleStamped = 'answer'; } // answered — the gate is satisfied (v177 D7: mark the genuine pick)
         if (st.key === 'accountType') _onbTypeNudge = false; // v147: same
         store.set('onboarding', o);
         renderOnbStep();

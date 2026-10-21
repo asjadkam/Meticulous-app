@@ -587,9 +587,14 @@
       '<p class="note" style="margin-top:0">Hand the phone to an officer: they see only your filed inspections from the last 14 days. The rest of the app stays locked until you unlock it with your PIN.</p>' +
       (dot.pinHash
         ? '<button type="button" class="btn navy" id="pti_dot_enter" style="width:100%">🛂 Enter Inspection Mode</button>'
-        : '<label class="f">Choose a PIN (4+ numbers) — you’ll need it to get back in</label>' +
-          '<input id="pti_dot_newpin" type="password" inputmode="numeric" autocomplete="off" placeholder="New PIN">' +
-          '<input id="pti_dot_newpin2" type="password" inputmode="numeric" autocomplete="off" placeholder="Same PIN again" style="margin-top:6px">' +
+        : /* v177 (D8, owner Oct 20, 2026 — his words: "What's this
+             pin?"): the field itself must say it in one look —
+             YOU pick this number now; it locks everything else
+             while the officer looks; you type it to get back in. */
+          '<p class="note" style="margin:0 0 6px"><b>Pick a PIN you will remember.</b> When an officer checks your inspections, this PIN locks the rest of the app — the officer sees only your last 14 days of PTIs. When he hands the phone back, you type this same PIN to unlock the app.</p>' +
+          '<label class="f">Your new PIN (4+ numbers)</label>' +
+          '<input id="pti_dot_newpin" type="password" inputmode="numeric" autocomplete="off" placeholder="Type a PIN you choose">' +
+          '<input id="pti_dot_newpin2" type="password" inputmode="numeric" autocomplete="off" placeholder="Type the same PIN again" style="margin-top:6px">' +
           '<div id="pti_dot_seterr"></div>' +
           '<button type="button" class="btn navy" id="pti_dot_set" style="width:100%;margin-top:8px">Set PIN &amp; enter Inspection Mode</button>') +
       (comp.gaps ? '<p class="note" style="margin-top:8px">⚠️ ' + comp.gaps + ' day' + (comp.gaps === 1 ? '' : 's') + ' in the last 14 had no pre-trip inspection on file.</p>' : '') +

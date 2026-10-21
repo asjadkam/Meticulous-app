@@ -697,12 +697,12 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. v162 pin move: 161 -> 162, same convention. */
-  check('i: version ships as 180', ver.webVersion === 180); // v177 standing pin move
-  check('i: index loads the touched files at the 180 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=180') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=180') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=180') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=180') !== -1);
+  check('i: version ships as 181', ver.webVersion === 181); // v177 standing pin move
+  check('i: index loads the touched files at the 181 pin',
+    idxSrc.indexOf('js/connectpipe.js?v=181') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=181') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=181') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=181') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

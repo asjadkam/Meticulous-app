@@ -61,6 +61,7 @@
      a quiet secondary action. */
   var detailFillIdx = null;
   var detailDelArm = false;
+  var fuShowAll = false; /* v177 (D6): Fill-ups shows the latest 3 until asked for more (the Entries pattern) */
   /* v118: receipt precision — litres carry 3 decimals, money 2.
      A receipt read derives litres as cost ÷ price when the litres
      line itself is unread, which produces raw float junk
@@ -354,13 +355,21 @@
          (the LOOK TWICE rule: the response happens where he's
          looking, or takes him straight to it). */
       var flAll = fills();
+      /* v177 (D6): latest 3 + Show more — the list scrolled
+         unbroken back to June. Same pattern as Revenue Entries. */
+      var flRev = flAll.slice().reverse();
+      var flShown = fuShowAll ? flRev : flRev.slice(0, 3);
       h += '<div class="card"><h3>📒 Fill-ups</h3>' +
-        (flAll.length ? flAll.slice().reverse().map(function (f, ri) {
+        (flAll.length ? flShown.map(function (f, ri) {
           var i = flAll.length - 1 - ri;
           return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
             '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
             '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + ' · tap to view or edit</div></div>';
-        }).join('') : '<div class="empty">No fill-ups yet.</div>') + '</div>';
+        }).join('') : '<div class="empty">No fill-ups yet.</div>') +
+        (flAll.length > 3
+          ? '<button class="btn ghost" id="fu_more" style="width:100%;margin-top:8px">' +
+            (fuShowAll ? 'Show less' : 'Show more — ' + (flAll.length - 3) + ' more fill-up' + (flAll.length - 3 === 1 ? '' : 's')) + '</button>'
+          : '') + '</div>';
 
       body.innerHTML = h;
 
@@ -387,6 +396,9 @@
       /* v118: a row tap opens the DETAILS view for the entry
          (read-only first) — Edit lives there now, not as the
          tap's direct destination. */
+      /* v177 (D6): Fill-ups Show more / Show less */
+      var fuMore = body.querySelector('#fu_more');
+      if (fuMore) fuMore.onclick = function () { fuShowAll = !fuShowAll; Meticulous.modules.fuel.render(body); };
       body.querySelectorAll('[data-fuedit]').forEach(function (el) {
         el.onclick = function () {
           detailFillIdx = +el.getAttribute('data-fuedit');

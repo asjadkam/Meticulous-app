@@ -505,14 +505,21 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   const pnlBody = makeBody();
   sb.Meticulous.modules.pnl.render(pnlBody);
   await flush();
-  const crewHtmlOut = (pnlBody._els['q:#pnl_crew'] || {}).innerHTML || '';
-  check('d: P&L crew card shows the limited driver his manifest door',
-    crewHtmlOut.indexOf('data-pnlmanl="uid-driver:') !== -1, crewHtmlOut.slice(0, 300));
-  check('d: P&L crew card shows NO fuel for a limited driver',
+  /* v181 (D5 REDEFINED, owner Oct 20, 2026 19:53–19:54) SUPERSEDES
+     the v148/v176 crew-card checks that stood here: there is NO
+     crew card on the P&L face at all any more — no manifest door,
+     no fuel, no invoices, no money picture. P&L keeps only the
+     Monthly analysis; Connect detail lives in Connect. The wage
+     LEG gate below (crewWagesFor) is unchanged and still tested. */
+  const crewHtmlOut = pnlBody.innerHTML || '';
+  check('d: P&L face has NO crew card at all (D5)',
+    crewHtmlOut.indexOf('Connected crew') === -1 && crewHtmlOut.indexOf('pnl_crew') === -1 &&
+    crewHtmlOut.indexOf('data-pnlmanl') === -1, crewHtmlOut.slice(0, 300));
+  check('d: P&L face shows NO fuel dump for a limited driver',
     crewHtmlOut.indexOf('Petro-Canada') === -1 && crewHtmlOut.indexOf('His fuel') === -1);
-  check('d: P&L crew card shows NO invoice for a limited driver',
-    crewHtmlOut.indexOf('Invoice #') === -1 && crewHtmlOut.indexOf('His pay invoices') === -1);
-  check('d: P&L crew card shows NO money picture for a limited driver',
+  check('d: P&L face shows NO invoice dump for a limited driver',
+    crewHtmlOut.indexOf('His pay invoices') === -1);
+  check('d: P&L face shows NO crew money picture for a limited driver',
     crewHtmlOut.indexOf('Revenue (your client rate)') === -1 && crewHtmlOut.indexOf('Crew revenue') === -1);
   // crewWagesFor: poison the cache with full priced days for the
   // limited driver — no leg may be booked

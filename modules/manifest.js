@@ -349,6 +349,49 @@
       }
     })();
 
+    /* v177 (D2, owner Oct 20, 2026): ONE ODOMETER FACT, APP-WIDE.
+       A verified reading captured anywhere on the day (a fuel
+       receipt read, a PTI, a dash photo in the readings log) is
+       the day's truth — it outranks a stale boundary the session
+       closed with. Oct 19: the fill carried 169,531 (17:15) yet
+       the Preview read 169,300 → 169,300 (0 km) because the
+       session's endOdo held the morning's stale 169,300 and the
+       v122 log pass only fills MISSING boundaries. Here: the
+       day's highest verified reading becomes the day's end when
+       it beats the standing end, and a stored miles-discrepancy
+       verdict computed against that stale end is dropped — the
+       warning must never indict a day the readings clear. */
+    (function () {
+      var dayMax = null;
+      fills.forEach(function (x) {
+        var v = parseFloat(x && x.odo);
+        if (v > 0 && (dayMax === null || v > dayMax)) dayMax = v;
+      });
+      try {
+        (G('odo_readings', []) || []).forEach(function (r) {
+          var v = parseFloat(r && r.value);
+          var ts = (r && typeof r.ts === 'number') ? r.ts : Date.parse(r && r.ts);
+          if (!(v > 0) || !isFinite(ts)) return;
+          var rd = new Date(ts);
+          var rs = rd.getFullYear() + '-' + ('0' + (rd.getMonth() + 1)).slice(-2) + '-' + ('0' + rd.getDate()).slice(-2);
+          if (rs === d && (dayMax === null || v > dayMax)) dayMax = v;
+        });
+      } catch (e) {}
+      /* The v87 honesty rule stands untouched: a MISSING end
+         stays missing ("end not recorded") — this pass only
+         corrects an end that EXISTS but is stale (at or below
+         the day's start while a higher verified reading from
+         the same day sits in the records). */
+      if (dayMax !== null && odoStart !== null && odoEnd !== null &&
+          dayMax > odoEnd && dayMax > odoStart) {
+        odoEnd = dayMax;
+        milesIssues = milesIssues.filter(function (s) {
+          var se = parseFloat(s && s.endOdo) || 0;
+          return se >= dayMax;
+        });
+      }
+    })();
+
     /* v107: earned, from the shared builder (see the note at the
        top of collect). The live session mirrors Revenue's rule
        exactly: it adds only on a day no confirmed line speaks
