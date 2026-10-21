@@ -1515,6 +1515,21 @@
          records read as saved-on-this-device, and one honest line
          points at the pipe card that does the sending (v132). */
       var isOffice = (App.userRole ? App.userRole() : 'driver') === 'office';
+      /* v186 (DSP-role, owner Oct 21, 2026 07:20 MDT — confirmed
+         wrong in his hands TWICE: his own screenshot and a read-only
+         in-app inspection, account type Driver, Dispatch still
+         listing Crew today + Send a dispatch): a DRIVER account
+         never sends a dispatch and has no crew view — the ruling
+         is absolute and keys off the ACCOUNT TYPE, not only the
+         person's role pick. His account is Driver (he set it
+         himself) while his role answer is "both", so the v132
+         role-only gate below kept the boss cards on his face. A
+         Driver accountType forces the driver face on this screen:
+         no crew board, no send card, no crew fetch, and the form
+         behind the quiet door. Owner-Operator / Fleet Manager
+         accounts keep their tools exactly as before. */
+      var dspDriverAcct = false;
+      try { dspDriverAcct = (App._store.get('onboarding', {}) || {}).accountType === 'Driver'; } catch (e) {}
       /* v56: the form's draft is resolved BEFORE the HTML is built —
          a draft carrying editId means the form opens in EDIT mode for
          that record (title, single "Save changes" button). If the
@@ -1647,7 +1662,7 @@
          connected driver's TODAY from the shared day records; the
          send card delivers a dispatch down the pipe. Both paint
          async into their containers (wiring at render end). */
-      if ((App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
+      if (!dspDriverAcct && (App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
         h += '<div class="card"><h3>👥 Crew today</h3><div id="dp_crew">' + crewHtml() + '</div></div>';
         h += '<div class="card"><h3>📤 Send a dispatch</h3><div id="dp_send">' + sendHtml() + '</div></div>';
       }
@@ -1664,7 +1679,7 @@
            and Send a dispatch were already office-only (v132) and
            stay off this face. Office/both faces keep their tools
            standing, as ordered. */
-      var dspDoorMode = ((App.userRole ? App.userRole() : 'driver') === 'driver') && !editingId && !draft0;
+      var dspDoorMode = (((App.userRole ? App.userRole() : 'driver') === 'driver') || dspDriverAcct) && !editingId && !draft0;
       if (dspDoorMode) {
         h += '<button class="btn ghost" id="dp_form_door" style="width:100%;margin:2px 0 10px">✏️ Type a dispatch in myself</button>' +
           '<div id="dp_form_wrap" style="display:none">';
@@ -3477,7 +3492,7 @@
             }
           });
           ConnectPipe.markSeen(list());
-          if ((App.userRole ? App.userRole() : 'driver') !== 'driver') {
+          if (!dspDriverAcct && (App.userRole ? App.userRole() : 'driver') !== 'driver') {
             ConnectPipe.fetchCrew(App._today()).then(function (days) {
               pipeDays = days;
               var w = body.querySelector('#dp_crew');

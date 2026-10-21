@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 185,
-  "notes": "v185: Your odometer history is ready to bring in — Maintenance, Add a past reading, now takes a whole list at once: copy the lines from the odometer file Muse made from your sheets, paste, Review, Confirm import. 57 readings from July 18 to October 16 are in that file, so your lifetime distance starts from a real July bookend. Also fixed behind the scenes: the session-close test world that was silently failing.",
+  "webVersion": 186,
+  "notes": "v186: Dispatch on a driver account is your day and nothing else — Crew today and Send a dispatch no longer appear on a Driver account's Dispatch screen (they were keyed to the role pick, not the account; your account is Driver). Only Add from a message stands, with the type-it-myself form behind its quiet button, exactly as you ruled.",
   "files": {
     "assets/avatar-dump.png": "1934435a537f58a5946965bc2691585823e4377898de5bbce21a7c28a93d0091",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "134e90ffafe14c630f7e1aea4dcfa49ba1fab41361149320d8aa2c544fa3781d",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "a68b8a597e1b4eaad2e563b7abff555fffde3e49c45d3bd9a09ac5374584a7e3",
+    "index.html": "dfc79513572e10b8f1411c48ce92a84317ecc7ce7e9ef285a6b754bd1213e5f1",
     "js/app.js": "dae10d89838da68adf450787c583436b3597b0e7f64e271667e67a85dc5ead07",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
@@ -40,7 +40,7 @@
     "modules/autostart.js": "6e751e87252fb430cb2f03634fccb4f9652b0a0d5bf2af8cf313f0b96d2bdb02",
     "modules/connect.js": "247e21edfe673e97cfd7a01dbd5ba1cd6d79e46db8bad11703fb2974ea269282",
     "modules/damage.js": "d9d0d88e25d863cf548b98d05f2536bed062fc0c66fb17f931d03a7f8bef097e",
-    "modules/dispatch.js": "1ada2bae0d799b63099ea50867baddc87f331565fad667aa1ce21de70a75c1c5",
+    "modules/dispatch.js": "fd4b3162de5794c357f8ae31ee9266ac628c9b8f7d604bc97041844b2e024b86",
     "modules/fuel.js": "3c1e90e104695f01a53eaf2540499c9596951349b9ab17e2e699f7226025e7a5",
     "modules/invoice.js": "a51eeaacd7f6c8e2a91064a819bd30a286f3ab21e437785d9510fc06b4c55c06",
     "modules/maintenance.js": "fe194a36505035dd237ab7305d65ceeb5b24eacb62fef890874eb69b1a18d86c",

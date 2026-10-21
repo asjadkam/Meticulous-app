@@ -13,8 +13,11 @@ const dsp = read('modules/dispatch.js');
 const man = read('modules/manifest.js');
 
 console.log('— DSP: driver face —');
-ok('door mode is driver-only, closed by an edit or a draft',
-  dsp.indexOf("=== 'driver') && !editingId && !draft0") !== -1);
+/* v186 (DSP-role) deliberately moved this pin: the door now also
+   opens on a Driver ACCOUNT whatever the role pick says — the
+   owner's account is Driver with a "both" role answer. */
+ok('door mode is the driver face (driver role OR Driver account), closed by an edit or a draft',
+  dsp.indexOf("|| dspDriverAcct) && !editingId && !draft0") !== -1);
 ok('the form sits behind ONE quiet door on the driver face',
   dsp.indexOf('id="dp_form_door"') !== -1 && dsp.indexOf('id="dp_form_wrap" style="display:none"') !== -1);
 ok('the door is wired to open the form', dsp.indexOf("body.querySelector('#dp_form_door')") !== -1);
