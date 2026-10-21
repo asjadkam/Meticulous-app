@@ -2250,6 +2250,19 @@
             }, 650);
           } catch (e) { S.driveMap = null; }
         }
+        /* v208 (VOICE-ON-AT-DRIVE-START, owner Oct 21, 2026):
+           a NEW drive always starts with the voice ON. The mute
+           used to persist invisibly in the settings store — a
+           tap from an earlier drive carried into this one, and
+           the owner drove with no audio while nothing at drive
+           start reset it or announced it. The reset is written
+           back to the same store, so the planning face (painted
+           below) agrees with the drive bar; muting mid-drive
+           still works — for THIS drive only. */
+        if (S.settings.muted) {
+          S.settings.muted = false;
+          saveSettings({ muted: false });
+        }
         paintMute();
         var saidNow = driveTick();
         if (!saidNow) {
