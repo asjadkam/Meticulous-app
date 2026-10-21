@@ -48,6 +48,11 @@
 
   /* ---------------- views ---------------- */
   App.showView = function (name) {
+    /* v216 (DATA-BEHIND-SIGNIN): 'main' cannot be shown while
+       signed out — from ANY caller (boot, deep link, restored tab
+       state, the back button, a stale route). The sign-in screen
+       is the only surface until App.onAuth(user) unlocks. */
+    if (name === 'main' && !App.user) name = 'auth';
     App.currentView = name; // v18: track for Android back button
     // v23: hide via inline none, but CLEAR inline on show so CSS controls layout
     // (forcing display:block broke #auth's flex centering)
@@ -198,25 +203,123 @@
     } catch (e) {}
   })();
 
+  /* ============ v216 — DATA BEHIND SIGN-IN (SECURITY) ============
+     Owner, Oct 21, 2026 15:26 MDT, over his own screen after an
+     uninstall/reinstall restored his day while the app stood in
+     Local mode: "I am not even signed in and all my information
+     is out there... That's way to data breach... Leave it outside
+     the door?" He is right: the data may LIVE on the device (the
+     uninstall survival he praised in the same breath — the timer,
+     loads, revenue, invoices all restored), but while there is NO
+     signed-in user it must never be PAINTED. The law from here on:
+       - Signed out, the ONLY surface is the sign-in screen. No
+         dashboard timer or loads, no module cards or their preview
+         figures (revenue, invoices, fuel, PTI, connection counts),
+         no drawer identity or menu, no open module render, no
+         prefilled onboarding answers — nothing of the user's is in
+         the rendered DOM at all.
+       - The data and the running session underneath are NEVER
+         touched by the lock; the moment the user signs in, every
+         surface repaints from the store exactly as before.
+     The lock is one funnel, this function: App.onAuth(user)
+     unlocks and paints; App.onAuth(null) locks and BLANKS every
+     painted surface. Around it, App.showView('main'),
+     App.showDashboard and App.openModule refuse to open while
+     locked, and the dashboard/sidebar builders paint nothing
+     while locked — so no entry point (deep link, restored tab
+     state, pull-to-refresh, a sync repaint, the back button) can
+     bypass the door or leak a figure into the hidden DOM.
+     PROFILE-RESTORE-INTEGRITY (owner, same day 15:28 MDT: "I am
+     100% certain I left this account as Dave cooper and owner
+     operator account" — his Preferences showed his own REAL
+     profile, his real name / Driver, instead): before anything
+     paints, CloudSync.
+     profileGate makes the active profile record the SIGNED-IN
+     account's own (per-uid local slots; the pull then fills from
+     that account's cloud profile), or the device-local slot when
+     signed out. See js/cloudsync.js for the gate itself. */
+  function authLocked() { return !App.user; }
+  App._authLocked = authLocked; // v216: the auxiliary painters (miles, parkplace) read the same lock
+
+  var _lockedHeroPainted = false;
+  function paintLockedHero() {
+    if (_lockedHeroPainted) return;
+    _lockedHeroPainted = true;
+    _heroSig = '__v216locked'; _extraSig = '__v216locked'; // force a real repaint on unlock
+    try {
+      var clock = el('trkClock'); if (clock) { clock.innerHTML = '00:00:00'; clock.textContent = '00:00:00'; }
+      var meta = el('trkMeta'); if (meta) meta.textContent = 'Ready to work';
+      var sub = el('trkSub'); if (sub) { sub.textContent = ''; sub.classList.add('hidden'); }
+      var extra = el('trkExtra'); if (extra) extra.innerHTML = '';
+      var miles = el('trkMiles'); if (miles) { miles.textContent = ''; miles.classList.add('hidden'); }
+      var wake = el('trkWake'); if (wake) { wake.textContent = ''; wake.classList.add('hidden'); }
+      var flag = el('trkPtiFlag'); if (flag) { flag.textContent = ''; flag.classList.add('hidden'); flag.onclick = null; }
+      var main = el('trkMain');
+      if (main) { main.classList.remove('pause'); main.classList.add('play'); main.innerHTML = '▶<br>START'; }
+      var stop = el('trkStop'); if (stop) stop.classList.add('hidden');
+      var sl = el('trkStartLabel'); if (sl) sl.textContent = 'Starts from now';
+    } catch (e) {}
+  }
+
+  /* Blank EVERY painted surface that can carry user data. The
+     store is not touched — this is paint only. */
+  function paintLockedShell() {
+    try { var g = el('modGrid'); if (g) g.innerHTML = ''; } catch (e) {}
+    try { var nav = el('sbNav'); if (nav) nav.innerHTML = ''; } catch (e) {}
+    try { var nm = el('sbName'); if (nm) nm.textContent = 'Meticulous'; } catch (e) {}
+    try { var em = el('sbEmail'); if (em) em.textContent = 'Signed out'; } catch (e) {}
+    try { var bar = el('trialBar'); if (bar) { bar.classList.add('hidden'); bar.innerHTML = ''; } } catch (e) {}
+    try { var mb = el('modBody'); if (mb) mb.innerHTML = ''; } catch (e) {}
+    try { var steps = el('onbSteps'); if (steps) steps.innerHTML = ''; } catch (e) {}
+    try { var pc = el('parkCard'); if (pc) { pc.innerHTML = ''; pc.classList.add('hidden'); } } catch (e) {}
+    try { var nc = el('nameCard'); if (nc) { nc.innerHTML = ''; nc.classList.add('hidden'); } } catch (e) {}
+    try { closeSidebar(); } catch (e) {}
+    paintLockedHero();
+  }
+
   App.onAuth = function (user) {
+    // v216: the profile gate runs FIRST, before anything paints —
+    // the active profile becomes the signed-in account's own (or
+    // the device-local slot when signed out); App.onb follows it.
+    try { if (window.CloudSync && CloudSync.profileGate) CloudSync.profileGate(user || null); } catch (e) {}
     App.user = user;
-    var em = user ? user.email : store.get('localEmail', null);
-    el('sbEmail').textContent = em || 'Local mode';
-    var nm = store.get('onboarding', {}).accountType || 'Driver';
-    el('sbName').textContent = nm + (user ? '' : ' (offline)');
+    try { App.onb = store.get('onboarding', {}); } catch (e) {}
     /* v95: the sign-in door in the drawer's account block — visible
        exactly when there is no signed-in user (Local mode), painted by
        this same funnel, so it can never disagree with the account
        lines above it or appear mid-session for a signed-in user. */
     var sbDoor = el('sbSignIn');
     if (sbDoor) sbDoor.classList.toggle('hidden', !!user);
+    if (!user) {
+      /* v216 LOCK: blank every painted surface and hold the
+         sign-in screen. The data underneath is untouched — the
+         day keeps running and restores in full on sign-in. */
+      paintLockedShell();
+      try { if (window.CloudSync) CloudSync.onAuth(null); } catch (e) {}
+      try { if (window.ConnectLive) ConnectLive.onAuth(null); } catch (e) {}
+      try { if (window.ConnectPipe) ConnectPipe.onAuth(null); } catch (e) {}
+      try { App.showView('auth'); } catch (e) {}
+      return;
+    }
+    _lockedHeroPainted = false;
+    el('sbEmail').textContent = user.email || '';
+    var nm = store.get('onboarding', {}).accountType || 'Driver';
+    el('sbName').textContent = nm;
     try { ensureUserRole(); } catch (e) {} // v52: stamp the role default before dashboards build
     syncTrial();
     buildSidebar();
     buildDashboard();
+    try { trackerPaint(); } catch (e) {} // v216: the hero repaints for the unlocked session at once
     try { if (window.CloudSync) CloudSync.onAuth(user); } catch (e) {} // v27: cloud sync
     try { if (window.ConnectLive) ConnectLive.onAuth(user); } catch (e) {} // v131: live Connect (directory self-heal + connection reconcile)
     try { if (window.ConnectPipe) ConnectPipe.onAuth(user); } catch (e) {} // v132: the pipe (shared days publish + inbox lands + crew cache)
+    /* v216: a session that restores (or a sign-in completed outside
+       the form flow) while the door is up takes an onboarded user
+       straight in. Not-onboarded routing stays with afterAuth /
+       routeAfterFirstSync, which wait for the first pull. */
+    try {
+      if (App.currentView === 'auth' && store.get('onboarded', false)) App.showView('main');
+    } catch (e) {}
   };
 
   /* ---------------- trial & tiers ---------------- */
@@ -480,6 +583,9 @@
      module cards only. */
 
   function buildDashboard() {
+    /* v216: while locked the grid stays EMPTY — no card, no preview
+       figure — whoever calls the repaint (sync, pull-to-refresh…). */
+    if (App._authLocked ? App._authLocked() : false) { var g0 = el('modGrid'); if (g0) g0.innerHTML = ''; return; }
     var g = el('modGrid');
     var html = '';
     /* v52: role tuning — office users get NO tracker card on home and an
@@ -607,6 +713,9 @@
   ];
 
   function buildSidebar() {
+    /* v216: while locked the drawer carries no menu at all — the
+       account block above it is the sign-in door, nothing more. */
+    if (App._authLocked ? App._authLocked() : false) { var n0 = el('sbNav'); if (n0) n0.innerHTML = ''; return; }
     var nav = el('sbNav');
     var html = '';
     roleSidebarOrder(App.userRole(), SIDEBAR_ITEMS).forEach(function (it) {
@@ -655,6 +764,8 @@
   App._dotLockActive = dotLockActive;
 
   App.showDashboard = function () {
+    /* v216: no dashboard exists while signed out — the door instead. */
+    if (App._authLocked ? App._authLocked() : false) { try { App.showView('auth'); } catch (e) {} return; }
     if (dotLockActive()) { App.openModule('pti'); return; }
     teardownModule();
     el('dashView').classList.remove('hidden');
@@ -685,6 +796,10 @@
   };
 
   App.openModule = function (key) {
+    /* v216: no module opens while signed out — the door instead,
+       whatever the entry point (card, drawer, deep link, a
+       programmatic open from another module). */
+    if (App._authLocked ? App._authLocked() : false) { try { App.showView('auth'); } catch (e) {} return; }
     /* v165: the DOT Inspection Mode lock — see dotLockActive. */
     if (key !== 'pti' && dotLockActive()) key = 'pti';
     /* v119: the retired 'navigation' door routes into the merged
@@ -1307,6 +1422,9 @@
   App.noteDispatchCompleted = function (info) { var okd = noteDispatchCompleted(info); trackerTick(); return okd; };
 
   function trackerTick() {
+    /* v216: while locked the hero shows the neutral face — the
+       session keeps counting underneath, unpainted. */
+    if (App._authLocked ? App._authLocked() : false) { paintLockedHero(); return; }
     var t = App.tracker, sec = t.elapsed;
     if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
     if (sec < 0) sec = 0; // v174: an anchored session (start ahead) reads zero until its time
@@ -1326,6 +1444,8 @@
     }
   }
   function trackerPaint() {
+    /* v216: while locked, only the neutral hero paints. */
+    if (App._authLocked ? App._authLocked() : false) { paintLockedHero(); return; }
     var t = App.tracker, main = el('trkMain'), stop = el('trkStop'), meta = el('trkMeta');
     main.classList.remove('play', 'pause');
     if (t.status === 'idle') {
@@ -2972,6 +3092,14 @@
   }
 
   function renderOnbStep() {
+    /* v216: a finished (onboarded) profile's answers are never
+       painted while signed out — setup while signed out belongs to
+       a not-yet-onboarded local slot only, and App.onb has already
+       been switched to it by the profile gate. */
+    if ((App._authLocked ? App._authLocked() : false) && store.get('onboarded', false)) {
+      var stp = el('onbSteps'); if (stp) stp.innerHTML = '';
+      return;
+    }
     var i = App.onbStep, o = App.onb;
     /* v76 (F2): a step the answered role skips is never landed on —
        snap forward to the next visible step (e.g. a restored session

@@ -881,6 +881,23 @@
 
   function paint() {
     paintWake(); // v70: reconcile the wake chip from live state on every paint
+    /* v216 (DATA-BEHIND-SIGNIN): while signed out the tracker lines
+       stay blank — the day's miles are the user's data, and data is
+       behind the sign-in door (js/app.js); paintWake included, so
+       the chip it just reconciled is blanked again below. The
+       engine keeps counting underneath; painting resumes on
+       sign-in. Inert wherever the shell's lock is absent (older
+       pages, suites). */
+    if (typeof window !== 'undefined' && window.App && App._authLocked && App._authLocked()) {
+      try {
+        var lm = document.getElementById('trkMiles');
+        if (lm) { lm.textContent = ''; lm.classList.add('hidden'); }
+        var wk = document.getElementById('trkWake');
+        if (wk) { wk.textContent = ''; wk.classList.add('hidden'); }
+      } catch (e) {}
+      lastPaint = '';
+      return;
+    }
     var elm = null;
     try { elm = document.getElementById('trkMiles'); } catch (e) {}
     if (!elm) return;

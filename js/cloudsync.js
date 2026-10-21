@@ -449,10 +449,106 @@
     refreshDot();
   };
 
+  /* ---------------- v216: PROFILE OWNERSHIP ----------------
+   * PROFILE-RESTORE-INTEGRITY (owner, Oct 21, 2026 15:28 MDT):
+   * "I am 100% certain I left this account as Dave cooper and
+   * owner operator account" — yet after an uninstall/reinstall the
+   * tester account's Preferences showed his REAL profile (his real
+   * name, Driver account type). The mechanism: the 'onboarding'
+   * store key IS the profile record (first/last name, account
+   * type, drives-answer, employment, business, rates…); it lived in
+   * ONE device-wide slot, and the pull's field-merge (v107, built
+   * to heal ONE person's phone-vs-cloud divergence) let a foreign
+   * profile's set fields survive under whichever account signed
+   * in next. Identity data bled across accounts on one device.
+   * The rule now: the slot is OWNED.
+   *   - mt___profowner (internal, never synced) names the active
+   *     slot's owner: a uid, or 'local' for the signed-out slot.
+   *   - mt___profiles (internal, never synced) stashes each
+   *     owner's record while another owner is active.
+   *   - profileGate(user) runs at every auth change — App.onAuth
+   *     calls it before anything paints, S.onAuth calls it before
+   *     any pull: the outgoing record is stashed under its owner
+   *     and the incoming owner's record becomes active — its own
+   *     stash if this device has seen it, otherwise a VACATED slot
+   *     the sign-in pull then fills from THAT account's cloud
+   *     profile (the pull's raw-missing branch takes the cloud
+   *     doc wholesale). One account's profile can never render
+   *     under another — not after account switches, not after an
+   *     uninstall/reinstall + backup restore lands stale local
+   *     data before sign-in.
+   *   - The first-run claim survives: a device that has never
+   *     synced any account (globallySynced false, no other uid on
+   *     record) lets its FIRST account adopt the local slot —
+   *     the v107 local-mode -> sign-in claim, the same person
+   *     setting up. Once any account has synced here, a uid-owned
+   *     or local slot never crosses to a different account.
+   * The swap writes localStorage RAW (never through the wrapped
+   * store): the swap itself marks nothing dirty, the outgoing
+   * account's record can never be pushed into the incoming
+   * account's cloud, and the 'onboarding' sync meta is reset to a
+   * neutral state the pull reconciles as same-account. */
+  var PROF_OWNER_KEY = '__profowner';   // -> mt___profowner
+  var PROF_STASH_KEY = '__profiles';    // -> mt___profiles
+  function profOwnerNow() {
+    var o = parseJson(lsGetRaw(PROF_OWNER_KEY), null);
+    return (typeof o === 'string' && o) ? o : null;
+  }
+  S.profileOwner = profOwnerNow; // exposed for the v216 suite
+  S.profileGate = function (user) {
+    try {
+      var newOwner = user ? user.uid : 'local';
+      var meta = getMeta();
+      var curOwner = profOwnerNow();
+      if (!curOwner) {
+        // First run of the gate on this device: the slot on the
+        // device belongs to the last account that synced here —
+        // or to the local slot if no account ever did.
+        curOwner = meta.uid || 'local';
+        lsSetRaw(PROF_OWNER_KEY, JSON.stringify(curOwner));
+      }
+      if (curOwner === newOwner) return false;
+      if (newOwner !== 'local' && curOwner === 'local' && !meta.globallySynced &&
+          (!meta.uid || meta.uid === newOwner)) {
+        // First-run claim (see header): the first account this
+        // device ever syncs adopts the local slot.
+        lsSetRaw(PROF_OWNER_KEY, JSON.stringify(newOwner));
+        keyMeta('onboarding').u = newOwner;
+        saveMeta();
+        return true;
+      }
+      var stash = parseJson(lsGetRaw(PROF_STASH_KEY), {}) || {};
+      var cur = parseJson(lsGetRaw('onboarding'), null);
+      if (cur && typeof cur === 'object' && !Array.isArray(cur)) stash[curOwner] = cur;
+      else delete stash[curOwner];
+      lsSetRaw(PROF_STASH_KEY, JSON.stringify(stash));
+      var incoming = stash[newOwner];
+      S._profVacatedFor = null;
+      if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+        lsSetRaw('onboarding', JSON.stringify(incoming));
+      } else {
+        lsDelRaw('onboarding');
+        /* The slot was vacated for this account: until its first
+           pull lands, shell defaults may get stamped into the empty
+           slot (ensureUserRole) — those stamps are NOT this
+           account's answers and must never win the pull merge
+           against its cloud profile. pull() reads this marker. */
+        if (user) S._profVacatedFor = newOwner;
+      }
+      lsSetRaw(PROF_OWNER_KEY, JSON.stringify(newOwner));
+      var km = keyMeta('onboarding');
+      km.t = 0; km.s = 0; delete km.d; km.u = user ? newOwner : (meta.uid || null);
+      saveMeta();
+      return true;
+    } catch (e) { return false; }
+  };
+
   /* ---------------- auth ---------------- */
 
   // Called from App.onAuth on every auth state change.
   S.onAuth = function (user) {
+    // v216: the profile slot changes hands before any pull runs.
+    S.profileGate(user);
     var newUid = user ? user.uid : null;
     if (newUid === S.uid) { refreshDot(); return; } // same session, nothing to do
     drainPullWaiters(false); // stale waiters belonged to the previous session
@@ -778,7 +874,9 @@
           var localVal = parseJson(raw, undefined);
           if (key === 'onboarding' && localVal && typeof localVal === 'object' && !Array.isArray(localVal) &&
               d.v && typeof d.v === 'object' && !Array.isArray(d.v)) {
-            var obWinner = (localDirty && cloudChanged)
+            var obWinner = (S._profVacatedFor && S._profVacatedFor === S.uid)
+              ? 'cloud' // v216: gate-vacated slot — the account's cloud profile supersedes any post-gate default stamps
+              : (localDirty && cloudChanged)
               ? (cloudTs > (km.t || 0) ? 'cloud' : 'local')
               : (cloudChanged ? 'cloud' : 'local');
             var merged = mergeOnboardingFields(localVal, d.v, obWinner);
@@ -857,6 +955,7 @@
       meta.globallySynced = true;
       saveMeta();
       S.pulledUid = S.uid;
+      S._profVacatedFor = null; // v216: the account's first pull has landed; the vacated-slot marker is spent
       S.lastPullAt = Date.now();
       S._pulling = false;
       /* v136: a healthy pull clears only PULL failure state. The v34

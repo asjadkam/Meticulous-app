@@ -394,6 +394,11 @@
   }
   function paint() {
     var el = cardEl(); if (!el) return;
+    /* v216 (DATA-BEHIND-SIGNIN): while signed out the park card —
+       it names the user's own places — never paints. */
+    if (typeof window !== 'undefined' && window.App && App._authLocked && App._authLocked()) {
+      el.classList.add('hidden'); el.innerHTML = ''; return;
+    }
     if (!card || !place) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     var morning = card === 'morning';
     el.innerHTML = '';

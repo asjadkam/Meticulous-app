@@ -28,6 +28,13 @@
  *      v149: the billing-rate door renders on the payer faces
  *      (office role, Fleet Manager, owner-operator of any role),
  *      boss-framed; NO personal wage field joins it.
+ *      PAY-CARD-ROLE SUPERSESSION (owner, Oct 21, 2026 15:29
+ *      MDT): the door is CLOSED — "Owner revenue is based on
+ *      the job!?" Billing rates live on the job/customer side;
+ *      the stored billingRate survives as the fallback default
+ *      and keeps pricing crew revenue through pricingFor.
+ *      Section (b) below now pins THAT behavior; section (a)'s
+ *      live-apply law is untouched.
  *
  * Worlds run the REAL modules/preferences.js + js/connectlive.js
  * + js/connectpipe.js over the v137 fake DOM (rendered-id aware)
@@ -295,8 +302,17 @@ function fireChange(el) {
       ['Owner-Operator', 'Payroll', 'Weight']);
   }
 
-  /* ============ (b) the office face gains the company billing door ============ */
-  console.log('(b) office client-rate door — renders, saves, prices crew revenue');
+  /* ============ (b) the office billing door — CLOSED by PAY-CARD-ROLE ============ */
+  console.log('(b) office faces render NO rate fields; the stored company rate prices on as the fallback');
+  /* PAY-CARD-ROLE SUPERSESSION (owner, Oct 21, 2026 15:29 MDT —
+     "Owner revenue is based on the job!?"): the v149 door below
+     is history. Billing rates live on the job/customer side now;
+     NO Preferences face renders a billing field. What v149
+     actually protected — an office owner's crew revenue can
+     price — survives through the data: the stored company rate
+     (set under the old door, or at setup) keeps pricing through
+     ConnectPipe.pricingFor as the fallback behind job rates, and
+     no Save can erase it, because nothing writes the key. */
   {
     const w = world({
       uid: 'uid-payer', email: 'umar@aitrucking.example', role: 'office',
@@ -304,14 +320,25 @@ function fireChange(el) {
     });
     const body = renderPrefs(w);
     const html = body.innerHTML;
-    has('b: office face renders the client billing field', html, 'id="pf_billrate"');
-    has('b: its label is the company/client billing rate', html, 'Client billing rate ($/foreman hour)</label>');
+    hasnt('b: office face renders NO billing field (PAY-CARD-ROLE — the v149 door is closed)', html, 'id="pf_billrate"');
     hasnt('b: office face still has NO personal wage field', html, 'id="pf_wagerate"');
-    eq('b: before the rate is set, pricingFor prices NO revenue', w.sb.ConnectPipe.pricingFor('uid-driver').clientRate, 0);
-    body.querySelector('#pf_billrate').value = '52';
+    eq('b: with no company rate on file, pricingFor prices NO revenue', w.sb.ConnectPipe.pricingFor('uid-driver').clientRate, 0);
     body.querySelector('#pf_save').click();
-    eq('b: Save writes onboarding.billingRate', w.store.get('onboarding', {}).billingRate, '52');
-    eq('b: pricingFor now prices crew revenue at $52', w.sb.ConnectPipe.pricingFor('uid-driver').clientRate, 52);
+    eq('b: a Save invents no billingRate', w.store.get('onboarding', {}).billingRate, undefined);
+  }
+  {
+    /* The migration case: the rate a payer set under the old
+       door is still on file — it prices crew revenue exactly as
+       before, and a Preferences Save leaves it untouched. */
+    const w = world({
+      uid: 'uid-payer', email: 'umar@aitrucking.example', role: 'office',
+      onboarding: { companyName: 'AI Trucking', accountType: 'Owner-Operator', userRole: 'office', payStandard: 'Hourly', billingRate: '52' }
+    });
+    eq('b: the stored company rate prices crew revenue at $52 (migration — unchanged)', w.sb.ConnectPipe.pricingFor('uid-driver').clientRate, 52);
+    const body = renderPrefs(w);
+    body.querySelector('#pf_save').click();
+    eq('b: Save leaves the stored billingRate untouched', w.store.get('onboarding', {}).billingRate, '52');
+    eq('b: pricingFor still prices at $52 after the Save', w.sb.ConnectPipe.pricingFor('uid-driver').clientRate, 52);
   }
   {
     /* Fleet Manager, office role — the boss face from v137. */
@@ -320,23 +347,24 @@ function fireChange(el) {
       onboarding: { companyName: 'Boss Co', accountType: 'Fleet Manager', userRole: 'office', payStandard: 'Hourly', payRate: '40' }
     });
     const body = renderPrefs(w);
-    has('b: Fleet Manager face renders the billing door', body.innerHTML, 'id="pf_billrate"');
+    hasnt('b: Fleet Manager face renders NO billing field (PAY-CARD-ROLE)', body.innerHTML, 'id="pf_billrate"');
     hasnt('b: Fleet Manager face has NO personal wage field', body.innerHTML, 'id="pf_wagerate"');
   }
   {
-    /* Fleet Manager who also drives: still a payer face for the
-       company rate; his own driving pay stays a P&L matter. */
+    /* Fleet Manager who also drives: still no rate fields — the
+       company rate is stored data now; his own driving pay stays
+       a P&L matter. */
     const w = world({
       uid: 'uid-boss2', email: 'boss2@example.example', role: 'both',
       onboarding: { companyName: 'Boss Co', accountType: 'Fleet Manager', userRole: 'both', payStandard: 'Hourly', payRate: '40' }
     });
     const body = renderPrefs(w);
-    has('b: FM/drives face renders the billing door', body.innerHTML, 'id="pf_billrate"');
+    hasnt('b: FM/drives face renders NO billing field (PAY-CARD-ROLE)', body.innerHTML, 'id="pf_billrate"');
     hasnt('b: FM/drives face has NO personal wage field', body.innerHTML, 'id="pf_wagerate"');
   }
 
-  /* ============ (c) the driving faces render exactly as before ============ */
-  console.log('(c) pfOO + driver faces — byte-for-byte the v137 render');
+  /* ============ (c) the driving faces — wage stays, billing leaves ============ */
+  console.log('(c) pfOO + driver faces — the wage field is the only rate field left (PAY-CARD-ROLE)');
   {
     const w = world({
       uid: 'uid-owner', email: 'asjadkamal482@gmail.com', role: 'driver',
@@ -344,11 +372,12 @@ function fireChange(el) {
     });
     const body = renderPrefs(w);
     const html = body.innerHTML;
-    has('c: OO face keeps the billing field', html, 'id="pf_billrate"');
+    hasnt('c: OO face has NO billing field (PAY-CARD-ROLE)', html, 'id="pf_billrate"');
     has('c: OO face keeps the wage field', html, 'id="pf_wagerate"');
-    has('c: OO billing placeholder unchanged', html, 'placeholder="Blank = your wage rate"');
-    has('c: OO wage label unchanged', html, 'Driver wage rate ($/hour)</label>');
-    has('c: OO two-books note unchanged', html, 'If you own the truck AND drive it, a closed haul card posts both sides of your books');
+    hasnt('c: OO billing placeholder is gone with the field', html, 'Blank = your wage rate');
+    has('c: OO wage label is "Your wage rate" (his OWN wage — PAY-CARD-ROLE)', html, 'Your wage rate ($/hour)</label>');
+    has('c: OO two-books note now prices revenue at the job rate', html, 'If you own the truck AND drive it, a closed haul card posts both sides of your books');
+    has('c: OO note names the job billing rate', html, 'the job\u2019s billing rate (set on the dispatch');
     check('c: OO wage field still shows his effective $29', /id="pf_wagerate"[^>]*value="29"/.test(html));
     /* and its Save still writes both rates, setup rate untouched */
     body.querySelector('#pf_wagerate').value = '31';
@@ -372,18 +401,23 @@ function fireChange(el) {
   /* ============ (d) statics — copy truth + ship pins ============ */
   console.log('(d) statics — the Account card tells the truth; the Crew hint names the door');
   has('d: account card copy says settings save on change', prefSrc, 'save the moment you change them');
-  has('d: the Crew card hint names the Pay card door', dspSrc,
-    'Revenue is not priced yet — set your client rate in Preferences (the Pay card).');
+  /* PAY-CARD-ROLE (Oct 21, 2026): the Crew card hint pointed at
+     the Preferences door this change closed — it now states the
+     fact without sending the user to a field that is gone. */
+  has('d: the Crew card hint no longer points at a Preferences field', dspSrc,
+    'Revenue is not priced yet — no client rate is set for your company.');
+  hasnt('d: no copy anywhere sends the user to set a rate in Preferences', dspSrc,
+    'set your client rate in Preferences');
   /* v151 pin move (the standing convention): 150 -> 151.
      v152 pin move: 151 -> 152, same convention.
      v154 pin move: 153 -> 154, same convention.
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('d: version ships as 199', ver.webVersion, 215);
+  eq('d: version ships as 199', ver.webVersion, 216);
   check('d: index loads the touched files at the 199 pin',
-    idxSrc.indexOf('modules/preferences.js?v=215') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=215') !== -1);
+    idxSrc.indexOf('modules/preferences.js?v=216') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=216') !== -1);
 
   console.log('\npreferences-live-v149: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
