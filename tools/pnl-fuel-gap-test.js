@@ -78,10 +78,24 @@ function makePnl(seed) {
 }
 
 /* The reference implementation the diagnosis claims calc() matches:
-   a plain prefix-sum over the raw store, written independently here. */
+   a prefix-sum over the raw store, written independently here.
+   v188 (D4, owner Oct 21, 2026 — the D10 audit's finding 1)
+   deliberately changed the law this reference encodes: a fill-up
+   recorded twice (same date + station + amount + litres — his
+   real Oct 15 Mobil $193.80 sat in the list twice) counts ONCE,
+   so the reference now skips an exact-duplicate key after its
+   first count. The pair in the fixture below is that real pair. */
 function refFuel(fills, m) {
+  const seen = {};
   return round2((fills || []).reduce(function (s, f) {
-    return s + ((f && f.date && String(f.date).indexOf(m) === 0) ? (parseFloat(f.cost) || 0) : 0);
+    if (!(f && f.date && String(f.date).indexOf(m) === 0)) return s;
+    const c = parseFloat(f.cost) || 0;
+    if (c > 0) {
+      const k = (f.date || '') + '|' + String(f.station || '').trim().toLowerCase() + '|' + c + '|' + (parseFloat(f.litres) || 0);
+      if (seen[k]) return s;
+      seen[k] = true;
+    }
+    return s + c;
   }, 0));
 }
 
@@ -96,7 +110,7 @@ const FILLS = [
   { date: '2026-09-30', cost: '165.25', litres: '70.0', station: 'Shell' },             // Sep 30 boundary — excluded
   { date: '2026-10-05', cost: '199.91000366210935', litres: '88.10600280761719', station: 'Petro-Canada' }, // Oct, float-artifact strings
   { date: '2026-10-15', cost: 193.80, litres: 78.175, station: 'Mobil Heritage' },      // Oct (his real fill)
-  { date: '2026-10-15', cost: 193.80, litres: 78.175, station: 'Mobil Heritage' },      // Oct — duplicate-looking pair: BOTH count
+  { date: '2026-10-15', cost: 193.80, litres: 78.175, station: 'Mobil Heritage' },      // Oct — the same fill recorded twice: counts ONCE (v188, D10 audit finding 1)
   { date: '2026-11-01', cost: '220.00', litres: '90.0', station: 'Mobil Westwinds' },   // Nov boundary — excluded
   { date: '2026-10-16', cost: 199.91, litres: 88.106, station: 'Petro-Canada Barlow' }, // Oct (his real fill)
   { date: '2026-10-31', cost: '150.00', litres: '62.0', station: 'Costco' },            // Oct 31 boundary — in
@@ -121,8 +135,8 @@ const EXPENSES = [
   const c = w.pnl._calc('2026-10');
   const wantFuel = refFuel(FILLS, '2026-10');
   eq('fuel == independent prefix-sum of the same store', round2(c.fuel), wantFuel);
-  eq('fuel == hand-summed October entries (210.40+234.32+199.91+193.80+193.80+199.91+150.00+0+75.55)',
-    wantFuel, round2(210.40 + 234.32 + 199.91 + 193.80 + 193.80 + 199.91 + 150.00 + 0 + 75.55));
+  eq('fuel == hand-summed October entries (210.40+234.32+199.91+193.80+199.91+150.00+0+75.55 — the doubled 193.80 counted once, v188)',
+    wantFuel, round2(210.40 + 234.32 + 199.91 + 193.80 + 199.91 + 150.00 + 0 + 75.55));
   eq('September fills never leak into October', round2(w.pnl._calc('2026-09').fuel), round2(180.00 + 165.25));
   eq('November boundary fill lands in November only', round2(w.pnl._calc('2026-11').fuel), 220.00);
 

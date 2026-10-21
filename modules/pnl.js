@@ -773,10 +773,24 @@
       income += extras;
     }
 
-    var fuel = 0;
+    /* v188 (D4, owner Oct 21, 2026 07:22 MDT — his own October
+       Monthly analysis): the same fill-up recorded twice counts
+       ONCE. His Oct 15 Mobil $193.80 sat in the list twice (one
+       copy carrying the receipt's invoice number, 519326, as its
+       odometer — the D10 audit finding), inflating Total fuel.
+       A fill-up is identified by its facts — date + station +
+       amount + litres; a second record with the same four IS
+       the same fill-up, never a second one. */
+    var fuel = 0, fuelSeen = {};
     (App._store.get('fuel_fills', []) || []).forEach(function (f) {
-      if (!inMonth(f.date, m)) return;
-      fuel += parseFloat(f.cost) || 0;
+      if (!f || !inMonth(f.date, m)) return;
+      var fc = parseFloat(f.cost) || 0;
+      if (fc > 0) {
+        var fk = (f.date || '') + '|' + String(f.station || '').trim().toLowerCase() + '|' + fc + '|' + (parseFloat(f.litres) || 0);
+        if (fuelSeen[fk]) return;
+        fuelSeen[fk] = true;
+      }
+      fuel += fc;
     });
     var fuelOther = 0;
     (App._store.get('fuel_expenses', []) || []).forEach(function (x) {
@@ -800,6 +814,34 @@
        (crewWagesByDriver), derived from the cached shared days. */
     var cw = crewWagesFor(m);
 
+    /* v188 (D4, owner Oct 21, 2026 07:22 MDT): TOTAL SALARIES =
+       the sum over ALL days in the period of (paid hours × the
+       day's wage). The v181 books totalled only the days that
+       happened to carry a card-wage posting inside driverWages —
+       on his phone just two October days had postings, so the
+       Monthly analysis showed $623.50 of salaries against
+       $1,870.50 of wages for Oct 14–20 alone (the D10 audit).
+       The days are priced by the SAME shared builder that priced
+       income above: its per-day lines are the paid totals at the
+       wage chain (paid hours × wage, healed by the day's own
+       posting where one exists), so every day line in the period
+       is a day's wage. The SELF postings inside dw.total price
+       those same days a second time and come back out; other
+       drivers' postings, wage entries, travel claims and crew
+       wages are untouched. Without the builder, the old total
+       stands (fallback parity). */
+    var selfPostings = 0, ownWages = 0;
+    (App._store.get('pnl_card_wages', []) || []).forEach(function (p) {
+      if (!p || !inMonth(p.date, m)) return;
+      if (!p.driverId || p.driverId === 'self') selfPostings += parseFloat(p.wage) || 0;
+    });
+    if (grouped) {
+      grouped.lines.forEach(function (l) { if (l && l.src !== 'extra') ownWages += parseFloat(l.amt) || 0; });
+    }
+    var wagesAll = grouped
+      ? Math.round((dw.total - selfPostings + ownWages + cw.total) * 100) / 100
+      : Math.round((dw.total + cw.total) * 100) / 100;
+
     /* Detailed expense categories (the owner's spreadsheet format) */
     var miles = totalMiles(m);
     var det = detailAmounts(m, income, dw.total);
@@ -817,17 +859,19 @@
       });
     });
 
-    var expenses = fuel + fuelOther + biz + dw.total + detTotal + cw.total;
+    var expenses = fuel + fuelOther + biz + detTotal + wagesAll;
     return {
       month: m, income: income, incomeByType: incomeByType, extras: extras,
       fuel: fuel, fuelOther: fuelOther, biz: biz, bizByCat: bizByCat,
       wages: dw.total, wagesByDriver: dw.per,
       crewWages: cw.total, crewWagesByDriver: cw.byDriver,
       /* v163: ONE wages figure for the fixed Driver wages line —
-         local drivers + connected crew (at their OWN rates) */
-      wagesTotal: Math.round((dw.total + cw.total) * 100) / 100,
-      wagesTotalPerMile: miles > 0 ? (dw.total + cw.total) / miles : 0,
-      wagesTotalPct: income > 0 ? (dw.total + cw.total) / income * 100 : 0,
+         local drivers + connected crew (at their OWN rates).
+         v188: the figure is wagesAll — every day in the period
+         priced (see the D4 note above), not only posted days. */
+      wagesTotal: wagesAll,
+      wagesTotalPerMile: miles > 0 ? wagesAll / miles : 0,
+      wagesTotalPct: income > 0 ? wagesAll / income * 100 : 0,
       miles: miles,
       detail: detRows, detailTotal: detTotal,
       fuelPerMile: miles > 0 ? fuel / miles : 0,

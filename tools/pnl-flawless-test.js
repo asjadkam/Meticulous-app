@@ -130,7 +130,11 @@ const OCT_FUEL = [
   eq('A income: NOT the poisoned raw sum', round2(c.income) !== round2(3929.50 + 282.75 + 279.27 + 291.16), true);
   eq('A income by type: hourly carries it all', round2(c.incomeByType.hourly), 3929.50);
   eq('A fuel: the three receipts land automatically ($628.03)', round2(c.fuel), 628.03);
-  eq('A expenses = exact sum of their lines', round2(c.fuel + c.fuelOther + c.biz + c.wages + c.detailTotal), round2(c.expenses));
+  /* v188 (D4) deliberately moved this identity: expenses' wage
+     component is wagesTotal — every day in the period priced —
+     not the postings-only c.wages (0 in this world: no postings,
+     yet $3,929.50 of his own days stand priced above). */
+  eq('A expenses = exact sum of their lines', round2(c.fuel + c.fuelOther + c.biz + c.wagesTotal + c.detailTotal), round2(c.expenses));
   eq('A net = income − expenses, to the cent', round2(c.income - c.expenses), round2(c.net));
   const brk = c.detail.filter(function (r) { return r.key === 'brokerage'; })[0];
   eq('A detail autos price off GROUPED income (brokerage 10% = $392.95)', round2(brk.amount), 392.95);
