@@ -276,9 +276,16 @@
        could not run. Shown separately; ticket loads stay the pay record. */
     var geoDay = ((G('geoloads', { days: {} }).days) || {})[d] || null;
     var odoStart = null, odoEnd = null, liveKm = 0, liveKmAny = false, milesIssues = [];
+    /* v206 (P1-odo-prompt-photo): the dash photos that came WITH
+       the readings ride the same sessions (startPhoto / endPhoto)
+       — the preview hangs their download doors on the Odometer
+       line. A photo follows ITS reading: start photo from the
+       session that gave the start reading, end photo from the
+       one that gave the (last) end reading. */
+    var odoStartPhoto = null, odoEndPhoto = null;
     sessions.forEach(function (s) {
-      if (odoStart === null && s.startOdo) odoStart = s.startOdo;
-      if (s.endOdo) odoEnd = s.endOdo;
+      if (odoStart === null && s.startOdo) { odoStart = s.startOdo; if (s.startPhoto) odoStartPhoto = s.startPhoto; }
+      if (s.endOdo) { odoEnd = s.endOdo; if (s.endPhoto) odoEndPhoto = s.endPhoto; }
       if (typeof s.liveKm === 'number') { liveKm += s.liveKm; liveKmAny = true; }
       if (s.milesStatus === 'discrepancy' && s.milesReport) milesIssues.push(s);
     });
@@ -308,6 +315,7 @@
           if (trk.odoStart && trk.odoStart.date === lDateStr &&
               trk.odoStart.value !== null && trk.odoStart.value !== undefined && trk.odoStart.value !== '') {
             live.startOdo = trk.odoStart.value;
+            live.startPhoto = trk.odoStart.photo || null;
           }
         }
       }
@@ -315,7 +323,7 @@
     if (live) {
       if (!sessions.length) startT = fmtStamp(live.startMs);
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
-      if (odoStart === null && live.startOdo !== null) odoStart = live.startOdo;
+      if (odoStart === null && live.startOdo !== null) { odoStart = live.startOdo; if (live.startPhoto) odoStartPhoto = live.startPhoto; }
       live.hours = lsec / 3600;
     }
     /* v87: with no session start reading, the day's earliest
@@ -677,7 +685,7 @@
     var edited = applyDayEdit({ odoEnd: odoEnd, milesIssues: milesIssues }, dayEdit);
     odoEnd = edited.odoEnd; milesIssues = edited.milesIssues;
     var dayNote = edited.dayNote;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit };
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -1087,6 +1095,14 @@
          v87: the readings print as ONE Odometer line — start → end
          with the day's km (see odoLineText). */
       if (t.odo) { var ol2 = odoLineText(c); h += '<div class="kv"><span>Odometer</span><b>' + esc(ol2 !== null ? ol2 : 'no readings captured') + '</b></div>'; }
+      /* v206 (P1): the start/end dash photos keep their download
+         doors here, on the day's record — the same App._photoDl
+         door every record view uses. Screen preview only; the
+         printed document stays text, like every P1 door. */
+      if (t.odo && (c.odoStartPhoto || c.odoEndPhoto) && window.App && App._photoDl) {
+        if (c.odoStartPhoto) h += '<div style="margin:2px 0">📸 Starting dash photo ' + App._photoDl(c.odoStartPhoto, 'odometer-start-' + d) + '</div>';
+        if (c.odoEndPhoto) h += '<div style="margin:2px 0">📸 Ending dash photo ' + App._photoDl(c.odoEndPhoto, 'odometer-end-' + d) + '</div>';
+      }
       if (t.odo && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
       if (t.odo && c.milesIssues.length && window.LiveMiles) {
         c.milesIssues.forEach(function (s) {

@@ -116,7 +116,7 @@ ok('the screen list renders the label before coordinates',
   man.indexOf("esc(s.label || ('Stop — '") !== -1);
 ok('the PDF lines render the same labels',
   man.indexOf("a: s.label || ('Stop — '") !== -1);
-eq('webVersion', ver.webVersion, 205);
+eq('webVersion', ver.webVersion, 206);
 ok('index pin agrees', idxSrc.includes('modules/manifest.js?v=' + ver.webVersion));
 
 console.log('manifest-names-v204: ' + pass + ' passed, ' + fail + ' failed');

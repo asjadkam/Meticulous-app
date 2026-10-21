@@ -239,10 +239,15 @@ function makeChainWorld() {
     'function resetAccum', 'function trackerAddLoadTap', 'function trackerAddTrip',
     'function noteDispatchCompleted', 'function takeSessionAccum',
     'function trackedSecondsAt', 'function trackerSessionStartMs',
-    'function ptiStartOdoFor', 'function takePendingStartOdo', 'function applyOdoReading', 'function applyEndOdoToEntry',
+    'function ptiStartOdoFor', 'function takePendingStartOdo', 'function takePendingStartOdoPhoto', 'function applyOdoReading', 'function applyEndOdoToEntry',
     'function stopSessionAt'
   ];
   let code = fns.map(m => extractFn(appSrc, m)).join('\n');
+  /* v206: takePendingStartOdo's photo stash var lives in the
+     ODO-PROMPT region, outside the extracted functions — declare
+     it here from the app's own line, or the read throws. */
+  code = appSrc.slice(appSrc.indexOf('var _takenStartOdoPhoto'),
+    appSrc.indexOf(';', appSrc.indexOf('var _takenStartOdoPhoto')) + 1) + '\n' + code;
   /* v143: stopSessionAt now reads the _endTicketPhoto hand-in
      vars declared directly above it in app.js — extract the
      declaration block too, or the read throws in this world

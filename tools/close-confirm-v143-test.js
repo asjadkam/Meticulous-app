@@ -343,9 +343,13 @@ function expectedEntry(regionWorld, closedRec) {
     const declBlock = appSrc.slice(appSrc.indexOf('var _stopViaDispatch = false;'),
       appSrc.indexOf('function stopSessionAt'));
     const fns = ['function todayStr', 'function trackedSecondsAt', 'function trackerSessionStartMs', 'function trkAccum',
-      'function takeSessionAccum', 'function ptiStartOdoFor', 'function takePendingStartOdo', 'function applyEndOdoToEntry',
+      'function takeSessionAccum', 'function ptiStartOdoFor', 'function takePendingStartOdo', 'function takePendingStartOdoPhoto', 'function applyEndOdoToEntry',
       'function liveKmNow', 'function endCloseSummary', 'function stopSessionAt'];
-    vm.runInContext(declBlock + '\n' + fns.map(function (m) { return extractFn(appSrc, m); }).join('\n') +
+    /* v206: the photo stash var from the ODO-PROMPT region rides
+       with its functions, like the declBlock above does for v143. */
+    const photoVar = appSrc.slice(appSrc.indexOf('var _takenStartOdoPhoto'),
+      appSrc.indexOf(';', appSrc.indexOf('var _takenStartOdoPhoto')) + 1);
+    vm.runInContext(declBlock + '\n' + photoVar + '\n' + fns.map(function (m) { return extractFn(appSrc, m); }).join('\n') +
       '\n' + extractRegion(appSrc, 'ODO-MASTER-BEGIN', 'ODO-MASTER-END'), sb);
     const sessLog = [];
     sb.Meticulous.modules.revenue = { onSession: function (s) { sessLog.push(JSON.parse(JSON.stringify(s))); } };

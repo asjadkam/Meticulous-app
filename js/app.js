@@ -1513,6 +1513,10 @@
       // shift start, pending on the tracker) onto the day's session.
       var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
       if (pendingStart) entry.startOdo = pendingStart;
+      // v206 (P1): the start dash photo taken with that reading
+      // lands on the same entry, the same way (see applyOdoReading).
+      var pendingStartPhoto = takePendingStartOdoPhoto();
+      if (pendingStartPhoto) entry.startPhoto = pendingStartPhoto;
       // End-sheet odometer: a closing reading handed in with the stop
       // (typed or snapped on the End shift sheet) lands on the entry
       // being saved — every pay mode, no start reading required. Runs
@@ -2039,14 +2043,23 @@
   /* A successful photo read. Start readings wait on the tracker state
      (persisted) until stopSessionAt moves them onto the session; end
      readings patch the day's session directly. Every read also bumps
-     the master odometer (upward only, addition #2 rule). */
-  function applyOdoReading(kind, value) {
+     the master odometer (upward only, addition #2 rule).
+     v206 (P1-odo-prompt-photo): the dash PHOTO rides along when the
+     sheet took one — P1's law is that every photo that feeds the app
+     keeps a downloadable copy on its record; until now this sheet's
+     photo was read for its value and discarded. The start photo
+     waits on the tracker next to its reading and lands on the
+     session as startPhoto (takePendingStartOdoPhoto); the end photo
+     lands on the session as endPhoto. The Manifest preview is the
+     viewing surface (its Odometer line carries the downloads). */
+  function applyOdoReading(kind, value, photo) {
     var n = parseFloat(value);
     if (!(n > 0)) return false;
     bumpOdometer(n, 'session');
     var today = todayStr(new Date());
     if (kind === 'start') {
       App.tracker.odoStart = { date: today, value: n };
+      if (photo) App.tracker.odoStart.photo = photo;
       trackerSave();
       return true;
     }
@@ -2054,6 +2067,7 @@
     for (var i = ss.length - 1; i >= 0; i--) {
       if (ss[i].date === today && ss[i].startOdo && !ss[i].endOdo) {
         ss[i].endOdo = n;
+        if (photo) ss[i].endPhoto = photo;
         // v40: the end reading completes the pair — reconcile live
         // miles against the odometer (the owner's confirmation rule).
         try { if (window.LiveMiles) LiveMiles.reconcileSession(ss[i]); } catch (e) {}
@@ -2086,10 +2100,12 @@
      entry. Matches on the session's START date, so an overnight shift
      still lands its reading on the entry (the entry itself is dated by
      its end day, per the existing session convention). */
+  var _takenStartOdoPhoto = null;
   function takePendingStartOdo(sessionStartDate) {
     var t = App.tracker;
     if (t && t.odoStart && t.odoStart.date === sessionStartDate) {
       var v = t.odoStart.value;
+      _takenStartOdoPhoto = t.odoStart.photo || null;
       delete t.odoStart;
       return v;
     }
@@ -2098,6 +2114,14 @@
        sheet reading would have: the manifest's day boundary,
        the day's miles pair, Revenue's by-mile fallback). */
     return ptiStartOdoFor(sessionStartDate);
+  }
+  /* v206: the start PHOTO taken with the pending reading above —
+     stopSessionAt asks for it in the same breath and lands it on
+     the session entry as startPhoto. Consumed once. */
+  function takePendingStartOdoPhoto() {
+    var p = _takenStartOdoPhoto;
+    _takenStartOdoPhoto = null;
+    return p;
   }
   /* ODO-PROMPT-END */
 
@@ -2218,6 +2242,11 @@
      tracker start/end sheets. Shown from trackerToggle (manual start),
      checkAutoStart (timed start) and stopSessionAt (stop). */
   var _odoPromptKind = null;
+  /* v206 (P1): the dash photo taken in THIS sheet showing — kept
+     so Save can land it on the day's record (applyOdoReading's
+     photo parameter). Cleared every time the sheet opens and
+     after every Save; a typed reading carries no photo. */
+  var _odoSheetPhoto = null;
   function closeOdoSheet() {
     var s = el('odoSheet');
     if (s) s.classList.remove('open');
@@ -2231,6 +2260,7 @@
     // Mark BEFORE showing: once per day per kind, even if skipped.
     markOdoPromptShown(kind, todayStr(new Date()));
     _odoPromptKind = kind;
+    _odoSheetPhoto = null;
     el('odoSheetTitle').textContent = kind === 'start' ? '📸 Starting odometer' : '📸 Ending odometer';
     // v46: wording follows WHY the prompt is showing — by-mile pay, or
     // the driver's own "Daily odometer photos" preference.
@@ -2264,7 +2294,8 @@
       if (st) st.innerHTML = 'Type the reading first — or tap Skip.';
       return;
     }
-    applyOdoReading(_odoPromptKind, n);
+    applyOdoReading(_odoPromptKind, n, _odoSheetPhoto);
+    _odoSheetPhoto = null;
     if (st) st.innerHTML = '✓ Saved: <b>' + Number(n).toLocaleString('en-CA') + ' km</b>';
     setTimeout(closeOdoSheet, 900);
   };
@@ -2283,6 +2314,9 @@
     TicketOCR.fileToOCRImage(file, function (ocrUrl) {
       if (!ocrUrl) { setStatus('⚠️ Couldn\'t read the odometer — type it below, or tap Skip.'); return; }
       if (_odoPromptKind !== kindAtStart) return;
+      /* v206 (P1): keep the photo itself — Save lands it on the
+         day's record, downloadable from the Manifest preview. */
+      _odoSheetPhoto = ocrUrl;
       /* v142: the cloud read starts NOW, in parallel with the
          local read — the morning-departure wait the owner clocked
          was the two reads running one after another. */
