@@ -622,6 +622,47 @@
     out.total = Math.round(out.total * 100) / 100;
     return out;
   }
+  /* v200 (OWNER-AUTO-UPDATE, owner, Oct 21, 2026 09:48 MDT):
+     the crew REVENUE leg — the other half of a connected day's
+     double duty. crewWagesFor has booked a Full-access driver's
+     closed days as a wage EXPENSE here since v146, but their
+     REVENUE never entered these books at all: the owner's P&L
+     carried the cost of a crew day and none of what it earned,
+     so the books did not build themselves from the driver's
+     days (his Oct 18 self-test: records crossed, the P&L did
+     not follow). Derived exactly like the wages — the same
+     cached shared days, the pipe's own pricer (priceDay), at
+     THIS side's client rate (pricingFor: the job's rate on the
+     owner side; travel billed only when the ticket says the
+     customer agreed) — and under the same Limited gate. An
+     account with no crew prices $0 and is byte-identical. */
+  function crewRevenueFor(m) {
+    var out = { total: 0, byDriver: {} };
+    var days = [];
+    try { days = crewDaysFor(m); } catch (e) { days = []; }
+    if (!days.length || !window.ConnectPipe) return out;
+    var byUid = {};
+    days.forEach(function (day) {
+      if (!day || !day.driver) return;
+      if (!byUid[day.driver]) byUid[day.driver] = { name: day.driverName || 'Driver', days: [] };
+      byUid[day.driver].days.push(day);
+    });
+    Object.keys(byUid).forEach(function (uid) {
+      if (crewKindLimited(uid)) return; // v148: no legs on Limited (same gate as the wages)
+      var g = byUid[uid];
+      var pricing = ConnectPipe.pricingFor(uid);
+      var rev = 0, priced = false;
+      g.days.forEach(function (day) {
+        var p = ConnectPipe.priceDay(day, pricing);
+        if (p.revenue !== null) { rev += p.revenue; priced = true; }
+      });
+      rev = Math.round(rev * 100) / 100;
+      out.byDriver[uid] = { name: g.name, revenue: rev, priced: priced, days: g.days.length };
+      if (priced) out.total += rev;
+    });
+    out.total = Math.round(out.total * 100) / 100;
+    return out;
+  }
   var UNIT = { hourly: 'hrs', permile: 'mi', perload: 'loads' };
   var QTY_LABEL = { hourly: 'Hours', permile: 'Miles', perload: 'Loads' };
 
@@ -814,6 +855,15 @@
        (crewWagesByDriver), derived from the cached shared days. */
     var cw = crewWagesFor(m);
 
+    /* v200 (OWNER-AUTO-UPDATE): the same days' priced REVENUE
+       joins income — a connected driver's closed day books both
+       of its legs here by itself: what it earned at this side's
+       client rate (crewRevenueFor) and what it cost at his own
+       wage (cw above). No crew → cr.total is 0 and income is
+       exactly the own-books figure it always was. */
+    var cr = crewRevenueFor(m);
+    income = Math.round((income + cr.total) * 100) / 100;
+
     /* v188 (D4, owner Oct 21, 2026 07:22 MDT): TOTAL SALARIES =
        the sum over ALL days in the period of (paid hours × the
        day's wage). The v181 books totalled only the days that
@@ -865,6 +915,7 @@
       fuel: fuel, fuelOther: fuelOther, biz: biz, bizByCat: bizByCat,
       wages: dw.total, wagesByDriver: dw.per,
       crewWages: cw.total, crewWagesByDriver: cw.byDriver,
+      crewRevenue: cr.total, crewRevenueByDriver: cr.byDriver,
       /* v163: ONE wages figure for the fixed Driver wages line —
          local drivers + connected crew (at their OWN rates).
          v188: the figure is wagesAll — every day in the period
@@ -1143,7 +1194,7 @@
             App._store.set('__peer_wages', pw);
           } catch (e) {}
           var nc = calc(m);
-          if (nc.crewWages !== c.crewWages) api.render(body);
+          if (nc.crewWages !== c.crewWages || nc.crewRevenue !== c.crewRevenue) api.render(body);
         }).catch(function () {});
       }
     }

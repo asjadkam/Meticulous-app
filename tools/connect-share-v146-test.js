@@ -558,7 +558,12 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   eq('f: e2e — the real fetched day prices into the totals (11 h × $29)',
     [calcBoss().crewWages, calcBoss().crewWagesByDriver['uid-driver'].wage, calcBoss().crewWagesByDriver['uid-driver'].days],
     [319, 319, 1]);
-  eq('f: expenses carry exactly the crew wages (empty local books)', calcBoss().expenses, 319);
+  /* v200 (OWNER-AUTO-UPDATE): the day's REVENUE leg books too
+     (10 foreman x $52 = $520), and the standing Brokerage auto
+     row (10% of revenue) prices on it — expenses are no longer
+     the wages alone: 319 wages + 52 brokerage = 371. */
+  eq('f: expenses carry the crew wages + the brokerage auto row on the new crew revenue', calcBoss().expenses, 371);
+  eq('f: v200 — the fetched day books its revenue leg', calcBoss().crewRevenue, 520);
   const trackerDay = {
     driver: 'uid-driver', date: OCT16, driverName: 'Asjad Kamal', driverBusiness: 'Asjad Kamal',
     viewers: ['uid-boss'], session: { hours: 7.01, active: false, startedAt: null, endedAt: null, km: 134 },
@@ -568,7 +573,9 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   users.boss.store.set('__crew_days', { '2026-10': [trackerDay] });
   eq('f: a tracker-closed day prices from its close facts (7.01 × $29)', calcBoss().crewWages, 203.29);
   eq('f: idempotent — a second calc is the same number, never stacked',
-    [calcBoss().crewWages, calcBoss().expenses], [203.29, 203.29]);
+    /* v200: expenses = 203.29 wages + 36.452 brokerage (10% of
+       the day's $364.52 crew revenue at the $52 client rate) */
+    [calcBoss().crewWages, calcBoss().expenses], [203.29, 239.742]);
   const correctedDay = clone(trackerDay);
   correctedDay.close = { source: 'dispatch', foremanHours: 8, travelHours: 1, bonusHours: 1, loads: 0, material: 'Clay', ticketNo: '21621' };
   users.boss.store.set('__crew_days', { '2026-10': [correctedDay] });
@@ -583,7 +590,10 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
   eq('f: v163 — boss\u2019s local entries emptied, the driver\u2019s own wage still prices', calcBoss().crewWages, 290);
   const peerSave = users.boss.store.get('__peer_wages', {});
   users.boss.store.set('__peer_wages', {});
-  eq('f: no wage crossed and none set -> $0, exactly as the board shows', [calcBoss().crewWages, calcBoss().expenses], [0, 0]);
+  /* v200: wages are $0 — but the corrected day's revenue leg
+     (8 foreman x $52 = $416) still books, so expenses carry its
+     10% brokerage row ($41.60) and nothing else. */
+  eq('f: no wage crossed and none set -> wages $0, expenses = the revenue leg\u2019s brokerage only', [calcBoss().crewWages, calcBoss().expenses], [0, 41.6]);
   users.boss.store.set('__peer_wages', peerSave);
   users.boss.store.set('pnl_drivers', driversSave);
   eq('f: rate set again -> priced again', calcBoss().crewWages, 290);
@@ -698,12 +708,12 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. v162 pin move: 161 -> 162, same convention. */
-  check('i: version ships as 199', ver.webVersion === 199); // v177 standing pin move
+  check('i: version ships as 199', ver.webVersion === 200); // v177 standing pin move
   check('i: index loads the touched files at the 199 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=199') !== -1 &&
-    idxSrc.indexOf('modules/pnl.js?v=199') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=199') !== -1 &&
-    idxSrc.indexOf('modules/invoice.js?v=199') !== -1);
+    idxSrc.indexOf('js/connectpipe.js?v=200') !== -1 &&
+    idxSrc.indexOf('modules/pnl.js?v=200') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=200') !== -1 &&
+    idxSrc.indexOf('modules/invoice.js?v=200') !== -1);
   check('i: publish hooks ride the module lifecycles (fuel / maintenance / invoice renders)',
     fuelSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&
     mtSrc.indexOf('ConnectPipe.publishRecords()') !== -1 &&

@@ -188,7 +188,12 @@ function makePnl(seed) {
   const c = w.pnl._calc('2026-10');
   near('A5 crew wage priced at HIS rate (11h x 29)', c.crewWages, 319);
   near('A5 wagesTotal carries the crew wage', c.wagesTotal, 319);
-  near('A5 the expense total contains it — with the line to show it', c.expenses, 319);
+  /* v200 SUPERSEDES the 319 pin below it in spirit: the day now
+     ALSO books its revenue (10 foreman x $93 = $930, OWNER-AUTO-
+     UPDATE), and the standing Brokerage auto row (10% of revenue)
+     prices on it — expenses = 319 wages + 93 brokerage. */
+  near('A5 the expense total contains it — with the line to show it', c.expenses, 412);
+  near('A5 v200: the day books its revenue leg too', c.crewRevenue, 930);
   eq('A5 per-driver attribution names him', c.crewWagesByDriver.uidX && c.crewWagesByDriver.uidX.name, 'Crew D');
 }
 

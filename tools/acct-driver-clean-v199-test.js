@@ -75,8 +75,8 @@ console.log('\n— v199: nothing underneath was deleted —');
 
 console.log('\n— v199: ship pins —');
 {
-  eq('version.json webVersion ships as 199', ver.webVersion, 199);
-  ok('index.html pins js/app.js at ?v=199', idxSrc.indexOf('js/app.js?v=199') !== -1);
+  eq('version.json webVersion ships as 199', ver.webVersion, 200);
+  ok('index.html pins js/app.js at ?v=200', idxSrc.indexOf('js/app.js?v=200') !== -1);
 }
 
 console.log('\nacct-driver-clean-v199: ' + pass + ' passed, ' + fail + ' failed');
