@@ -106,6 +106,43 @@
     return out;
   }
 
+  /* v190 (M-route home-stops, owner, Oct 21, 2026 07:23 MDT):
+     the day's stops start when the truck LEAVES home. His Oct 21
+     preview listed two stops AT HOME (51.15710, −113.93860 —
+     6:06 AM · 42 min; 6:52 AM · 17 min) as day stops: pre-
+     departure at-home time wearing a work stop's clothes. A stop
+     within 250 m of the saved Home place is not a work stop:
+     dropHomeStops takes such stops out of the route collect()
+     returns, so they leave BOTH the on-screen list and the PDF
+     (both render collect's routeStops). trailStops itself stays
+     pure and untouched — the filter rides collect() only. The
+     Home place is the user's own saved favorite named "Home"
+     (personal first, then work — the yardstart resolution). No
+     Home pin saved → no filtering, nothing invented. */
+  function homePin() {
+    try {
+      var nd = G('nav_data', null) || {};
+      var lists = [nd.personal || [], nd.work || []];
+      for (var i = 0; i < lists.length; i++) {
+        for (var j = 0; j < lists[i].length; j++) {
+          var p = lists[i][j];
+          if (p && String(p.name || '').trim().toLowerCase() === 'home' &&
+              isFinite(parseFloat(p.lat)) && isFinite(parseFloat(p.lng))) {
+            return { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+  function dropHomeStops(stops, home) {
+    if (!home || !stops || !stops.length) return stops || [];
+    return stops.filter(function (s) {
+      return !(isFinite(s.lat) && isFinite(s.lng)) ||
+        trailDistM(s.lat, s.lng, home.lat, home.lng) > 250;
+    });
+  }
+
   /* v87: ONE Odometer line for the day (owner, Oct 15: there were
      "no Odos on the manifest either… even though I gave you the
      starting and ending" — his own sheet carries the pair every
@@ -545,6 +582,8 @@
         return { at: new Date(s.t).toISOString(), label: label, lat: s.lat, lng: s.lng, mins: s.mins };
       });
     } catch (e) { routeStops = []; }
+    /* v190: home is not a work stop (see homePin/dropHomeStops). */
+    routeStops = dropHomeStops(routeStops, homePin());
     return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc };
   }
 
@@ -771,6 +810,7 @@
     _collectDay: collect,
     _docLines: docLines,
     _trailStops: trailStops,
+    _dropHomeStops: dropHomeStops, /* v190: the home-stop filter, exported for the suite */
     _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is
        the tracker COMPLEMENT, not a repeat: the hero card counts
