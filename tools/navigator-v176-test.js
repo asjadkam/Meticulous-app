@@ -98,7 +98,7 @@ check('doRoute re-requests around U-turn points (exclude_locations) before prese
 
 console.log('— ship pins —');
 check('ships as webVersion 176, index.html loads the navigator at the 176 pin',
-  ver.webVersion === 213 && idxSrc.indexOf('src="modules/navigator.js?v=213"') >= 0,
+  ver.webVersion === 214 && idxSrc.indexOf('src="modules/navigator.js?v=214"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v176: ' + pass + ' passed, ' + fail + ' failed');
