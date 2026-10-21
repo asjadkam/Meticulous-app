@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 192,
-  "notes": "v192: The truck Navigator never tells you to turn around — in geometry now, not just words. If a route doubles back on itself (out one side of a divided highway, back on the other), it is re-planned around the block like a truck actually drives, and the little next-turn card will never draw a turn-around arrow.",
+  "webVersion": 193,
+  "notes": "v193: Drive view tidy-up — the next-turn card no longer sits on top of your route near the top of the map. It now docks at the bottom right, level with the speedometer, so the banner, the map, and the bottom bar stack clean with nothing cut off.",
   "files": {
     "assets/avatar-dump.png": "1934435a537f58a5946965bc2691585823e4377898de5bbce21a7c28a93d0091",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -14,10 +14,10 @@
     "assets/logo.svg": "ff9022a015da20fe2142d2f70e4c99c3e48f10457adebf681eefb1f840cdec70",
     "assets/manifest.json": "92e467fa45e8df0bb326cfeb23aa83d2fad42876abc58b3935c2ba2bb3ca05bd",
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
-    "css/style.css": "134e90ffafe14c630f7e1aea4dcfa49ba1fab41361149320d8aa2c544fa3781d",
+    "css/style.css": "e9bd466d6f441cb917d0c0df6252844aaa67cd2db13e17d39e0870e90864277e",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "4ab4813628a3758177271a3c83e009b6d081afacbd661de3b6c0426eaea9d5d5",
+    "index.html": "315ab89dc369f9810bfc0b02166d69c9bb3db6363288db452ee2073a966c3415",
     "js/app.js": "38576c57474a4e9ebb9453e65adaa96e3f7546d0864b39d8c74e02af2e84974c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",

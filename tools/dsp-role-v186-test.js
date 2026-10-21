@@ -219,8 +219,8 @@ function makeWorld(opts) {
   /* ---- source pins ---- */
   check('gate keys off the Driver account type',
     dspSrc.indexOf("accountType === 'Driver'") !== -1 && dspSrc.indexOf('!dspDriverAcct') !== -1);
-  eq('ships as webVersion 188', ver.webVersion, 192);
-  check('index loads dispatch at the 192 pin', idxSrc.indexOf('modules/dispatch.js?v=192') !== -1);
+  eq('ships as webVersion 188', ver.webVersion, 193);
+  check('index loads dispatch at the 193 pin', idxSrc.indexOf('modules/dispatch.js?v=193') !== -1);
 
   console.log('\ndsp-role v186: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
