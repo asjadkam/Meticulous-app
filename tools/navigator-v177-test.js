@@ -118,11 +118,11 @@ check('the speedometer overlay is fed by the GPS speed through the cached writer
 check('the settings + overlay CSS shipped', cssSrc.indexOf('.nv-settings{') >= 0 && cssSrc.indexOf('.nv-drive-speedo{') >= 0 && cssSrc.indexOf('.nv-drive-limit{') >= 0);
 
 console.log('— ship pins —');
-check('ships as webVersion 188 with the changed files at the 197 pin',
-  ver.webVersion === 197 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=197"') >= 0 &&
-  idxSrc.indexOf('src="modules/preferences.js?v=197"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=197"') >= 0,
+check('ships as webVersion 188 with the changed files at the 198 pin',
+  ver.webVersion === 198 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=198"') >= 0 &&
+  idxSrc.indexOf('src="modules/preferences.js?v=198"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=198"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v177: ' + pass + ' passed, ' + fail + ' failed');

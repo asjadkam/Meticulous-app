@@ -66,7 +66,7 @@ ok('the pop-up paints the strip between junction and header',
   navSrc.indexOf("laneStripHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : 0, dDeg) +") !== -1);
 ok('the strip CSS exists', css.indexOf('.nv-inset-lanes{') !== -1 && css.indexOf('.nv-lane.on{') !== -1);
 ok('no version-196 claim leaks into the module header pins of older suites',
-  navSrc.indexOf('webVersion, 197') === -1);
+  navSrc.indexOf('webVersion, 198') === -1);
 
 console.log('— v196: pickLaneCount — the honest pick —');
 const el = (tags) => ({ tags: tags });

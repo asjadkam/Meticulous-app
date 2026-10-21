@@ -469,10 +469,12 @@ function extract(src, beginMark, endMark) {
   /* v182 SUPERSEDES the crew-card half of this pin (D5 REDEFINED,
      owner Oct 20, 2026 19:53–19:54): there is NO crew card on the
      P&L face any more — the crew-books fetch is silent plumbing.
-     The uid-stamping prefill (Dispatch board -> P&L manual form)
-     is untouched and still pinned. */
-  check('g: P&L — NO crew books card (D5); the uid-stamping prefill exists',
-    pnlSrc.indexOf('Connected crew') === -1 && pnlSrc.indexOf('__mtPnlPrefillDriver') !== -1 && pnlSrc.indexOf('rec.uid = pnlPrefill.uid') !== -1);
+     v198 SUPERSEDES the prefill half (PNL-CLEAN-2, owner Oct 20
+     19:53 reaffirmed Oct 21 09:17): the whole Add-driver surface
+     — manual form + its uid-stamping save — is OFF the P&L face;
+     P&L is the Monthly analysis only. */
+  check('g: P&L — NO crew books card (D5); the Add-driver form + uid-stamping save are gone (v198)',
+    pnlSrc.indexOf('Connected crew') === -1 && pnlSrc.indexOf('id="pnl_dadd"') === -1 && pnlSrc.indexOf('rec.uid = pnlPrefill.uid') === -1);
   check('g: app funnel runs the pipe on auth', appSrc.indexOf('ConnectPipe.onAuth(user)') !== -1);
   check('g: index loads the pipe engine at the shipped version', idxSrc.indexOf('js/connectpipe.js?v=' + ver.webVersion) !== -1);
   check('g: publishing is gated on having viewers (no connection, no share)',

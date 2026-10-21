@@ -1030,87 +1030,16 @@
          the analysis's Total salaries figure prices connected
          drivers' wages from the cached shared days — plumbing
          behind the glass, never a display. */
-      /* Add driver — v120 (owner, Oct 16 22:00 MDT: "Adding
-         drivers should have an option of connecting via
-         'connect'."), v131: TWO doors. PRIMARY: Connect a driver —
-         routes to the Connect screen's LIVE people search (find
-         them by name, tap Connect, they accept). SECONDARY
-         (quiet): the manual form, unchanged — for drivers not on
-         the app, and for setting what YOU pay a connected driver
-         (pay terms are set here, privately, and never cross the
-         connection). The v120 email/phone invite form is GONE: it
-         saved a pending driver + a local-only connection and
-         delivered nothing. v120 pending entries still render their
-         status line (PNL_INVITE_NOTE, reworded for the live era). */
-      h += '<div class="card"><h3>＋ Add driver</h3>' +
-        '<button class="btn primary big" id="pnl_connect_open" style="width:100%">🤝 Connect a driver</button>' +
-        '<p class="note">For a driver who uses Meticulous — Connect finds them by name, and their identity comes from their own account, not from typing. When they accept, you are connected. A connected driver\u2019s wage is set by the driver himself, on his own side — it crosses to your books as an expense at his rate, and there is nothing here for you to set. The manual form below is for drivers who are not on the app.</p>' +
-        '<button class="btn ghost" id="pnl_manual_open" style="margin-top:10px">Add manually instead</button>' +
-        '<div id="pnl_manual_wrap" style="display:' + (pnlManualOpen ? 'block' : 'none') + ';margin-top:8px">' +
-        (pnlPrefill ? '<p class="note" style="color:var(--navy);font-weight:600">Setting the pay rate for ' + esc(pnlPrefill.name || 'your driver') + ' — it prices his shared days on your books, and it never crosses to him.</p>' : '') +
-        '<div class="row"><div><label class="f">Driver name</label><input id="pnl_dname" placeholder="e.g. Driver 1" value="' + esc(pnlPrefill ? (pnlPrefill.name || '') : '') + '"></div>' +
-        '<div><label class="f">Pay type</label><select id="pnl_dtype">' +
-        PAY_TYPES.map(function (p) { return '<option value="' + p[0] + '">' + p[1] + '</option>'; }).join('') +
-        '</select></div></div>' +
-        '<div class="row"><div><label class="f">Rate $</label><input id="pnl_drate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
-        '<div><label class="f">Start month</label><input id="pnl_dstart" type="month" value="' + esc(m) + '"><div class="note">Salary drivers earn their rate every month from this month on.</div></div></div>' +
-        '<div class="row"><div><label class="f">Travel time (hours/day)</label><input id="pnl_dtravel" type="number" inputmode="decimal" min="0" step="0.25" placeholder="0"><div class="note">Travel pay you owe this driver for each day they work — on top of their ticket/logged hours (e.g. 1, some drivers 1.5).</div></div></div>' +
-        '<button class="btn primary" id="pnl_dadd">Add driver</button>' +
-        '</div>' +
-        '<div id="pnl_dlist">' + drivers().map(function (d) {
-          return '<div class="listitem"><div class="a">' + esc(d.name) + ' — ' + esc(PAY_LABEL[d.payType] || d.payType) + ' ' + money(parseFloat(d.rate) || 0) + '</div>' +
-            '<div class="b">' + (d.payType === 'salary' ? 'from ' + esc(d.start || '') : 'log work below') + '</div>' +
-            pnlInviteLine(d) +
-            (d.uid ? '<div class="b" style="color:#2e7d32;font-weight:600">🤝 Connected — his days price at his own wage once it crosses; this rate is only the fallback until then</div>' : '') +
-            '<div class="row" style="margin-top:6px;align-items:flex-end"><div style="flex:1"><label class="f">Travel hrs/day owed</label><input type="number" inputmode="decimal" min="0" step="0.25" data-pnltravel="' + esc(d.id) + '" value="' + (parseFloat(d.travelHours) || 0) + '"></div>' +
-            '<button class="btn small ghost" data-pnldriverdel="' + esc(d.id) + '">Remove</button></div></div>';
-        }).join('') + '</div></div>';
-
-      /* Log driver work */
-      var allDs = drivers();
-      var workable = allDs.filter(function (d) { return d.payType !== 'salary'; });
-      h += '<div class="card"><h3>🕒 Log driver work</h3>';
-      if (!workable.length) {
-        h += '<div class="empty">Add an hourly, per-mile, or per-load driver above to log work. Salary drivers are paid automatically each month — no work log needed.</div>';
-      } else {
-        h += '<div class="row"><div><label class="f">Date</label><input type="date" id="pnl_wdate" value="' + App._today() + '"></div>' +
-          '<div><label class="f">Driver</label><select id="pnl_wdriver">' +
-          workable.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + ' (' + esc(PAY_LABEL[d.payType]) + ' ' + money(parseFloat(d.rate) || 0) + ')</option>'; }).join('') +
-          '</select></div></div>' +
-          '<div class="row"><div><label class="f" id="pnl_wqtylabel">Hours</label><input id="pnl_wqty" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0"></div></div>' +
-          '<button class="btn primary" id="pnl_wadd">Log work</button>';
-        h += '<div id="pnl_wlist">' + wageEntries().slice().reverse().slice(0, 30).map(function (e) {
-          var dd = null;
-          allDs.forEach(function (x) { if (x.id === e.driverId) dd = x; });
-          return '<div class="listitem"><div class="a">' + esc(dd ? dd.name : '(removed driver)') + ' — ' + esc(e.qty) + ' ' + esc(e.unit) + ' = ' + money(parseFloat(e.wage) || 0) + '</div>' +
-            '<div class="b">' + esc(e.date) + '</div>' +
-            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnlwdel="' + esc(e.id) + '">Delete</button></div></div>';
-        }).join('') + '</div>';
-      }
-      h += '</div>';
-
-      /* Manual business expense entry */
-      h += '<div class="card"><h3>＋ Business expense</h3>' +
-        '<div class="row"><div><label class="f">Date</label><input type="date" id="pnl_date" value="' + App._today() + '"></div>' +
-        '<div><label class="f">Category</label><select id="pnl_cat">' +
-        BIZ_CATS.map(function (x) { return '<option>' + x + '</option>'; }).join('') + '</select></div></div>' +
-        '<div class="row"><div><label class="f">What</label><input id="pnl_what" placeholder="e.g. Oil change"></div>' +
-        '<div><label class="f">Cost $</label><input id="pnl_cost" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
-        '<label class="f">📷 Receipt photo</label>' +
-        '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
-        '<button type="button" class="btn secondary" id="pnl_rc_cam" style="flex:1;">📷 Take photo</button>' +
-        '<button type="button" class="btn secondary" id="pnl_rc_pick" style="flex:1;">📁 Choose file</button>' +
-        '</div>' +
-        '<input type="file" id="pnl_rc_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<input type="file" id="pnl_rc_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<div id="pnl_rc_prev"></div>' +
-        '<div id="pnl_rc_read" style="font-size:14px;margin-top:8px;"></div>' +
-        '<button class="btn primary" id="pnl_add">Add expense</button>' +
-        '<div id="pnl_list">' + bizExpenses().slice().reverse().map(function (x, ri) {
-          return '<div class="listitem"><div class="a">' + esc(x.what || x.category) + ' — $' + esc(x.cost) + '</div>' +
-            '<div class="b">' + esc(x.date) + ' · ' + esc(x.category || 'Other') + '</div>' +
-            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-pnldel="' + (bizExpenses().length - 1 - ri) + '">Delete</button></div></div>';
-        }).join('') + '</div></div>';
+      /* v198 (PNL-CLEAN-2, owner Oct 20 19:53 MDT, reaffirmed
+         Oct 21 09:17 MDT — "I thought I asked you to clean up
+         everything?"): the last three sections are OFF this
+         face — the "+ Add driver" card (Connect door + manual
+         form + driver list), the "Log driver work" card, and
+         the "+ Business expense" form. P&L is the period picker
+         + the Monthly analysis above, NOTHING else. The stores
+         and helpers (drivers(), wageEntries(), bizExpenses(),
+         calc()) are untouched — they feed the analysis; drivers
+         are managed in Connect, expenses in Fuel & Expense. */
 
       body.innerHTML = h;
 
@@ -1174,103 +1103,8 @@
         };
       });
 
-      /* v42: receipt photo → OCR on the Business expense form — same
-         shared pipeline as Fuel (TicketOCR.fileToOCRImage 1600px +
-         recognizeWithRotation), fields the user typed in are never
-         overwritten, and the read is always reported. Never silent. */
-      ['#pnl_date', '#pnl_what', '#pnl_cost'].forEach(function (id) {
-        var e = body.querySelector(id);
-        if (e) e.addEventListener('input', function () { e.setAttribute('data-touched', '1'); });
-      });
-      var pnlCat = body.querySelector('#pnl_cat');
-      if (pnlCat) pnlCat.addEventListener('change', function () { pnlCat.setAttribute('data-touched', '1'); });
-      function pnlFillField(id, v) {
-        var e = body.querySelector(id);
-        if (!e || !v) return;
-        if (e.getAttribute('data-touched')) return;
-        if (e.value && id !== '#pnl_date') return;
-        e.value = v;
-      }
-      var pnlRcCamInput = body.querySelector('#pnl_rc_img_cam');
-      var pnlRcPickInput = body.querySelector('#pnl_rc_img');
-      body.querySelector('#pnl_rc_cam').onclick = function () { pnlRcCamInput.click(); };
-      body.querySelector('#pnl_rc_pick').onclick = function () { pnlRcPickInput.click(); };
-      var pnlOcrToken = 0;
-      function pnlSetRead(html) { var d = body.querySelector('#pnl_rc_read'); if (d) d.innerHTML = html; }
-      function pnlHandlePhoto(ev) {
-        var file = ev.target.files && ev.target.files[0]; if (!file) return;
-        var token = ++pnlOcrToken;
-        var r = new FileReader();
-        r.onload = function () { body.querySelector('#pnl_rc_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
-        r.readAsDataURL(file);
-        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseExpenseReceipt) {
-          pnlSetRead('<span style="color:#e67e22">Photo added — the reader isn\'t ready, fill the form by hand.</span>');
-          return;
-        }
-        pnlSetRead('📖 Reading receipt…');
-        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
-          if (token !== pnlOcrToken) return;
-          if (!ocrUrl) { pnlSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
-          TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
-            if (token !== pnlOcrToken) return;
-            try { pnlSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
-          }).then(function (text) {
-            if (token !== pnlOcrToken) return;
-            var parsed = TicketOCR.parseExpenseReceipt(text);
-            var rep = TicketOCR.describeExpenseRead(parsed);
-            pnlFillField('#pnl_cost', parsed.total);
-            pnlFillField('#pnl_what', parsed.vendor);
-            pnlFillField('#pnl_date', parsed.date);
-            if (parsed.category && pnlCat && !pnlCat.getAttribute('data-touched')) {
-              for (var oi = 0; oi < pnlCat.options.length; oi++) {
-                if (pnlCat.options[oi].value === parsed.category || pnlCat.options[oi].text === parsed.category) {
-                  pnlCat.selectedIndex = oi; break;
-                }
-              }
-            }
-            if (rep.found.length) {
-              pnlSetRead('🧾 Read: ' + esc(rep.found.join(' · ')) +
-                (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
-            } else {
-              pnlSetRead('<span style="color:#e67e22">Couldn\'t read anything from that receipt — fill the form by hand.</span>');
-            }
-          }).catch(function () {
-            if (token !== pnlOcrToken) return;
-            pnlSetRead('<span style="color:#e67e22">Couldn\'t read that receipt — fill the form by hand.</span>');
-          });
-        });
-      }
-      pnlRcCamInput.onchange = pnlHandlePhoto;
-      pnlRcPickInput.onchange = pnlHandlePhoto;
 
-      body.querySelector('#pnl_add').onclick = function () {
-        var what = body.querySelector('#pnl_what').value.trim();
-        var cost = parseFloat(body.querySelector('#pnl_cost').value);
-        if (!what || !(cost > 0)) { alert('Enter what it was and a cost greater than 0.'); return; }
-        var rec = {
-          date: body.querySelector('#pnl_date').value || App._today(),
-          category: body.querySelector('#pnl_cat').value,
-          what: what,
-          cost: cost.toFixed(2)
-        };
-        var l = bizExpenses(); l.push(rec); W('expenses', l);
-        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl', 'x' + Date.now(), rec); } catch (e) {} }
-        api.render(body);
-      };
-      body.querySelectorAll('[data-pnldel]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Delete this expense?')) return;
-          var l = bizExpenses(); l.splice(+b.getAttribute('data-pnldel'), 1); W('expenses', l);
-          api.render(body);
-        };
-      });
 
-      /* Driver wages: add driver — v120: the two doors.
-         v131: the Connect door ROUTES to the Connect screen's live
-         people search (the flag lands the user on its search box);
-         it no longer opens a form. The v120 email/phone invite
-         handler is removed with its form — it saved a local-only
-         pending driver + connection and delivered nothing. */
       /* v132: connected-crew books — fetch the month's shared days
          and paint them priced; the card's own Set-pay door reopens
          the manual form prefilled for that driver. v146: the
@@ -1311,101 +1145,6 @@
           var nc = calc(m);
           if (nc.crewWages !== c.crewWages) api.render(body);
         }).catch(function () {});
-      }
-      var cOpen = body.querySelector('#pnl_connect_open');
-      if (cOpen) cOpen.onclick = function () {
-        try { window.__mtConnectSearch = true; } catch (e) {}
-        if (window.App && App.openModule) App.openModule('connect');
-      };
-      var mOpen = body.querySelector('#pnl_manual_open');
-      if (mOpen) mOpen.onclick = function () { pnlManualOpen = true; api.render(body); };
-      /* Driver wages: add driver (manual door — unchanged) */
-      var dadd = body.querySelector('#pnl_dadd');
-      if (dadd) dadd.onclick = function () {
-        var name = body.querySelector('#pnl_dname').value.trim();
-        var rate = parseFloat(body.querySelector('#pnl_drate').value);
-        if (!name || !(rate > 0)) { alert('Enter a driver name and a rate greater than 0.'); return; }
-        var rec = {
-          id: 'd' + Date.now(),
-          name: name,
-          payType: body.querySelector('#pnl_dtype').value,
-          rate: rate,
-          travelHours: parseFloat(body.querySelector('#pnl_dtravel').value) || 0, // v52
-          start: body.querySelector('#pnl_dstart').value || App._today().slice(0, 7)
-        };
-        /* v132: a prefilled save is FOR a connected driver — his
-           account uid stamps the entry, and that stamp is what
-           prices his shared days on these books from now on. */
-        if (pnlPrefill && pnlPrefill.uid) {
-          rec.uid = pnlPrefill.uid; rec.viaConnect = true; pnlPrefill = null;
-        }
-        var l = drivers(); l.push(rec); W('drivers', l);
-        if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
-        api.render(body);
-      };
-      /* v52: per-driver travel hrs/day — editable in place; saves on change */
-      body.querySelectorAll('[data-pnltravel]').forEach(function (inp) {
-        inp.onchange = function () {
-          var id = inp.getAttribute('data-pnltravel');
-          var v = parseFloat(inp.value);
-          if (isNaN(v) || v < 0) v = 0;
-          var l = drivers(), rec = null;
-          l.forEach(function (d) { if (d.id === id) { d.travelHours = v; rec = d; } });
-          W('drivers', l);
-          if (rec && window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_drivers', rec.id, rec); } catch (e) {} }
-          api.render(body);
-        };
-      });
-      body.querySelectorAll('[data-pnldriverdel]').forEach(function (b) {
-        b.onclick = function () {
-          if (!confirm('Remove this driver? Their logged work entries will be removed too.')) return;
-          var id = b.getAttribute('data-pnldriverdel');
-          W('drivers', drivers().filter(function (d) { return d.id !== id; }));
-          W('wage_entries', wageEntries().filter(function (e) { return e.driverId !== id; }));
-          W('travel_claims', travelClaims().filter(function (c) { return c.driverId !== id; })); // v52
-          api.render(body);
-        };
-      });
-
-      /* Driver wages: log work */
-      var wadd = body.querySelector('#pnl_wadd');
-      if (wadd) {
-        var wdriver = body.querySelector('#pnl_wdriver');
-        var updQty = function () {
-          var dd = null;
-          drivers().forEach(function (x) { if (x.id === wdriver.value) dd = x; });
-          var lbl = body.querySelector('#pnl_wqtylabel');
-          if (lbl && dd) lbl.textContent = QTY_LABEL[dd.payType] || 'Amount';
-        };
-        wdriver.onchange = updQty; updQty();
-        wadd.onclick = function () {
-          var dd = null;
-          drivers().forEach(function (x) { if (x.id === wdriver.value) dd = x; });
-          if (!dd) { alert('Pick a driver.'); return; }
-          var qty = parseFloat(body.querySelector('#pnl_wqty').value);
-          if (!(qty > 0)) { alert('Enter the ' + (QTY_LABEL[dd.payType] || 'amount').toLowerCase() + ' worked.'); return; }
-          var rate = parseFloat(dd.rate) || 0;
-          var rec = {
-            id: 'w' + Date.now(),
-            date: body.querySelector('#pnl_wdate').value || App._today(),
-            driverId: dd.id,
-            qty: qty,
-            unit: UNIT[dd.payType] || '',
-            rate: rate,
-            wage: qty * rate
-          };
-          var l = wageEntries(); l.push(rec); W('wage_entries', l);
-          if (window.FB && FB.saveDoc) { try { FB.saveDoc('pnl_wage_entries', rec.id, rec); } catch (e) {} }
-          api.render(body);
-        };
-        body.querySelectorAll('[data-pnlwdel]').forEach(function (b) {
-          b.onclick = function () {
-            if (!confirm('Delete this work entry?')) return;
-            var id = b.getAttribute('data-pnlwdel');
-            W('wage_entries', wageEntries().filter(function (e) { return e.id !== id; }));
-            api.render(body);
-          };
-        });
       }
     }
   };

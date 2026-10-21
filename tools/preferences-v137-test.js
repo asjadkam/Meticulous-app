@@ -465,9 +465,13 @@ console.log('— 6. Money pins: Oct 1–15 = 124.5 h × $29 at the wage chain, b
     'parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate)');
   has('connect pipe: client rate carries the wage middle', read('js/connectpipe.js'),
     'parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate)');
-  /* Crew rates live in P&L: the per-driver pay-rate surface. */
+  /* Crew rates lived in P&L until v198 (PNL-CLEAN-2, owner
+     Oct 20 19:53 reaffirmed Oct 21 09:17): the per-driver
+     pay-rate surface is OFF the P&L face — P&L is the Monthly
+     analysis only; a driver's wage is set on the driver's own
+     side and crosses via Connect. Pin the absence. */
   const pnlSrc = read('modules/pnl.js');
-  has('P&L: a boss sets EACH driver\'s pay rate on the driver\'s own entry', pnlSrc, 'Setting the pay rate for ');
+  ok('P&L: NO per-driver pay-rate surface remains (v198)', pnlSrc.indexOf('Setting the pay rate for ') === -1 && pnlSrc.indexOf('id="pnl_dadd"') === -1);
   has('P&L: driver entries carry their own rate', pnlSrc, 'money(parseFloat(d.rate) || 0)');
   has('connect pipe: crew wages price from the pnl_drivers entry, never Preferences', read('js/connectpipe.js'),
     "rate: parseFloat(d.rate) || 0");

@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 197,
-  "notes": "v197: Dispatch opens on TODAY. Your current dispatch now stands at the top of the Dispatch screen in its own card — no longer buried as the first entry of History. History now holds past days only (still three at a glance, with the full-history door).",
+  "webVersion": 198,
+  "notes": "v198: PNL-CLEAN-2 — P&L is the Monthly analysis, full stop. The three sections that still sat under it (Add driver / Connect a driver, Log driver work, and the Business expense form) are removed from the P&L screen, per the owner's ruling (Oct 20, reaffirmed Oct 21: 'I thought I asked you to clean up everything?'). Nothing underneath changed: drivers still live in Connect, expenses in Fuel & Expense, and every figure in the analysis is untouched.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "dd258fda10fb2bb8c9fad7d83d11ee03dd809fb83a287dd2ad278b4b9f2577a3",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "6ec749c4a5ecee7317fba1f9143e23cdc8223d4c69a70d1cb747a48527b5e5b8",
+    "index.html": "5d8e9715b7b0a07d2815a993de0399d1a980dabafdba2ead5ced2e5af05d88e4",
     "js/app.js": "38576c57474a4e9ebb9453e65adaa96e3f7546d0864b39d8c74e02af2e84974c",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
@@ -47,7 +47,7 @@
     "modules/manifest.js": "ea2c7ce65905d569b0383578d93aebe05f1baa22ec18913991811bdc670c8f0d",
     "modules/navigation.js": "7f2414540c90295289de6404347447b6b8d47bf023f00df4e49eda20912cf88a",
     "modules/navigator.js": "3c0d048ac1ee8847d9ba1e9ec6555322251ca20f7272f297eb08e4bd1c008938",
-    "modules/pnl.js": "0aa81969df84b8f191451c57ed5188cab3871c76bb16b1724d0a57fbe0dd6a56",
+    "modules/pnl.js": "51e58a30a842c368a88817d9e0f8576cf531657559e11286006ba06dbb8f9881",
     "modules/preferences.js": "51c3f1a226753abaf711a778747ea88d4e2d3f05458065555197b363ff264a49",
     "modules/pti.js": "9872cbb56a228fcfd39caa0253a3b23eaa1afeb4fd2d5e6374876fab27b81412",
     "modules/reminders.js": "80d3d3a2183aec785382ed33941e1f3dc200cfac0c7627439faaccbc0fb427e0",

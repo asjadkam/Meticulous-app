@@ -406,8 +406,12 @@ function makeBody() {
     conSrc.indexOf('Dispatch &amp; document sharing arrives next') === -1 &&
     conSrc.indexOf('Dispatch & document sharing comes next') === -1);
   check('h: P&L no longer claims invites go live later', pnlSrc.indexOf('Invites go live with Connect') === -1);
-  check('h: P&L door routes to the live search; the dead form is gone',
-    pnlSrc.indexOf("App.openModule('connect')") !== -1 && pnlSrc.indexOf('pnl_ccontact') === -1 && pnlSrc.indexOf('pnl_csend') === -1);
+  /* v198 SUPERSESSION (PNL-CLEAN-2, owner Oct 20 19:53 reaffirmed
+     Oct 21 09:17): the P&L door itself is GONE — P&L holds only
+     the Monthly analysis, so nothing in P&L routes to the search
+     any more; connecting lives in the Connect module alone. */
+  check('h: P&L door is GONE with the Add-driver card (v198); the dead form stays gone',
+    pnlSrc.indexOf('pnl_connect_open') === -1 && pnlSrc.indexOf('__mtConnectSearch') === -1 && pnlSrc.indexOf('pnl_ccontact') === -1 && pnlSrc.indexOf('pnl_csend') === -1);
 
   console.log('\nconnect-live test: ' + pass + '/' + (pass + fail) + ' passed');
   process.exit(fail ? 1 : 0);

@@ -327,16 +327,24 @@ const OCT_FUEL = [
    the button now routes to Connect's live people search and the
    email/phone invite form (which delivered nothing) is gone.
    v120 pending entries keep rendering a status line, reworded
-   to point at the live Connect screen; wage math untouched. */
+   to point at the live Connect screen; wage math untouched.
+   v198 SUPERSESSION (PNL-CLEAN-2, deliberate pin moves below):
+   owner Oct 20 19:53 MDT, reaffirmed Oct 21 09:17 MDT — P&L
+   holds NOTHING but the Monthly analysis, so the Add-driver
+   card (both doors + the manual form + the driver list), the
+   Log-driver-work card and the Business-expense form are OFF
+   the P&L face entirely. The v120/v131 door pins below now
+   pin their ABSENCE from pnl.js; connecting drivers lives in
+   the Connect module alone. The wage math and the invite-line
+   function are untouched — they feed the analysis silently. */
 {
   console.log('\n— v120: Connect a driver —');
-  ok('v120: the Connect door is the one big primary action', pnlSrc.indexOf('id="pnl_connect_open"') !== -1 && pnlSrc.indexOf('🤝 Connect a driver') !== -1 && pnlSrc.indexOf('btn primary big') !== -1);
-  ok('v120: the manual door is the quiet secondary', pnlSrc.indexOf('id="pnl_manual_open"') !== -1 && pnlSrc.indexOf('Add manually instead') !== -1);
-  ok('v120: the manual form is unchanged (same ids, same fields)', ['id="pnl_dname"', 'id="pnl_drate"', 'id="pnl_dtype"', 'id="pnl_dstart"', 'id="pnl_dtravel"', 'id="pnl_dadd"'].every(function (s) { return pnlSrc.indexOf(s) !== -1; }));
+  ok('v198: the Add-driver card is GONE from P&L (no Connect door, no manual door, no form)', pnlSrc.indexOf('id="pnl_connect_open"') === -1 && pnlSrc.indexOf('🤝 Connect a driver') === -1 && pnlSrc.indexOf('id="pnl_manual_open"') === -1 && pnlSrc.indexOf('Add manually instead') === -1 && ['id="pnl_dname"', 'id="pnl_drate"', 'id="pnl_dtype"', 'id="pnl_dstart"', 'id="pnl_dtravel"', 'id="pnl_dadd"'].every(function (s) { return pnlSrc.indexOf(s) === -1; }));
+  ok('v198: the Log-driver-work + Business-expense cards are GONE from P&L', pnlSrc.indexOf('id="pnl_wadd"') === -1 && pnlSrc.indexOf('id="pnl_wdriver"') === -1 && pnlSrc.indexOf('id="pnl_add"') === -1 && pnlSrc.indexOf('id="pnl_rc_cam"') === -1 && pnlSrc.indexOf('<h3>🕒 Log driver work</h3>') === -1 && pnlSrc.indexOf('<h3>＋ Business expense</h3>') === -1 && pnlSrc.indexOf('<h3>＋ Add driver</h3>') === -1);
   ok('v131: the honest status line ships verbatim (v120 note superseded — connections are live now)', pnlSrc.indexOf('Connections are live now — find them in Connect, tap Connect, and when they accept you are connected.') !== -1);
   ok('v120: no fake delivery claim anywhere in the pnl copy', !/Invite sent|invitation (was )?sent|✓ Connected/.test(pnlSrc));
-  ok('v131: the Connect door routes to the LIVE Connect search (the v120 local-only invite + its con_list landing are gone)',
-    pnlSrc.indexOf("App.openModule('connect')") !== -1 && pnlSrc.indexOf('__mtConnectSearch') !== -1 &&
+  ok('v198: no P&L-side Connect routing remains (the v131 door + its search flag left with the card; Connect owns connecting now)',
+    pnlSrc.indexOf('__mtConnectSearch') === -1 &&
     pnlSrc.indexOf('pnl_ccontact') === -1 && pnlSrc.indexOf('pnl_csend') === -1 && pnlSrc.indexOf("role: 'Driver', contact: contact") === -1);
   /* The pending line itself, extracted and driven: */
   const seg = (() => {
