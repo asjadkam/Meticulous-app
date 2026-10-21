@@ -141,7 +141,9 @@ FakeEl.prototype.addEventListener = function (type, fn) {
 FakeEl.prototype.setAttribute = function () {};
 FakeEl.prototype.getAttribute = function () { return null; };
 FakeEl.prototype.getContext = function () {
-  return { clearRect: function () {}, fillRect: function () {}, fillText: function () {}, fillStyle: '', font: '' };
+  return { clearRect: function () {}, fillRect: function () {}, fillText: function () {}, fillStyle: '', font: '',
+    /* v201: drawChart stands its date labels up via the transform stack */
+    save: function () {}, restore: function () {}, translate: function () {}, rotate: function () {} };
 };
 FakeEl.prototype.getBoundingClientRect = function () { return { width: 600, left: 0 }; };
 

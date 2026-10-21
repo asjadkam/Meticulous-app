@@ -411,38 +411,25 @@
     return { added: added, rejected: rejected };
   }
 
-  /* v151 (owner, Oct 17 2026 22:10–22:11 MDT: "These dates are
-     mushed up" / "Can't tell which graph is for what date"): WHICH
-     bars carry a date label. Pure rule, in the canvas's doubled
-     coordinates at the 20px label font: a label is at most
-     12px per character wide, and a chosen label must leave 18px
-     of clear air before the next chosen label starts (labels are
-     left-anchored at i*bw + bw*0.15, the anchor drawChart has
-     always used). Greedy from the first day; the LAST day is
-     always labelled — any chosen label that would crowd it is
-     dropped, never the last day itself. The old rule (stride
-     ceil(days/8) + the last day forced in with no width math)
-     sat the final pair one slot apart at 16 days and printed
-     "10/16" and "10/17" on top of each other. */
+  /* v151 (owner, Oct 17 2026: "These dates are mushed up"):
+     the horizontal stride rule that stood here chose WHICH bars
+     carried a date — and choosing meant SKIPPING: his Oct 21,
+     2026 screenshot (09:55 MDT) showed every OTHER day labelled
+     (10/16, 10/18, 10/20…) and the final label clipped at the
+     card edge ("10/:").
+     v201 CHART-DATES (owner, Oct 21, 2026 09:55 MDT: "the dates
+     on that chart are still not clean"): EVERY day of the period
+     is labelled — the labels stand VERTICAL under their bars
+     (drawChart), so a label's sideways footprint is only its
+     font thickness, which drawChart sizes to the bar slot: no
+     skipping, no crowding, and a label can never run off the
+     card edge. This rule now simply returns every index; it
+     stays a named pure function so the drawing and its suite
+     keep one source for "which bars carry a date": all of them. */
   function chartLabelIdx(days, Wd, labels) {
-    if (!(days > 0)) return [];
-    var bw = Wd / days, GAP = 18;
-    function w(i) { return String(labels[i] || '').length * 12; }
-    function x(i) { return i * bw + bw * 0.15; }
-    var chosen = [0], i, last;
-    for (i = 1; i < days - 1; i++) {
-      last = chosen[chosen.length - 1];
-      if (x(i) >= x(last) + w(last) + GAP) chosen.push(i);
-    }
-    if (days > 1) {
-      while (chosen.length > 1) {
-        last = chosen[chosen.length - 1];
-        if (x(days - 1) >= x(last) + w(last) + GAP) break;
-        chosen.pop();
-      }
-      if (chosen[chosen.length - 1] !== days - 1) chosen.push(days - 1);
-    }
-    return chosen;
+    var out = [];
+    for (var i = 0; i < days; i++) out.push(i);
+    return out;
   }
 
   /* v164: THE CHART'S DATES — ONE SOURCE, CALENDAR-TRUE (owner,
@@ -525,11 +512,14 @@
     ctx.clearRect(0, 0, Wd, H);
     var max = Math.max.apply(null, buckets.concat([1]));
     var bw = Wd / days;
-    /* v151: labels chosen by the width rule above — never crowded
-       at any day count, first + last always labelled, and at
-       small counts every bar carries its date. */
-    var labelSet = {};
-    chartLabelIdx(days, Wd, labels).forEach(function (ix) { labelSet[ix] = 1; });
+    /* v201 CHART-DATES: every bar carries its date, standing
+       VERTICAL in the reserved band under the bars. A vertical
+       label's sideways footprint is its font thickness, sized to
+       the bar slot (never wider than the slot, never under 11px),
+       so labels cannot crowd or clip at any day count — the band
+       is 80 tall (was 44) to hold a 5-char date standing up. */
+    var baseY = H - 80;
+    var fontPx = Math.max(11, Math.min(20, Math.floor(bw * 0.92)));
     /* v151: the MARKED bar — the day the preview readout under
        the chart names. The two-tap selection when there is one;
        until a tap (or after a stale selection falls away) the
@@ -537,15 +527,18 @@
        empty readout. */
     var mark = (graphSel && dates.indexOf(graphSel) >= 0) ? graphSel : chartMarkDate(dates);
     buckets.forEach(function (v, i) {
-      var h = (v / max) * (H - 70);
+      var h = (v / max) * (H - 106);
       /* v116: the two-tap SELECTED day paints navy — the same navy
          as the preview card under the chart. */
       ctx.fillStyle = (dates[i] === graphSel || dates[i] === mark) ? '#1F3764' : (v > 0 ? '#F26522' : '#e8ecf4');
-      ctx.fillRect(i * bw + bw * 0.2, H - 44 - h, bw * 0.6, Math.max(h, 4));
-      if (labelSet[i]) {
-        ctx.fillStyle = '#6b7690'; ctx.font = '20px sans-serif';
-        ctx.fillText(labels[i], i * bw + bw * 0.15, H - 12);
-      }
+      ctx.fillRect(i * bw + bw * 0.2, baseY - h, bw * 0.6, Math.max(h, 4));
+      ctx.save();
+      ctx.translate(i * bw + bw / 2, H - 8);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillStyle = '#6b7690'; ctx.font = fontPx + 'px sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(labels[i], 0, 0);
+      ctx.restore();
     });
     ctx.fillStyle = '#1F3764'; ctx.font = 'bold 24px sans-serif';
     ctx.fillText('$' + Math.round(max), 8, 28);
@@ -1240,6 +1233,8 @@
 
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
   var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
+  var formView = null; // v201 REV-CLEAN: 'manual' | 'extras' — the form opened from the top tabs, or null for the Revenue face
+  var asOpen = false; // v201 REV-CLEAN: the auto-start menu panel on the Revenue face (collapsed until its button is tapped)
   /* v75: the entry/extra being edited inside Day Details
      ({kind:'entry'|'extra', index} into the FULL stored list), the
      message a failed verified save/delete leaves on the detail view,
@@ -1271,6 +1266,113 @@
   /* v116: the last body render() painted into — the shell's back
      contract (api.back) re-renders through it. */
   var lastBody = null;
+
+  /* v201 REV-CLEAN (owner, Oct 21, 2026 09:50–09:53 MDT): the
+     Manual entry and Extras forms on their OWN views, opened from
+     the two small tabs at the top of the Revenue face — the older,
+     cleaner design he asked back ("Manual entry and Extras live
+     at the TOP as tappable entries that OPEN a separate page; the
+     forms never sit on the Revenue face"). Both forms are the
+     pre-v201 face cards VERBATIM — same fields, same ids, same
+     save behavior (api.addEntry / the extras store write, same
+     manifest feed lines); a save returns to the face, where the
+     new money shows in the chart and the Entries list. The
+     extras LIST rides with its form (it is the extras history —
+     history belongs behind the tap, per the NO-SCROLL rule). */
+  function renderFormView(body) {
+    lastBody = body;
+    var h = '<button class="btn small ghost" id="rv_form_back" style="margin-bottom:10px">‹ Back</button>';
+    if (formView === 'manual') {
+      h += '<div class="card"><h3>＋ Manual entry</h3>' +
+        '<div class="row"><div><label class="f">Date</label><input type="date" id="rv_date" value="' + App._today() + '"></div>' +
+        '<div><label class="f">Amount $</label><input id="rv_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
+        '<div class="row"><div><label class="f">Type</label><select id="rv_type"><option value="load">Load</option><option value="hourly">Hourly</option><option value="trip">Trip</option><option value="weight">Weight</option></select></div>' +
+        '<div><label class="f">Loads</label><input id="rv_loads" type="number" min="1" step="1" value="1"></div></div>' +
+        '<div id="rv_tonsrow" style="display:none"><label class="f">Tonnes (net weight)</label><input id="rv_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 12.18"></div>' +
+        '<label class="f">Note</label><input id="rv_note" placeholder="e.g. Gravel haul to Site 7">' +
+        '<button class="btn primary" id="rv_add">Add earnings</button></div>';
+    } else {
+      h += '<div class="card"><h3>✨ Extras</h3>' +
+        '<div class="row"><div><label class="f">Type</label><select id="rx_type"><option value="bonus">Bonus</option><option value="detention">Detention pay</option><option value="reimbursement">Reimbursement</option><option value="other">Other</option></select></div>' +
+        '<div><label class="f">Amount $</label><input id="rx_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
+        '<label class="f">Date</label><input type="date" id="rx_date" value="' + App._today() + '">' +
+        '<label class="f">Note</label><input id="rx_note" placeholder="e.g. 3h wait at pit">' +
+        '<button class="btn navy" id="rx_add">Add extra</button>' +
+        '<div id="rx_list">' + (extras().length ? extras().slice().reverse().map(function (x, ri) {
+          return '<div class="listitem" data-day-link="' + esc(x.date) + '" style="cursor:pointer"><div class="a">' + esc(x.type) + ' — $' + esc(x.amount) + '</div><div class="b">' + esc(x.date) + (x.note ? ' · ' + esc(x.note) : '') + ' · tap to open the day</div>' +
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + (extras().length - 1 - ri) + '">Delete</button></div></div>';
+        }).join('') : '<div class="empty">No extras yet.</div>') + '</div></div>';
+    }
+    body.innerHTML = h;
+    body.querySelector('#rv_form_back').onclick = function () { formView = null; api.render(body); };
+    if (formView === 'manual') {
+      /* v26: Show tonnes input when Weight type selected; auto-calc amount */
+      var rvType = body.querySelector('#rv_type');
+      var rvTonsRow = body.querySelector('#rv_tonsrow');
+      var rvTons = body.querySelector('#rv_tons');
+      var rvAmt = body.querySelector('#rv_amt');
+      function syncTonsRow() {
+        var isW = rvType.value === 'weight';
+        rvTonsRow.style.display = isW ? '' : 'none';
+        if (isW) {
+          var o = App._store.get('onboarding', {});
+          var rate = ownRate(o);
+          var tons = parseFloat(rvTons.value) || 0;
+          if (rate > 0 && tons > 0) rvAmt.value = (tons * rate).toFixed(2);
+        }
+      }
+      rvType.onchange = syncTonsRow;
+      rvTons.oninput = syncTonsRow;
+      syncTonsRow();
+
+      body.querySelector('#rv_add').onclick = function () {
+        var amt = parseFloat(body.querySelector('#rv_amt').value);
+        if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
+        var entry = {
+          date: body.querySelector('#rv_date').value || App._today(),
+          amount: amt.toFixed(2),
+          type: body.querySelector('#rv_type').value,
+          loads: body.querySelector('#rv_loads').value || 1,
+          note: body.querySelector('#rv_note').value.trim()
+        };
+        if (entry.type === 'weight') {
+          entry.tons = body.querySelector('#rv_tons').value.trim() || null;
+        }
+        api.addEntry(entry);
+        manifestFeedPush('revenue', 'Manual entry: $' + amt.toFixed(2) + ' (' + entry.type + ')' +
+          (entry.tons ? ' · ' + entry.tons + 't' : ''));
+        formView = null;
+        api.render(body);
+      };
+    } else {
+      body.querySelector('#rx_add').onclick = function () {
+        var amt = parseFloat(body.querySelector('#rx_amt').value);
+        if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
+        var x = extras();
+        x.push({
+          type: body.querySelector('#rx_type').value,
+          amount: amt.toFixed(2),
+          date: body.querySelector('#rx_date').value || App._today(),
+          note: body.querySelector('#rx_note').value.trim()
+        });
+        W('extras', x);
+        manifestFeedPush('revenue', 'Extra (' + body.querySelector('#rx_type').value + '): $' + amt.toFixed(2));
+        formView = null;
+        api.render(body);
+      };
+      bindTwoTapDelete(body, '[data-rxdel]', function (b) {
+        var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
+      });
+      body.querySelectorAll('[data-day-link]').forEach(function (el) {
+        el.onclick = function (ev) {
+          if (ev && ev.target && ev.target.closest &&
+              ev.target.closest('[data-rxdel]')) return;
+          dayDetailDate = el.getAttribute('data-day-link');
+          api.render(body);
+        };
+      });
+    }
+  }
 
   var api = {
     /* v124: the dashboard card quotes the SAME period the owner
@@ -1419,15 +1521,24 @@
       /* v47: a tapped Month day shows its Day Details instead of the
          normal Revenue view (Back clears dayDetailDate). */
       if (dayDetailDate) { renderDayDetail(body); return; }
+      /* v201 REV-CLEAN: a form opened from the top tabs shows on
+         its own view instead of the face (Back clears formView). */
+      if (formView) { renderFormView(body); return; }
       var o = App._store.get('onboarding', {});
       var period = S('period', '30');
       var view = S('view', 'period');
       var s = summary();
 
-      var h = '<div class="card"><h3>💰 Revenue</h3>';
+      /* v201 REV-CLEAN layout: headHtml = the Revenue header card
+         (view + period controls) and the stats row. It now sits
+         UNDER the chart (period view): the chart is the page's
+         highlight and first content card, the two small form tabs
+         ride a strip at the very top, and auto-start lives behind
+         its own menu button on that strip (see the assembly). */
+      var headHtml = '<div class="card"><h3>💰 Revenue</h3>';
       /* v38 (B): view mode — the pay-period chips stay exactly as they were;
          Month is an additional mode alongside them. */
-      h += '<div class="row" style="margin-bottom:10px">' +
+      headHtml += '<div class="row" style="margin-bottom:10px">' +
         '<button class="btn small ' + (view === 'period' ? 'primary' : 'ghost') + '" data-view="period">Pay period</button>' +
         '<button class="btn small ' + (view === 'month' ? 'primary' : 'ghost') + '" data-view="month">📅 Month</button></div>';
 
@@ -1439,7 +1550,7 @@
           ym = nd.getFullYear() + '-' + ('0' + (nd.getMonth() + 1)).slice(-2);
         }
         ms = monthSummary(ym);
-        h += '<div class="row" style="align-items:center;justify-content:space-between">' +
+        headHtml += '<div class="row" style="align-items:center;justify-content:space-between">' +
           '<button class="btn small ghost" data-mstep="-1">‹ Prev</button>' +
           '<div style="font-weight:800;color:var(--navy);font-size:17px">' + esc(monthLabel(ym)) + '</div>' +
           '<button class="btn small ghost" data-mstep="1">Next ›</button></div>';
@@ -1448,19 +1559,19 @@
            — in a plain .row the six chips overflowed a phone-width
            screen and "Custom" sat half cut off at the right edge.
            Two rows of three now; every chip fully on screen. */
-        h += '<label class="f">Pay period</label><div class="row rvchips">' +
+        headHtml += '<label class="f">Pay period</label><div class="row rvchips">' +
           PERIOD_OPTS.map(function (p) {
             return '<button class="btn small ' + (period === p[0] ? 'primary' : 'ghost') + '" data-p="' + p[0] + '">' + p[1] + '</button>';
           }).join('') + '</div>';
         if (period === 'custom') {
-          h += '<div class="row" style="margin-top:8px"><div><label class="f">From</label><input type="date" id="rv_ca" value="' + esc(S('customA', '')) + '"></div>' +
+          headHtml += '<div class="row" style="margin-top:8px"><div><label class="f">From</label><input type="date" id="rv_ca" value="' + esc(S('customA', '')) + '"></div>' +
             '<div><label class="f">To</label><input type="date" id="rv_cb" value="' + esc(S('customB', '')) + '"></div></div>';
         }
       }
-      h += '</div>';
+      headHtml += '</div>';
 
       if (view === 'month') {
-        h += '<div class="row">' +
+        headHtml += '<div class="row">' +
           '<div class="card" style="flex:1"><div class="note">Hours</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + fmtH(ms.hours) + '</div></div>' +
           '<div class="card" style="flex:1"><div class="note">Earnings</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">$' + ms.total.toFixed(2) + '</div></div>' +
           '<div class="card" style="flex:1"><div class="note">Days worked</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + ms.daysWorked + '</div></div>' +
@@ -1469,7 +1580,7 @@
           '<div class="card" style="flex:1"><div class="note">Loads</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + ms.loads + '</div></div>' +
           '</div>';
       } else {
-        h += '<div class="row">' +
+        headHtml += '<div class="row">' +
           '<div class="card" style="flex:1"><div class="note">Earnings · ' + s.days + 'd</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">$' + s.total.toFixed(2) + '</div></div>' +
           '<div class="card" style="flex:1"><div class="note">Per worked day</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">$' + s.avg.toFixed(2) + '</div></div>' +
           '<div class="card" style="flex:1"><div class="note">Loads</div><div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + s.loads + '</div></div>' +
@@ -1486,18 +1597,34 @@
          hard-returns 'office' and can never fire for them, so the card
          was an inert promise of a tracker they do not have. */
       var rvIsOffice = (App.userRole ? App.userRole() : 'driver') === 'office';
+      /* v201 REV-CLEAN: auto-start's panel — the shared settings
+         card + save, built only while its own menu button has it
+         open, and never for office users (v76 F5 stands). */
+      var asPanelHtml = '';
       if (!rvIsOffice) {
-        h += Meticulous.modules.autostart.settingsHTML('rv');
-        h += '<button class="btn primary" id="rv_as_save" style="margin-bottom:16px">Save auto-start</button>';
+        if (asOpen) {
+          asPanelHtml = Meticulous.modules.autostart.settingsHTML('rv') +
+            '<button class="btn primary" id="rv_as_save" style="margin-bottom:16px">Save auto-start</button>';
+        }
       }
+      /* v201 REV-CLEAN: the face's top strip — the two small form
+         tabs and auto-start's own menu button. The forms live on
+         their own views now (renderFormView); only their place
+         changed — same fields, same saves, same storage keys. */
+      var tabsHtml = '<div class="row" style="margin-bottom:10px;align-items:center">' +
+        '<button class="btn small ghost" data-rvtab="manual">＋ Add rev. manually</button>' +
+        '<button class="btn small ghost" data-rvtab="extras">✨ Add extras</button>' +
+        (rvIsOffice ? '' : '<button class="btn small ghost" id="rv_as_btn" style="margin-left:auto">⏰ Auto-start ' + (asOpen ? '▴' : '▾') + '</button>') +
+        '</div>';
 
+      var blockHtml = '';
       if (view === 'month') {
         /* v38 (B1): per-day breakdown, newest first — date, hours, amount.
            No travel line: the recorded hours already include travel.
            v47: rows are tappable — a tap opens the Day Details view for
            that date (renderDayDetail below); the › + "tap for details"
            is the only visual change. */
-        h += '<div class="card"><h3>🗓 Days in ' + esc(monthLabel(ym)) + '</h3>' +
+        blockHtml += '<div class="card"><h3>🗓 Days in ' + esc(monthLabel(ym)) + '</h3>' +
           (ms.days.length ? ms.days.map(function (d) {
             var dl = new Date(d.date + 'T12:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
             return '<div class="listitem" data-day="' + d.date + '" style="cursor:pointer' + (d.date === graphSel ? ';background:#eef2fa;border:1px solid var(--navy)' : '') + '"><div class="a">' + esc(dl) + ' — $' + d.amount.toFixed(2) +
@@ -1510,7 +1637,7 @@
           '<div id="rv_gprev"></div>';
 
         /* v38 (B2): paste-import from the hours sheet. */
-        h += '<div class="card"><h3>📥 Import days</h3>' +
+        blockHtml += '<div class="card"><h3>📥 Import days</h3>' +
           '<div class="note">One line per day: <b>YYYY-MM-DD,hours</b> (a header line is fine). ' +
           'Hours are used exactly as written — your sheet\'s start-to-end span already includes travel, so nothing is added. Bad lines are reported, never dropped quietly.</div>' +
           '<textarea id="rv_imp_text" rows="6" style="width:100%" placeholder="2026-10-01,10.5&#10;2026-10-02,11"></textarea>' +
@@ -1521,30 +1648,15 @@
             }).join('') + '</div>' : '') +
           '</div>';
       } else {
-        h += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas>' +
+        blockHtml += '<div class="card"><h3>📊 Daily earnings</h3><canvas class="chart" id="revChart"></canvas>' +
           '<div class="note" style="margin-top:6px">Tap a bar to preview the day — tap the same bar again to open it.</div></div>' +
           '<div id="rv_gprev"></div>';
       }
-
-      h += '<div class="card"><h3>＋ Manual entry</h3>' +
-        '<div class="row"><div><label class="f">Date</label><input type="date" id="rv_date" value="' + App._today() + '"></div>' +
-        '<div><label class="f">Amount $</label><input id="rv_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
-        '<div class="row"><div><label class="f">Type</label><select id="rv_type"><option value="load">Load</option><option value="hourly">Hourly</option><option value="trip">Trip</option><option value="weight">Weight</option></select></div>' +
-        '<div><label class="f">Loads</label><input id="rv_loads" type="number" min="1" step="1" value="1"></div></div>' +
-        '<div id="rv_tonsrow" style="display:none"><label class="f">Tonnes (net weight)</label><input id="rv_tons" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 12.18"></div>' +
-        '<label class="f">Note</label><input id="rv_note" placeholder="e.g. Gravel haul to Site 7">' +
-        '<button class="btn primary" id="rv_add">Add earnings</button></div>';
-
-      h += '<div class="card"><h3>✨ Extras</h3>' +
-        '<div class="row"><div><label class="f">Type</label><select id="rx_type"><option value="bonus">Bonus</option><option value="detention">Detention pay</option><option value="reimbursement">Reimbursement</option><option value="other">Other</option></select></div>' +
-        '<div><label class="f">Amount $</label><input id="rx_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>' +
-        '<label class="f">Date</label><input type="date" id="rx_date" value="' + App._today() + '">' +
-        '<label class="f">Note</label><input id="rx_note" placeholder="e.g. 3h wait at pit">' +
-        '<button class="btn navy" id="rx_add">Add extra</button>' +
-        '<div id="rx_list">' + (extras().length ? extras().slice().reverse().map(function (x, ri) {
-          return '<div class="listitem" data-day-link="' + esc(x.date) + '" style="cursor:pointer"><div class="a">' + esc(x.type) + ' — $' + esc(x.amount) + '</div><div class="b">' + esc(x.date) + (x.note ? ' · ' + esc(x.note) : '') + ' · tap to open the day</div>' +
-            '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rxdel="' + (extras().length - 1 - ri) + '">Delete</button></div></div>';
-        }).join('') : '<div class="empty">No extras yet.</div>') + '</div></div>';
+      /* v201 REV-CLEAN: the Manual entry and Extras FORMS no
+         longer sit on the face — they live on their own views
+         behind the top tabs (renderFormView holds them verbatim).
+         The Entries list below is the face's history: it scrolls,
+         as history may (NO-SCROLL rule, Oct 21 09:59 MDT). */
 
       /* v116: the flat list renders MONEY entries only — per day,
          the record(s) the shared builder priced (entryMoneyFlags).
@@ -1563,7 +1675,7 @@
          scrolls endlessly — show the LATEST 3, the rest behind
          one Show-more tap (and fold back with Show less). */
       var rvShown = rvShowAll ? rvRows : rvRows.slice(0, 3);
-      h += '<div class="card"><h3>📒 Entries</h3><div id="rv_list">' +
+      var tailHtml = '<div class="card"><h3>📒 Entries</h3><div id="rv_list">' +
         (rvRows.length ? rvShown.map(function (r) {
           var e = r.e;
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
@@ -1574,15 +1686,23 @@
             '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rvdel="' + r.index + '">Delete</button></div></div>';
         }).join('') : (entries().length
           ? '<div class="empty">Nothing counted right now — some days are recorded more than once. Open the day from the Month view to fix it.</div>'
-          : '<div class="empty">No entries yet. Add one above or run the tracker.</div>')) + '</div>' +
+          : '<div class="empty">No entries yet. Add one from the tab at the top or run the tracker.</div>')) + '</div>' +
         (rvRows.length > 3
           ? '<button class="btn ghost" id="rv_more" style="width:100%;margin-top:8px">' +
             (rvShowAll ? 'Show less' : 'Show more — ' + (rvRows.length - 3) + ' more entr' + (rvRows.length - 3 === 1 ? 'y' : 'ies')) + '</button>'
           : '') + '</div>';
 
-      h += '<button class="btn navy" id="rv_export" style="width:100%;margin-bottom:16px">📝 Send summary to Manifest</button>';
+      tailHtml += '<button class="btn navy" id="rv_export" style="width:100%;margin-bottom:16px">📝 Send summary to Manifest</button>';
 
-      body.innerHTML = h;
+      /* v201 REV-CLEAN assembly: tabs strip first, then the
+         auto-start panel (only while its menu is open), then the
+         CHART — the highlight, the first content card of the
+         period view — then the header card + stats, the month
+         blocks in the month view, and the Entries history last:
+         the working face up top, the scrollable history below. */
+      body.innerHTML = tabsHtml + asPanelHtml +
+        (view === 'period' ? blockHtml : '') + headHtml +
+        (view === 'month' ? blockHtml : '') + tailHtml;
       var chartEl = body.querySelector('#revChart');
       if (chartEl) {
         drawChart(chartEl);
@@ -1677,64 +1797,21 @@
       if (ca) ca.onchange = function () { W('customA', ca.value); api.render(body); };
       if (cb) cb.onchange = function () { W('customB', cb.value); api.render(body); };
 
-      /* v26: Show tonnes input when Weight type selected; auto-calc amount */
-      var rvType = body.querySelector('#rv_type');
-      var rvTonsRow = body.querySelector('#rv_tonsrow');
-      var rvTons = body.querySelector('#rv_tons');
-      var rvAmt = body.querySelector('#rv_amt');
-      function syncTonsRow() {
-        var isW = rvType.value === 'weight';
-        rvTonsRow.style.display = isW ? '' : 'none';
-        if (isW) {
-          var o = App._store.get('onboarding', {});
-          var rate = ownRate(o);
-          var tons = parseFloat(rvTons.value) || 0;
-          if (rate > 0 && tons > 0) rvAmt.value = (tons * rate).toFixed(2);
-        }
-      }
-      rvType.onchange = syncTonsRow;
-      rvTons.oninput = syncTonsRow;
-      syncTonsRow();
+      /* v201 REV-CLEAN: the top tabs open their form views; the
+         auto-start button unfolds its panel right here (the
+         panel's own save wiring sits above, where it always was —
+         it simply only has elements to bind while the panel is
+         open). The forms' own wiring lives in renderFormView. */
+      body.querySelectorAll('[data-rvtab]').forEach(function (b) {
+        b.onclick = function () { formView = b.getAttribute('data-rvtab'); api.render(body); };
+      });
+      var rvAsBtn = body.querySelector('#rv_as_btn');
+      if (rvAsBtn) rvAsBtn.onclick = function () { asOpen = !asOpen; api.render(body); };
 
-      body.querySelector('#rv_add').onclick = function () {
-        var amt = parseFloat(body.querySelector('#rv_amt').value);
-        if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
-        var entry = {
-          date: body.querySelector('#rv_date').value || App._today(),
-          amount: amt.toFixed(2),
-          type: body.querySelector('#rv_type').value,
-          loads: body.querySelector('#rv_loads').value || 1,
-          note: body.querySelector('#rv_note').value.trim()
-        };
-        if (entry.type === 'weight') {
-          entry.tons = body.querySelector('#rv_tons').value.trim() || null;
-        }
-        api.addEntry(entry);
-        manifestFeedPush('revenue', 'Manual entry: $' + amt.toFixed(2) + ' (' + entry.type + ')' +
-          (entry.tons ? ' · ' + entry.tons + 't' : ''));
-        api.render(body);
-      };
-      body.querySelector('#rx_add').onclick = function () {
-        var amt = parseFloat(body.querySelector('#rx_amt').value);
-        if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
-        var x = extras();
-        x.push({
-          type: body.querySelector('#rx_type').value,
-          amount: amt.toFixed(2),
-          date: body.querySelector('#rx_date').value || App._today(),
-          note: body.querySelector('#rx_note').value.trim()
-        });
-        W('extras', x);
-        manifestFeedPush('revenue', 'Extra (' + body.querySelector('#rx_type').value + '): $' + amt.toFixed(2));
-        api.render(body);
-      };
       /* v43: two-tap in-app delete confirm — see bindTwoTapDelete at
          module scope (moved out in v47 so Day Details reuses it). */
       bindTwoTapDelete(body, '[data-rvdel]', function (b) {
         var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
-      });
-      bindTwoTapDelete(body, '[data-rxdel]', function (b) {
-        var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
       });
       /* v75: the main Entries/Extras rows open their day's detail
          (owner: "make sure revenue entries are clickable as well").

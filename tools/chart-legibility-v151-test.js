@@ -143,11 +143,21 @@ function makeWorld() {
 /* ---------- recording fake canvas ---------- */
 function fakeCanvas(widthCss) {
   const calls = { rects: [], texts: [] };
+  /* v201: the ctx also tracks the transform stack — drawChart
+     stands its date labels up (save/translate/rotate/fillText/
+     restore), and the recorded text carries its effective anchor
+     + rotation so the geometry checks below can verify the
+     vertical label law. */
+  let tx = 0, ty = 0, rot = 0; const tstack = [];
   const ctx = {
-    fillStyle: '', font: '',
+    fillStyle: '', font: '', textAlign: '', textBaseline: '',
     clearRect: function () {},
+    save: function () { tstack.push([tx, ty, rot]); },
+    restore: function () { const s = tstack.pop(); if (s) { tx = s[0]; ty = s[1]; rot = s[2]; } },
+    translate: function (x, y) { tx += x; ty += y; },
+    rotate: function (r) { rot += r; },
     fillRect: function (x, y, w, h) { calls.rects.push({ x: x, y: y, w: w, h: h, fillStyle: this.fillStyle }); },
-    fillText: function (t, x, y) { calls.texts.push({ text: String(t), x: x, y: y, font: this.font, fillStyle: this.fillStyle }); },
+    fillText: function (t, x, y) { calls.texts.push({ text: String(t), x: tx + x, y: ty + y, rot: rot, font: this.font, fillStyle: this.fillStyle }); },
     measureText: function (t) { return { width: String(t).length * 12 }; }
   };
   return {
@@ -157,19 +167,25 @@ function fakeCanvas(widthCss) {
   };
 }
 function axisLabels(cv) {
-  return cv._calls.texts.filter(function (t) { return t.font === '20px sans-serif'; });
+  /* v201: the axis labels are the ROTATED grey texts (the $ max
+     label is navy and unrotated). */
+  return cv._calls.texts.filter(function (t) { return t.fillStyle === '#6b7690' && t.rot !== 0; });
 }
 function navyBars(cv) {
   return cv._calls.rects.filter(function (r) { return r.fillStyle === '#1F3764'; });
 }
-/* INDEPENDENT label width model: at the 20px label font (in the
-   canvas's doubled coordinates) a character is at most 12px wide;
-   two labels have "clear air" when the next starts at least 10px
-   past the previous label's end. */
-function labelsHaveAir(texts) {
-  for (let i = 1; i < texts.length; i++) {
-    const prev = texts[i - 1], cur = texts[i];
-    if (cur.x < prev.x + prev.text.length * 12 + 10) return false;
+/* INDEPENDENT label model, v201 vertical law: a standing label's
+   sideways footprint is its FONT THICKNESS (the glyph height), so
+   labels have clear air when each label's anchor clears the
+   previous anchor by at least the font size the label was drawn
+   at — and every anchor must sit inside the canvas (no clipping
+   at either card edge, the "10/:" defect). */
+function labelsHaveAir(texts, Wd) {
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
+    const fontPx = parseFloat(t.font) || 20;
+    if (t.x - fontPx / 2 < -0.5 || t.x + fontPx / 2 > Wd + 0.5) return false;
+    if (i > 0 && t.x - texts[i - 1].x < fontPx - 0.5) return false;
   }
   return true;
 }
@@ -199,12 +215,14 @@ console.log('— v151: chart label geometry (real drawChart, recording canvas) �
   w.x.drawChart(cv);
   const texts = axisLabels(cv);
   eq('days=' + days + ': bar count equals the day count', cv._calls.rects.length, days);
-  ok('days=' + days + ': labels never crowd (independent width model)', labelsHaveAir(texts),
+  ok('days=' + days + ': labels never crowd or clip (vertical model)', labelsHaveAir(texts, cv.width),
     JSON.stringify(texts.map(function (t) { return t.text + '@' + Math.round(t.x); })));
   eq('days=' + days + ': first day is labelled', texts.length && texts[0].text, dlabel(days - 1));
   eq('days=' + days + ': last day is labelled', texts.length && texts[texts.length - 1].text, dlabel(0));
-  if (days <= 7) eq('days=' + days + ': EVERY bar carries its date', texts.length, days);
-  if (days >= 16) ok('days=' + days + ': a readable spread of labels (>=6)', texts.length >= 6, 'got ' + texts.length);
+  /* v201 CHART-DATES: EVERY bar carries its date, at every count —
+     the v151 "readable spread" allowance is superseded by his
+     Oct 21 ruling (no silent skipping, ever). */
+  eq('days=' + days + ': EVERY bar carries its date', texts.length, days);
 });
 
 console.log('— v151: narrow phone width still cannot crowd —');
@@ -214,7 +232,7 @@ console.log('— v151: narrow phone width still cannot crowd —');
   const cv = fakeCanvas(320);
   w.x.drawChart(cv);
   const texts = axisLabels(cv);
-  ok('days=31 @320px: labels never crowd', labelsHaveAir(texts),
+  ok('days=31 @320px: labels never crowd', labelsHaveAir(texts, cv.width),
     JSON.stringify(texts.map(function (t) { return t.text + '@' + Math.round(t.x); })));
   eq('days=31 @320px: first + last still labelled', texts[0].text + '|' + texts[texts.length - 1].text, dlabel(30) + '|' + dlabel(0));
 }
@@ -230,15 +248,8 @@ console.log('— v151: the pure stride rule agrees with the drawing —');
       const idx = w.x.chartLabelIdx(days, 720, labels);
       eq('rule days=' + days + ': first index is 0', idx[0], 0);
       eq('rule days=' + days + ': last index is days-1', idx[idx.length - 1], days - 1);
-      /* spacing under the independent model, positions as drawChart anchors them */
-      const bw = 720 / days;
-      let air = true;
-      for (let k = 1; k < idx.length; k++) {
-        const prevX = idx[k - 1] * bw + bw * 0.15, curX = idx[k] * bw + bw * 0.15;
-        if (curX < prevX + labels[idx[k - 1]].length * 12 + 10) air = false;
-      }
-      ok('rule days=' + days + ': chosen labels have clear air', air, JSON.stringify(idx));
-      if (days <= 7) eq('rule days=' + days + ': every index chosen', idx.length, days);
+      /* v201: the rule IS "every day" — no index is ever skipped */
+      eq('rule days=' + days + ': every index chosen', idx.length, days);
     });
     /* the drawing uses exactly the rule's indices */
     setPeriod(w.mem, 16);
@@ -316,8 +327,8 @@ console.log('— v151: ship pins —');
      v155 pin move: 154 -> 155, same convention.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('ships as webVersion 188', ver.webVersion, 200);
-  ok('index loads revenue at the 199 pin', idxSrc.indexOf('modules/revenue.js?v=200') !== -1);
+  eq('ships as webVersion 188', ver.webVersion, 201);
+  ok('index loads revenue at the 199 pin', idxSrc.indexOf('modules/revenue.js?v=201') !== -1);
   ok('version.json manifest carries the touched module', typeof ver.files['modules/revenue.js'] === 'string' && ver.files['modules/revenue.js'].length === 64);
 }
 
