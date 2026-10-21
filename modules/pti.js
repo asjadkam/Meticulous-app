@@ -827,6 +827,9 @@
     if (reps.length > 400) reps = reps.slice(reps.length - 400);
     W('reports', reps);
     try { if (window.FB && FB.saveDoc) { var c = Object.assign({}, rep); FB.saveDoc('pti', rep.id, c); } } catch (e) {}
+    /* v187 (PTI-DASH): the standing dashboard banner repaints the
+       moment a PTI lands — filing is the event it was waiting for. */
+    try { if (App.paintPtiFlag) App.paintPtiFlag(); } catch (e) {}
 
     /* THE ODOMETER COMMIT — one write, three effects, all through
        the app's existing paths: App._bumpOdometer raises the
@@ -970,16 +973,32 @@
     };
   }
 
+  /* v187 (PTI-DASH, owner Oct 21, 2026 07:19 MDT — video
+     evidence: PTI filed 06:51 yet the dashboard tracker banner
+     still read "⚠ No PTI filed today" while this module's own
+     card read filed): THE filed-state source. One derivation —
+     the first PRE-trip report filed for the date — read by the
+     dashboard card (status below), by the app shell's standing
+     banner (App.ptiFiledFor delegates here), and by the tests.
+     The banner and the card can never disagree again, because
+     there is only one place that decides. */
+  function filedFor(dateStr) {
+    var reps = reports(), out = null;
+    reps.forEach(function (r) { if (r.date === dateStr && kindOf(r) === 'pre' && !out) out = r; });
+    return out;
+  }
+
   /* ---------------- the module ---------------- */
 
   var lastBody = null;
   Meticulous.modules.pti = {
+    /* the shell's banner reads the same source as the card */
+    filedFor: filedFor,
     /* v165: the dashboard card is the compliance badge — today's
        state, then what is owed: unsigned inspections and days in
        the last 14 with no pre-trip on file. */
     status: function () {
-      var t = todayStr(), reps = reports(), filed = null;
-      reps.forEach(function (r) { if (r.date === t && kindOf(r) === 'pre' && !filed) filed = r; });
+      var t = todayStr(), filed = filedFor(t);
       var base;
       if (!filed) base = 'Today: not filed yet';
       else if (filed.result === 'major') base = 'Today: 🚨 MAJOR DEFECT';
@@ -1018,6 +1037,7 @@
     _defectsOf: defectsOf,
     _kindOf: kindOf,
     _isSigned: isSigned,
+    _filedFor: filedFor,
     _dotReports: dotReports,
     _dotActive: dotActive,
     _pinHash: pinHash,

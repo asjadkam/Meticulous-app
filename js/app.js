@@ -481,6 +481,11 @@
       c.onclick = function () { App.openModule(c.getAttribute('data-mod')); };
     });
     paintNameCard(); // v147: the one-time name ask (self-hiding once settled)
+    /* v187 (PTI-DASH): the no-PTI flag rides EVERY dashboard paint
+       (showDashboard, sign-in, the cloud-sync repaint) — not only
+       trackerPaint — so it always reads the filed state the PTI
+       card beside it reads. */
+    try { paintPtiFlag(); } catch (e) {}
   }
 
   /* NAME-CARD-BEGIN — v147 (owner, Oct 17, 2026 21:31 MDT): the
@@ -2091,6 +2096,16 @@
      matters. Decision + record-keeping only; harness-
      extractable: may use `store`, `App`, `todayStr`. */
   function ptiFiledFor(dateStr) {
+    /* v187 (PTI-DASH, owner Oct 21, 2026 07:19 MDT): the PTI
+       module's filedFor is THE filed-state source — the dashboard
+       card reads it, so the banner reads it too, and the two can
+       never disagree again. The local loop below remains only as
+       the fallback for a shell paint that lands before the PTI
+       module has loaded. */
+    try {
+      var pm = window.Meticulous && Meticulous.modules && Meticulous.modules.pti;
+      if (pm && typeof pm.filedFor === 'function') return !!pm.filedFor(dateStr);
+    } catch (e) {}
     var reps = store.get('pti_reports', []);
     if (!Array.isArray(reps)) return false;
     for (var i = 0; i < reps.length; i++) {
@@ -2155,7 +2170,15 @@
   };
   App.ptiNudgeLater = function () { closePtiNudge(); };
   /* Wired + painted from trackerPaint: the flag is a door, not
-     just a warning — tapping it opens the PTI form. */
+     just a warning — tapping it opens the PTI form.
+     v187 (PTI-DASH): also painted from buildDashboard (every
+     dashboard paint, incl. the cloud-sync repaint) and directly
+     by the PTI module the moment a report is filed — the flag
+     used to repaint only inside trackerPaint, so a filed PTI
+     never cleared it until the next tracker action, while the
+     PTI card beside it (painted on dashboard paints) already
+     read filed. One source (pti.filedFor) + a repaint on every
+     surface that shows it ends the disagreement. */
   function paintPtiFlag() {
     var f = el('trkPtiFlag');
     if (!f) return;
@@ -2170,6 +2193,7 @@
       f.onclick = null;
     }
   }
+  App.paintPtiFlag = paintPtiFlag;
 
   /* v39: the prompt sheet itself (index.html #odoSheet) — mirrors the
      tracker start/end sheets. Shown from trackerToggle (manual start),
