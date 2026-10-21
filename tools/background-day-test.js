@@ -499,8 +499,8 @@ function cStatus(extra) {
       'E5 the service keeps the watchdog chain and pokes it on task removal');
     ok(boot.includes('armPending') && boot.includes('scheduleDayAlarm'),
       'E6 a reboot restores a pending arm');
-    ok(/versionCode 10/.test(gradle) && /versionName "1\.8"/.test(gradle),
-      'E7 native version bumped (code 10 / name 1.8)');
+    ok(/versionCode 11/.test(gradle) && /versionName "1\.9"/.test(gradle),
+      'E7 native version bumped (code 11 / name 1.9 — v36, Oct 21 2026)');
     const vj = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
     /* v104: webVersion moved to 104 (auto-enter Drive; native unchanged).
        v159 repair (stale test, product correct): the literal === 104
@@ -509,9 +509,12 @@ function cStatus(extra) {
        guarded held. The durable facts this suite owns: native is
        STILL 35 (this feature's ship), and webVersion never fell below
        the 104 the arm shipped at. */
-    ok(Number.isInteger(vj.webVersion) && vj.webVersion >= 104 && vj.version === 35, 'E8 version.json: web at/after 104 (the arm ship), native 35');
+    /* v36 roll-forward (Oct 21, 2026): the native generation moved
+       35 -> 36 with the v212-bridges APK; E8/E9 track the CURRENT
+       native generation, not the generation this feature shipped in. */
+    ok(Number.isInteger(vj.webVersion) && vj.webVersion >= 104 && vj.version === 36, 'E8 version.json: web at/after 104 (the arm ship), native 36');
     const appSrc2 = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
-    ok(/var APK_VERSION = 35;/.test(appSrc2), 'E9 app.js APK_VERSION = 35');
+    ok(/var APK_VERSION = 36;/.test(appSrc2), 'E9 app.js APK_VERSION = 36');
     const idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     ok(!idx.includes('?v=95') && idx.includes('?v=96'), 'E10 index.html pins moved to ?v=96 (v96 bump)');
     const lead = /var ARM_LEAD_MS = (\d+) \* 60 \* 1000/.exec(appSrc2);
