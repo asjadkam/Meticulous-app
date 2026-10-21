@@ -119,6 +119,12 @@ function makeWorld(extra) {
     h.slice(h.indexOf('Period total') - 40, h.indexOf('Period total') + 200));
   ok('the v184 one-line summary rows are gone', h.indexOf('2026-10-19 — ') === -1);
   ok('no Edit door in range mode (single-day only)', h.indexOf('mn_edit_btn') === -1);
+  /* regression (v213): the v211 refactor's first range-branch
+     replacement swallowed the settings card's From/To inputs +
+     section toggles; batch-v184 caught it a ship later. Pinned
+     here now: the range face carries its own pickers + toggles. */
+  ok('the range face still carries the From/To pickers', h.indexOf('id="mn_from"') >= 0 && h.indexOf('id="mn_to"') >= 0);
+  ok('the section toggles still paint on the range face', h.indexOf('data-tg=') >= 0 && h.indexOf('Choose what shows on your manifest') >= 0);
 
   console.log('— the printed period document —');
   w.els['#mn_dl'].onclick();
@@ -158,8 +164,8 @@ function makeWorld(extra) {
     manSrc.indexOf('function dayBodyHtml(dd, cc, tt)') >= 0 && manSrc.indexOf('dayBodyHtml(rd, rc, t)') >= 0 && manSrc.indexOf('h += dayBodyHtml(d, c, t);') >= 0);
   ok('one reducer: sumCollected + rangeTotals shared',
     manSrc.indexOf('function sumCollected(list)') >= 0 && manSrc.indexOf('rangeTotals(rangeDays)') >= 0 && manSrc.indexOf('sumCollected(rcs)') >= 0);
-  eq('webVersion is 211', ver.webVersion, 212);
-  ok('index.html pins the v211 build', idxSrc.indexOf('?v=212') >= 0 && idxSrc.indexOf('?v=' + '210') < 0);
+  eq('webVersion is 211', ver.webVersion, 213);
+  ok('index.html pins the v211 build', idxSrc.indexOf('?v=213') >= 0 && idxSrc.indexOf('?v=' + '210') < 0);
 
   console.log('\nmanifest-multiday-v211 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

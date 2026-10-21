@@ -208,7 +208,12 @@ ok('MODULE_META names the module', /pti:\s*\{\s*title: 'PTI'/.test(appSrc));
 const roleBlock = appSrc.slice(appSrc.indexOf('ROLE_MODULE_ORDER = {'), appSrc.indexOf('};', appSrc.indexOf('ROLE_MODULE_ORDER = {')));
 ok('driver face carries the PTI card', /driver: \[[^\]]*'pti'/.test(roleBlock));
 ok('both face carries the PTI card', /both: \[[^\]]*'pti'/.test(roleBlock));
-ok('office face carries NO PTI card', !/office: \[[^\]]*'pti'/.test(roleBlock));
+/* v213 (PTI-ROLE-SPLIT, owner Oct 21, 2026 14:09 MDT) supersedes
+   the v167/v162 'no PTI card on the office face' pin: the office
+   face now carries PTI as a VIEWER (drivers' reports) — the form
+   itself is role-gated inside modules/pti.js and proven absent
+   for office by tools/pti-role-split-v213-test.js. */
+ok('office face carries the PTI card as a viewer (v213)', /office: \[[^\]]*'pti'/.test(roleBlock));
 ok('MODULE_ORDER carries pti', /MODULE_ORDER = \[[^\]]*'pti'/.test(appSrc));
 ok('sidebar carries pti', appSrc.indexOf("['pti', '🔍', 'PTI']") >= 0);
 
@@ -225,7 +230,7 @@ const pnlSrc = read('modules/pnl.js');
 ok('the boss’s records block paints PTI', pnlSrc.indexOf('rec.pti') >= 0 && pnlSrc.indexOf('His PTIs') >= 0);
 ok('the boss’s PTI paint shouts majors', pnlSrc.indexOf('🚨 MAJOR DEFECT') >= 0);
 
-ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=212') >= 0);
+ok('index.html loads the module', read('index.html').indexOf('modules/pti.js?v=213') >= 0);
 ok('sharedrecords rules exist for the ride', read('firestore.rules').indexOf('match /sharedrecords/{driverId}') >= 0);
 
 console.log('pti-v162 test: ' + pass + ' passed, ' + fail + ' failed');

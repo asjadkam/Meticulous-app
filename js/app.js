@@ -339,7 +339,12 @@
        rest) are REMOVED from the office face — an office-only
        user never drives, and driver tools on his face are noise
        he has to look past. */
-    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest'],
+    /* v213 (PTI-ROLE-SPLIT, owner Oct 21, 2026 14:09 MDT): PTI
+       joins the office face as the sixth tool — as a VIEWER
+       only (the module renders the drivers'-reports surface
+       for this role; the filing form never exists for it). The
+       five working tools keep their lead order; PTI rides last. */
+    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti'],
     both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every

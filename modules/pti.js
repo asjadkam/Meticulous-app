@@ -988,6 +988,63 @@
     return out;
   }
 
+  /* v213 (PTI-ROLE-SPLIT, owner Oct 21, 2026 14:09 MDT): the
+     office-only user's PTI surface — VIEW-ONLY. One shared row
+     per report, painted from the facts the driver's shared
+     record carries (CP.sharedPti — the same facts, the same
+     painting the P&L crew block used): a MAJOR defect cannot
+     be missed. Read-only by construction — no buttons, no
+     doors, nothing to file, nothing to sign. */
+  function officePtiRowHtml(r) {
+    var isMajor = r.result === 'major';
+    var h = '<div class="kv"><span>' + esc(r.date) +
+      ' · ' + (r.kind === 'post' ? 'Post-trip' : 'Pre-trip') +
+      (r.unit ? ' · Unit ' + esc(r.unit) : '') +
+      (r.odometer ? ' · odo ' + Number(r.odometer).toLocaleString('en-CA') + ' km' : '') +
+      '</span><b>' + (isMajor
+        ? '<span style="color:#b91c1c">🚨 MAJOR DEFECT</span>'
+        : (r.result === 'minor' ? '<span style="color:#92400e">⚠ Minor defect(s)</span>' : '✓ No defects')) + '</b></div>';
+    (r.defects || []).forEach(function (df) {
+      var maj = df && df.severity === 'major';
+      h += '<div style="padding-left:14px;margin:1px 0;' + (maj ? 'color:#b91c1c;font-weight:700' : 'color:#555') + '">' +
+        (maj ? '⛔ MAJOR — ' : '⚠ Minor — ') + esc((df && df.item) || '') + (df && df.note ? ': ' + esc(df.note) : '') + '</div>';
+    });
+    h += '<div class="note" style="margin:0 0 6px">' + (r.signed ? 'Signed by ' + esc(r.driverName || 'the driver') : 'Not signed yet') + (r.location ? ' · ' + esc(r.location) : '') + '</div>';
+    return h;
+  }
+  function renderOfficePti(body) {
+    body.innerHTML =
+      '<div class="card"><h3>🔍 Drivers\' PTI reports</h3>' +
+      '<p class="note" style="margin-top:0">You don\'t fill these out — a PTI is the driver\'s own inspection. These are the reports your connected drivers filed and shared with you.</p>' +
+      '<div id="pti_office_wrap"><p class="note">Loading…</p></div></div>';
+    var wrap = null;
+    try { wrap = body.querySelector('#pti_office_wrap'); } catch (e) {}
+    if (!wrap) return;
+    if (!window.ConnectPipe || !ConnectPipe.fetchRecords) {
+      wrap.innerHTML = '<div class="empty">No PTI reports shared with you yet.</div>';
+      return;
+    }
+    ConnectPipe.fetchRecords().then(function (out) {
+      var recs = (out && out.records) || {};
+      var uids = Object.keys(recs).filter(function (u) { return recs[u] && Array.isArray(recs[u].pti) && recs[u].pti.length; });
+      if (!uids.length) {
+        wrap.innerHTML = '<div class="empty">No PTI reports shared with you yet. When a connected driver files a PTI — and PTI is ticked on your connection — it shows here.</div>';
+        return;
+      }
+      var h = '';
+      uids.forEach(function (uid) {
+        var rec = recs[uid];
+        var nm = rec.driverName || rec.driverBusiness || '';
+        if (!nm) { try { if (ConnectPipe.peerNames) nm = (ConnectPipe.peerNames(uid) || [])[0] || ''; } catch (e) {} }
+        h += '<div style="margin:10px 0 2px;font-weight:700">' + esc(nm || 'Driver') + '</div>';
+        rec.pti.forEach(function (r) { h += officePtiRowHtml(r); });
+      });
+      wrap.innerHTML = h;
+    }).catch(function () {
+      wrap.innerHTML = '<div class="empty">The reports could not be loaded — check your connection and reopen.</div>';
+    });
+  }
+
   /* ---------------- the module ---------------- */
 
   var lastBody = null;
@@ -998,6 +1055,10 @@
        state, then what is owed: unsigned inspections and days in
        the last 14 with no pre-trip on file. */
     status: function () {
+      /* v213 (PTI-ROLE-SPLIT): an office-only user's PTI card is
+         the VIEWER's line — he files nothing, so a driver
+         framing ("not filed yet") is never said to him. */
+      try { if (App.userRole && App.userRole() === 'office') return 'Your drivers\' filed inspections'; } catch (e) {}
       var t = todayStr(), filed = filedFor(t);
       var base;
       if (!filed) base = 'Today: not filed yet';
@@ -1021,6 +1082,17 @@
     },
     render: function (body) {
       lastBody = body;
+      /* v213 (PTI-ROLE-SPLIT, owner Oct 21, 2026 14:09 MDT):
+         office-only users (owners, fleet managers, office staff
+         who do NOT drive) never fill out a PTI — their surface
+         is view-only: their connected drivers' reports. The
+         branch sits above EVERY other view (form, report,
+         Inspection Mode) so no path can hand an office user the
+         filing form. Drivers and owner-drivers ('both') fall
+         through to the full module, exactly as before. */
+      var roleNow = '';
+      try { roleNow = (App.userRole && App.userRole()) || ''; } catch (e) {}
+      if (roleNow === 'office') { renderOfficePti(body); return; }
       if (view.mode === 'report' && view.id) { renderReport(body, view.id); return; }
       /* Inspection Mode outranks every other view — while it is
          active the module can only ever paint the officer's list */

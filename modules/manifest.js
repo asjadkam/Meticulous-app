@@ -1020,6 +1020,17 @@
       h += '<div class="row" style="gap:6px;margin:4px 0">' +
         '<button class="btn small ' + (mnMode === 'day' ? 'navy' : 'ghost') + '" id="mn_mode_day" style="flex:1">One day</button>' +
         '<button class="btn small ' + (mnMode === 'range' ? 'navy' : 'ghost') + '" id="mn_mode_range" style="flex:1">Date range</button></div>';
+      if (mnMode === 'range') {
+        h += '<div class="row"><div><label class="f">From</label><input type="date" id="mn_from" value="' + esc(mnFrom) + '"></div>' +
+          '<div><label class="f">To</label><input type="date" id="mn_to" value="' + esc(mnTo) + '"></div></div>' +
+          '<div class="note">The manifest covers every day from From to To — on screen and in the PDF.</div>';
+      }
+      h += '<div class="note">Choose what shows on your manifest — the app remembers your choice.</div>';
+      SECTIONS.forEach(function (s) {
+        h += '<div class="toggle"><span>' + s[1] + '</span><label class="switch"><input type="checkbox" data-tg="' + s[0] + '"' + (t[s[0]] ? ' checked' : '') + '><span class="knob"></span></label></div>';
+      });
+      h += '</div>';
+
       /* v211 (MANIFEST-MULTIDAY): ONE builder for a day's
          preview body. The single-day preview and every per-day
          block of a date-range preview are this same chain, so a
