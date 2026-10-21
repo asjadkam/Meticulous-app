@@ -142,15 +142,23 @@
     try {
       var nd = G('nav_data', null) || {};
       var lists = [nd.personal || [], nd.work || []];
+      /* v204: the exact name 'home' wins; a place whose name
+         carries 'home' as a word ("My Home", "Home" with an
+         emoji in the name) is the fallback — v190's exact-only
+         read missed such pins entirely, and a missed pin means
+         NO filtering: the at-home stops survive onto the list
+         (his Oct 21, 2026 10:09 screenshot still showed them). */
+      var exact = null, wordy = null;
       for (var i = 0; i < lists.length; i++) {
         for (var j = 0; j < lists[i].length; j++) {
           var p = lists[i][j];
-          if (p && String(p.name || '').trim().toLowerCase() === 'home' &&
-              isFinite(parseFloat(p.lat)) && isFinite(parseFloat(p.lng))) {
-            return { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
-          }
+          if (!p || !isFinite(parseFloat(p.lat)) || !isFinite(parseFloat(p.lng))) continue;
+          var nm = String(p.name || '').trim().toLowerCase();
+          if (nm === 'home' && !exact) exact = { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
+          else if (!wordy && nm.split(/[^a-z0-9]+/).indexOf('home') >= 0) wordy = { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
         }
       }
+      return exact || wordy;
     } catch (e) {}
     return null;
   }
@@ -160,6 +168,49 @@
       return !(isFinite(s.lat) && isFinite(s.lng)) ||
         trailDistM(s.lat, s.lng, home.lat, home.lng) > 250;
     });
+  }
+
+  /* v204 (MANIFEST-NAMES, owner, Oct 21, 2026 10:09 MDT — the
+     same screenshot: "Stop — 51.15710, -113.93860"): a stop at a
+     place the app KNOWS shows that place's NAME, not raw
+     coordinates. Candidates — the nearest within 250 m wins:
+     his saved places (nav_data personal + work), the built-in
+     pits (the Navigation module's list), and the dump sites of
+     learned load<->dump pairs (geoload_pairs) that carry a
+     label. A place the app has never seen resolves to '' and
+     the renderers keep the coordinates (honest) — and a worked
+     place stops being unseen: the day's own machinery learns
+     its sites as pairs (v203), and a named save is one tap in
+     the Navigator. Screen list and PDF both render collect's
+     routeStops labels, so one resolution serves both. */
+  function placeNameFor(lat, lng) {
+    if (!isFinite(lat) || !isFinite(lng)) return '';
+    var best = '', bestD = 250;
+    function consider(name, la, lo) {
+      if (!name || !isFinite(la) || !isFinite(lo)) return;
+      var d = trailDistM(lat, lng, la, lo);
+      if (d <= bestD) { bestD = d; best = String(name); }
+    }
+    try {
+      var nd = G('nav_data', null) || {};
+      [nd.personal || [], nd.work || []].forEach(function (list) {
+        list.forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
+      });
+    } catch (e) {}
+    try {
+      var nav = window.Meticulous && Meticulous.modules && Meticulous.modules.navigation;
+      if (nav && typeof nav.builtinPlaces === 'function') {
+        nav.builtinPlaces().forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
+      }
+    } catch (e) {}
+    try {
+      var pairs = (G('geoload_pairs', {}) || {}).pairs || {};
+      Object.keys(pairs).forEach(function (k) {
+        var pr = pairs[k];
+        if (pr && pr.dump) consider(pr.dump.label, parseFloat(pr.dump.lat), parseFloat(pr.dump.lng));
+      });
+    } catch (e) {}
+    return best;
   }
 
   /* v87: ONE Odometer line for the day (owner, Oct 15: there were
@@ -592,6 +643,10 @@
             }
           });
         }
+        /* v204: a stop at a known place takes the place's name —
+           the day's own sites (above) speak first, then the saved
+           / built-in / learned places, then the navigation log. */
+        if (!label) label = placeNameFor(s.lat, s.lng);
         if (!label) {
           for (var ni = 0; ni < navLog.length; ni++) {
             var nt = stampMs(navLog[ni].at);
@@ -853,6 +908,7 @@
     _docLines: docLines,
     _trailStops: trailStops,
     _dropHomeStops: dropHomeStops, /* v190: the home-stop filter, exported for the suite */
+    _placeNameFor: placeNameFor, /* v204: the stop-name resolver, exported for the suite */
     _applyDayEdit: applyDayEdit, /* v191: the manifest-edit layer, exported for the suite */
     _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is

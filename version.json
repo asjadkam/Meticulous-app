@@ -1,8 +1,8 @@
 {
   "version": 35,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v35.apk",
-  "webVersion": 203,
-  "notes": "v203: LOADS-GPS-FIX (owner, Oct 21, 2026 10:09 MDT) — the GPS load counter no longer goes blind on a message dispatch. It needed a load-site anchor (pin, unique place name, or remembered pair) before ANY learning could start; a boss's text dispatch carries none, so the day recorded zero while the truck ran clean pit-dump cycles and the driver tapped 13 loads by hand. A pattern learner now reads the pair out of the day's own dwell clusters: home never anchors, first work place = load site, second place 300m+ away = dump, teaching cycle credited, pair remembered; a third place before the cycle closes contests and retracts it all.",
+  "webVersion": 204,
+  "notes": "v204: MANIFEST-NAMES (owner, Oct 21, 2026 10:09 MDT) — 'Where the truck went' stops now show NAMES, not raw coordinates: collect() resolves each unlabeled stop against the nearest known place within 250 m (saved places, built-in pits, labelled dump sites of learned pairs) before falling back to the navigation log; only a never-seen place keeps coordinates, and screen list + PDF share the labels. Home filter verified against his exact screenshot stops (both ~2 m from the pin — dropped when the pin resolves); homePin's one in-code miss fixed: v190 matched only the exact name 'home', so a pin named e.g. 'My Home' or with an emoji read as no pin and nothing was filtered — exact name still wins, a name carrying 'home' as a word is the fallback.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
