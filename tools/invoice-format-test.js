@@ -221,10 +221,15 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
      g('pf_billrate')/g('pf_wagerate') line — Preferences renders
      rate fields per role and writes only the ones it rendered
      (guarded reads), and the universal g('pf_rate') write is
-     gone. The fields still exist (owner-operator face). */
-  ok('rates: billing + wage rate fields exist and save (v137: guarded per-role writes, no universal rate field)',
-    prefSrc.indexOf('id="pf_billrate"') !== -1 && prefSrc.indexOf('id="pf_wagerate"') !== -1 &&
-    prefSrc.indexOf("if (pfBrEl) o.billingRate = pfBrEl.value.trim();") !== -1 &&
+     gone. The fields still exist (owner-operator face).
+     PAY-CARD-ROLE pin move (owner, Oct 21, 2026 15:29 MDT): the
+     billing field and its writer are GONE from Preferences —
+     billing rates live on the job; the stored billingRate is
+     never written here, so it survives as the pricing fallback.
+     The wage field + its guarded write are what remain. */
+  ok('rates: wage field exists and saves; NO billing field or writer anywhere in Preferences (PAY-CARD-ROLE)',
+    prefSrc.indexOf('id="pf_billrate"') === -1 && prefSrc.indexOf('id="pf_wagerate"') !== -1 &&
+    prefSrc.indexOf('o.billingRate =') === -1 &&
     prefSrc.indexOf("if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();") !== -1 &&
     prefSrc.indexOf('id="pf_rate"') === -1 && prefSrc.indexOf("g('pf_rate')") === -1);
 

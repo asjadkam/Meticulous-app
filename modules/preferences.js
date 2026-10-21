@@ -179,7 +179,23 @@
          ownWageRate || payRate; billing uses billingRate ||
          ownWageRate || payRate) — Preferences no longer writes it,
          so every computed number for an existing setup is
-         unchanged. */
+         unchanged.
+         PAY-CARD-ROLE (owner, Oct 21, 2026 15:29 MDT — over this
+         card on his own screen: "I thought I told you we don't
+         have driver pay/owner pay... Owner revenue is based on
+         the job!?"): the "Client billing rate" field is OFF this
+         card on EVERY face — the v149 office door and the v105
+         owner-operator field both close. There is no driver-pay /
+         owner-pay split to set here: each driver's wage is his
+         own (the one wage field below, on the faces that drive),
+         and owner revenue prices at the JOB's rate (the Dispatch
+         record's jobRate, v173 — a customer's last rate is their
+         remembered default). The stored onboarding.billingRate is
+         NOT deleted and NOT written here anymore: it survives as
+         the company fallback default, read by the pricing paths
+         (ConnectPipe.pricingFor, the completion settings) wherever
+         a job carries no rate of its own — so every existing
+         user's numbers price exactly as before. */
       var pfOfficeFace = (effRole === 'office' || o.accountType === 'Fleet Manager');
       var pfOO = (!pfOfficeFace && o.accountType === 'Owner-Operator');
       h += '<div class="card"><h3>💵 Pay</h3>' +
@@ -188,34 +204,28 @@
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
         '<p class="note">Fixed daily bonus added to foreman ticket hours — for example 1 h, some drivers 1.5 h.</p>';
       if (pfOO) {
-        /* v105: the two-books rates for an owner-operator whose
-           card posts BOTH sides of his own P&L — v137 framing:
-           shown only to an owner-operator, as HIS two rates. */
-        h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="Blank = your wage rate">' +
-          '<label class="f">Driver wage rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
-          '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × billing rate (customers never pay the travel hour), and driver pay = foreman + travel × your wage rate. Leave the billing rate blank to bill at your wage rate.</p>';
+        /* v105's two fields become ONE (PAY-CARD-ROLE, Oct 21,
+           2026): an owner-operator's wage is his OWN wage — the
+           same one every driver sets for himself — so the field is
+           labelled as his, and the billing side leaves this card
+           entirely: revenue prices at the job's rate, set on the
+           dispatch itself. */
+        h += '<label class="f">Your wage rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
+          '<p class="note">If you own the truck AND drive it, a closed haul card posts both sides of your books: revenue = foreman hours × the job\u2019s billing rate (set on the dispatch — a customer\u2019s last rate is remembered for their next job; customers never pay the travel hour), and your pay = foreman + travel × your wage rate here. A job with no rate of its own prices at the company rate already on file, which stays as the fallback.</p>';
       } else if (!pfOfficeFace) {
         h += '<label class="f">Your pay rate ($/hour)</label><input id="pf_wagerate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.ownWageRate || o.payRate || '') + '">' +
           '<p class="note">Your own rate — your pay stubs, invoices and day earnings are figured at it. Every driver sets his own here; it reaches his boss\u2019s books by itself — a boss never sets a driver\u2019s wage.</p>';
-      } else {
-        /* v149 (owner, Oct 17 21:43 MDT — over the payer's own
-           evening): the office/boss face rendered NO rate fields
-           (v137: personal wage rates don't belong on a boss's
-           face — that stands, and no wage field joins this card),
-           but the CLIENT BILLING RATE is a company setting, not a
-           personal rate, and this field is the only Preferences
-           writer of the onboarding.billingRate that
-           ConnectPipe.pricingFor reads. The payer's Crew card
-           told him "set your client rate in Preferences" while
-           his face had no such field — an office-only owner could
-           never set the rate, so his crew revenue could never
-           price. The door now renders on the payer faces too
-           (office role, Fleet Manager, owner-operator of any
-           role), framed as the company's rate. It writes through
-           the same guarded Save line as the owner-operator's. */
-        h += '<label class="f">Client billing rate ($/foreman hour)</label><input id="pf_billrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.billingRate || '') + '" placeholder="e.g. 52">' +
-          '<p class="note">Your company\u2019s rate — what you bill your customer for each foreman hour a connected driver works. It prices the revenue on your crew board and in P&L. Each driver sets his own wage in his own app — his wage shows under Drivers\u2019 wages below, never set on this side.</p>';
       }
+      /* The office face renders NO rate fields (PAY-CARD-ROLE,
+         Oct 21, 2026 — supersedes the v149 door): no personal wage
+         (v137 stands — an office user's wage is not a thing), and
+         no client billing rate either: billing rates live on the
+         job/customer side now (Dispatch job rates; a customer's
+         last rate is their remembered default), and the company
+         rate already on file keeps pricing crew revenue as the
+         fallback through ConnectPipe.pricingFor — it is stored
+         data, no longer a field on this card. Each driver's wage
+         still shows read-only under Drivers' wages below. */
       h += '</div>';
 
       /* v167 (owner, Oct 18, 2026 21:17 + 21:50 MDT): each
@@ -301,7 +311,18 @@
 
       /* v31: photo retake buttons — same OCR as onboarding. Lets the user update
          the odometer baseline (e.g. new truck / rolled over) or the safety
-         sticker (renewed) without redoing onboarding. */
+         sticker (renewed) without redoing onboarding.
+         PREFS-ROLE-SPLIT (owner, Oct 21, 2026 15:30 MDT — over the
+         Dave Cooper office account's Preferences: "This suppose to
+         be only a driver setting"): the WHOLE Truck card is a
+         DRIVER setting — it renders only for users who drive
+         (driver + both), gated on the same drives-answer that
+         gates the tracker and PTI. An office-only account never
+         renders it. This supersedes the v76 carve-out below, which
+         kept truck number/type and the safety sticker on the
+         office face; the Save handler now guards those writes the
+         same v76 way, so an office save keeps whatever is stored. */
+      if (effRole !== 'office') {
       h += '<div class="card"><h3>🚛 Truck</h3>' +
         '<label class="f">Truck number</label><input id="pf_tnum" value="' + esc(o.truckNo || '') + '">' +
         '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">';
@@ -309,8 +330,9 @@
          the Daily-odometer-photos tracker toggle are DRIVER tools —
          hidden for office-only users (a man who never starts a tracker
          should not be asked for photos of an odometer he doesn't sit
-         in front of). Truck number/type and the safety sticker stay:
-         an office manages the fleet's trucks and inspections. */
+         in front of). [The whole card is office-gated now — see the
+         PREFS-ROLE-SPLIT note above; this inner gate is the
+         original F6 line and stays as the record.] */
       if (effRole !== 'office') {
         h += '<label class="f">Odometer (km)</label>' +
         '<div style="display:flex;gap:8px;margin:6px 0;">' +
@@ -360,6 +382,7 @@
           return '<option value="' + x[0] + '"' + (econU === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
         }).join('') + '</select>' +
         '<p class="note">How fuel economy is printed in Fuel and Maintenance.</p></div>';
+      } /* PREFS-ROLE-SPLIT: the Truck card closes here — office-only accounts never rendered it (see the gate above). */
 
       /* v77 (Navigator): the truck profile every truck route is costed
          with — dimensions and weights the routing engine checks against
@@ -511,23 +534,28 @@
         /* v137: only the rate fields this role's face rendered are
            written. o.payRate is NOT written here anymore — the
            setup-time value stays as the legacy fallback inside
-           every rate chain. v149: an office face renders the
-           company billing rate (only), so its Save writes
-           billingRate through this same guarded line. */
-        var pfBrEl = body.querySelector('#pf_billrate'); if (pfBrEl) o.billingRate = pfBrEl.value.trim();
+           every rate chain. PAY-CARD-ROLE (Oct 21, 2026): NO face
+           renders a billing-rate field anymore, so billingRate is
+           not written here at all — the stored value survives
+           every Save untouched, as the company fallback default
+           the pricing paths read (see the Pay card note). */
         var pfWgEl = body.querySelector('#pf_wagerate'); if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont'); o.contractingAddr = g('pf_contaddr');
         o.nextInvoiceNo = g('pf_nextinv');
         o.rateIncludesTax = body.querySelector('#pf_taxincl').checked;
         o.invoiceTaxRate = g('pf_invtax') || '5';
-        o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype');
+        /* PREFS-ROLE-SPLIT (Oct 21, 2026): office renders have no
+           Truck card at all — keep whatever is stored, never reach
+           for missing inputs (the v76 guard pattern, widened to
+           the whole card). */
+        if (body.querySelector('#pf_tnum')) { o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype'); }
         /* v76 (F6): office renders have no odometer field/toggle —
            keep whatever is stored, never reach for missing inputs. */
         if (body.querySelector('#pf_odo')) o.odometerBaseline = g('pf_odo');
         /* v118: an untouched safety field never stomps a newer
            stored annualDate (see pfSafetyWinner above). */
-        o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));
+        if (body.querySelector('#pf_safety')) o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));
         var odoTglSave = body.querySelector('#pf_odo_photos');
         o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
         /* v80: the master odometer moves through the SUPERVISED

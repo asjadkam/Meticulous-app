@@ -287,8 +287,12 @@ function fireChange(el) {
     await flush();
 
     eq('a: the change still persists the moment it lands (v149)', w.store.get('onboarding', {}).accountType, 'Owner-Operator');
-    has('a: THE SAME PAGE now carries the billing field', body.innerHTML, 'id="pf_billrate"');
-    has('a: ...and the two-books wage label', body.innerHTML, 'Driver wage rate ($/hour)</label>');
+    /* PAY-CARD-ROLE pin move (owner, Oct 21, 2026 15:29 MDT):
+       the repainted OO face gains NO billing field — the global
+       field is off every face now; what the repaint gains is the
+       owner-operator's own-wage label. */
+    hasnt('a: THE SAME PAGE still carries NO billing field (PAY-CARD-ROLE)', body.innerHTML, 'id="pf_billrate"');
+    has('a: ...and the two-books wage label', body.innerHTML, 'Your wage rate ($/hour)</label>');
     hasnt('a: ...and the driver-only label is gone', body.innerHTML, 'Your pay rate ($/hour)</label>');
     eq('a: his unsaved typing survived the repaint', body.querySelector('#pf_cname').value, 'Typed Haul Co');
 
@@ -324,7 +328,13 @@ function fireChange(el) {
     hasnt('b: THE SAME PAGE drops the park card', body.innerHTML, 'Where I park');
     hasnt('b: ...drops the odometer tools', body.innerHTML, 'id="pf_odo"');
     hasnt('b: ...drops the personal wage field', body.innerHTML, 'id="pf_wagerate"');
-    has('b: ...and gains the office billing door', body.innerHTML, 'id="pf_billrate"');
+    /* PAY-CARD-ROLE + PREFS-ROLE-SPLIT pin moves (owner, Oct 21,
+       2026 15:29/15:30 MDT): the repainted office face gains NO
+       billing door (the field is off every face), and it drops
+       the WHOLE Truck card — truck settings are driver-only. */
+    hasnt('b: ...and gains NO billing door (PAY-CARD-ROLE)', body.innerHTML, 'id="pf_billrate"');
+    hasnt('b: ...drops the whole Truck card (PREFS-ROLE-SPLIT)', body.innerHTML, '🚛 Truck');
+    hasnt('b: ...drops the truck number field', body.innerHTML, 'id="pf_tnum"');
     has('b: the role note reads as a fresh entry would paint it', body.innerHTML, 'Your answer now: <b>No — office only</b>');
 
     const fresh = renderPrefs(w);

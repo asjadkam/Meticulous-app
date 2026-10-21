@@ -312,7 +312,13 @@ ok('B2 the legs row is deleted from the face',
 }
 
 /* ============ D. Preferences label ============ */
-ok('D1 the Pay card reads Driver wage rate', prefSrc.indexOf('Driver wage rate ($/hour)') !== -1);
+/* PAY-CARD-ROLE pin move (owner, Oct 21, 2026 15:29 MDT): the
+   v163 "Driver wage rate" label is superseded — on the
+   owner-operator's own card it read as a rate set FOR a driver
+   (the abolished driver-pay/owner-pay split). The field is the
+   user's OWN wage and is labelled so. */
+ok('D1 the Pay card reads Your wage rate (PAY-CARD-ROLE supersedes the v163 label)', prefSrc.indexOf('Your wage rate ($/hour)') !== -1);
+ok('D1 the v163 Driver wage rate label is gone', prefSrc.indexOf('Driver wage rate ($/hour)') === -1);
 ok('D1 the old My wage rate label is gone', prefSrc.indexOf('My wage rate') === -1);
 
 console.log('\nqueue-v163 test: ' + pass + ' passed, ' + fail + ' failed');

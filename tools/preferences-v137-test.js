@@ -183,14 +183,21 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
   const body = makeBody();
   w.sb.Meticulous.modules.preferences.render(body);
   const html = body.innerHTML;
-  has('OO face: the billing rate field renders', html, 'id="pf_billrate"');
+  /* PAY-CARD-ROLE pin move (owner, Oct 21, 2026 15:29 MDT —
+     "I thought I told you we don't have driver pay/owner pay...
+     Owner revenue is based on the job!?"): the global client
+     billing field is OFF every Preferences face; billing rates
+     live on the job (Dispatch job rates), and the stored global
+     value survives as the fallback default. The v137/v163
+     billing pins below are superseded by that ruling. */
+  hasnt('OO face: NO billing rate field (PAY-CARD-ROLE — rates live on the job)', html, 'id="pf_billrate"');
   has('OO face: the wage rate field renders', html, 'id="pf_wagerate"');
   hasnt('OO face: NO universal Rate field (pf_rate is gone)', html, 'id="pf_rate"');
   hasnt('OO face: no "Same as rate" placeholder anywhere', html, 'Same as rate');
-  has('OO face: labels carry no "— owner-operators" tail', html, 'Client billing rate ($/foreman hour)</label>');
-  has('OO face: wage label is "Driver wage rate" (v163 rename, owner Oct 18 18:10)', html, 'Driver wage rate ($/hour)</label>');
+  hasnt('OO face: no client billing label anywhere', html, 'Client billing rate');
+  has('OO face: wage label is "Your wage rate" (PAY-CARD-ROLE — it is his OWN wage; supersedes the v163 "Driver wage rate" rename)', html, 'Your wage rate ($/hour)</label>');
   ok(/id="pf_wagerate"[^>]*value="29"/.test(html), 'OO face: the wage field SHOWS his effective $29 (from the setup rate), not a blank');
-  has('OO face: billing placeholder speaks the chain', html, 'placeholder="Blank = your wage rate"');
+  hasnt('OO face: no billing placeholder (the chain note left with the field)', html, 'Blank = your wage rate');
   has('travel note is the generic rewrite (mandated wording)', html,
     'Fixed daily bonus added to foreman ticket hours — for example 1 h, some drivers 1.5 h.');
   hasnt('rendered page contains NO owner name', html, 'Asjad');
@@ -223,8 +230,12 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
      not a personal rate, and its absence left an office-only
      owner unable to set the very rate his Crew card told him to
      set in Preferences. The v137 rule that survives intact is the
-     personal one: no wage/pay rate field on this face. */
-  has('boss face: the company billing rate field renders (v149)', html, 'id="pf_billrate"');
+     personal one: no wage/pay rate field on this face.
+     PAY-CARD-ROLE SUPERSESSION (owner, Oct 21, 2026 15:29 MDT):
+     the billing field came off EVERY face, this one included —
+     rates live on the job now, and the stored company value
+     survives as data (the pricing fallback), not as a field. */
+  hasnt('boss face: NO billing rate field (PAY-CARD-ROLE supersedes the v149 door)', html, 'id="pf_billrate"');
   hasnt('boss face: NO wage/pay rate field', html, 'id="pf_wagerate"');
   hasnt('boss face: NO universal rate field', html, 'id="pf_rate"');
   has('boss face: the Pay card itself remains', html, 'id="pf_std"');
@@ -240,42 +251,49 @@ console.log('— 1. Preferences renders rates as the user\'s OWN money identity,
   const html = body.innerHTML;
   hasnt('FM/drives face: NO personal rate fields', html, 'id="pf_wagerate"');
   /* v149 pin move, same catch as the boss face above: the company
-     billing rate renders on payer faces; personal rates stay off. */
-  has('FM/drives face: the company billing rate field renders (v149)', html, 'id="pf_billrate"');
+     billing rate renders on payer faces; personal rates stay off.
+     PAY-CARD-ROLE SUPERSESSION (Oct 21, 2026): off every face —
+     see the boss face note. */
+  hasnt('FM/drives face: NO billing rate field (PAY-CARD-ROLE supersedes v149)', html, 'id="pf_billrate"');
 }
 
 /* ================= 2. Save: guarded writes, setup rate untouched ================= */
 console.log('— 2. Save writes only the rendered rate fields; the setup rate is never stomped —');
 {
-  const w = prefsWorld({ accountType: 'Owner-Operator', userRole: 'driver', payStandard: 'Hourly', payRate: '29', billingRate: '', ownWageRate: '', travelBonus: '1', truckNo: '07' }, 'driver');
+  const w = prefsWorld({ accountType: 'Owner-Operator', userRole: 'driver', payStandard: 'Hourly', payRate: '29', billingRate: '93', ownWageRate: '', travelBonus: '1', truckNo: '07' }, 'driver');
   const body = makeBody();
   w.sb.Meticulous.modules.preferences.render(body);
   /* the face a save sees: wage field shows 29 (seeded from the
-     setup rate); he now splits his wage to 31, billing stays blank */
+     setup rate); he now splits his wage to 31. PAY-CARD-ROLE:
+     there is no billing field on the face at all anymore. */
   body.querySelector('#pf_wagerate').value = '31';
-  body.querySelector('#pf_billrate').value = '';
   body.querySelector('#pf_save').click();
   const saved = w.store.get('onboarding', {});
   eq(saved.ownWageRate, '31', 'save: the wage field writes ownWageRate');
-  eq(saved.billingRate, '', 'save: the blank billing field writes blank (chain falls back to the wage rate)');
+  eq(saved.billingRate, '93', 'save: the stored company billing rate SURVIVES untouched — no field renders it, no Save writes it; it lives on as the pricing fallback (PAY-CARD-ROLE migration)');
   eq(saved.payRate, '29', 'save: the setup rate payRate is NOT written by Preferences anymore — it survives as the legacy fallback');
   eq(saved.travelBonus, '1', 'save: travel bonus still saves');
 }
 {
-  /* The boss saves Preferences with NO PERSONAL rate fields
-     rendered: the handler must not throw and must not invent or
-     erase personal rates. (v149: the company billing field DOES
-     render on this face and writes billingRate — empty here, so
-     the stored shape below is unchanged.) */
-  const w = prefsWorld({ accountType: 'Fleet Manager', userRole: 'office', payStandard: 'Hourly', payRate: '40', ownWageRate: '38' }, 'office');
+  /* The boss saves Preferences with NO rate fields rendered at
+     all: the handler must not throw and must not invent or erase
+     stored rates. (v149 once rendered the company billing field
+     on this face; PAY-CARD-ROLE, Oct 21, 2026, took it off every
+     face — the stored value below must survive as the pricing
+     fallback, and the office-gated Truck card must not make the
+     save reach for inputs that were never rendered.) */
+  const w = prefsWorld({ accountType: 'Fleet Manager', userRole: 'office', payStandard: 'Hourly', payRate: '40', ownWageRate: '38', billingRate: '85', truckNo: '12', safetyExpiry: '2027-05-31' }, 'office');
   const body = makeBody();
   w.sb.Meticulous.modules.preferences.render(body);
   let threw = null;
   try { body.querySelector('#pf_save').click(); } catch (e) { threw = e; }
-  eq(threw, null, 'boss save: no throw with no personal rate fields rendered');
+  eq(threw, null, 'boss save: no throw with no rate fields and no Truck card rendered');
   const saved = w.store.get('onboarding', {});
   eq(saved.payRate, '40', 'boss save: stored setup rate untouched');
   eq(saved.ownWageRate, '38', 'boss save: stored wage rate untouched (nothing rendered, nothing written)');
+  eq(saved.billingRate, '85', 'boss save: stored company billing rate untouched — it survives as fallback data (PAY-CARD-ROLE)');
+  eq(saved.truckNo, '12', 'boss save: stored truck number untouched (Truck card is driver-only now — PREFS-ROLE-SPLIT)');
+  eq(saved.safetyExpiry, '2027-05-31', 'boss save: stored safety expiry untouched (same gate)');
 }
 
 /* ================= 3. Plumbing out of the face ================= */
@@ -460,11 +478,20 @@ console.log('— 6. Money pins: Oct 1–15 = 124.5 h × $29 at the wage chain, b
     eq(bad.length, 0, f + ': every payRate read rides the ownWageRate chain (no universal-rate reader left)');
   });
   has('the ONE remaining payRate writer is the setup flow itself (by design)', appSrc, "if (g('ob_rate')) o.payRate = g('ob_rate');");
-  /* Billing chain: billing || wage || setup, in both readers. */
+  /* Billing chain: billing || wage || setup, in both readers.
+     PNL-REVENUE-RATE SUPERSESSION (owner, Oct 21, 2026 15:33
+     MDT): the Connect pipe's client rate lost its wage middle —
+     a wage value must never price revenue, so pricingFor reads
+     the stored company rate ALONE (the fallback behind the
+     job's own rate). The dispatch completion chain is untouched
+     by that ruling (the v52 plan routes by role; jobRate wins
+     inside it) and keeps its v137 shape. */
   has('dispatch completion: billing chain carries the wage middle', read('modules/dispatch.js'),
     'parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate)');
-  has('connect pipe: client rate carries the wage middle', read('js/connectpipe.js'),
-    'parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate)');
+  has('connect pipe: client rate is the stored company rate ALONE (PNL-REVENUE-RATE — no wage fallback prices revenue)', read('js/connectpipe.js'),
+    'out.clientRate = parseFloat(o.billingRate) || 0;');
+  hasnt('connect pipe: the wage-middle client chain is GONE', read('js/connectpipe.js'),
+    'out.clientRate = parseFloat(o.billingRate) || parseFloat(o.ownWageRate)');
   /* Crew rates lived in P&L until v198 (PNL-CLEAN-2, owner
      Oct 20 19:53 reaffirmed Oct 21 09:17): the per-driver
      pay-rate surface is OFF the P&L face — P&L is the Monthly

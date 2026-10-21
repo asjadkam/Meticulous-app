@@ -1191,7 +1191,7 @@
       (!pricing.wage
         ? '<div class="b" style="margin-top:4px">His pay is not priced yet — his wage is set by him, on his own side; his days price here once it crosses.</div>'
         : '') +
-      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — set your client rate in Preferences (the Pay card).</div>');
+      (pricing.clientRate > 0 ? '' : '<div class="b" style="margin-top:4px">Revenue is not priced yet — no client rate is set for your company.</div>');
     /* v146: a one-line strip from his shared RECORDS (fuel /
        maintenance / latest invoice billed to you) — the full
        read-only detail lives on the P&L crew card */

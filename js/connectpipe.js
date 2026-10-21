@@ -790,9 +790,16 @@
   };
 
   /* My prices for one driver's shared facts — read from MY OWN
-     books only: my client rate (my billingRate; v137 chain: my
-     wage rate, then the setup rate, as its standing fallbacks)
-     and the driver's wage. v163 SUPERSEDES the v132 wage source
+     books only: my client rate (my stored billingRate — the
+     company rate on file, kept as the fallback default behind
+     the job's own rate, v173) and the driver's wage. The v137
+     chain's wage fallbacks (ownWageRate, then payRate) came OUT
+     of the client rate (PNL-REVENUE-RATE, owner Oct 21, 2026
+     15:33 MDT: "This revenue is not 93 x by my hours" — his
+     analysis priced revenue at his WAGE because the chain fell
+     back to it): a wage value never prices revenue, so with no
+     company rate on file the crew revenue leg is honestly
+     unpriced instead of wage-priced. v163 SUPERSEDES the v132 wage source
      for connected drivers (the settled Oct 18 design above):
      the wage is the DRIVER'S OWN, received via Connect (his
      records doc's driverWage, cached locally by the P&L crew
@@ -809,7 +816,7 @@
     var out = { clientRate: 0, wage: null, entryId: '', wageSource: '' };
     if (!st) return out;
     var o = st.get('onboarding', {}) || {};
-    out.clientRate = parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    out.clientRate = parseFloat(o.billingRate) || 0;
     var peer = null;
     try { peer = (st.get('__peer_wages', {}) || {})[driverUid] || null; } catch (e) { peer = null; }
     if (peer && parseFloat(peer.rate) > 0) {

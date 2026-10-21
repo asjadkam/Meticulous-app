@@ -630,8 +630,9 @@
      days (his Oct 18 self-test: records crossed, the P&L did
      not follow). Derived exactly like the wages — the same
      cached shared days, the pipe's own pricer (priceDay), at
-     THIS side's client rate (pricingFor: the job's rate on the
-     owner side; travel billed only when the ticket says the
+     THIS side's client rate (pricingFor: this side's stored
+     company rate — the fallback default behind the job's own
+     rate; travel billed only when the ticket says the
      customer agreed) — and under the same Limited gate. An
      account with no crew prices $0 and is byte-identical. */
   function crewRevenueFor(m) {
@@ -810,6 +811,72 @@
         incomeByType[t] = (incomeByType[t] || 0) + a;
       });
       income += extras;
+    }
+
+    /* PNL-REVENUE-RATE (owner, Oct 21, 2026 15:33 MDT — over his
+       own October Monthly analysis: "This revenue is not 93 x by
+       my hours"): the builder's lines price OWN days at the wage
+       chain — those lines are the day's PAID totals, which is
+       exactly what the salaries leg below must read, and exactly
+       what REVENUE must never read. On this owner-side book the
+       revenue leg prices each day's hours at the CLIENT rate:
+       the job's own rate first (the day's dispatch record,
+       v173), the stored company rate second (onboarding.
+       billingRate — the migrated Preferences value, kept as the
+       fallback default). A day with no client rate anywhere
+       keeps its builder amount, so a book with no client rate on
+       file is byte-identical; non-hourly standards keep the
+       builder's pricing (their quantities are not hours). The
+       salaries leg further down still sums the SAME builder
+       lines at the wage chain — the two legs read different
+       rate sources by construction. */
+    if (grouped && std === 'hourly') {
+      var clientGlobal = parseFloat(o.billingRate) || 0;
+      var jobRateByDate = {};
+      try {
+        var dspRecs = (App._store.get('dsp_list', []) || []).slice();
+        var dspAct = App._store.get('dsp_active', null);
+        if (dspAct) dspRecs.push(dspAct);
+        dspRecs.forEach(function (rec) {
+          var jr = parseFloat(rec && rec.jobRate) || 0;
+          if (!(jr > 0)) return;
+          var rd = '';
+          var sa = rec && rec.scheduledAt;
+          if (typeof sa === 'string') { var mm = /^(\d{4}-\d{2}-\d{2})/.exec(sa); if (mm) rd = mm[1]; }
+          if (!rd && rec && typeof rec.date === 'string') rd = rec.date;
+          if (rd && inMonth(rd, m) && jr > (jobRateByDate[rd] || 0)) jobRateByDate[rd] = jr;
+        });
+      } catch (e) { jobRateByDate = {}; }
+      var revDelta = 0;
+      grouped.lines.forEach(function (l) {
+        if (!l || l.src === 'extra') return;
+        var rr = jobRateByDate[l.date] || clientGlobal;
+        if (rr > 0) {
+          var na = Math.round(((parseFloat(grouped.dayHours[l.date]) || 0) * rr) * 100) / 100;
+          revDelta += na - (parseFloat(l.amt) || 0);
+        }
+      });
+      revDelta = Math.round(revDelta * 100) / 100;
+      if (revDelta !== 0) {
+        income = Math.round((income + revDelta) * 100) / 100;
+        /* the by-type breakdown follows the same repricing —
+           scaled proportionally so its buckets still sum to the
+           repriced income (it has no second source of truth). */
+        var typeSumBefore = 0;
+        Object.keys(incomeByType).forEach(function (t) { typeSumBefore += incomeByType[t] || 0; });
+        if (typeSumBefore > 0) {
+          var typeScale = income / typeSumBefore, typeSumAfter = 0, bigType = null;
+          Object.keys(incomeByType).forEach(function (t) {
+            incomeByType[t] = Math.round(incomeByType[t] * typeScale * 100) / 100;
+            typeSumAfter += incomeByType[t];
+            if (bigType === null || incomeByType[t] > incomeByType[bigType]) bigType = t;
+          });
+          if (bigType !== null) {
+            var typeDrift = Math.round((income - typeSumAfter) * 100) / 100;
+            if (typeDrift !== 0) incomeByType[bigType] = Math.round((incomeByType[bigType] + typeDrift) * 100) / 100;
+          }
+        }
+      }
     }
 
     /* v188 (D4, owner Oct 21, 2026 07:22 MDT — his own October
