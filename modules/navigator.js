@@ -348,6 +348,72 @@
     return out;
   }
 
+  /* v195 (NAV-POPUP, owner, Oct 21, 2026 08:09 MDT, live drive
+     video): "no turn pop-up appears as a maneuver approaches."
+     The v178 mini inset existed, but it was small, late (last
+     400 m only — ~14 s at highway speed) and, until v193, parked
+     at the top where he was not looking. The junction view is
+     the enlarged pop-up the standing requirement always meant
+     (Rand McNally-style): an SVG of the route's own geometry
+     around the upcoming turn — 160 m in, 220 m out — drawn with
+     the route highlighted (white casing, orange core), a ring
+     on the turn point, and the road ahead pointing UP (the
+     window is rotated by the incoming bearing, so it reads the
+     way the driver sees the junction). Pure: the suite drives
+     it off fixture geometry. Empty string when there is not
+     enough line to draw honestly. */
+  function junctionViewSvg(plan, line, idx) {
+    if (!plan || !plan.maneuvers || !plan.maneuvers[idx] || !line || line.length < 2) return '';
+    var total = 0, k;
+    for (k = 0; k + 1 < line.length; k++) total += haversineM(line[k], line[k + 1]);
+    var turnM = plan.maneuvers[idx].cumEndKm * 1000;
+    var from = Math.max(0, turnM - 160), to = Math.min(total, turnM + 220);
+    if (to - from < 60) return '';
+    var inA = pointAlongLine(line, Math.max(0, turnM - 110));
+    var inB = pointAlongLine(line, Math.max(0, turnM - 30));
+    if (!inA || !inB) return '';
+    var b = bearingDeg(inA, inB) * Math.PI / 180;
+    var lat0 = (inA[0] + inB[0]) / 2 * Math.PI / 180;
+    var pts = [], m;
+    for (m = from; m <= to; m += 8) { var p = pointAlongLine(line, m); if (p) pts.push(p); }
+    var lastP = pointAlongLine(line, to);
+    if (lastP && pts.length && (pts[pts.length - 1][0] !== lastP[0] || pts[pts.length - 1][1] !== lastP[1])) pts.push(lastP);
+    if (pts.length < 2) return '';
+    var cosB = Math.cos(b), sinB = Math.sin(b);
+    var xy = pts.map(function (p) {
+      var ex = (p[1] - inA[1]) * 111320 * Math.cos(lat0);
+      var ny = (p[0] - inA[0]) * 111320;
+      return [ex * cosB - ny * sinB, ex * sinB + ny * cosB];
+    });
+    var tp = pointAlongLine(line, turnM);
+    var tex = (tp[1] - inA[1]) * 111320 * Math.cos(lat0);
+    var tny = (tp[0] - inA[0]) * 111320;
+    var txy = [tex * cosB - tny * sinB, tex * sinB + tny * cosB];
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    xy.forEach(function (q) {
+      if (q[0] < minX) minX = q[0]; if (q[0] > maxX) maxX = q[0];
+      if (q[1] < minY) minY = q[1]; if (q[1] > maxY) maxY = q[1];
+    });
+    var W = 220, H = 170, PAD = 16;
+    var sc = Math.min((W - 2 * PAD) / Math.max(1, maxX - minX), (H - 2 * PAD) / Math.max(1, maxY - minY));
+    function sx(q) { return (PAD + (q[0] - minX) * sc).toFixed(1); }
+    function sy(q) { return (H - PAD - (q[1] - minY) * sc).toFixed(1); }
+    var linePts = xy.map(function (q) { return sx(q) + ',' + sy(q); }).join(' ');
+    var endQ = xy[xy.length - 1], prevQ = xy[xy.length - 2];
+    var ea = Math.atan2(-(endQ[1] - prevQ[1]), endQ[0] - prevQ[0]);
+    var ax = parseFloat(sx(endQ)), ay = parseFloat(sy(endQ));
+    var ah = [0, 1, 2].map(function (i) {
+      var ang = ea + (i === 0 ? 0 : (i === 1 ? 2.6 : -2.6));
+      var rr = i === 0 ? 2 : 13;
+      return (ax + rr * Math.cos(ang)).toFixed(1) + ',' + (ay - rr * Math.sin(ang)).toFixed(1);
+    }).join(' ');
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Junction view">' +
+      '<polyline points="' + linePts + '" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>' +
+      '<polyline points="' + linePts + '" fill="none" stroke="#e67e00" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="' + sx(txy) + '" cy="' + sy(txy) + '" r="7" fill="#1F3764" stroke="#ffffff" stroke-width="3"/>' +
+      '<polygon points="' + ah + '" fill="#ffffff"/></svg>';
+  }
+
   /* v135 layer 2 — the presentation guarantee. If every
      U-turn-free re-request failed and a plan STILL carries a
      U-turn, the maneuver is rewritten before anything can show
@@ -2253,7 +2319,14 @@
            transform attribute, not a style write). */
         var insetEl = body.querySelector('#nvd_inset');
         if (insetEl) {
-          var showInset = !!dp.next && dp.toTurnM <= 400;
+          /* v195 (NAV-POPUP): the window doubles to 800 m — at
+             highway speed the old 400 m gave the driver ~14 s
+             with a card the size of a postage stamp, and in his
+             Oct 21 08:09 drive video no pop-up registered at
+             all. The pop-up is now the junction view: an enlarged
+             drawing of the turn itself (junctionViewSvg) over
+             the v178 header (bent arrow + distance + words). */
+          var showInset = !!dp.next && dp.toTurnM <= 800;
           /* v192 (NAV-UTURN): a turn-around arrow IS a U-turn
              instruction. If the route the engine finally gave
              still doubles back at this maneuver (every exclusion
@@ -2268,9 +2341,10 @@
             S.drive.insetKey = insetKey;
             insetEl.classList.toggle('hidden', !showInset);
             if (showInset) {
-              insetEl.innerHTML = '<svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
+              insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
+                '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
-                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div>';
+                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';
             }
           }
         }

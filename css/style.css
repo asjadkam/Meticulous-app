@@ -607,7 +607,13 @@ body.mt-driving #chatSheet{z-index:2120;}
    off the road's path at any heading, clear of the centred
    truck (max-width 46vw keeps it right of centre), and clear of
    the centred recenter pill that floats at bottom:84px. */
-.nv-drive-inset{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));right:10px;z-index:4;background:#1F3764;color:#fff;border-radius:16px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 18px rgba(0,0,0,.45);max-width:46vw;}
+.nv-drive-inset{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));right:10px;z-index:4;background:#1F3764;color:#fff;border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 4px 18px rgba(0,0,0,.45);max-width:46vw;width:46vw;}
+/* v195 (NAV-POPUP): the junction view inside the pop-up — the
+   enlarged drawing of the upcoming turn (route highlighted),
+   over the v178 header row (bent arrow + distance + words). */
+.nv-inset-junction{background:rgba(255,255,255,.08);border-radius:10px;padding:4px;}
+.nv-inset-junction svg{display:block;width:100%;height:auto;}
+.nv-inset-head{display:flex;align-items:center;gap:10px;}
 .nv-inset-text{display:flex;flex-direction:column;min-width:0;}
 .nv-inset-text b{font-size:20px;line-height:1.1;}
 .nv-inset-text span{font-size:13.5px;color:#D9E1F3;line-height:1.25;}

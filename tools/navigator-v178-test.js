@@ -89,19 +89,22 @@ check('chevrons rotate by SVG transform attribute inside a cached divIcon (no CS
 check('turnDeltaDeg measures the bend off the route geometry (pure inputs, signed degrees)',
   navSrc.indexOf('function turnDeltaDeg(plan, line, idx)') >= 0 &&
   navSrc.indexOf('pointAlongLine(line, Math.max(0, m - 60))') >= 0);
-check('the inset exists, shows inside 400 m, repaints on change only (insetKey)',
+/* PIN MOVED by v195 (NAV-POPUP, owner Oct 21, 2026 08:09 MDT):
+   the pop-up window doubled 400 m -> 800 m and the card became
+   the junction view — see nav-popup-v195-test.js. */
+check('the inset exists, shows inside 800 m (v195), repaints on change only (insetKey)',
   navSrc.indexOf('id="nvd_inset"') >= 0 &&
-  navSrc.indexOf('dp.toTurnM <= 400') >= 0 &&
+  navSrc.indexOf('dp.toTurnM <= 800') >= 0 &&
   navSrc.indexOf('S.drive.insetKey !== insetKey') >= 0 &&
   cssSrc.indexOf('.nv-drive-inset{') >= 0);
 check('no lane fabrication: the module never claims lane data it does not have',
   !/lanes?:\s*\[/.test(navSrc) && navSrc.indexOf('never invented lanes') >= 0);
 
 console.log('— ship pins —');
-check('ships as webVersion 188 with the changed files at the 194 pin',
-  ver.webVersion === 194 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=194"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=194"') >= 0,
+check('ships as webVersion 188 with the changed files at the 195 pin',
+  ver.webVersion === 195 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=195"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=195"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v178: ' + pass + ' passed, ' + fail + ' failed');
