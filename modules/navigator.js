@@ -414,6 +414,56 @@
       '<polygon points="' + ah + '" fill="#ffffff"/></svg>';
   }
 
+  /* v196 (NAV-LANES, owner, Oct 21, 2026 08:09 MDT, same drive
+     video: "the drive view shows NO lane guidance"). The route
+     response itself carries NO lane data — verified against the
+     live server the same morning (13 maneuvers, zero lane
+     fields; BUGS.md's standing data gap). What honestly exists
+     is OpenStreetMap's `lanes` tag on the approach road. Two
+     pure pieces:
+       pickLaneCount(elements, streetName) — chooses the lane
+       count from an Overpass answer for the ways at the turn
+       point: a way whose name matches the approach street wins;
+       otherwise a single distinct candidate value wins;
+       ambiguity or junk ("2|3", 0, 9+) answers NOTHING — the
+       strip is absent rather than invented (v178's rule).
+       laneStripHtml(count, deltaDeg) — the strip itself: one
+       cell per OSM lane; the ROUTE lane (from the turn's own
+       geometry: right turn -> rightmost lane, left -> leftmost,
+       straight on -> every lane continues) burns bright with
+       the turn's arrow; the rest sit dim and straight. */
+  function pickLaneCount(elements, streetName) {
+    if (!elements || !elements.length) return 0;
+    var want = String(streetName || '').trim().toLowerCase();
+    var named = 0, values = {};
+    elements.forEach(function (el) {
+      var t = (el && el.tags) || {};
+      var raw = t.lanes !== undefined ? t.lanes : t['lanes:forward'];
+      var n = parseInt(raw, 10);
+      if (!(n >= 1 && n <= 6) || String(raw).trim() !== String(n)) return;
+      values[n] = true;
+      if (want && String(t.name || '').trim().toLowerCase() === want) named = n;
+    });
+    if (named) return named;
+    var keys = Object.keys(values);
+    return keys.length === 1 ? parseInt(keys[0], 10) : 0;
+  }
+  function laneStripHtml(count, deltaDeg) {
+    count = parseInt(count, 10);
+    if (!(count >= 1 && count <= 6)) return '';
+    var d = Number(deltaDeg) || 0;
+    var straight = Math.abs(d) < 8;
+    var cells = '';
+    for (var i = 0; i < count; i++) {
+      var on = straight || (d >= 8 && i === count - 1) || (d <= -8 && i === 0);
+      var rot = on ? (d >= 8 ? 90 : (d <= -8 ? -90 : 0)) : 0;
+      cells += '<span class="nv-lane' + (on ? ' on' : '') + '">' +
+        '<svg viewBox="0 0 48 48" width="30" height="30" aria-hidden="true"><g transform="rotate(' + rot + ' 24 24)">' +
+        '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="' + (on ? '#ffffff' : '#8fa3c8') + '"/></g></svg></span>';
+    }
+    return '<div class="nv-inset-lanes">' + cells + '</div>';
+  }
+
   /* v135 layer 2 — the presentation guarantee. If every
      U-turn-free re-request failed and a plan STILL carries a
      U-turn, the maneuver is rewritten before anything can show
@@ -1679,6 +1729,33 @@
            invented grade. Runs off the route's critical path:
            the route is usable the moment it lands; events fill
            in when the answer arrives. */
+        /* v196 (NAV-LANES): the lane count for the approach
+           road of maneuver `idx`, read lazily from
+           OpenStreetMap (Overpass) — the route response
+           carries no lane data (verified live, Oct 21).
+           Fires once per maneuver per route; the answer (or
+           a tried-and-none 0) lands in S.laneByTurn, and if
+           the pop-up is showing that maneuver the inset key
+           clears so the strip paints on the next fix. Any
+           failure leaves NO strip — honest absence, never
+           an invented lane (v178's rule). */
+        function fetchLaneCount(idx) {
+          S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
+          if (S.laneByTurn[idx] !== undefined || S.laneFetch[idx] || !S.plan || !S.line) return;
+          var m = S.plan.maneuvers[idx]; if (!m) return;
+          S.laneFetch[idx] = 1;
+          var tp = pointAlongLine(S.line, m.cumEndKm * 1000);
+          var street = (m.streets && m.streets[0]) || '';
+          var q = '[out:json][timeout:8];way(around:30,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
+          fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+              S.laneByTurn[idx] = j && j.elements ? pickLaneCount(j.elements, street) : 0;
+              if (S.drive && S.drive.insetKey && S.drive.insetKey.split(':')[0] === String(idx)) S.drive.insetKey = '';
+            })
+            .catch(function () { S.laneByTurn[idx] = 0; });
+        }
+
         function fetchGradeEvents(line) {
           S.gradeEvents = [];
           S.gradeSaid = {};
@@ -1707,6 +1784,10 @@
           S.line = line;
           S.plan = plan;
           fetchGradeEvents(line);
+          /* v196 (NAV-LANES): lane lookups belong to THIS
+             route's maneuvers — a new route starts with an
+             empty cache. */
+          S.laneByTurn = {}; S.laneFetch = {};
           S.manIdx = 0; S.offSince = 0; S.arrived = false;
           /* v78: remember the destination for the dashboard card
              (search name when there is one, else the pin coords —
@@ -2326,6 +2407,12 @@
              all. The pop-up is now the junction view: an enlarged
              drawing of the turn itself (junctionViewSvg) over
              the v178 header (bent arrow + distance + words). */
+          /* v196 (NAV-LANES): warm the OSM lane lookup for
+             the upcoming turn while it is still 3 km out, so
+             the strip is ready when the pop-up shows. Lazy,
+             once per maneuver per route, off the critical
+             path (the v179 pattern); silent on any failure. */
+          if (dp.next && dp.toTurnM <= 3000) fetchLaneCount(dp.idx);
           var showInset = !!dp.next && dp.toTurnM <= 800;
           /* v192 (NAV-UTURN): a turn-around arrow IS a U-turn
              instruction. If the route the engine finally gave
@@ -2342,6 +2429,7 @@
             insetEl.classList.toggle('hidden', !showInset);
             if (showInset) {
               insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
+                laneStripHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : 0, dDeg) +
                 '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';

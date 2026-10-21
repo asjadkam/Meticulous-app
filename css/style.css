@@ -613,6 +613,13 @@ body.mt-driving #chatSheet{z-index:2120;}
    over the v178 header row (bent arrow + distance + words). */
 .nv-inset-junction{background:rgba(255,255,255,.08);border-radius:10px;padding:4px;}
 .nv-inset-junction svg{display:block;width:100%;height:auto;}
+/* v196 (NAV-LANES): the lane strip inside the turn pop-up —
+   one cell per OSM lane on the approach road; the route lane
+   burns bright with the turn's arrow, the rest sit dim. Absent
+   entirely when OSM carries no lane count for the road. */
+.nv-inset-lanes{display:flex;gap:4px;justify-content:center;padding:2px 2px 4px;}
+.nv-lane{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.10);}
+.nv-lane.on{background:#e67e00;box-shadow:0 0 0 2px #ffffff inset;}
 .nv-inset-head{display:flex;align-items:center;gap:10px;}
 .nv-inset-text{display:flex;flex-direction:column;min-width:0;}
 .nv-inset-text b{font-size:20px;line-height:1.1;}
