@@ -461,6 +461,28 @@
     navigateToPin: function (name, lat, lng) {
       goNavigate({ name: name || '', lat: lat, lng: lng }, 'work');
     },
+    /* v209 (NAV-2STEP): a saved place resolved from its address
+       LEARNS its pin — the Navigator calls this when a place
+       arriving by name (nav_pending, no coordinates) resolves
+       through the geocoder. Only a MISSING pin is filled; an
+       existing pin never moves. Returns true when it learned. */
+    learnCoords: function (name, lat, lng) {
+      var la = Number(lat), ln = Number(lng);
+      var want = String(name || '').trim().toLowerCase();
+      if (!want || !isFinite(la) || !isFinite(ln)) return false;
+      var d = data(), hit = null;
+      ['work', 'personal'].forEach(function (kind) {
+        (d[kind] || []).forEach(function (p) {
+          if (hit || !p) return;
+          if ((p.lat && p.lng)) return;
+          if (String(displayPlaceName(p) || '').trim().toLowerCase() === want) hit = p;
+        });
+      });
+      if (!hit) return false;
+      hit.lat = la; hit.lng = ln;
+      saveData(d);
+      return true;
+    },
     /* v207 (CONNECT-PICK part 3): every place this driver could
        send a connection — built-ins + his work + personal
        favorites, names resolved the picker's way, duplicates

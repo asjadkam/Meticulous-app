@@ -1433,9 +1433,41 @@
                 if (q2) { searchBtn.onclick(); return; }
               }
               S._geoRetried = false;
+              /* v209: a pending arrival that resolves to nothing
+                 spends its go-now intent here — a later manual
+                 search must never inherit it and auto-pick. */
+              S.pendGoNow = false;
+              S.pendName = '';
               box.innerHTML = '<p class="note">No places found for “' + esc(q) + '”. If it is one of your saved places, pick it from Your pits & job sites below.</p>'; return;
             }
             S._geoRetried = false;
+            /* v209 (NAV-2STEP, owner Oct 21, 2026 12:58 MDT —
+               "This should be a 2 step process"): this search IS
+               a saved place arriving through nav_pending (the
+               driver's two steps — tap the place, tap Navigate —
+               are already spent). Take the top result as the
+               destination outright: no results list, no "Use
+               this" tap stands between him and Routing… The
+               place LEARNS the pin (Navigation.learnCoords), so
+               every later trip hands the coordinates over
+               directly and never searches at all. A manual search
+               (pendGoNow false) keeps the list + confirm below —
+               that form is for NEW places. */
+            if (S.pendGoNow) {
+              var topRow = rows[0];
+              S.pendGoNow = false;
+              box.innerHTML = '';
+              setDest([Number(topRow.lat), Number(topRow.lon)], topRow.display_name.split(',').slice(0, 2).join(','), true);
+              if (S.map) S.map.setView(S.dest, 14);
+              try {
+                var navLearn = window.Meticulous && Meticulous.modules.navigation;
+                if (navLearn && navLearn.learnCoords && S.pendName) {
+                  navLearn.learnCoords(S.pendName, Number(topRow.lat), Number(topRow.lon));
+                }
+              } catch (e) {}
+              S.pendName = '';
+              return;
+            }
             box.innerHTML = rows.map(function (r, i) {
               return '<div class="listitem"><div class="a">' + esc(r.display_name.split(',').slice(0, 2).join(',')) + '</div>' +
                 '<div class="b">' + esc(r.display_name) + '</div>' +
@@ -1568,6 +1600,10 @@
                pending, the search failed on the glued query, and
                the driver was back on the destination page. */
             S.pendGoNow = true;
+            /* v209: the arriving place's name rides along — when
+               the search below resolves it, the place learns its
+               pin under this name (Navigation.learnCoords). */
+            S.pendName = String(pend.name || '');
             var pendSaved = savedMatchesFor(pend.name || '');
             var pendPin = null;
             for (var psi = 0; psi < pendSaved.length; psi++) {
