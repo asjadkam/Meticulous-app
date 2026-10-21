@@ -467,6 +467,160 @@
     };
   }
 
+  /* ---- pattern learning (v203, LOADS-GPS-FIX) ----
+     The dump learner above still needs ONE known site to start:
+     the load fence. A real dispatch from a boss's text message
+     often carries NEITHER a pin NOR a name the places can answer
+     (a customer + project string) — Oct 21, 2026 the whole
+     counting chain sat blind on exactly such a day while the
+     truck ran clean pit<->dump cycles (the Manifest's own trail
+     showed the stops; the GPS counter recorded ZERO and the
+     driver tapped all 13 loads by hand — the one job the app
+     swore he would never do). This learner needs NO site at
+     all: it watches the day's dwell clusters and reads the
+     cycle's shape out of the driving itself.
+       - A place CONFIRMS the dump learner's way: fixes staying
+         within LEARN_CLUSTER_M of a running centroid for
+         LEARN_DWELL_MS (a real stop, never a drive-past).
+       - HOME never anchors (the v190 rule: home is not a work
+         stop — the session starts there, and a 40-minute
+         at-home dwell is not a pit).
+       - The FIRST confirmed work place is the ANCHOR (the load
+         site): a dump day starts empty, leaves home, and its
+         first work dwell is where the truck loads. A second
+         confirmed place >= LEARN_MIN_SEP_M away IS the dump —
+         by the time a cluster has confirmed there, the truck
+         has unmistakably left the anchor and sat loaded-side
+         for minutes; the pair is emitted and the caller arms
+         the counter and credits the teaching cycle.
+       - A THIRD distinct place confirming before the truck
+         closes the cycle back at the anchor CONTESTS the pair
+         (the day cannot tell its places apart — teach nothing,
+         the same verdict the dump learner reaches). Confirming
+         back at the anchor LOCKS the pair for the day.
+     Direction honesty: even if a day's first work dwell were
+     somehow the dump side, the cycle COUNT is the same — the
+     counter counts completed alternations either way; only
+     the load/dump labels could sit swapped. */
+  function createPatternLearner(cfg) {
+    cfg = cfg || {};
+    var HOME = (cfg.home && isCoord(cfg.home)) ? { lat: +cfg.home.lat, lng: +cfg.home.lng } : null;
+    var learnDwellMs = cfg.learnDwellMs || LEARN_DWELL_MS;
+    var clusterM = cfg.clusterM || LEARN_CLUSTER_M;
+    var accMaxM = cfg.accMaxM || ACC_MAX_M;
+    var S = null;
+
+    function isHome(lat, lng) {
+      return !!HOME && haversineM(lat, lng, HOME.lat, HOME.lng) <= 250;
+    }
+    function confirmPlace(place, res) {
+      if (S.ambiguous) return;
+      if (isHome(place.lat, place.lng)) return;
+      if (!S.anchor) {
+        S.anchor = place;
+        res.anchor = place;
+        return;
+      }
+      var dA = haversineM(place.lat, place.lng, S.anchor.lat, S.anchor.lng);
+      if (dA <= CONTEST_SEP_M) {
+        // back at the anchor: a return, never a new place — and
+        // once a pair stands, the return CLOSES the first cycle:
+        // the teaching is proven for the day.
+        if (S.pair && !S.locked) { S.locked = true; res.locked = true; }
+        return;
+      }
+      if (!S.pair) {
+        if (dA < LEARN_MIN_SEP_M) return; // too close to call a second site — no-man's land
+        S.pair = { load: S.anchor, dump: place, t: place.t };
+        res.pair = S.pair;
+        return;
+      }
+      if (S.locked) return;
+      if (haversineM(place.lat, place.lng, S.pair.dump.lat, S.pair.dump.lng) <= CONTEST_SEP_M) return; // another tip at the dump
+      S.ambiguous = true;
+      res.contested = { anchor: S.anchor, pair: S.pair, rival: place };
+    }
+
+    return {
+      /* saved: a previous snapshot() from the same day. Anchor,
+         pair and verdicts carry over; a half-built dwell cluster
+         is dropped, exactly as in the dump learner — a relaunch
+         can never invent a place. */
+      begin: function (saved) {
+        S = {
+          active: true, anchor: null, pair: null, locked: false,
+          ambiguous: false, cluster: null, lastT: 0, lastLat: null, lastLng: null
+        };
+        if (saved && typeof saved === 'object') {
+          if (saved.anchor && isCoord(saved.anchor)) {
+            S.anchor = { lat: +saved.anchor.lat, lng: +saved.anchor.lng, t: +saved.anchor.t || 0 };
+          }
+          if (saved.pair && saved.pair.load && saved.pair.dump && isCoord(saved.pair.load) && isCoord(saved.pair.dump)) {
+            S.pair = {
+              load: { lat: +saved.pair.load.lat, lng: +saved.pair.load.lng, t: +saved.pair.load.t || 0 },
+              dump: { lat: +saved.pair.dump.lat, lng: +saved.pair.dump.lng, t: +saved.pair.dump.t || 0 },
+              t: +saved.pair.t || 0
+            };
+          }
+          S.locked = !!saved.locked;
+          S.ambiguous = !!saved.ambiguous;
+          if (typeof saved.lastT === 'number') S.lastT = saved.lastT;
+        }
+        return true;
+      },
+      ingest: function (fix) {
+        var res = { accepted: false };
+        if (!S || !S.active) { res.why = 'inactive'; return res; }
+        if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) { res.why = 'bad-fix'; return res; }
+        if (fix.accuracy !== null && fix.accuracy !== undefined && fix.accuracy > accMaxM) { res.why = 'accuracy'; return res; }
+        var t = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : 0;
+        if (!t) { res.why = 'no-time'; return res; }
+        if (S.lastT && t <= S.lastT) { res.why = 'stale'; return res; }
+        if (S.lastLat !== null) {
+          var dJump = haversineM(S.lastLat, S.lastLng, fix.latitude, fix.longitude);
+          var dtH = (t - S.lastT) / 3600000;
+          if (dtH > 0 && (dJump / 1000) / dtH > MAX_SPEED_KMH) { res.why = 'teleport'; return res; }
+        }
+        S.lastT = t; S.lastLat = +fix.latitude; S.lastLng = +fix.longitude;
+        res.accepted = true;
+
+        var cl = S.cluster;
+        if (!cl) {
+          S.cluster = { sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t, confirmed: false };
+        } else if (haversineM(cl.sumLat / cl.n, cl.sumLng / cl.n, +fix.latitude, +fix.longitude) <= clusterM) {
+          cl.sumLat += +fix.latitude; cl.sumLng += +fix.longitude; cl.n++;
+          if (!cl.confirmed && t - cl.since >= learnDwellMs) {
+            cl.confirmed = true;
+            confirmPlace({ lat: cl.sumLat / cl.n, lng: cl.sumLng / cl.n, t: t }, res);
+          }
+        } else {
+          S.cluster = { sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t, confirmed: false };
+        }
+        return res;
+      },
+      /* The caller proved the cycle through the counter (dumped,
+         returned to the load fence): same lock the dump learner
+         takes — later odd dwells can no longer contest. */
+      lock: function () { if (S && S.pair && !S.ambiguous) S.locked = true; },
+      stop: function () { if (S) S.active = false; },
+      snapshot: function () {
+        if (!S) return null;
+        return {
+          anchor: S.anchor ? { lat: S.anchor.lat, lng: S.anchor.lng, t: S.anchor.t || 0 } : null,
+          pair: S.pair ? {
+            load: { lat: S.pair.load.lat, lng: S.pair.load.lng, t: S.pair.load.t || 0 },
+            dump: { lat: S.pair.dump.lat, lng: S.pair.dump.lng, t: S.pair.dump.t || 0 },
+            t: S.pair.t || 0
+          } : null,
+          locked: S.locked, ambiguous: S.ambiguous, lastT: S.lastT
+        };
+      },
+      pair: function () { return S ? S.pair : null; },
+      isAmbiguous: function () { return !!(S && S.ambiguous); },
+      isActive: function () { return !!(S && S.active); }
+    };
+  }
+
   var ENGINE = {
     haversineM: haversineM,
     isCoord: isCoord,
@@ -474,6 +628,7 @@
     looksLikeAddress: looksLikeAddress,
     createGeoLoadCounter: createGeoLoadCounter,
     createDumpLearner: createDumpLearner,
+    createPatternLearner: createPatternLearner,
     RADIUS_M: RADIUS_M, DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
     ACC_MAX_M: ACC_MAX_M, MIN_SITE_SEP_M: MIN_SITE_SEP_M,
     LEARN_DWELL_MS: LEARN_DWELL_MS, LEARN_MIN_SEP_M: LEARN_MIN_SEP_M,
@@ -657,6 +812,28 @@
       }
     } catch (e) {}
     return out;
+  }
+  /* v203: the saved Home place (nav_data, personal first then
+     work — the manifest homePin / yardstart resolution). The
+     pattern learner must never anchor on it: the session starts
+     at home, and an at-home dwell is not a pit. */
+  function homePlace() {
+    var s = store();
+    if (!s) return null;
+    var nd = null;
+    try { nd = s.get('nav_data', null); } catch (e) {}
+    if (!nd) return null;
+    var lists = [nd.personal || [], nd.work || []];
+    for (var i = 0; i < lists.length; i++) {
+      for (var j = 0; j < lists[i].length; j++) {
+        var p = lists[i][j];
+        if (p && String(p.name || '').trim().toLowerCase() === 'home') {
+          var c = { lat: parseFloat(p.lat), lng: parseFloat(p.lng) };
+          if (ENGINE.isCoord(c)) return c;
+        }
+      }
+    }
+    return null;
   }
   /* A dispatch whose pin never landed can still NAME its load
      site ("Go Empty To Maple Ridge"): match the name against the
@@ -892,7 +1069,12 @@
         }
       }
     }
-    if (learner) rec.learn = learner.snapshot();
+    if (learner) {
+      /* v203: the pattern learner's state rides its own field —
+         its snapshot shape is not the dump learner's. */
+      if (learnMode === 'pattern') rec.pattern = learner.snapshot();
+      else rec.learn = learner.snapshot();
+    }
     writeDay(rec);
   }
 
@@ -952,6 +1134,48 @@
 
     if (why) {
       counter = null;
+      /* v203 (LOADS-GPS-FIX): the dispatch is REAL but carries no
+         anchor at all — no pin, and its text names no place the
+         app knows (a boss's message: customer + project, not a
+         pit name). Until now the day went blind here ('no-site-
+         coords', no learner, zero counts while the truck ran
+         clean cycles — Oct 21, 2026: 13 loads tapped by hand).
+         Now the PATTERN learner watches the driving itself: the
+         day's own dwell clusters are the two sites (see the
+         engine). A day already proven ambiguous stays unteachable. */
+      if (why === 'no-site-coords' && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
+        learnMode = 'pattern';
+        curSites = null;
+        learner = ENGINE.createPatternLearner({ home: homePlace() });
+        var prevN = recordFor(curDate);
+        var sameN = !!(prevN && prevN.sessionKey === sessionKey);
+        baseCount = (!sameN && prevN) ? (prevN.count || 0) : 0;
+        baseEvents = (!sameN && prevN && prevN.events) ? prevN.events.slice() : [];
+        /* a pair taught earlier today arms the counter again at
+           once — its count rides the base. The teaching wrote it
+           on the day record (patternPair) precisely so a NEW
+           session finds it; within the same session the
+           learner's own snapshot carries it. */
+        var restoredPair = null;
+        if (prevN && prevN.patternPair && prevN.patternPair.load && prevN.patternPair.dump) {
+          restoredPair = { load: prevN.patternPair.load, dump: prevN.patternPair.dump, t: prevN.patternPair.t || 0 };
+        } else if (sameN && prevN.pattern && prevN.pattern.pair) {
+          restoredPair = prevN.pattern.pair;
+        }
+        if (restoredPair) {
+          learner.begin({ anchor: restoredPair.load, pair: restoredPair });
+          armPatternPair(restoredPair, false);
+          return true;
+        }
+        learner.begin(sameN ? prevN.pattern : null);
+        var recN = prevN || blankDay(curDate);
+        recN.dispatchId = d.id; recN.sessionKey = sessionKey;
+        recN.sites = null; recN.blocked = 'learning'; recN.updatedAt = Date.now();
+        recN.pattern = learner.snapshot();
+        writeDay(recN);
+        maybeGeocode(d, sites);
+        return false;
+      }
       if (learnMode === 'teach') {
         /* No counter yet — but the learner watches the driving from
            the first fix, and the day record honestly says counting
@@ -1034,6 +1258,75 @@
     persist(true);
   }
 
+  /* v203: the pattern learner read the day's pair out of the
+     driving (or restored it from this morning's teaching on a
+     new session). Arm the counter on it. A FRESH teaching
+     credits the cycle that taught it as load #1 and remembers
+     the pair (keyed by the load site, like every learned pair);
+     a RESTORED pair credits nothing again — the day's earlier
+     count rides baseCount. The pattern learner stays alive
+     after arming: until the cycle closes back at the anchor,
+     a third place can still contest the teaching. */
+  function armPatternPair(pair, credit) {
+    var load = { lat: +pair.load.lat, lng: +pair.load.lng, label: 'Load site', src: 'pattern' };
+    var dump = { lat: +pair.dump.lat, lng: +pair.dump.lng, label: 'Dump site', src: 'pattern' };
+    curLoad = load;
+    curSites = { load: load, dump: dump };
+    if (credit) {
+      rememberPair(load, { lat: dump.lat, lng: dump.lng, label: '', learnedAt: Date.now() });
+    }
+    var key = sitesKeyFor(curDispatchId, load, dump);
+    counter = ENGINE.createGeoLoadCounter({ load: load, dump: dump });
+    if (credit) {
+      counter.begin(key, {
+        sitesKey: key, zone: 'dump', phase: 'at-dump', armed: false,
+        count: 1, events: [{ t: pair.t || Date.now(), site: 'dump', n: 1 }], lastT: pair.t || 0
+      });
+      taughtOutstanding = true;
+      wasDumpSinceTeach = true;
+    } else {
+      counter.begin(key, null);
+    }
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = curSites; rec.blocked = null; rec.updatedAt = Date.now();
+    if (credit) rec.patternPair = { load: { lat: load.lat, lng: load.lng }, dump: { lat: dump.lat, lng: dump.lng }, t: pair.t || Date.now() };
+    if (learner) rec.pattern = learner.snapshot();
+    writeDay(rec);
+    persist(true);
+    return true;
+  }
+  function onPatternPair(pair) { return armPatternPair(pair, true); }
+
+  /* v203: a third place contested the pattern pair before the
+     first cycle closed — retract in full, the onContested
+     discipline: counter stopped, taught count and pair memory
+     withdrawn, the day marked ambiguous and left unteachable. */
+  function onPatternContested(info) {
+    if (info && info.pair) forgetPair(info.pair.load, info.pair.dump);
+    if (counter) counter.stop();
+    counter = null;
+    taughtOutstanding = false; wasDumpSinceTeach = false;
+    learnMode = null;
+    curSites = null;
+    curLoad = null;
+    if (learner) learner.stop();
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = null; rec.blocked = 'ambiguous-dump'; rec.updatedAt = Date.now();
+    rec.count = baseCount;
+    rec.events = baseEvents.slice();
+    rec.state = null;
+    delete rec.patternPair;
+    rec.dumpContested = {
+      taught: (info && info.pair && info.pair.dump) ? { lat: info.pair.dump.lat, lng: info.pair.dump.lng, t: info.pair.t || 0 } : null,
+      rival: (info && info.rival) ? { lat: info.rival.lat, lng: info.rival.lng, t: info.rival.t || 0 } : null,
+      t: (info && info.rival && info.rival.t) || Date.now()
+    };
+    if (learner) rec.pattern = learner.snapshot();
+    writeDay(rec);
+  }
+
   /* Two different places both looked like the dump before the first
      cycle completed — the day cannot tell them apart, so the
      teaching is retracted in full: no learned site, no learned
@@ -1096,7 +1389,9 @@
     }
     if (learner) {
       var lr = learner.ingest(fix);
-      if (lr && lr.learned) onLearned(lr.learned);
+      if (lr && learnMode === 'pattern' && lr.pair) onPatternPair(lr.pair);
+      else if (lr && learnMode === 'pattern' && lr.contested) onPatternContested(lr.contested);
+      else if (lr && lr.learned) onLearned(lr.learned);
       else if (lr && lr.contested) onContested(lr.contested);
       else if (lr && lr.altCandidate) onAltCandidate(lr.altCandidate);
       if (!r) r = lr;

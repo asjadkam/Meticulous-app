@@ -204,7 +204,13 @@ console.log('(d) no load pin, and no session at all');
   drive(w, clock, LOAD, DUMP, 240);
   park(w, clock, DUMP, 200);
   const day = w.GeoLoads.forDate(DAY);
-  ok(day && day.count === 0 && day.blocked === 'no-site-coords', 'no pins: nothing counted, honest reason kept');
+  /* v203 SUPERSEDES the 'no-site-coords' pin: a pin-less ACTIVE
+     dispatch no longer goes blind — the pattern learner watches
+     the day's own dwell clusters for a pit<->dump cycle. This
+     trace (70 s at the load place, under the 2-minute anchor
+     dwell) teaches nothing, so still nothing is counted — the
+     honest reason is now 'learning', the state it is in. */
+  ok(day && day.count === 0 && day.blocked === 'learning', 'no pins: nothing counted, the day is pattern-learning');
   const fresh = mkWorld(mkStore({}));
   ok(fresh.GeoLoads.forDate(DAY) === null, 'no session ever: no record, no fake numbers');
   ok(fresh.GeoLoads.ingestNativeCrumbs([{ t: T0, a: LOAD.lat, o: LOAD.lng, c: 8 }]) === 0, 'crumbs without a session change nothing');

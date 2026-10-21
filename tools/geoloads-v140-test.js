@@ -255,7 +255,12 @@ console.log('\n— (C) a dispatch with no pin resolves its load site by name —
   W.start();
   const fin = W.GeoLoads.forDate(TODAY);
   eq(fin.count, 0, 'an ambiguous name counts nothing');
-  eq(fin.blocked, 'no-site-coords', 'an ambiguous name resolves nothing — no fence on a guess');
+  /* v203 SUPERSEDES the blocked value only: the name still
+     resolves NOTHING (no fence on a guess — the point of this
+     check stands); the anchorless day now falls to pattern
+     learning instead of blindness, so its state reads
+     'learning' while it watches its own driving. */
+  eq(fin.blocked, 'learning', 'an ambiguous name resolves nothing — no fence on a guess; the day pattern-learns');
 }
 
 /* ============ (D) missing fixes stay honest ============ */
