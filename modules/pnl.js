@@ -278,20 +278,18 @@
      live Connect screen instead of a future update. Pay setup
      stays here and stays private: what YOU pay a driver is set in
      P&L and never crosses the connection. */
-  var pnlManualOpen = false;
   var PNL_INVITE_NOTE = 'Connections are live now — find them in Connect, tap Connect, and when they accept you are connected.';
   function pnlInviteLine(d) {
     if (!d || !d.viaConnect || d.inviteStatus !== 'pending') return '';
     return '<div class="b" style="color:var(--navy);font-weight:600">🤝 Invite saved — waiting for them to accept. ' + PNL_INVITE_NOTE + '</div>';
   }
-  /* v132: the "Set his pay rate" prefill — {uid, name} of the
-     connected driver whose pay entry is being created, set by the
-     Dispatch crew board, the crew card below, or the door in
-     window.__mtPnlPrefillDriver. Consumed by the next render; the
-     uid stamps the saved entry, and that stamp is what lets
-     ConnectPipe.pricingFor price his shared days on these books.
-     Session-only — never persisted as its own key. */
-  var pnlPrefill = null;
+  /* v205 (PREFILL-HANDOFF-INERT): the v132 "Set his pay rate"
+     prefill path is GONE — the Dispatch crew board's door was
+     removed in v163 (a boss never sets a connected driver's wage)
+     and the manual form it fed was removed in v198, leaving a
+     render-time consumer for a hand-off global nothing in the
+     app could set. The consumer and its state are removed; no
+     dead path remains. */
   /* The connected-crew books view (v132): a month of shared day
      records grouped per driver, priced with THIS side's rates by
      the pipe's pure pricer (revenue at the client rate; wages at
@@ -968,17 +966,6 @@
     render: function (body) {
       var m = curMonth();
       var c = calc(m);
-      /* v132: consume a "Set his pay rate" prefill (the Dispatch
-         crew board sets window.__mtPnlPrefillDriver) — the manual
-         form opens with the driver's name in it, and his uid rides
-         pnlPrefill to the save below. */
-      try {
-        if (window.__mtPnlPrefillDriver) {
-          pnlPrefill = window.__mtPnlPrefillDriver;
-          window.__mtPnlPrefillDriver = null;
-          pnlManualOpen = true;
-        }
-      } catch (e) {}
       var netColor = c.net < 0 ? '#c0392b' : '#1e8e3e';
 
       var pr = periodRange(m);
