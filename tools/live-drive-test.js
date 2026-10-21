@@ -239,7 +239,7 @@ function makeChainWorld() {
     'function resetAccum', 'function trackerAddLoadTap', 'function trackerAddTrip',
     'function noteDispatchCompleted', 'function takeSessionAccum',
     'function trackedSecondsAt', 'function trackerSessionStartMs',
-    'function takePendingStartOdo', 'function applyOdoReading', 'function applyEndOdoToEntry',
+    'function ptiStartOdoFor', 'function takePendingStartOdo', 'function applyOdoReading', 'function applyEndOdoToEntry',
     'function stopSessionAt'
   ];
   let code = fns.map(m => extractFn(appSrc, m)).join('\n');
@@ -330,7 +330,15 @@ console.log('\n— D5: Complete with NO running session —');
   /* v143 PIN MOVE: plain Complete opens the shared confirm step —
      the drive confirms it (owner, Oct 17 16:22 MDT). */
   body.querySelector('#dp_closeflow').querySelector('#dp_cf_confirm').click();
-  eq('the plain completion alert fires', w.alerts[0], 'Dispatch completed.');
+  /* v185 PIN MOVE (v165 law, owner Oct 18, 2026 21:48 MDT):
+     closing a day asks for the day's PTI until one is on file —
+     one plain line in the completion alert, never a block. This
+     world files no PTI, so the alert is the plain completion
+     PLUS that line; the D5-negative point stands — with NO
+     session running there is NO shift-closed sentence. */
+  eq('the plain completion alert fires (v165: + the PTI ask, no PTI on file here)',
+    w.alerts[0], 'Dispatch completed. No PTI filed for ' + TODAY + ' yet — open PTI to file it.');
+  ok('no session -> no shift-closed sentence', (w.alerts[0] || '').indexOf('Your shift was closed') === -1);
 }
 
 /* ============ D4b priority: scheduled 08:00 wins the manifest Start ============ */

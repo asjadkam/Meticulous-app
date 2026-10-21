@@ -3261,6 +3261,72 @@
     store.set('odo_readings', out);
     return added.length;
   }
+  /* v185 (ODO-BACKFILL, owner Oct 20 21:12 MDT — "I have them
+     since May of this year… Upload them!"): the BULK import for
+     dated past readings (his monthly sheets). There is no safe
+     direct write into his phone's store from outside the app,
+     so the import is an in-app CONFIRM-FIRST door (Maintenance →
+     past-reading box): the driver pastes the list, reviews the
+     parsed result, and only a Confirm tap calls this. The merge
+     follows the seed's discipline exactly: dedupe on value|date,
+     candidates walked in date order as an ascending chain (a
+     candidate that runs backwards from the previous kept entry,
+     leaps more than 50,000 km past it, or sits more than the
+     jump gate past the master is skipped and COUNTED, never
+     silently dropped), existing entries are never removed or
+     rewritten, the master is never touched, and the merged log
+     is stored sorted by ts. Imported entries carry the source
+     the caller names (default 'sheet-import') so every boundary
+     stays auditable, exactly like the seed sources. */
+  function importOdoReadings(list, source) {
+    if (!Array.isArray(list)) return { added: 0, skipped: 0 };
+    var log = store.get('odo_readings', []);
+    if (!Array.isArray(log)) log = [];
+    var have = {};
+    log.forEach(function (r) {
+      if (r && parseFloat(r.value) > 0 && r.date) have[String(parseFloat(r.value)) + '|' + String(r.date)] = true;
+    });
+    var master = masterOdometer();
+    var cands = [], skipped = 0;
+    list.forEach(function (r) {
+      if (!r) { skipped++; return; }
+      var v = parseFloat(r.value);
+      var dv = String(r.date || '');
+      if (!(v > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(dv)) { skipped++; return; }
+      var key = String(v) + '|' + dv;
+      if (have[key]) { skipped++; return; }
+      have[key] = true;
+      var ts = (typeof r.ts === 'number' && isFinite(r.ts) && r.ts > 0) ? Math.round(r.ts) : null;
+      if (ts === null) {
+        var p = dv.split('-');
+        ts = new Date(+p[0], +p[1] - 1, +p[2], 12, 0).getTime();
+      }
+      if (master !== null && v > master + ODO_MAX_JUMP_KM) { skipped++; return; }
+      cands.push({ ts: ts, date: dv, value: v, source: String(source || r.source || 'sheet-import') });
+    });
+    if (!cands.length) return { added: 0, skipped: skipped };
+    var merged = log.concat(cands);
+    merged.sort(function (a, b) { return (parseFloat(a.ts) || 0) - (parseFloat(b.ts) || 0); });
+    var candSet = {};
+    cands.forEach(function (c) { candSet[c.ts + '|' + c.value + '|' + c.date] = true; });
+    var out = [], lastV = 0, added = 0;
+    merged.forEach(function (r) {
+      var v = parseFloat(r.value) || 0;
+      var isCand = !!candSet[(parseFloat(r.ts) || 0) + '|' + v + '|' + String(r.date)];
+      if (isCand && lastV > 0 && (v < lastV || v - lastV > 50000)) { skipped++; return; }
+      var prev = out[out.length - 1];
+      if (prev && parseFloat(prev.value) === v && Math.abs((parseFloat(r.ts) || 0) - (parseFloat(prev.ts) || 0)) < 60000) {
+        if (isCand) skipped++;
+        return;
+      }
+      out.push(r);
+      if (v > 0) lastV = v;
+      if (isCand) added++;
+    });
+    if (out.length > 2000) out = out.slice(out.length - 2000);
+    if (added > 0) store.set('odo_readings', out);
+    return { added: added, skipped: skipped };
+  }
   function bumpOdometer(v, src) {
     var n = parseFloat(v);
     var prev = masterOdometer();
@@ -4615,6 +4681,7 @@
   };
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
   App._logOdoReading = logOdoReading; // v122: the dated readings log (odo_readings) — every master write path appends
+  App._importOdoReadings = importOdoReadings; // v185: the confirm-first bulk import (ODO-BACKFILL)
   App._seedOdoReadings = seedOdoReadings; // v127: seed the dated log from the app's own dated records (fills + sessions)
   App._econUnit = econUnit; // v127: the economy-unit preference ('kpl' | 'l100' | 'mpg')
   App._econConvert = econConvert; // v127: km/L → the chosen unit (pure, test-pinned)

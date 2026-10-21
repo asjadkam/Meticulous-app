@@ -343,7 +343,7 @@ function expectedEntry(regionWorld, closedRec) {
     const declBlock = appSrc.slice(appSrc.indexOf('var _stopViaDispatch = false;'),
       appSrc.indexOf('function stopSessionAt'));
     const fns = ['function todayStr', 'function trackedSecondsAt', 'function trackerSessionStartMs', 'function trkAccum',
-      'function takeSessionAccum', 'function takePendingStartOdo', 'function applyEndOdoToEntry',
+      'function takeSessionAccum', 'function ptiStartOdoFor', 'function takePendingStartOdo', 'function applyEndOdoToEntry',
       'function liveKmNow', 'function endCloseSummary', 'function stopSessionAt'];
     vm.runInContext(declBlock + '\n' + fns.map(function (m) { return extractFn(appSrc, m); }).join('\n') +
       '\n' + extractRegion(appSrc, 'ODO-MASTER-BEGIN', 'ODO-MASTER-END'), sb);

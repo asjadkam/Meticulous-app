@@ -245,6 +245,35 @@
      number. Reads the log LIVE: a past reading added later
      through the Add-a-past-reading door extends the figure on
      the next render — no migration, nothing rewritten. */
+  /* v185 (ODO-BACKFILL): parse a pasted list of dated readings —
+     one per line, "2026-05-04, 132450" (comma, tab, or spaces;
+     the number may carry thousands commas inside quotes-free
+     text only when it is the LAST field). Header lines and
+     anything without a real date + a plausible odometer
+     (1,000–2,000,000) are counted as unread, never guessed at.
+     Pure: returns { readings: [{date, value}], bad: n }. */
+  function parseOdoImportText(text) {
+    var out = [], bad = 0;
+    String(text || '').split(/[\r\n]+/).forEach(function (line) {
+      var s = line.trim();
+      if (!s) return;
+      var dm = /(\d{4})-(\d{2})-(\d{2})/.exec(s);
+      if (!dm) {
+        var alt = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
+        if (alt) dm = [alt[0], alt[3], ('0' + alt[1]).slice(-2), ('0' + alt[2]).slice(-2)];
+      }
+      if (!dm) { bad++; return; }
+      var date = dm[1] + '-' + dm[2] + '-' + dm[3];
+      var rest = s.replace(dm[0], ' ');
+      var nums = rest.match(/\d[\d,]*(?:\.\d+)?/g) || [];
+      var v = nums.length ? parseFloat(nums[nums.length - 1].replace(/,/g, '')) : NaN;
+      if (!(v >= 1000 && v <= 2000000)) { bad++; return; }
+      out.push({ date: date, value: Math.round(v) });
+    });
+    out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : a.value - b.value); });
+    return { readings: out, bad: bad };
+  }
+
   function lifetimeStats(ms) {
     ms = ms || mileageStats();
     var log = [];
@@ -459,6 +488,7 @@
     _dueItems: dueItems,
     _mileageStats: mileageStats,
     _lifetimeStats: lifetimeStats, /* v156: the bookend lifetime derivation */
+    _parseOdoImportText: parseOdoImportText, /* v185: the bulk-import parser */
     _currentOdo: currentOdo,
     _applyOdoCorrection: applyOdoCorrection,
     _logOdoCorrection: logOdoCorrection,
@@ -566,7 +596,19 @@
         '<div><label class="f">Time</label><input type="time" id="mt_past_time"></div></div>' +
         '<div class="row"><div><label class="f">Odometer (km)</label><input id="mt_past_val" type="number" inputmode="decimal" placeholder="e.g. 169166"></div>' +
         '<div><label class="f">&nbsp;</label><button class="btn navy" id="mt_past_save">Save past reading</button></div></div>' +
-        '<div id="mt_past_note" class="note"></div></div>' +
+        '<div id="mt_past_note" class="note"></div>' +
+        /* v185 (ODO-BACKFILL): the BULK door — a whole list from
+           his monthly sheets at once. Paste → Review (the parsed
+           list is shown back) → Confirm import. Nothing is
+           written before the Confirm tap, ever. */
+        '<div style="margin-top:10px;border-top:1px solid #ddd;padding-top:8px">' +
+        '<label class="f">…or bring in a whole list at once (from a sheet)</label>' +
+        '<p class="note" style="margin:2px 0 6px">One reading per line: the date, then the odometer — like <b>2026-05-04, 132450</b>. Copy the lines from the file Muse made from your sheets and paste them here.</p>' +
+        '<textarea id="mt_past_bulk" rows="5" placeholder="2026-05-04, 132450" style="width:100%"></textarea>' +
+        '<div class="row" style="margin-top:6px"><button type="button" class="btn secondary" id="mt_past_review" style="flex:1">Review the list</button>' +
+        '<button type="button" class="btn primary hidden" id="mt_past_confirm" style="flex:1">Confirm import</button></div>' +
+        '<div id="mt_past_bulk_note" class="note" style="margin-top:6px"></div></div>' +
+        '</div>' +
         '</div>';
 
       /* v107 (Stage 4): the separate v97 "Correct odometer from
@@ -1142,6 +1184,39 @@
           }
           if (vEl) vEl.value = '';
           if (note) note.innerHTML = '✓ Recorded <b>' + Math.round(v).toLocaleString('en-CA') + ' km</b> for ' + esc(dv) + '. Add another, or keep going.';
+        };
+        /* v185: the bulk door's wiring — Review parses and shows
+           the list back; Confirm is the ONLY write, through
+           App._importOdoReadings (seed-discipline merge). */
+        var bulkTa = body.querySelector('#mt_past_bulk');
+        var bulkReview = body.querySelector('#mt_past_review');
+        var bulkConfirm = body.querySelector('#mt_past_confirm');
+        var bulkNote = body.querySelector('#mt_past_bulk_note');
+        var bulkParsed = null;
+        if (bulkReview && bulkTa) bulkReview.onclick = function () {
+          bulkParsed = parseOdoImportText(bulkTa.value);
+          if (!bulkParsed.readings.length) {
+            if (bulkNote) bulkNote.innerHTML = '<span style="color:#c2410c;font-weight:600">No readings could be read from that list.</span> Each line needs a date like 2026-05-04 and the odometer number.';
+            if (bulkConfirm) bulkConfirm.classList.add('hidden');
+            return;
+          }
+          var f = bulkParsed.readings[0], l = bulkParsed.readings[bulkParsed.readings.length - 1];
+          if (bulkNote) bulkNote.innerHTML = 'Ready to import <b>' + bulkParsed.readings.length + ' readings</b>: ' +
+            esc(f.date) + ' — ' + Math.round(f.value).toLocaleString('en-CA') + ' km → ' +
+            esc(l.date) + ' — ' + Math.round(l.value).toLocaleString('en-CA') + ' km.' +
+            (bulkParsed.bad ? ' (' + bulkParsed.bad + ' line' + (bulkParsed.bad === 1 ? '' : 's') + ' could not be read and will be left out.)' : '') +
+            ' Check the dates and numbers, then tap Confirm import.';
+          if (bulkConfirm) bulkConfirm.classList.remove('hidden');
+        };
+        if (bulkConfirm) bulkConfirm.onclick = function () {
+          if (!bulkParsed || !bulkParsed.readings.length) return;
+          var res = { added: 0, skipped: 0 };
+          try { if (window.App && App._importOdoReadings) res = App._importOdoReadings(bulkParsed.readings, 'sheet-import'); } catch (e) {}
+          if (bulkNote) bulkNote.innerHTML = '✓ Imported <b>' + res.added + ' readings</b>' +
+            (res.skipped ? ' — ' + res.skipped + ' were already recorded or did not fit the record in order, and were left out.' : '.') +
+            ' Your lifetime distance now starts from the earliest of them.';
+          bulkConfirm.classList.add('hidden');
+          bulkParsed = null;
         };
       })();
 
