@@ -1,8 +1,8 @@
 {
   "version": 36,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v36.apk",
-  "webVersion": 214,
-  "notes": "v214 — APK v36 is out (native voice for navigation, picture-in-picture while driving, the next turn kept in the notification tray, and a home-screen widget with your shift at a glance). Web layer unchanged since v213.",
+  "webVersion": 215,
+  "notes": "v215 \u2014 Navigator gestures fixed: a pinch now zooms the map about your truck (it used to zoom about your fingers and walk the truck off its spot, and a skewed pinch could spin the whole view). Two-finger rotate and tilt now turn about the truck too, and every drive opens on the clean, level chase view.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "5aada8fa169314feafae8657fa8399149ac4bc045da29fede66f2afaadac808e",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "7444e5d598d1f0d47872e5571340c1040829e531e110c337aa2a5acbb98687cf",
+    "index.html": "4f13c0e57bd88621130dde94e722faaf5be47f90a29aaaedc682c4fd78c98e8f",
     "js/app.js": "6cf8eb1b151cb15a171cb5fec612a9c41c5c2bc53face73ff630fcb9ba1b8121",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
@@ -46,7 +46,7 @@
     "modules/maintenance.js": "fe194a36505035dd237ab7305d65ceeb5b24eacb62fef890874eb69b1a18d86c",
     "modules/manifest.js": "715c3283664fa23364a4488d27fe636bc15ed4b0cf76d659d65fdc38bb576cf7",
     "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
-    "modules/navigator.js": "faba338d425d6b71c806e2d66f72c7506fb871d861fce0b4443ce4930151f157",
+    "modules/navigator.js": "fcdf9748f731af905324af7ccb96446e090c465ed1acb2bc72d1f6099d35078b",
     "modules/pnl.js": "804fe35df52365ece29870f2933d50f77e2f33b8f49dda317ed348bca64fe3e7",
     "modules/preferences.js": "51c3f1a226753abaf711a778747ea88d4e2d3f05458065555197b363ff264a49",
     "modules/pti.js": "5e75f391e7c8193de3477f6414f93f553b65f9c64f1baf2180393585496cac9e",

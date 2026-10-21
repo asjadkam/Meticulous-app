@@ -78,7 +78,13 @@ ok('settings carry a Test my voice button wired to speak()',
   navSrc.indexOf('nvs_testvoice') !== -1 && navSrc.indexOf('Voice guidance is on. In 300 metres, turn right.') !== -1);
 
 console.log('— Pinch-to-zoom / free-look —');
-ok('drive map accepts touch zoom', navSrc.indexOf('touchZoom: true') !== -1);
+/* v215 (NAV-GESTURE-PLANE) supersedes the v183 touchZoom pin: Leaflet's own
+   pinch zoomed about the finger centroid and walked the truck off its
+   anchor (owner's video, Oct 21, 2026 15:22 MDT), so touchZoom is OFF and
+   the two-finger observer drives the pinch through setZoomAround on the
+   truck. The v183 law — the driver CAN pinch the drive map — stands. */
+ok('drive map pinch is driven about the truck (v215: touchZoom off, setZoomAround drives it)',
+  navSrc.indexOf('touchZoom: false') !== -1 && navSrc.indexOf('setZoomAround') !== -1);
 ok('drive map accepts dragging', /L\.map\('nv_drive_map'[\s\S]{0,400}dragging: true/.test(navSrc));
 ok('user gesture enters free-look (dragstart/zoomstart)', navSrc.indexOf("on('dragstart'") !== -1 && navSrc.indexOf("on('zoomstart'") !== -1);
 ok('follow recenter stands down in free-look (tick + animator)', (navSrc.match(/!S\.driveFree/g) || []).length >= 2);

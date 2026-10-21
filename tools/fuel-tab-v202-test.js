@@ -131,7 +131,7 @@ check('fuel.js: the fx wiring lives in wireFx, called by the view only',
   fuelSrc.includes('function wireFx(body)') && fuelSrc.includes('wireFx(body);'));
 check('fuel.js: renderFxView exists and the render branches to it',
   fuelSrc.includes('function renderFxView(body)') && fuelSrc.includes('if (fxView) { renderFxView(body); return; }'));
-eq('webVersion', ver.webVersion, 214);
+eq('webVersion', ver.webVersion, 215);
 check('index pin agrees', idxSrc.includes('modules/fuel.js?v=' + ver.webVersion));
 
 console.log('fuel-tab-v202: ' + pass + ' passed, ' + fail + ' failed');

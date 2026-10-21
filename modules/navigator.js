@@ -765,13 +765,46 @@
      twist is >=12°, a real vertical slide >=28 px), so the
      small cross-talk of a real gesture (a tilt's few degrees
      of skew, a twist's few px of midY drift) never steals the
-     channel. Anything under both thresholds is nothing yet. */
+     channel. Anything under both thresholds is nothing yet.
+     v215 (NAV-GESTURE-PLANE, owner's video Oct 21, 2026 15:22
+     MDT — his pinch SPUN the sheet): the channel LOCKS on the
+     first threshold crossed, and a natural pinch skews fast —
+     the fingers can twist 12–20° while the spread is still
+     small — so a plain dominance race let a pinch lock as
+     ROTATE mid-gesture, and the plane spun while Leaflet
+     zoomed. Two guards now sit between the pinch threshold
+     and the dominance race: a committed vertical slide
+     (tilt's own threshold, little twist) is a tilt even if
+     the fingers breathed apart on the way; and a DEVELOPING
+     pinch — spread >=14 px, at least 60% of the twist's arc
+     travel at the fingers, no committed slide under way —
+     is a pinch before the twist can reach its own lock. Only
+     an extreme twist (>=30°) with a small spread outranks a
+     developing pinch, via the dominance race below. */
   function gestureClass(start, cur) {
-    if (Math.abs(cur.dist - start.dist) >= 40) return 'pinch';
-    var rot = Math.abs(gestureAngDelta(start.angle, cur.angle)) / 12;
-    var tilt = Math.abs(cur.midY - start.midY) / 28;
+    var dDist = cur.dist - start.dist;
+    var dAng = Math.abs(gestureAngDelta(start.angle, cur.angle));
+    var dMidY = Math.abs(cur.midY - start.midY);
+    if (Math.abs(dDist) >= 40) return 'pinch';
+    if (dMidY >= 28 && dAng < 12) return 'tilt';
+    var arcPx = dAng * Math.PI / 180 * (start.dist || 0);
+    if (Math.abs(dDist) >= 14 && dMidY < 20 && Math.abs(dDist) >= 0.6 * arcPx) return 'pinch';
+    var rot = dAng / 12;
+    var tilt = dMidY / 28;
     if (rot < 1 && tilt < 1) return null;
     return rot >= tilt ? 'rotate' : 'tilt';
+  }
+  /* v215: the pinch's camera zoom — a pinch drives the map
+     CAMERA (Leaflet setZoomAround on the truck), never a
+     sheet scale. Doubling the finger spread is one zoom level,
+     the map's own arithmetic. The band is the drive view's
+     sane range: the view opens at 18, the tile layer tops at
+     18 (one overzoom level reads closer), and 14 is as far
+     out as a chase view stays useful. */
+  function pinchZoomFrom(baseZoom, startDist, curDist) {
+    if (!(startDist > 0) || !(curDist > 0) || !isFinite(baseZoom)) return baseZoom;
+    var z = baseZoom + Math.log(curDist / startDist) / Math.LN2;
+    return Math.max(14, Math.min(19, Math.round(z * 100) / 100));
   }
   /* Fingers slide UP (midY falls) → the view pitches UP toward
      the horizon; slide DOWN → it flattens toward top-down.
@@ -2257,17 +2290,72 @@
 
       /* v210 (NAV-GESTURES): two-finger rotate + tilt on the
          drive view. Pointer events are OBSERVED only (passive,
-         never prevented) — Leaflet keeps pinch zoom and
-         one-finger pan exactly as they were; the NAVPURE
-         gestureClass decides the channel with pinch judged
-         first, so a pinch never reads as a rotate. Engaging
-         rotate/tilt enters free-look like any other manual
-         look (setDriveFree above); the view state composes
-         into the plane's ONE transform via planeTransform,
-         repaints go through paintPlane (the one writer), and
-         the Re-center snap-back zeroes both adjustments. */
+         never prevented); the NAVPURE gestureClass decides
+         the channel with pinch judged first, so a pinch never
+         reads as a rotate. Engaging rotate/tilt enters
+         free-look like any other manual look (setDriveFree
+         above); the view state composes into the plane's ONE
+         transform via planeTransform, repaints go through
+         paintPlane (the one writer), and the Re-center
+         snap-back zeroes both adjustments.
+         v215 (NAV-GESTURE-PLANE, owner's video Oct 21, 2026
+         15:22 MDT — "Why is my truck moving with the zoom?"):
+         the gestures now drive the map CAMERA about the
+         truck, never a sheet about wherever it happens to
+         sit. (1) PINCH is ours: Leaflet's touchZoom zoomed
+         about the finger centroid and walked the truck's
+         ground point off the avatar on every pinch; the
+         observer instead calls setZoomAround on the truck's
+         own latlng — the zoom changes, the truck's screen
+         point does not move, and the follow camera keeps
+         the truck (no free-look). (2) TWIST + TILT pivot on
+         the plane's centre, which is the truck ONLY while
+         the camera sits on the truck — so at the moment a
+         gesture first classifies (any channel), the camera
+         re-anchors on the truck (gestureAnchor below) and
+         the rotation/pitch is then truly about the truck's
+         GPS point, the avatar's fixed anchor. The avatar
+         itself never transforms: it is a sibling overlay
+         outside the plane (the v139 architecture), and with
+         the camera pinned to the truck it stays over its
+         GPS point through every gesture. */
       function driveGesturePaint() {
         if (S && S.drive) paintPlane((S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) ? S.drive.headingApplied : (S.heading || 0));
+      }
+      /* v215: put the camera back on the truck before a
+         two-finger gesture acts, so the gesture's pivot IS
+         the truck's GPS position. A no-op when the follow
+         camera already sits there (the ordinary case). */
+      function gestureAnchor() {
+        if (!S || !S.driveMap || !S.pos) return;
+        try {
+          var ctr = S.driveMap.getCenter ? S.driveMap.getCenter() : null;
+          if (ctr && haversineM([ctr.lat, ctr.lng], S.pos) > 1) {
+            S.driveMap.panTo(S.pos, { animate: false });
+          }
+        } catch (e) {}
+      }
+      /* v215: the pinch, applied to the camera. The zoom
+         pivot is the truck's own latlng, so its container
+         point — the plane centre, the avatar anchor — is
+         exactly preserved by Leaflet's own zoom arithmetic.
+         _pinchZooming marks the write as ours so the map's
+         zoomstart hook never reads it as a free-look. */
+      function gesturePinchZoom(cur) {
+        if (!S || !S.driveMap || !S._gestStart) return;
+        var base = S._gestBaseZoom;
+        if (base === null || base === undefined) {
+          try { base = S.driveMap.getZoom(); } catch (e) { base = null; }
+        }
+        if (base === null || base === undefined) return;
+        var z = pinchZoomFrom(base, S._gestStart.dist, cur.dist);
+        if (!isFinite(z)) return;
+        S._pinchZooming = true;
+        try {
+          var pivot = S.pos || (S.driveMap.getCenter ? S.driveMap.getCenter() : null);
+          if (pivot && S.driveMap.setZoomAround) S.driveMap.setZoomAround(pivot, z, { animate: false });
+        } catch (e) {}
+        S._pinchZooming = false;
       }
       function attachDriveGestures() {
         var mapEl = body.querySelector('#nv_drive_map');
@@ -2278,6 +2366,7 @@
         S._pointers = {};
         S._gestStart = null; S._gestLock = null;
         S._gestBaseRot = 0; S._gestBasePitch = 45;
+        S._gestBaseZoom = null; S._gestAnchored = false;
         var ptrs = function () {
           return Object.keys(S._pointers).map(function (k) { return S._pointers[k]; });
         };
@@ -2288,8 +2377,11 @@
             var ps = ptrs();
             S._gestStart = gestureVec(ps[0], ps[1]);
             S._gestLock = null;
+            S._gestAnchored = false;
             S._gestBaseRot = S.viewRot || 0;
             S._gestBasePitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 45;
+            S._gestBaseZoom = null;
+            if (S.driveMap) { try { S._gestBaseZoom = S.driveMap.getZoom(); } catch (e) {} }
           }
         };
         S._gMove = function (ev) {
@@ -2300,6 +2392,13 @@
           if (ps.length !== 2 || !S._gestStart) return;
           var cur = gestureVec(ps[0], ps[1]);
           if (!S._gestLock) S._gestLock = gestureClass(S._gestStart, cur);
+          if (S._gestLock && !S._gestAnchored) {
+            /* v215: the gesture acts about the truck — put
+               the camera on the truck once, at lock-in,
+               before the channel's first write. */
+            S._gestAnchored = true;
+            gestureAnchor();
+          }
           if (S._gestLock === 'rotate') {
             S.viewRot = gestureRotOffset(S._gestBaseRot, S._gestStart.angle, cur.angle);
             if (!S.driveFree) setDriveFree(true);
@@ -2308,13 +2407,20 @@
             S.viewPitch = tiltPitchFrom(S._gestBasePitch, cur.midY - S._gestStart.midY);
             if (!S.driveFree) setDriveFree(true);
             driveGesturePaint();
+          } else if (S._gestLock === 'pinch') {
+            /* v215: the pinch drives the CAMERA about the
+               truck (Leaflet's own touchZoom is off — it
+               zoomed about the fingers and walked the truck
+               off its anchor). No plane write, no free-look:
+               the follow camera keeps the truck at the new
+               zoom. */
+            gesturePinchZoom(cur);
           }
-          /* 'pinch' is Leaflet's zoom — observed, never acted on. */
         };
         S._gUp = function (ev) {
           if (!ev || ev.pointerId === undefined || ev.pointerId === null) return;
           delete S._pointers[ev.pointerId];
-          if (ptrs().length < 2) { S._gestStart = null; S._gestLock = null; }
+          if (ptrs().length < 2) { S._gestStart = null; S._gestLock = null; S._gestAnchored = false; }
         };
         mapEl.addEventListener('pointerdown', S._gDown, { passive: true });
         mapEl.addEventListener('pointermove', S._gMove, { passive: true });
@@ -2398,14 +2504,14 @@
           try {
             S.driveMap = L.map('nv_drive_map', {
               zoomControl: false, attributionControl: false,
-              /* v183: dragging + touchZoom ON — the driver can
-                 pinch and pan mid-drive (free-look, see
-                 setDriveFree); the follow camera stands down
-                 while he looks and the Re-center pill brings
-                 it back. Wheel/box/keyboard zoom stay off. */
+              /* v183: dragging ON (free-look pan).
+                 v215: Leaflet pinch (touchZoom) OFF — it
+                 zoomed about the fingers, not the truck;
+                 the observer drives pinch instead (see
+                 attachDriveGestures). Other zooms off. */
               dragging: true,
               scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
-              keyboard: false, touchZoom: true,
+              keyboard: false, touchZoom: false,
               /* v125 flicker fix (owner's headline defect): no
                  tile fade-in on the drive map — Leaflet's fade
                  re-paints every fresh tile from opacity 0 on
@@ -2415,16 +2521,28 @@
             }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
             var tspec = driveTileSpec();
             L.tileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
-            /* v183: a user pinch/drag enters free-look. Leaflet
-               fires dragstart/touchzoom start only for real
-               gestures (programmatic panTo does not), so the
-               follow camera never fights the driver. */
+            /* v183: a user drag enters free-look. Leaflet fires
+               dragstart only for real gestures (programmatic
+               panTo does not), so the follow camera never
+               fights the driver.
+               v215: zoomstart no longer means free-look on its
+               own — the only zooms left on this map are the
+               gesture observer's own camera pinches (applied
+               under _pinchZooming / the 'pinch' lock), and a
+               pinch about the truck must NOT stand the follow
+               camera down: the truck stays followed at the
+               new zoom. The guard keeps the hook honest for
+               any other zoom source. */
             try {
               S.driveMap.on('dragstart', function () { setDriveFree(true); });
-              S.driveMap.on('zoomstart', function () { setDriveFree(true); });
+              S.driveMap.on('zoomstart', function () {
+                if (S._pinchZooming || S._gestLock === 'pinch') return;
+                setDriveFree(true);
+              });
             } catch (e) {}
-            /* v210: two-finger rotate/tilt observers (passive;
-               Leaflet's own gestures are untouched). */
+            /* v210: two-finger observers (passive). v215: they
+               now also carry the pinch — see the touchZoom note
+               at the map's creation and attachDriveGestures. */
             try { attachDriveGestures(); } catch (e) {}
             S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v178 (F2): the route-arrow pool — ten chevron
@@ -2464,6 +2582,15 @@
             }, 650);
           } catch (e) { S.driveMap = null; }
         }
+        /* v215 (NAV-GESTURE-PLANE): a NEW drive always opens
+           on the pure chase view — the manual two-finger
+           adjustments (viewRot/viewPitch) are zeroed HERE, at
+           entry, not only on the previous drive's exit, so no
+           residual lean or pitch can ever greet a fresh drive
+           (owner, Oct 21, 2026 15:24 MDT: "tilt towards the
+           right of the truck is still there" on a view nobody
+           had adjusted that drive). */
+        S.viewRot = 0; S.viewPitch = null;
         /* v208 (VOICE-ON-AT-DRIVE-START, owner Oct 21, 2026):
            a NEW drive always starts with the voice ON. The mute
            used to persist invisibly in the settings store — a
