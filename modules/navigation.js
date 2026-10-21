@@ -281,7 +281,13 @@
     recordNav(fav, kind);
     var pend = { name: displayPlaceName(fav), ts: Date.now() };
     if (fav.lat && fav.lng) { pend.lat = fav.lat; pend.lng = fav.lng; }
-    else pend.query = fav.address ? (fav.name + ', ' + fav.address) : fav.name;
+    /* v183: the query is the ADDRESS ALONE — gluing the place
+       name in front ("Home, 1243 Cornerstone…") made the
+       geocoder find nothing and the Navigate tap loop back to
+       the destination page (owner, Oct 20 17:13 MDT). The name
+       travels separately in pend.name, and the Navigator checks
+       its saved places by that name before geocoding at all. */
+    else pend.query = fav.address ? fav.address : fav.name;
     App._store.set('nav_pending', pend);
     App.openModule('navigator');
   }

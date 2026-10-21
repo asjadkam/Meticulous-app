@@ -450,6 +450,79 @@
     return null;
   }
 
+  /* v179 (F5, owner Oct 19: Garmin-style grade warnings):
+     GRADE EVENTS from elevation samples. samples = [{m, ele}]
+     along the route (metres along, metres elevation — fetched
+     from the free Open-Meteo elevation service at route time;
+     see fetchGradeEvents in the render). For each sample, the
+     grade over the next ~150 m is (eleAhead − ele) / run; a
+     sustained |grade| ≥ 4% opens an event {atM, gradePct} —
+     gradePct signed (positive = climb). Consecutive firing
+     samples merge into ONE event (its steepest grade), so a
+     long hill announces once, at its start. Grades are computed
+     from real elevation data only — if the fetch fails there
+     are no events and no announcements, never invented numbers. */
+  function gradeEvents(samples) {
+    var out = [];
+    if (!samples || samples.length < 3) return out;
+    var open = null;
+    for (var i = 0; i < samples.length; i++) {
+      var j = i + 1;
+      while (j < samples.length && samples[j].m - samples[i].m < 150) j++;
+      if (j >= samples.length) break;
+      var run = samples[j].m - samples[i].m;
+      if (!(run > 0)) continue;
+      var g = (samples[j].ele - samples[i].ele) / run * 100;
+      if (Math.abs(g) >= 4) {
+        if (!open) open = { atM: samples[i].m, gradePct: g };
+        else if (Math.abs(g) > Math.abs(open.gradePct)) open.gradePct = g;
+      } else if (open) { out.push(open); open = null; }
+    }
+    if (open) out.push(open);
+    return out;
+  }
+
+  /* v183 (N-limit, owner Oct 20 19:50 MDT — no speed limit was
+     displayed on his drive): Valhalla carries no maxspeed (see
+     BUGS.md), so the limit comes from OpenStreetMap's own
+     maxspeed tag on the road under the truck, fetched live from
+     the free Overpass service (see fetchSpeedLimit in render).
+     parseMaxspeed turns a raw tag ("50", "50 mph", "CA:urban")
+     into km/h, or null when the tag carries no honest number —
+     the badge shows only a number this returns. */
+  function parseMaxspeed(tag) {
+    if (tag === null || tag === undefined) return null;
+    var m = String(tag).match(/(\d+(?:\.\d+)?)\s*(mph|km\/h|kmh)?/i);
+    if (!m) return null;
+    var v = parseFloat(m[1]);
+    if (!(v > 0)) return null;
+    if (m[2] && /^mph$/i.test(m[2])) v = v * 1.609344;
+    return Math.round(v);
+  }
+
+  /* v183 (Navigator search + Navigate loop, owner Oct 20 17:10–
+     17:13 MDT): a typed search must match his SAVED places
+     before any outside geocoder is asked — "Home, 1243
+     Cornerstone Boulevard" failed because the geocoder was
+     handed the place NAME glued to the address. matchSavedPlaces
+     (pure) returns the saved places a query means: a place whose
+     name appears in the query (his "Home"), or whose name/address
+     contains every query word. Order: name-in-query first. */
+  function matchSavedPlaces(places, q) {
+    var norm = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); };
+    var nq = norm(q);
+    if (!nq || !places || !places.length) return [];
+    var words = nq.split(' ').filter(function (w) { return w.length >= 2; });
+    var named = [], worded = [];
+    for (var i = 0; i < places.length; i++) {
+      var p = places[i];
+      var nn = norm(p.name), hay = norm((p.name || '') + ' ' + (p.address || ''));
+      if (nn && nn.length >= 3 && nq.indexOf(nn) !== -1) { named.push(p); continue; }
+      if (words.length && words.every(function (w) { return hay.indexOf(w) !== -1; })) worded.push(p);
+    }
+    return named.concat(worded);
+  }
+
   /* v176 (F1, owner Oct 19 drive): EVERY TURN ANNOUNCED, NONE
      SKIPPED. On his Oct 19 drive the guidance jumped from the
      Beddington Trail exit straight to the next turn — a short
@@ -624,6 +697,8 @@
          this same object, never a copy. Defaults: fastest,
          3D chase, both overlays on. */
       routePref: s.routePref === 'economical' ? 'economical' : 'fastest',
+      /* v179 (F5): grade/slope announcements, on by default. */
+      gradeAlerts: s.gradeAlerts === undefined ? true : !!s.gradeAlerts,
       viewMode: s.viewMode === '2d' ? '2d' : '3d',
       showSpeed: s.showSpeed === undefined ? true : !!s.showSpeed,
       showSpeedLimit: s.showSpeedLimit === undefined ? true : !!s.showSpeedLimit
@@ -689,14 +764,51 @@
     S = null;
   }
 
+  /* v183 (N-voice, owner Oct 20 19:50 MDT — in his hands the
+     voice was SILENT all drive, and the mute button read broken):
+     the v101 speak() lost utterances three ways in the Android
+     WebView/Capacitor shell. (1) cancel() in the same tick as
+     speak() drops the new utterance on WebView — now a busy
+     synth is cancelled and the line is spoken ~70 ms later,
+     while an idle synth speaks at once. (2) An utterance held
+     only by a local variable can be garbage-collected mid-line
+     in Chromium (the classic silent-cutoff bug) — voiceKeep
+     holds it until it ends. (3) A paused synth (Chrome parks
+     speechSynthesis) never starts — resume() is called first,
+     and a voice is picked explicitly once voices load (an
+     unvoiced utterance on some TTS engines says nothing).
+     Unmuting now SPEAKS its confirmation, and the settings menu
+     carries a Test voice button, so the driver can prove the
+     voice with his own ears parked — machine proof is not the
+     verdict, his hearing it is. The robust native path
+     (a Capacitor text-to-speech plugin) needs a new APK and is
+     parked BY NAME for the native pass in BUGS.md. */
+  var voiceKeep = null;
   function speak(text) {
     if (!text || !S || S.settings.muted) return;
     try {
-      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
-      speechSynthesis.cancel();
-      var u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.02;
-      speechSynthesis.speak(u);
+      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { S.voiceMissing = true; return; }
+      var synth = window.speechSynthesis;
+      try { synth.resume(); } catch (e) {}
+      var voices = [];
+      try { voices = synth.getVoices() || []; } catch (e) {}
+      var doSpeak = function () {
+        try {
+          var u = new SpeechSynthesisUtterance(text);
+          u.rate = 1.02; u.volume = 1; u.lang = 'en-CA';
+          for (var i = 0; i < voices.length; i++) {
+            if (/^en/i.test(voices[i].lang || '')) { u.voice = voices[i]; break; }
+          }
+          voiceKeep = u;
+          u.onend = u.onerror = function () { if (voiceKeep === u) voiceKeep = null; };
+          synth.speak(u);
+          if (S) S.voiceSpokeAt = Date.now();
+        } catch (e) {}
+      };
+      if (synth.speaking || synth.pending) {
+        try { synth.cancel(); } catch (e) {}
+        setTimeout(doSpeak, 70);
+      } else doSpeak();
     } catch (e) {}
   }
 
@@ -907,6 +1019,10 @@
         }).join('') +
         '</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div>' +
+        /* v183 (pinch-to-zoom): appears only while the driver is
+           in free-look (he pinched or dragged the drive map);
+           one tap puts the map back on the truck. */
+        '<button class="btn navy hidden" id="nvd_recenter" style="position:absolute;left:50%;transform:translateX(-50%);bottom:84px;z-index:6">🎯 Back to my truck</button>' +
         /* v177 (F4): the on-screen speedometer + speed-limit
            badge — overlays the settings toggles show/hide. The
            speed is the GPS stream's own speed; the limit badge
@@ -1070,17 +1186,96 @@
       }
 
       var searchBtn = body.querySelector('#nv_search');
+      /* v183: ALL saved places (work + personal), read through
+         the Navigation module's shared picker data — the search
+         consults this list BEFORE any geocoder (see the handler
+         below). Entries arrive as {place, src}; flattened here. */
+      function savedPlacesAll() {
+        var out = [];
+        try {
+          var navMod2 = window.Meticulous && Meticulous.modules.navigation;
+          if (navMod2 && navMod2.pickerEntries) {
+            ['work', 'personal'].forEach(function (kind) {
+              var res = navMod2.pickerEntries(kind, '');
+              /* pickerEntries with an empty query returns recents
+                 only; a per-word probe below covers the rest, so
+                 ALSO pull the query-filtered rows for the text. */
+              if (res && res.rows) res.rows.forEach(function (e) { if (e.place) out.push(e.place); });
+            });
+          }
+        } catch (e) {}
+        return out;
+      }
+      function savedMatchesFor(q) {
+        var pool = savedPlacesAll();
+        try {
+          var navMod3 = window.Meticulous && Meticulous.modules.navigation;
+          if (navMod3 && navMod3.pickerEntries) {
+            ['work', 'personal'].forEach(function (kind) {
+              var res = navMod3.pickerEntries(kind, q);
+              if (res && res.rows) res.rows.forEach(function (e) {
+                if (e.place && pool.indexOf(e.place) === -1) pool.push(e.place);
+              });
+            });
+          }
+        } catch (e) {}
+        return matchSavedPlaces(pool, q);
+      }
       searchBtn.onclick = function () {
         var q = body.querySelector('#nv_q').value.trim();
         var box = body.querySelector('#nv_results');
         if (!q) { note('Type an address or place name first.'); return; }
         if (S.searching) return;
+        /* v183: SAVED PLACES WIN THE SEARCH. A match with a pin
+           IS the destination (no geocoder involved); a match
+           with only an address re-searches by the ADDRESS ALONE
+           (never name+address — the glued query is what made
+           "Home, 1243 Cornerstone…" unfindable). Only when no
+           saved place matches does the typed text go to the
+           geocoder, and even then a leading saved-place name is
+           stripped from a retry (see below). */
+        var saved = savedMatchesFor(q);
+        if (saved.length) {
+          var pin = null, addrOnly = null, i2;
+          for (i2 = 0; i2 < saved.length; i2++) {
+            if (saved[i2].lat && saved[i2].lng) { pin = saved[i2]; break; }
+            if (!addrOnly && saved[i2].address) addrOnly = saved[i2];
+          }
+          if (pin) {
+            box.innerHTML = '';
+            var pn = (navPicker && navPicker.displayPlaceName) ? navPicker.displayPlaceName(pin) : pin.name;
+            var qEl2 = body.querySelector('#nv_q'); if (qEl2) qEl2.value = pn || q;
+            setDest([Number(pin.lat), Number(pin.lng)], pn || pin.name || 'Saved place', true);
+            if (S.map) S.map.setView(S.dest, 14);
+            note('Found your saved place: ' + (pn || pin.name || '') + '.');
+            return;
+          }
+          if (addrOnly) {
+            var qEl3 = body.querySelector('#nv_q'); if (qEl3) qEl3.value = addrOnly.address;
+            q = addrOnly.address;
+          }
+        }
         S.searching = true; box.innerHTML = '<p class="note">Searching…</p>';
         fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=ca&q=' + encodeURIComponent(q))
           .then(function (r) { return r.json(); })
           .then(function (rows) {
             S.searching = false;
-            if (!rows || !rows.length) { box.innerHTML = '<p class="note">No places found for “' + esc(q) + '”.</p>'; return; }
+            if (!rows || !rows.length) {
+              /* v183: one honest retry — a query like "Home, 1243
+                 Cornerstone Boulevard" fails whole; the address
+                 after the first comma often resolves. Retry once
+                 with the name segment dropped, never in a loop. */
+              var comma = q.indexOf(',');
+              if (comma > 0 && !S._geoRetried) {
+                S._geoRetried = true;
+                var q2 = q.slice(comma + 1).trim();
+                var qEl4 = body.querySelector('#nv_q'); if (qEl4) qEl4.value = q2;
+                if (q2) { searchBtn.onclick(); return; }
+              }
+              S._geoRetried = false;
+              box.innerHTML = '<p class="note">No places found for “' + esc(q) + '”. If it is one of your saved places, pick it from Your pits & job sites below.</p>'; return;
+            }
+            S._geoRetried = false;
             box.innerHTML = rows.map(function (r, i) {
               return '<div class="listitem"><div class="a">' + esc(r.display_name.split(',').slice(0, 2).join(',')) + '</div>' +
                 '<div class="b">' + esc(r.display_name) + '</div>' +
@@ -1205,10 +1400,27 @@
           } else if (pend.query) {
             /* v104: the address path keeps the intent on file —
                the setDest that lands from this search (the row
-               the driver taps) inherits it (see setDest). */
+               the driver taps) inherits it (see setDest).
+               v183: FIRST check the saved places by the pending
+               NAME — a saved place with a pin (e.g. Home) must
+               land as a destination outright, never as a geocoder
+               query; this was the Navigate loop: the tap set the
+               pending, the search failed on the glued query, and
+               the driver was back on the destination page. */
             S.pendGoNow = true;
-            var pq = body.querySelector('#nv_q');
-            if (pq && searchBtn) { pq.value = pend.query; searchBtn.onclick(); }
+            var pendSaved = savedMatchesFor(pend.name || '');
+            var pendPin = null;
+            for (var psi = 0; psi < pendSaved.length; psi++) {
+              if (pendSaved[psi].lat && pendSaved[psi].lng) { pendPin = pendSaved[psi]; break; }
+            }
+            if (pendPin) {
+              S.pendGoNow = false;
+              setDest([Number(pendPin.lat), Number(pendPin.lng)], pend.name || pendPin.name || 'Saved place', true);
+              if (S.map) S.map.setView(S.dest, 14);
+            } else {
+              var pq = body.querySelector('#nv_q');
+              if (pq && searchBtn) { pq.value = pend.query; searchBtn.onclick(); }
+            }
           }
         }
       } catch (e) {}
@@ -1349,10 +1561,42 @@
         var attempt = 0;
         var lastGood = null;
 
+        /* v179 (F5): fetch elevations for ~200 m samples along
+           the new route from the free Open-Meteo elevation
+           service (no key, no spend) and compute grade events.
+           Fully guarded: any failure leaves S.gradeEvents empty
+           and guidance exactly as before — silence, never an
+           invented grade. Runs off the route's critical path:
+           the route is usable the moment it lands; events fill
+           in when the answer arrives. */
+        function fetchGradeEvents(line) {
+          S.gradeEvents = [];
+          S.gradeSaid = {};
+          if (typeof fetch !== 'function' || !line || line.length < 2) return;
+          try {
+            var totalM = 0, i;
+            for (i = 0; i + 1 < line.length; i++) totalM += haversineM(line[i], line[i + 1]);
+            var pts = [], step = Math.max(100, totalM / 60), m;
+            for (m = 0; m <= totalM; m += step) { var p = pointAlongLine(line, m); if (p) pts.push({ m: m, p: p }); }
+            if (pts.length < 3) return;
+            var lat = pts.map(function (q) { return q.p[0].toFixed(6); }).join(',');
+            var lon = pts.map(function (q) { return q.p[1].toFixed(6); }).join(',');
+            fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lat + '&longitude=' + lon)
+              .then(function (r) { return r.json(); })
+              .then(function (j) {
+                if (!j || !j.elevation || !S || S.line !== line) return;
+                var samples = pts.map(function (q, k) { return { m: q.m, ele: Number(j.elevation[k]) || 0 }; });
+                S.gradeEvents = gradeEvents(samples);
+              })
+              .catch(function () {});
+          } catch (e) {}
+        }
+
         function finalizeRoute(line, plan) {
           S.rerouting = false;
           S.line = line;
           S.plan = plan;
+          fetchGradeEvents(line);
           S.manIdx = 0; S.offSince = 0; S.arrived = false;
           /* v78: remember the destination for the dashboard card
              (search name when there is one, else the pin coords —
@@ -1663,6 +1907,60 @@
       }
 
       /* ---------- v101 drive screen ---------- */
+      /* v183: FREE-LOOK (pinch-to-zoom / drag on the drive map).
+         The drive map used to be locked (touchZoom/dragging off),
+         so a pinch did nothing (owner, Oct 20 17:12 MDT). The map
+         now takes touch zoom + drag; the first user gesture flips
+         driveFree on, the follow recentering (tick + animator)
+         stands down, and the Re-center pill shows. The pill — or
+         15 quiet seconds — hands the map back to the truck. */
+      function setDriveFree(on) {
+        if (!S) return;
+        S.driveFree = !!on;
+        var pill = body.querySelector('#nvd_recenter');
+        if (pill) pill.classList.toggle('hidden', !on);
+        if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
+        if (on) {
+          S.driveFreeTimer = setTimeout(function () { setDriveFree(false); }, 15000);
+        } else if (S.driveMap && S.pos) {
+          try { S.driveMap.panTo(S.pos, { animate: false }); } catch (e) {}
+        }
+      }
+
+      /* v183 (N-limit): THE SPEED LIMIT under the truck, from
+         OpenStreetMap's maxspeed tag via the free Overpass
+         service — no key, no spend. Throttled: at most one query
+         per 30 s and only after the truck has moved 150 m from
+         the last query point. Any failure, or a road with no
+         maxspeed tag, leaves the last honest state (badge hides
+         when no number is known) — never an invented limit. */
+      function maybeFetchSpeedLimit() {
+        if (!S || !S.drive || !S.pos || !S.settings.showSpeedLimit) return;
+        if (typeof fetch !== 'function') return;
+        var now = Date.now();
+        if (S.limitFetchedAt && now - S.limitFetchedAt < 30000) return;
+        if (S.limitPos && haversineM(S.limitPos, S.pos) < 150) return;
+        S.limitFetchedAt = now; S.limitPos = S.pos;
+        var lat = S.pos[0], lon = S.pos[1];
+        var q = '[out:json][timeout:8];way(around:25,' + lat + ',' + lon + ')["maxspeed"];out tags 1;';
+        fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!S) return;
+            var v = null;
+            if (j && j.elements) {
+              for (var i = 0; i < j.elements.length; i++) {
+                var t = j.elements[i].tags && j.elements[i].tags.maxspeed;
+                var parsed = parseMaxspeed(t);
+                if (parsed) { v = parsed; break; }
+              }
+            }
+            S.limitKmh = v;
+            paintSpeedOverlay();
+          })
+          .catch(function () {});
+      }
+
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
@@ -1689,9 +1987,15 @@
         if (window.L && body.querySelector('#nv_drive_map')) {
           try {
             S.driveMap = L.map('nv_drive_map', {
-              zoomControl: false, attributionControl: false, dragging: false,
+              zoomControl: false, attributionControl: false,
+              /* v183: dragging + touchZoom ON — the driver can
+                 pinch and pan mid-drive (free-look, see
+                 setDriveFree); the follow camera stands down
+                 while he looks and the Re-center pill brings
+                 it back. Wheel/box/keyboard zoom stay off. */
+              dragging: true,
               scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
-              keyboard: false, touchZoom: false,
+              keyboard: false, touchZoom: true,
               /* v125 flicker fix (owner's headline defect): no
                  tile fade-in on the drive map — Leaflet's fade
                  re-paints every fresh tile from opacity 0 on
@@ -1701,6 +2005,14 @@
             }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
             var tspec = driveTileSpec();
             L.tileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
+            /* v183: a user pinch/drag enters free-look. Leaflet
+               fires dragstart/touchzoom start only for real
+               gestures (programmatic panTo does not), so the
+               follow camera never fights the driver. */
+            try {
+              S.driveMap.on('dragstart', function () { setDriveFree(true); });
+              S.driveMap.on('zoomstart', function () { setDriveFree(true); });
+            } catch (e) {}
             S.driveLine = makeDriveLine().addTo(S.driveMap);
             /* v178 (F2): the route-arrow pool — ten chevron
                markers created ONCE here and only ever MUTATED
@@ -1749,6 +2061,9 @@
 
       function exitDrive() {
         if (!S || !S.drive) return;
+        /* v183: free-look state dies with the drive. */
+        if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
+        S.driveFree = false;
         /* v104: leaving Drive — by the driver's tap or by the
            arrival hand-back — spends the arm: no re-route for
            this destination will auto-enter again. */
@@ -1901,6 +2216,28 @@
         }
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);
+        /* v179 (F5): grade warnings — 500 m before a sustained
+           ≥4% slope the guidance says so once, with the grade
+           the elevation data supports ("Steep climb ahead,
+           6 percent grade" / "Downhill ahead, 5 percent
+           grade"). Only when no turn prompt spoke on this very
+           fix — speak() cancels, and a turn always outranks a
+           hill. */
+        if (!say && S.settings.gradeAlerts && S.gradeEvents && S.gradeEvents.length) {
+          for (var gi = 0; gi < S.gradeEvents.length; gi++) {
+            var ev = S.gradeEvents[gi];
+            if (S.gradeSaid['g' + gi]) continue;
+            if (pr.along >= ev.atM - 500 && pr.along < ev.atM) {
+              S.gradeSaid['g' + gi] = 1;
+              var pct = Math.abs(Math.round(ev.gradePct));
+              speak(ev.gradePct > 0
+                ? 'Steep climb ahead — ' + pct + ' percent grade.'
+                : 'Downhill ahead — ' + pct + ' percent grade. Watch your speed and brakes.');
+              break;
+            }
+          }
+        }
+        maybeFetchSpeedLimit();
         if (S.driveMap) {
           try {
             /* v128: MUTATE, never rebuild — the recenter is a
@@ -1919,7 +2256,10 @@
                mutate (setLatLng / setLatLngs) — nothing is added
                to or removed from the drive map per tick. */
             var ctr = S.driveMap.getCenter ? S.driveMap.getCenter() : null;
-            if (!ctr || haversineM(S.pos, [ctr.lat, ctr.lng]) > 3) {
+            /* v183: free-look stands the follow camera down —
+               the marker still tracks the truck, the view stays
+               where the driver put it. */
+            if (!S.driveFree && (!ctr || haversineM(S.pos, [ctr.lat, ctr.lng]) > 3)) {
               S.driveMap.panTo(S.pos, { animate: false });
             }
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
@@ -2025,7 +2365,7 @@
               moving = true;
             }
           }
-          if (S.driveMap && S.pos && S.driveMap.getCenter) {
+          if (S.driveMap && S.pos && S.driveMap.getCenter && !S.driveFree) {
             var ctr = S.driveMap.getCenter();
             if (ctr) {
               var gap = haversineM([ctr.lat, ctr.lng], S.pos);
@@ -2081,6 +2421,8 @@
       if (driveBtn) driveBtn.onclick = startDrive;
       var dExit = body.querySelector('#nvd_exit');
       if (dExit) dExit.onclick = function () { exitDrive(); };
+      var dRecenter = body.querySelector('#nvd_recenter');
+      if (dRecenter) dRecenter.onclick = function () { setDriveFree(false); };
 
       /* v135: the avatar tap — opens/closes the chooser; a choice
          applies AT THE TAP (glyph swapped, 'on' marker moved) and
@@ -2178,6 +2520,9 @@
         saveSettings({ muted: S.settings.muted });
         paintMute();
         if (S.settings.muted) { try { speechSynthesis.cancel(); } catch (e) {} }
+        /* v183: unmuting SPEAKS — the driver hears the voice is
+           back in the same tap, instead of trusting a label. */
+        else speak('Voice guidance on.');
       }
       var muteBtn = body.querySelector('#nv_mute');
       if (muteBtn) muteBtn.onclick = toggleMute;
@@ -2207,8 +2552,11 @@
           '<label class="f">Map view</label>' + seg('nvs_view', st.viewMode, [['3d', '🏔️ 3D chase'], ['2d', '🗺️ 2D flat']]) +
           '<label class="f">Route preference</label>' + seg('nvs_route', st.routePref, [['fastest', '⚡ Fastest'], ['economical', '⛽ Most economical']]) +
           '<label class="chk" style="display:block;margin-top:12px"><input type="checkbox" id="nvs_speed"' + (st.showSpeed ? ' checked' : '') + '> Speedometer on screen</label>' +
-          '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_limit"' + (st.showSpeedLimit ? ' checked' : '') + '> Speed limit on screen (shows when the route data carries one)</label>' +
+          '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_limit"' + (st.showSpeedLimit ? ' checked' : '') + '> Speed limit on screen (read live from map data for the road you are on; roads with no posted limit in the map show none)</label>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_mute"' + (st.muted ? ' checked' : '') + '> Voice guidance muted</label>' +
+          '<button class="btn navy" id="nvs_testvoice" style="margin-top:8px">🔊 Test my voice</button>' +
+          '<p class="note" id="nvs_voicenote" style="margin-top:4px">Tap Test my voice — you should hear the guidance speak out loud.</p>' +
+          '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_grades"' + (st.gradeAlerts ? ' checked' : '') + '> Announce hills and steep grades ahead</label>' +
           '<h3 style="margin:16px 0 4px">🚛 Your truck</h3>' +
           '<p class="note" style="margin-top:0">Routes keep you legal for a truck of this size and weight.</p>' +
           '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '">' +
@@ -2275,6 +2623,25 @@
         if (li) li.onchange = function () { S.settings.showSpeedLimit = !!li.checked; saveSettings({ showSpeedLimit: S.settings.showSpeedLimit }); paintSpeedOverlay(); };
         var mu = panel.querySelector('#nvs_mute');
         if (mu) mu.onchange = function () { if (mu.checked !== S.settings.muted) toggleMute(); };
+        /* v183: the in-hand voice proof — speaks a real guidance
+           line at full volume through the same speak() the drive
+           uses; if the phone has no speech engine at all, it says
+           so in words instead of failing silently. */
+        var tv = panel.querySelector('#nvs_testvoice');
+        if (tv) tv.onclick = function () {
+          var vn = panel.querySelector('#nvs_voicenote');
+          if (S.settings.muted) { if (vn) vn.textContent = 'Voice is muted — untick "Voice guidance muted" above, then test again.'; return; }
+          S.voiceMissing = false;
+          speak('Voice guidance is on. In 300 metres, turn right.');
+          setTimeout(function () {
+            if (!vn) return;
+            vn.textContent = S.voiceMissing
+              ? 'This phone is not offering a speech voice to the app — voice guidance needs the native speech engine (parked for the native app update).'
+              : 'Played just now. If you heard nothing, check the phone media volume, then test again.';
+          }, 350);
+        };
+        var gr = panel.querySelector('#nvs_grades');
+        if (gr) gr.onchange = function () { S.settings.gradeAlerts = !!gr.checked; saveSettings({ gradeAlerts: S.settings.gradeAlerts }); };
         var profIds = { height: 'nvs_height', width: 'nvs_width', length: 'nvs_length', weight: 'nvs_weight', axleLoad: 'nvs_axleload', axles: 'nvs_axles' };
         function saveProfile() {
           var cur = S.settings.profile, p = {}, k, el;

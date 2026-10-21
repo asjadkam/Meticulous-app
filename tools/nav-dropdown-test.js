@@ -365,8 +365,14 @@ function favByName(mem, name) {
   q.value = 'westwinds'; q.fire('input');
   res.pick(mob.id);
   detail.querySelector('#nv_go').click();
+  /* v183 pin move (owner, Oct 20 17:13 MDT): the hand-off query is
+     the ADDRESS ALONE — the old name-glued query ("Mobil —
+     Westwinds, 300-…") is exactly what geocoders fail on and what
+     looped his Navigate tap; the name travels in pend.name and
+     the Navigator matches saved places by it before geocoding. */
   check('the pin-less favorite hands over its address as the search text', !!mem.nav_pending &&
-    mem.nav_pending.query === 'Mobil — Westwinds, 300-3633 Westwinds Dr NE, Calgary' && mem.nav_pending.lat === undefined,
+    mem.nav_pending.query === '300-3633 Westwinds Dr NE, Calgary' && mem.nav_pending.lat === undefined &&
+    mem.nav_pending.name === 'Mobil — Westwinds',
     JSON.stringify(mem.nav_pending));
 
   console.log('— EXISTING: a deleted migrated favorite STAYS deleted —');
@@ -395,7 +401,10 @@ function favByName(mem, name) {
   const feedBefore = (mem.manifest_feed || []).length;
   resP.pick('home1');
   detail.querySelector('#nv_go').click();
-  check('personal Navigate hands off the address', !!mem.nav_pending && mem.nav_pending.query === 'Home, 1243 Cornerstone Blvd NE');
+  /* v183 pin move: was 'Home, 1243 Cornerstone Blvd NE' — the
+     glued query from his Oct 20 bug video, verbatim. Now the
+     address alone, with the name carried separately. */
+  check('personal Navigate hands off the address', !!mem.nav_pending && mem.nav_pending.query === '1243 Cornerstone Blvd NE' && mem.nav_pending.name === 'Home');
   check('personal visits NEVER reach the manifest feed', (mem.manifest_feed || []).length === feedBefore);
 
   /* ================= DEDUPE ================= */
