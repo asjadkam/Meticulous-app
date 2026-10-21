@@ -17,6 +17,33 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.status == 'accepted'
           && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.get('kind', 'all') == 'limited');
     }
+    // v176 (L1, owner Oct 20, 2026): the approver's TICKED module
+    // list rides the accepted request doc as `modules`. A limited
+    // pair with no list reads as the legacy preset
+    // ['dispatch','manifest']. pairAllows is true when either
+    // direction's accepted doc ticks the module.
+    function pairAllows(a, b, key) {
+      return (exists(/databases/$(database)/documents/requests/$(a + '_' + b))
+          && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.status == 'accepted'
+          && key in get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.get('modules', ['dispatch', 'manifest']))
+        || (exists(/databases/$(database)/documents/requests/$(b + '_' + a))
+          && get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.status == 'accepted'
+          && key in get(/databases/$(database)/documents/requests/$(b + '_' + a)).data.get('modules', ['dispatch', 'manifest']));
+    }
+    // Limited AND no records module ticked — the records/photos
+    // door stays shut. (The client also strips unticked sections;
+    // rules cannot strip fields, so a records-ticked limited pair
+    // is a deliberate approver grant of the records doc.)
+    function pairLimitedNoRecords(a, b) {
+      return pairLimited(a, b)
+        && !pairAllows(a, b, 'fuel') && !pairAllows(a, b, 'expenses')
+        && !pairAllows(a, b, 'maintenance') && !pairAllows(a, b, 'pti')
+        && !pairAllows(a, b, 'invoices') && !pairAllows(a, b, 'pnl');
+    }
+    function pairLimitedNoBilling(a, b) {
+      return pairLimited(a, b)
+        && !pairAllows(a, b, 'invoices') && !pairAllows(a, b, 'pnl');
+    }
     function pairEnded(a, b) {
       return (exists(/databases/$(database)/documents/requests/$(a + '_' + b))
           && get(/databases/$(database)/documents/requests/$(a + '_' + b)).data.status == 'accepted'
@@ -99,7 +126,7 @@ service cloud.firestore {
               || request.auth.uid == resource.data.to)
             && resource.data.status == 'accepted'
             && request.resource.data.status == 'accepted'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['kind', 'onceDate', 'endedAt', 'updatedAt']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['kind', 'onceDate', 'modules', 'endedAt', 'updatedAt']))
           // v148: the sender re-opens an ENDED one-time pair with
           // a fresh request — the end clears as it re-opens
           || (request.auth.uid == resource.data.from
@@ -128,7 +155,8 @@ service cloud.firestore {
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
           || (request.auth.uid in resource.data.viewers
-            && !pairLimited(resource.data.driver, request.auth.uid)
+            && (!pairLimited(resource.data.driver, request.auth.uid)
+              || pairAllows(resource.data.driver, request.auth.uid, 'dispatch'))
             && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
@@ -188,7 +216,7 @@ service cloud.firestore {
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
           || (request.auth.uid in resource.data.viewers
-            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairLimitedNoRecords(resource.data.driver, request.auth.uid)
             && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
@@ -219,7 +247,7 @@ service cloud.firestore {
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
           || (request.auth.uid == resource.data.viewer
-            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairLimitedNoBilling(resource.data.driver, request.auth.uid)
             && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.driver
@@ -244,7 +272,7 @@ service cloud.firestore {
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
           || (request.auth.uid in resource.data.viewers
-            && !pairLimited(resource.data.driver, request.auth.uid)
+            && !pairLimitedNoRecords(resource.data.driver, request.auth.uid)
             && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create, update: if request.auth != null
         && request.auth.uid == request.resource.data.driver

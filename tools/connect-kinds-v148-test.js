@@ -490,7 +490,11 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
     loads: 2, ticketsClosed: 0, updatedAt: Date.now()
   });
   asUser(users.disp);
-  eq('d: fetchCrewRange gives a limited viewer NO days (stale doc refused)', (await CP().fetchCrewRange('2026-10-01', '2026-10-31')).filter((d) => d.driver === 'uid-driver'), []);
+  /* v176 (L1) SUPERSEDES the v148 line below: a pre-v176 Limited pair reads as the
+     legacy preset ['dispatch','manifest'], and Dispatch ticked means the board days
+     DO cross. What Limited still never carries is the money picture (see the P&L
+     crew-card checks in this section + crewWagesFor). */
+  check('d: fetchCrewRange gives a legacy-limited viewer his dispatch days (v176 L1 preset)', (await CP().fetchCrewRange('2026-10-01', '2026-10-31')).filter((d) => d.driver === 'uid-driver').length >= 1);
   const fr = await CP().fetchRecords();
   check('d: fetchRecords hands a limited peer NO records', !fr.records['uid-driver']);
   check('d: fetchRecords hands a limited peer NO billing', !fr.billing['uid-driver']);
@@ -608,7 +612,10 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   asUser(users.boss);
   await CL().reconcile();
   eq('f: the payer side entry follows the flip', connOf(users.boss, 'uid-driver').kind, 'limited');
-  eq('f: the payer fetchCrew now returns nothing for the driver', (await CP().fetchCrewRange('2026-10-01', '2026-10-31')).filter((d) => d.driver === 'uid-driver'), []);
+  /* v176 (L1): after the flip to Limited the pair reads as the legacy preset
+     (dispatch ticked), so the board days still cross; the money gates are what
+     shut (records/billing below + crewWagesFor). */
+  check('f: after the flip to Limited the dispatch days still cross (v176 L1 preset)', (await CP().fetchCrewRange('2026-10-01', '2026-10-31')).filter((d) => d.driver === 'uid-driver').length >= 1);
   // and back to All — everything resumes
   asUser(users.driver);
   eq('f: setKind back to all', await CL().setKind('uid-boss', 'all'), true);
@@ -653,7 +660,7 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   check('g: the picker offers the three kinds in his words',
     pickHtml.indexOf('Connect all') !== -1 && pickHtml.indexOf('Connect limited') !== -1 && pickHtml.indexOf('One time connection') !== -1);
   check('g: the picker preselects Limited for a dispatcher (its meaning line shows)',
-    pickHtml.indexOf('Only dispatches and manifests cross') !== -1, pickHtml.slice(0, 300));
+    pickHtml.indexOf('Only the modules you tick cross') !== -1, pickHtml.slice(0, 300)); // v176 (L1): the line is the tick law now
   check('g: each kind carries its one plain meaning line',
     pickHtml.indexOf('Everything crosses') !== -1 && pickHtml.indexOf('ends by itself when that day closes') !== -1);
   const sendBtn = body._mk('q:#cn_kind_send');
@@ -672,7 +679,7 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   const reqHtml = (body._els['q:#cn_req_wrap'] || {}).innerHTML || '';
   check('g: the accept row carries the kind select', reqHtml.indexOf('data-cn-kindsel') !== -1, reqHtml.slice(0, 300));
   check('g: the accept select is preselected to the proposal (limited meaning shows)',
-    reqHtml.indexOf('Only dispatches and manifests cross') !== -1);
+    reqHtml.indexOf('Only the modules you tick cross') !== -1); // v176 (L1)
   const kindSel = body.querySelectorAll('[data-cn-kindsel]').filter((el) => el._attrs['data-cn-kindsel'] === 'uid-fresh_uid-driver')[0];
   const acceptBtn = body.querySelectorAll('[data-cn-accept]').filter((el) => el._attrs['data-cn-accept'] === 'uid-fresh_uid-driver')[0];
   check('g: the accept controls are wired', !!kindSel && !!acceptBtn && typeof acceptBtn.onclick === 'function');
@@ -685,8 +692,10 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   /* ============ (h) rules — statics + the mirrored read matrix ============ */
   console.log('(h) rules — kind gates');
   const reqBlock = rulesSrc.slice(rulesSrc.indexOf('match /requests/'), rulesSrc.indexOf('match /shareddays/'));
+  /* v176 (L1): the same branch may also move the approver's
+     ticked `modules` list — the pin moves with the owner's order. */
   check('h: requests gain the either-party kind-governance branch',
-    reqBlock.indexOf("affectedKeys().hasOnly(['kind', 'onceDate', 'endedAt', 'updatedAt'])") !== -1);
+    reqBlock.indexOf("affectedKeys().hasOnly(['kind', 'onceDate', 'modules', 'endedAt', 'updatedAt'])") !== -1);
   check('h: the kind branch holds only on accepted docs',
     reqBlock.indexOf("resource.data.status == 'accepted'") !== -1);
   check('h: an ended pair can be re-opened by its sender',

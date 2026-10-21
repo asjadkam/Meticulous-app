@@ -410,6 +410,15 @@
     var h = '', tRev = 0, tWage = 0, anyRev = false, anyWage = false;
     order.forEach(function (uid) {
       var g = byDriver[uid];
+      /* v180 (L1): a Limited driver whose ticks do NOT include
+         P&L gets NO money picture on this card — even when his
+         days crossed for Dispatch, his block here is his
+         manifests only, and he adds nothing to the crew totals. */
+      if (crewKindLimited(uid)) {
+        h += '<div class="kv"><span>' + esc(g.name) + '</span><b></b></div>';
+        if (mans && mans[uid]) h += pnlLimitedManifestsHtml(uid, mans[uid]);
+        return;
+      }
       var pricing = ConnectPipe.pricingFor(uid);
       var rev = 0, wage = 0, hrs = 0, loads = 0, nRev = false, nWage = false;
       g.days.forEach(function (day) {
@@ -437,7 +446,11 @@
         (nRev && nWage ? '<div class="kv"><span style="padding-left:14px">Margin</span><b>' + money(rev - wage) + '</b></div>' : '');
       h += pnlDriverRecordsHtml(uid, recs, bills, month);
     });
-    if (days.length) {
+    /* v180 (L1): the crew totals footer paints only when money
+       actually priced — a month whose only crew days belong to
+       a Limited (no-P&L-tick) driver shows no money picture at
+       all, not even dashed totals. */
+    if (days.length && (anyRev || anyWage)) {
       h += '<div class="kv"><span><b>Crew revenue</b></span><b>' + (anyRev ? money(tRev) : '—') + '</b></div>' +
         '<div class="kv"><span><b>Crew wages</b></span><b>' + (anyWage ? money(tWage) : '—') + '</b></div>' +
         (anyRev && anyWage ? '<div class="kv"><span><b>Crew margin</b></span><b>' + money(tRev - tWage) + '</b></div>' : '');
@@ -508,7 +521,14 @@
     try {
       var list = App._store.get('con_list', []) || [];
       for (var i = 0; i < list.length; i++) {
-        if (list[i] && list[i].uid === uid) return list[i].kind === 'limited';
+        if (list[i] && list[i].uid === uid) {
+          if (list[i].kind !== 'limited') return false;
+          /* v180 (L1): a Limited pair whose approver ticked P&L
+             DOES book its wage legs — the tick is the permission.
+             Unticked (or legacy preset) Limited books none. */
+          var mods = list[i].modules;
+          return !(Array.isArray(mods) && mods.indexOf('pnl') !== -1);
+        }
       }
     } catch (e) {}
     return false;

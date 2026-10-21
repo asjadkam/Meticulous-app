@@ -250,6 +250,57 @@
     return (entry && CL.isKind(entry.kind)) ? entry.kind : 'all';
   };
 
+  /* v176 (L1/L2, owner Oct 20, 2026 14:24 MDT): LIMITED is no
+     longer a fixed preset. The approver ticks exactly which
+     modules the connecter gets; the ticked list rides the request
+     doc and both con_list entries as `modules` (an array of module
+     keys). Enforcement reads CL.modulesOf everywhere the kinds are
+     read (pipe publishers, readers, P&L crew gates, rules mirror).
+     A Limited pair with NO modules list (every pre-v176 pair)
+     reads as the legacy preset ['dispatch','manifest'] so nothing
+     already live changes shape. Connect All ignores the list —
+     everything, past and present. For a ONE-TIME pair the same
+     list is the ITEM LIST the request covers (L2): both sides see
+     exactly what the one-time access is for. */
+  CL.MODULES = [
+    { key: 'dispatch', label: 'Dispatches' },
+    { key: 'manifest', label: 'Manifests' },
+    { key: 'fuel', label: 'Fuel' },
+    { key: 'expenses', label: 'Expenses & receipts' },
+    { key: 'maintenance', label: 'Maintenance' },
+    { key: 'pti', label: 'PTI inspections' },
+    { key: 'invoices', label: 'Invoices' },
+    { key: 'pnl', label: 'P&L money picture' }
+  ];
+  CL.MODULE_KEYS = CL.MODULES.map(function (m) { return m.key; });
+  CL.LEGACY_LIMITED_MODULES = ['dispatch', 'manifest'];
+  CL.sanitizeModules = function (v) {
+    if (!Array.isArray(v)) return null;
+    var out = [];
+    v.forEach(function (k) {
+      if (CL.MODULE_KEYS.indexOf(k) !== -1 && out.indexOf(k) === -1) out.push(k);
+    });
+    return out;
+  };
+  /* The effective module list for an entry/doc. 'all' -> null
+     (no restriction). 'limited'/'once' -> the ticked list, or the
+     legacy preset when none was ever ticked. */
+  CL.modulesOf = function (entry) {
+    var k = CL.kindOf(entry);
+    if (k === 'all') return null;
+    var m = CL.sanitizeModules(entry && entry.modules);
+    if (m && m.length) return m;
+    return CL.LEGACY_LIMITED_MODULES.slice();
+  };
+  CL.allowsModule = function (entry, key) {
+    var m = CL.modulesOf(entry);
+    return m === null || m.indexOf(key) !== -1;
+  };
+  CL.moduleLabel = function (key) {
+    for (var i = 0; i < CL.MODULES.length; i++) if (CL.MODULES[i].key === key) return CL.MODULES[i].label;
+    return key;
+  };
+
   function z2(n) { return ('0' + n).slice(-2); }
   function dateOfMs(ms) {
     var d = new Date(ms || 0);
@@ -334,7 +385,7 @@
      (endedAt stamped) is not 'connected' — the fresh request
      re-opens the same doc as pending with the end cleared (the
      rules carry that branch). */
-  CL.sendRequest = function (peer, kind, onceDate) {
+  CL.sendRequest = function (peer, kind, onceDate, modules) {
     var f = fb();
     if (!f || !peer || !peer.uid) return Promise.resolve('error');
     if (peer.uid === f.user.uid) return Promise.resolve('self');
@@ -353,6 +404,12 @@
       if (cur && (cur.endedAt || 0) > 0) doc.endedAt = 0; // the re-open clears the end
       if (CL.isKind(kind)) doc.kind = kind;
       if (kind === 'once') doc.onceDate = onceDate || todayStr();
+      /* v176 (L1/L2): the module/item list rides the request —
+         for Limited, the requester's proposed ticks (the approver
+         may change them at accept; the accepted list governs);
+         for One-Time, the item list the access covers. */
+      var sm = CL.sanitizeModules(modules);
+      if (sm && (kind === 'limited' || kind === 'once')) doc.modules = sm;
       if (!snap.exists) doc.createdAt = now;
       return ref.set(doc, { merge: true }).then(function () { return 'sent'; });
     }).catch(function () { return 'error'; });
@@ -392,11 +449,11 @@
      and it governs both sides; a re-accept of a re-opened
      one-time pair clears the old end. Called the old way (no
      kind), the doc keeps the proposal (or the pre-v148 shape). */
-  CL.respond = function (req, accept, kind, onceDate) {
+  CL.respond = function (req, accept, kind, onceDate, modules) {
     var f = fb();
     if (!f || !req || !req.id) return Promise.resolve(false);
     var upd = { status: accept ? 'accepted' : 'declined', updatedAt: Date.now() };
-    var ak = null, od = null;
+    var ak = null, od = null, am = null;
     if (accept) {
       ak = CL.isKind(kind) ? kind : (CL.isKind(req.kind) ? req.kind : null);
       if (ak) upd.kind = ak;
@@ -404,13 +461,19 @@
         od = onceDate || req.onceDate || todayStr();
         upd.onceDate = od;
       }
+      /* v176 (L1/L2): the APPROVER's ticked list governs. The
+         approver may pass his ticks; absent ticks, the request's
+         proposed list stands; absent both, a Limited pair keeps
+         no list and reads as the legacy preset. */
+      var sm = CL.sanitizeModules(modules) || CL.sanitizeModules(req.modules);
+      if (sm && (ak === 'limited' || ak === 'once')) { upd.modules = sm; am = sm; }
       if ((req.endedAt || 0) > 0) upd.endedAt = 0;
     }
     return f.db.collection('requests').doc(req.id)
       .update(upd)
       .then(function () {
         if (accept) {
-          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace, person: req.fromPerson, kind: ak, onceDate: od }, 'connected');
+          CL.upsertConn({ uid: req.from, name: req.fromName, business: req.fromBusiness, role: req.fromRole, face: req.fromFace, person: req.fromPerson, kind: ak, onceDate: od, modules: am }, 'connected');
         }
         return true;
       })
@@ -438,7 +501,7 @@
       if (!cur) { byUid[c.uid] = c; out.push(c); return; }
       var keep = (CONN_STATUS_RANK[c.status] || 0) > (CONN_STATUS_RANK[cur.status] || 0) ? c : cur;
       var drop = (keep === c) ? cur : c;
-      ['name', 'role', 'face', 'person', 'business', 'contact', 'kind', 'onceDate'].forEach(function (k) {
+      ['name', 'role', 'face', 'person', 'business', 'contact', 'kind', 'onceDate', 'modules'].forEach(function (k) {
         if (!keep[k] && drop[k]) keep[k] = drop[k];
       });
       if (drop.viaConnect) keep.viaConnect = true;
@@ -488,6 +551,11 @@
          key at all and reads as 'all' (CL.kindOf). */
       if (CL.isKind(peer.kind) && found.kind !== peer.kind) { found.kind = peer.kind; changed = true; }
       if (peer.onceDate && found.onceDate !== peer.onceDate) { found.onceDate = peer.onceDate; changed = true; }
+      /* v176 (L1/L2): the ticked module list rides the same
+         refresh — only a valid non-empty sanitized list lands, so
+         a pre-v176 snapshot never invents or erases one. */
+      var pm = CL.sanitizeModules(peer.modules);
+      if (pm && pm.length && JSON.stringify(found.modules || null) !== JSON.stringify(pm)) { found.modules = pm; changed = true; }
       if (!found.viaConnect) { found.viaConnect = true; changed = true; }
     } else {
       var entry = {
@@ -504,6 +572,8 @@
       };
       if (CL.isKind(peer.kind)) entry.kind = peer.kind;
       if (peer.onceDate) entry.onceDate = peer.onceDate;
+      var em = CL.sanitizeModules(peer.modules);
+      if (em && em.length) entry.modules = em;
       list.push(entry);
       changed = true;
     }
@@ -618,7 +688,7 @@
      Switching TO one-time stamps the day as given (the row
      passes today; a dispatch sent later re-stamps it to the
      job's day through CL.stampOnceDate). */
-  CL.setKind = function (uid, kind, onceDate) {
+  CL.setKind = function (uid, kind, onceDate, modules) {
     var st = store();
     if (!st || !uid || !CL.isKind(kind)) return Promise.resolve(false);
     var list = st.get('con_list', []) || [];
@@ -627,6 +697,11 @@
     if (!entry) return Promise.resolve(false);
     entry.kind = kind;
     if (kind === 'once') entry.onceDate = onceDate || entry.onceDate || todayStr();
+    /* v176 (L1/L2): a kind change may also carry the new ticked
+       list; it lands on my entry and on the pair doc(s). */
+    var sm = CL.sanitizeModules(modules);
+    if (sm && (kind === 'limited' || kind === 'once')) entry.modules = sm;
+    if (kind === 'all' && entry.modules) { delete entry.modules; }
     st.set('con_list', list);
     var f = fb();
     if (!f) return Promise.resolve(true);
@@ -639,6 +714,7 @@
           if (peer !== uid) return;
           var upd = { kind: kind, updatedAt: Date.now() };
           if (kind === 'once') upd.onceDate = entry.onceDate;
+          if (sm && (kind === 'limited' || kind === 'once')) upd.modules = sm;
           jobs.push(f.db.collection('requests').doc(q.id).update(upd).catch(function () {}));
         });
       });
@@ -678,11 +754,11 @@
         return (q.endedAt || 0) > 0 ? 'ended' : 'connected';
       };
       r.outgoing.forEach(function (q) {
-        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace, person: q.toPerson, business: q.toBusiness, kind: q.kind, onceDate: q.onceDate }, pairStatus(q))) changed = true;
+        if (CL.upsertConn({ uid: q.to, name: q.toName, role: q.toRole, face: q.toFace, person: q.toPerson, business: q.toBusiness, kind: q.kind, onceDate: q.onceDate, modules: q.modules }, pairStatus(q))) changed = true;
       });
       r.incoming.forEach(function (q) {
         if (q.status === 'accepted') {
-          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace, person: q.fromPerson, business: q.fromBusiness, kind: q.kind, onceDate: q.onceDate }, pairStatus(q))) changed = true;
+          if (CL.upsertConn({ uid: q.from, name: q.fromName, role: q.fromRole, face: q.fromFace, person: q.fromPerson, business: q.fromBusiness, kind: q.kind, onceDate: q.onceDate, modules: q.modules }, pairStatus(q))) changed = true;
         }
       });
       return healFromDirectory().then(function (healed) {

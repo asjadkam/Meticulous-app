@@ -196,12 +196,55 @@
     return out;
   };
 
+  /* v176 (L1, owner Oct 20, 2026): the ticked module list on MY
+     con_list entry for a peer — the pipe's mirror of
+     ConnectLive.modulesOf. 'all'/'once' -> null (no restriction
+     beyond the kind itself); 'limited' -> the ticked list, or
+     the legacy preset ['dispatch','manifest'] when none was ever
+     ticked (every pre-v176 pair). */
+  CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl'];
+  CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl'];
+  CP.modulesFor = function (uid) {
+    var st = store();
+    if (!st || !uid) return null;
+    var entry = null;
+    (st.get('con_list', []) || []).forEach(function (c) { if (c && c.uid === uid) entry = c; });
+    if (!entry || CP.kindFor(uid) !== 'limited') return null;
+    var out = [];
+    if (Array.isArray(entry.modules)) {
+      entry.modules.forEach(function (k) {
+        if (CP.MODULE_KEYS.indexOf(k) !== -1 && out.indexOf(k) === -1) out.push(k);
+      });
+    }
+    return out.length ? out : ['dispatch', 'manifest'];
+  };
+  CP.allowsModule = function (uid, key) {
+    var m = CP.modulesFor(uid);
+    return m === null || m.indexOf(key) !== -1;
+  };
+  /* A limited peer whose ticks reach into the records doc
+     (fuel/expenses/maintenance/pti/invoices/pnl) IS named as a
+     records viewer; the reader strips every unticked section, so
+     what he can actually see is exactly what was ticked. */
+  CP.limitedNeedsRecords = function (uid) {
+    var m = CP.modulesFor(uid);
+    if (!m) return false;
+    return CP.RECORD_MODULES.some(function (k) { return m.indexOf(k) !== -1; });
+  };
+
   /* v148: the peers my SHARED FACTS publish to — every connected
      peer except LIMITED ones. A limited peer gets the dispatch
      pipe and his manifests doc, never a seat in a viewers list.
-     One-time peers ride while connected, exactly like All. */
+     One-time peers ride while connected, exactly like All.
+     v176 (L1): a limited peer whose approver ticked records
+     modules joins the viewers list for the records doc only —
+     the reader-side section strip + the rules' modules check
+     keep unticked modules shut. */
   CP.sharePeers = function () {
-    return CP.connectedPeers().filter(function (c) { return CP.kindFor(c.uid) !== 'limited'; });
+    return CP.connectedPeers().filter(function (c) {
+      if (CP.kindFor(c.uid) !== 'limited') return true;
+      return CP.limitedNeedsRecords(c.uid);
+    });
   };
 
   /* ---------------- the shared day record ---------------- */
@@ -652,7 +695,11 @@
            its viewers. The kind on MY con_list entry governs
            what my surfaces may show. */
         var days = a.filter(function (d) {
-          return d && d.date === dateStr && CP.kindFor(d.driver) !== 'limited';
+          /* v176 (L1): the board is the Dispatch surface — a
+             limited driver's days render only when Dispatch was
+             ticked for him. */
+          return d && d.date === dateStr &&
+            (CP.kindFor(d.driver) !== 'limited' || CP.allowsModule(d.driver, 'dispatch'));
         });
         CP._crewCache = { date: dateStr, days: days };
         return days;
@@ -664,7 +711,8 @@
     return job(f.db.collection('shareddays').where('viewers', 'array-contains', f.user.uid).get())
       .then(function (a) {
         return a.filter(function (d) {
-          return d && d.date >= fromDate && d.date <= toDate && CP.kindFor(d.driver) !== 'limited';
+          return d && d.date >= fromDate && d.date <= toDate &&
+            (CP.kindFor(d.driver) !== 'limited' || CP.allowsModule(d.driver, 'dispatch'));
         });
       });
   };
@@ -1294,18 +1342,24 @@
         /* v148: a LIMITED peer never gets a billing doc — his
            only share doc is his manifests (below); a stale
            billing doc of his is emptied by the clearing pass
-           since he never enters `matched`. */
-        if (CP.kindFor(peer.uid) === 'limited') return;
+           since he never enters `matched`.
+           v176 (L1): unless the approver ticked Invoices or P&L
+           for him — then the billing doc is exactly what was
+           ticked, and he enters `matched` like any peer. */
+        if (CP.kindFor(peer.uid) === 'limited' &&
+            !CP.allowsModule(peer.uid, 'invoices') && !CP.allowsModule(peer.uid, 'pnl')) return;
         var bill = CP.buildBilling(peer.uid);
         if (!bill) return;
         matched[peer.uid] = true;
         var j2 = guardedSet('sharedbilling', me + '_' + peer.uid, bill);
         if (j2) jobs.push(j2);
       });
-      /* v148: the limited peers' manifests docs */
+      /* v148: the limited peers' manifests docs.
+         v176 (L1): written only when Manifest was ticked. */
       var mfMatched = {};
       CP.connectedPeers().forEach(function (peer) {
         if (CP.kindFor(peer.uid) !== 'limited') return;
+        if (!CP.allowsModule(peer.uid, 'manifest')) return;
         var mdoc = CP.buildManifestsFor(peer.uid);
         if (!mdoc) return;
         mfMatched[peer.uid] = true;
@@ -1468,11 +1522,43 @@
          the client never even asks). His result lands under
          manifests, never records/billing. */
       if (CP.kindFor(p.uid) === 'limited') {
-        return f.db.collection('sharedmanifests').doc(p.uid + '_' + f.user.uid).get()
-          .then(function (snap) {
-            if (snap && snap.exists) out.manifests[p.uid] = snap.data();
-          })
-          .catch(function () {});
+        /* v176 (L1): manifests cross only when Manifest was
+           ticked; the records doc crosses only when a records
+           module was ticked, and every unticked section is
+           stripped HERE, at the reader, before any surface can
+           paint it. Billing (invoices) crosses only when
+           Invoices or P&L was ticked. */
+        var jobs = [];
+        if (CP.allowsModule(p.uid, 'manifest')) {
+          jobs.push(f.db.collection('sharedmanifests').doc(p.uid + '_' + f.user.uid).get()
+            .then(function (snap) {
+              if (snap && snap.exists) out.manifests[p.uid] = snap.data();
+            })
+            .catch(function () {}));
+        }
+        if (CP.limitedNeedsRecords(p.uid)) {
+          jobs.push(f.db.collection('sharedrecords').doc(p.uid).get()
+            .then(function (snap) {
+              if (snap && snap.exists) {
+                var rec = snap.data() || {};
+                if (!CP.allowsModule(p.uid, 'fuel')) delete rec.fuel;
+                if (!CP.allowsModule(p.uid, 'expenses')) delete rec.expenses;
+                if (!CP.allowsModule(p.uid, 'maintenance')) delete rec.maintenance;
+                if (!CP.allowsModule(p.uid, 'pti')) delete rec.pti;
+                if (!CP.allowsModule(p.uid, 'pnl')) delete rec.driverWage;
+                out.records[p.uid] = rec;
+              }
+            })
+            .catch(function () {}));
+          if (CP.allowsModule(p.uid, 'invoices') || CP.allowsModule(p.uid, 'pnl')) {
+            jobs.push(f.db.collection('sharedbilling').doc(p.uid + '_' + f.user.uid).get()
+              .then(function (snap) {
+                if (snap && snap.exists) out.billing[p.uid] = snap.data();
+              })
+              .catch(function () {}));
+          }
+        }
+        return Promise.all(jobs);
       }
       return Promise.all([
         f.db.collection('sharedrecords').doc(p.uid).get().catch(function () { return null; }),

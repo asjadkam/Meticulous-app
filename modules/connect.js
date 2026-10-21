@@ -125,7 +125,7 @@
   var KIND_NAMES = { all: 'Connect all', limited: 'Connect limited', once: 'One time connection' };
   var KIND_LINES = {
     all: 'Everything crosses — days, fuel, receipts, maintenance, invoices and manifests.',
-    limited: 'Only dispatches and manifests cross — no fuel, receipts, invoices or money.',
+    limited: 'Only the modules you tick cross — nothing else. You pick them one by one.',
     once: 'For one job — it ends by itself when that day closes.'
   };
   var KIND_ROW_LABEL = { all: 'Full access', limited: 'Connect limited', once: 'One time connection' };
@@ -148,6 +148,73 @@
     if (!isFinite(d.getTime())) return '';
     var z = function (n) { return ('0' + n).slice(-2); };
     return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
+  }
+
+  /* ---- v176: L1/L2 MODULE TICKS (owner, Oct 20, 2026 14:24 MDT).
+     Limited is the approver's own pick, module by module — not a
+     fixed package. One-Time carries the item list it covers, shown
+     to both sides. The vocabulary is ConnectLive.MODULES; the
+     fallback list below only serves a paint before the engine
+     loads. ---- */
+  var MODULE_FALLBACK = [
+    { key: 'dispatch', label: 'Dispatches' }, { key: 'manifest', label: 'Manifests' },
+    { key: 'fuel', label: 'Fuel' }, { key: 'expenses', label: 'Expenses & receipts' },
+    { key: 'maintenance', label: 'Maintenance' }, { key: 'pti', label: 'PTI inspections' },
+    { key: 'invoices', label: 'Invoices' }, { key: 'pnl', label: 'P&L money picture' }
+  ];
+  function moduleList() {
+    try { if (window.ConnectLive && ConnectLive.MODULES) return ConnectLive.MODULES; } catch (e) {}
+    return MODULE_FALLBACK;
+  }
+  function modulesOfThing(x) {
+    try { if (window.ConnectLive && ConnectLive.modulesOf) return ConnectLive.modulesOf(x); } catch (e) {}
+    if (!x || (x.kind !== 'limited' && x.kind !== 'once')) return null;
+    return (Array.isArray(x.modules) && x.modules.length) ? x.modules.slice() : ['dispatch', 'manifest'];
+  }
+  function moduleNames(keys) {
+    var labels = {};
+    moduleList().forEach(function (m) { labels[m.key] = m.label; });
+    return (keys || []).map(function (k) { return labels[k] || k; }).join(', ');
+  }
+  var uiModPick = null;     // v176: ticks in the send picker (session only)
+  var uiModChoice = {};     // v176: reqId -> ticks chosen on an accept row
+  function defaultTicks(kind, proposed) {
+    if (Array.isArray(proposed) && proposed.length) return proposed.slice();
+    return kind === 'once' ? ['dispatch', 'manifest'] : ['dispatch', 'manifest'];
+  }
+  function moduleTicksHtml(attr, selected) {
+    var sel = selected || [];
+    var h = '<div style="margin:4px 0 2px"><div class="note" style="font-weight:600">Tick exactly what they can see — nothing else crosses:</div>';
+    moduleList().forEach(function (m) {
+      h += '<label style="display:block;margin-top:4px"><input type="checkbox" ' + attr + '="' + m.key + '"' +
+        (sel.indexOf(m.key) !== -1 ? ' checked' : '') + '> ' + esc(m.label) + '</label>';
+    });
+    return h + '</div>';
+  }
+  function readTicks(root, attr) {
+    var out = [];
+    if (!root) return out;
+    root.querySelectorAll('input[' + attr + ']').forEach(function (cb) {
+      if (cb.checked) out.push(cb.getAttribute(attr));
+    });
+    return out;
+  }
+  function moduleTicksHtmlFor(reqId, selected) {
+    var sel = selected || [];
+    var h = '<div style="margin:4px 0 2px">';
+    moduleList().forEach(function (m) {
+      h += '<label style="display:block;margin-top:4px"><input type="checkbox" data-cn-modacc="' + esc(reqId) + '" data-cn-modkey="' + m.key + '"' +
+        (sel.indexOf(m.key) !== -1 ? ' checked' : '') + '> ' + esc(m.label) + '</label>';
+    });
+    return h + '</div>';
+  }
+  function readTicksFor(root, reqId) {
+    var out = [];
+    if (!root) return out;
+    root.querySelectorAll('input[data-cn-modacc]').forEach(function (cb) {
+      if (cb.getAttribute('data-cn-modacc') === reqId && cb.checked) out.push(cb.getAttribute('data-cn-modkey'));
+    });
+    return out;
   }
 
   function dispatchName(d) {
@@ -309,6 +376,15 @@
         (sel ? '● ' : '○ ') + KIND_NAMES[k] + '</button>' +
         '<p class="note" style="margin:2px 0 0 4px' + (sel ? ';font-weight:600' : ';color:#999') + '">' + esc(KIND_LINES[k]) + '</p>';
     });
+    /* v176 (L1/L2): Limited and One-Time carry a tick list —
+       Limited: the modules you are offering; One-Time: the items
+       this one-time access is for. Both sides see the same list. */
+    if (uiKindPick.kind === 'limited' || uiKindPick.kind === 'once') {
+      if (!uiModPick) uiModPick = defaultTicks(uiKindPick.kind, null);
+      h += '<p class="note" style="margin:6px 0 0 4px;font-weight:600">' +
+        (uiKindPick.kind === 'limited' ? 'They will see only what you tick:' : 'This one-time connection is for:') + '</p>' +
+        moduleTicksHtml('data-cn-modpick', uiModPick);
+    }
     h += '<div class="row" style="margin-top:8px">' +
       '<button class="btn ghost small" id="cn_kind_cancel">Cancel</button>' +
       '<button class="btn primary small" id="cn_kind_send">Send request</button></div></div>';
@@ -348,12 +424,23 @@
         try { kSel = CLr && CLr.defaultKindForRequest ? CLr.defaultKindForRequest(q) : (kindOfReq(q) || 'all'); }
         catch (e) { kSel = kindOfReq(q) || 'all'; }
       }
+      /* v176 (L2): a one-time request SHOWS the items it is
+         asking for, right on the request — both sides see
+         exactly what the access covers before anyone accepts. */
+      var qMods = modulesOfThing(q);
+      var askLine = (kindOfReq(q) === 'once' && qMods)
+        ? '<div class="b">Asking for: <b>' + esc(moduleNames(qMods)) + '</b></div>' : '';
+      var tickSel = uiModChoice[q.id] || defaultTicks(kSel, q.modules);
       h += '<div class="listitem"><div class="a">' + esc(q.fromName || 'Meticulous user') + '</div>' +
         '<div class="b">' + esc(q.fromRole || '') + (q.fromBusiness && q.fromBusiness !== q.fromName ? ' · ' + esc(q.fromBusiness) : '') +
-        ' · wants to connect</div>' +
+        ' · wants to connect</div>' + askLine +
         '<label class="f">Kind of connection</label>' +
         '<select data-cn-kindsel="' + esc(q.id) + '">' + kindOptions(kSel) + '</select>' +
         '<p class="note" style="margin:2px 0 6px">' + esc(KIND_LINES[kSel] || '') + '</p>' +
+        ((kSel === 'limited' || kSel === 'once')
+          ? '<p class="note" style="margin:2px 0 0;font-weight:600">You approve exactly what crosses — tick the modules:</p>' +
+            moduleTicksHtmlFor(q.id, tickSel)
+          : '') +
         '<div class="row" style="margin-top:8px">' +
         '<button class="btn small primary" data-cn-accept="' + esc(q.id) + '">✓ Accept</button>' +
         '<button class="btn small ghost" data-cn-decline="' + esc(q.id) + '">Decline</button></div></div>';
@@ -446,6 +533,10 @@
             (linked && c.status === 'connected'
               ? '<div class="b">Kind: <b>' + esc(KIND_ROW_LABEL[kindOfConn(c)]) + '</b>' +
                 (kindOfConn(c) === 'once' && c.onceDate ? ' — for ' + esc(c.onceDate) + '; ends when that day closes' : '') + '</div>' +
+                /* v176 (L1/L2): the ticked list shows on the row —
+                   what this connection can see, at a glance. */
+                ((kindOfConn(c) === 'limited' || kindOfConn(c) === 'once') && modulesOfThing(c)
+                  ? '<div class="b">Can see: <b>' + esc(moduleNames(modulesOfThing(c))) + '</b></div>' : '') +
                 '<div class="row" style="margin-top:4px"><select data-cn-kindchg="' + i + '" aria-label="Connection kind">' + kindOptions(kindOfConn(c)) + '</select></div>'
               : '') +
             (linked && c.status === 'ended'
@@ -698,16 +789,22 @@
           ob.onclick = function () {
             if (!uiKindPick) return;
             uiKindPick.kind = ob.getAttribute('data-cn-kind-opt');
+            uiModPick = null; // v176: ticks re-seed for the new kind
             paintResults();
           };
+        });
+        body.querySelectorAll('input[data-cn-modpick]').forEach(function (cb) {
+          cb.onchange = function () { uiModPick = readTicks(body, 'data-cn-modpick'); };
         });
         var kSend = body.querySelector('#cn_kind_send');
         if (kSend) kSend.onclick = function () {
           if (!CL || !uiKindPick) return;
           var p = uiKindPick.peer, k = uiKindPick.kind;
-          uiKindPick = null;
+          var mods = (k === 'limited' || k === 'once') ? readTicks(body, 'data-cn-modpick') : undefined;
+          if ((k === 'limited' || k === 'once') && !mods.length) mods = defaultTicks(k, null);
+          uiKindPick = null; uiModPick = null;
           kSend.disabled = true;
-          CL.sendRequest(p, k, k === 'once' ? kindToday() : undefined).then(function (r) {
+          CL.sendRequest(p, k, k === 'once' ? kindToday() : undefined, mods).then(function (r) {
             /* v145: the outcome is bound to THIS peer (uiPeerNote)
                and re-derived from his live state at every paint
                through cnStateNote — the old code stored the
@@ -749,8 +846,13 @@
               try { ak = CL.defaultKindForRequest ? CL.defaultKindForRequest(q) : (kindOfReq(q) || 'all'); }
               catch (e) { ak = kindOfReq(q) || 'all'; }
             }
-            CL.respond(q, true, ak, ak === 'once' ? (q.onceDate || kindDateOfMs(q.createdAt) || kindToday()) : undefined).then(function () {
-              delete uiKindChoice[q.id];
+            /* v176 (L1/L2): the approver's ticks on THIS row are
+               what crosses — read them at Accept, never the
+               requester's proposal alone. */
+            var amods = (ak === 'limited' || ak === 'once') ? readTicksFor(body, q.id) : undefined;
+            if ((ak === 'limited' || ak === 'once') && amods && !amods.length) amods = defaultTicks(ak, q.modules);
+            CL.respond(q, true, ak, ak === 'once' ? (q.onceDate || kindDateOfMs(q.createdAt) || kindToday()) : undefined, amods).then(function () {
+              delete uiKindChoice[q.id]; delete uiModChoice[q.id];
               uiFlash = 'Connected to ' + (q.fromName || 'them') + '.';
               refreshLive(true);
             });
