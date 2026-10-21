@@ -1,0 +1,26 @@
+{
+  "dump": {
+    "beforeDeg": 1.42,
+    "appliedDeg": 2.55,
+    "afterDeg": 0.2,
+    "massBeforeDeg": 2.07,
+    "massAfterDeg": 1.15,
+    "sha256": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746"
+  },
+  "semi": {
+    "beforeDeg": 0.96,
+    "appliedDeg": 1.29,
+    "afterDeg": 0.11,
+    "massBeforeDeg": 2.01,
+    "massAfterDeg": 1.31,
+    "sha256": "4aa1da48e191231749a6b96accac0e1900c945d5a12ac62cc8ae1c9e00b82baa"
+  },
+  "pickup": {
+    "beforeDeg": -0.01,
+    "appliedDeg": 0.0,
+    "afterDeg": -0.01,
+    "massBeforeDeg": -0.02,
+    "massAfterDeg": -0.02,
+    "sha256": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37"
+  }
+}
