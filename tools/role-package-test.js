@@ -277,14 +277,22 @@ const octBase = { sum: octSum, std: 'hourly', rate: 29, date: '2026-10-14', jobS
    revenue and expense, on the right books). Revenue = foreman
    hours ONLY × billing rate; expense posting = (foreman +
    travel) × wage rate. The travel hour appears in the expense,
-   never in the revenue. */
+   never in the revenue.
+   v179 (D1, owner Oct 20, 2026) REVISES the single-rate case:
+   when the billing rate and the wage rate are the SAME rate
+   (this fixture — no split rates on the card, both fall back to
+   the one $29), the one rate is his pay and his paid hours
+   include the travel hour, so the entry is the PAID total —
+   (foreman + travel) × rate — and travelInIncome is true. His
+   Oct 19 read $275.50 for a $304.50 day under the old pin. The
+   two-rate split below (billing $40 vs wage $29) is unchanged. */
 {
   const p = plan(Object.assign({}, octBase, { role: 'both' }));
-  eq(p.entry.amount, '304.50', 'completion both: revenue = foreman only × rate (10.5 × $29) — travel NOT billed');
-  eq(p.entry.hours, '10.50', 'completion both: revenue hours are foreman hours');
+  eq(p.entry.amount, '333.50', 'completion both (single-rate, v179 D1): revenue = PAID hours × the one rate (11.5 × $29)');
+  eq(p.entry.hours, '11.50', 'completion both (single-rate, v179 D1): revenue hours are the PAID hours');
   eq(p.entry.foremanHours, 10.5, 'completion both: foremanHours stored');
   eq(p.entry.travelHours, 1, 'completion both: travelHours on record');
-  eq(p.entry.travelInIncome, false, 'completion both: travelInIncome=false (travel is a wage cost here)');
+  eq(p.entry.travelInIncome, true, 'completion both (single-rate, v179 D1): travelInIncome=true — the one rate pays the travel hour too');
   eq(p.claim, null, 'completion both: no claim');
   eq(p.heldOut, 0, 'completion both: nothing held out — the travel lands in the wage posting');
   eq(p.disclosure, '', 'completion both: no disclosure');

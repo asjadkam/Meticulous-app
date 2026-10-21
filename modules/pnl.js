@@ -670,7 +670,7 @@
         grouped = Meticulous.shared.buildRevenueLines(
           entAll.filter(function (e) { return inMonth(e.date, m); }),
           extAll.filter(function (x) { return inMonth(x.date, m); }),
-          parseFloat(rate) || 0, std);
+          parseFloat(rate) || 0, std, App._store.get('pnl_card_wages', []) || []);
       }
     } catch (e) { grouped = null; }
     if (grouped) {

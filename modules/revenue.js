@@ -135,7 +135,7 @@
     var built = null;
     try {
       if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-        built = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std);
+        built = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std, App._store.get('pnl_card_wages', []) || []);
       }
     } catch (e) { built = null; }
     /* v107: which dates a CONFIRMED line (dispatch completion or
@@ -221,7 +221,7 @@
     var winSrc = {}, haveBuilt = false;
     try {
       if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-        var builtF = Meticulous.shared.buildRevenueLines(list, extras(), ctx.rate, ctx.std);
+        var builtF = Meticulous.shared.buildRevenueLines(list, extras(), ctx.rate, ctx.std, App._store.get('pnl_card_wages', []) || []);
         haveBuilt = true;
         (builtF.lines || []).forEach(function (l) {
           if (l && l.date && l.src !== 'extra') winSrc[l.date] = l.src;
@@ -699,7 +699,7 @@
     var winSrc = null, haveBuilt = false;
     try {
       if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-        var builtD = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std);
+        var builtD = Meticulous.shared.buildRevenueLines(entries(), extras(), ctx.rate, ctx.std, App._store.get('pnl_card_wages', []) || []);
         haveBuilt = true;
         (builtD.lines || []).forEach(function (l) {
           if (l && l.date === ds && l.src !== 'extra') winSrc = l.src;

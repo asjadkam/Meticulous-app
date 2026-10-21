@@ -98,10 +98,10 @@ check('no lane fabrication: the module never claims lane data it does not have',
   !/lanes?:\s*\[/.test(navSrc) && navSrc.indexOf('never invented lanes') >= 0);
 
 console.log('— ship pins —');
-check('ships as webVersion 178 with the changed files at the 178 pin',
-  ver.webVersion === 178 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=178"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=178"') >= 0,
+check('ships as webVersion 179 with the changed files at the 179 pin',
+  ver.webVersion === 179 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=179"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=179"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v178: ' + pass + ' passed, ' + fail + ' failed');

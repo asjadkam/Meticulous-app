@@ -358,7 +358,7 @@
       var built = null;
       try {
         if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-          built = Meticulous.shared.buildRevenueLines(revEntries, extras, rate, String(o.payStandard || '').toLowerCase());
+          built = Meticulous.shared.buildRevenueLines(revEntries, extras, rate, String(o.payStandard || '').toLowerCase(), G('pnl_card_wages', []) || []);
         }
       } catch (e) { built = null; }
       if (built) {
@@ -665,7 +665,7 @@
           try {
             var sh = (window.Meticulous && Meticulous.shared) || {};
             if (typeof sh.buildRevenueLines === 'function') {
-              var built = sh.buildRevenueLines(G('rev_entries', []) || [], G('rev_extras', []) || [], G('dsp_list', []) || [], G('sessions', []) || [], G('onboarding', {}) || {});
+              var built = sh.buildRevenueLines(G('rev_entries', []) || [], G('rev_extras', []) || [], G('dsp_list', []) || [], G('sessions', []) || [], G('pnl_card_wages', []) || []);
               (built.lines || []).forEach(function (l) {
                 if (l && l.date === today && (l.src === 'dispatch' || l.src === 'entry')) {
                   var bh = parseFloat((built.dayHours || {})[today]);

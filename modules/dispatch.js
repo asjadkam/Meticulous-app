@@ -597,20 +597,36 @@
              differ — the margin between them is the card's gross. */
           var bRate = jobRate > 0 ? jobRate : (parseFloat(x.billingRate) > 0 ? parseFloat(x.billingRate) : x.rate);
           var wRate = parseFloat(x.wageRate) > 0 ? parseFloat(x.wageRate) : x.rate;
-          var bAmt = fh * bRate;
+          /* v179 (D1, owner Oct 20, 2026): ONE FORMULA for the day
+             total — paid hours × the rate. When the billing rate
+             and the wage rate are the SAME rate (the single-rate
+             owner-operator: the one rate is his pay, and his paid
+             hours already include the travel hour), the travel hour
+             is IN the income entry too — foreman-only pricing made
+             his Oct 19 read $275.50 (9.5 × $29) for a day that paid
+             $304.50 (10.5 × $29). A genuinely different billing
+             rate keeps the v105 split: the customer is billed
+             foreman only and the travel hour is the wage cost
+             between the two rates, carried by the wage posting. */
+          var singleRate = (bRate === wRate);
+          var bAmt = singleRate ? (fh + th) * bRate : fh * bRate;
           entry = {
             date: x.date,
             amount: bAmt.toFixed(2),
-            hours: fh.toFixed(2),
+            hours: (singleRate ? (fh + th) : fh).toFixed(2),
             type: 'hourly',
             loads: x.ticketCount,
             foremanHours: fh,
             travelHours: th,
-            travelInIncome: false,
-            note: 'Dispatch: ' + (x.jobSite || '') +
-              ' · foreman ' + fh + 'h billed @ $' + bRate + '/h' +
-              (brk ? ' (' + brk + ')' : '') +
-              ' · travel ' + dspFmtH(th) + 'h not billed — it is your wage cost'
+            travelInIncome: singleRate,
+            note: singleRate
+              ? 'Dispatch: ' + (x.jobSite || '') +
+                ' · foreman ' + fh + 'h + travel ' + (x.travelBonusRaw != null ? x.travelBonusRaw : dspFmtH(th)) + 'h = ' + dspFmtH(Math.round((fh + th) * 100) / 100) + 'h @ $' + bRate + '/h' +
+                (brk ? ' (' + brk + ')' : '')
+              : 'Dispatch: ' + (x.jobSite || '') +
+                ' · foreman ' + fh + 'h billed @ $' + bRate + '/h' +
+                (brk ? ' (' + brk + ')' : '') +
+                ' · travel ' + dspFmtH(th) + 'h not billed — it is your wage cost'
           };
           var bwHrs = Math.round((fh + th) * 100) / 100;
           wagePosting = {
@@ -905,7 +921,7 @@
     var built = null;
     try {
       if (typeof window !== 'undefined' && window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-        built = Meticulous.shared.buildRevenueLines(entries, extras, rate, std);
+        built = Meticulous.shared.buildRevenueLines(entries, extras, rate, std, App._store.get('pnl_card_wages', []) || []);
       }
     } catch (e) { built = null; }
     var earned = 0;

@@ -315,11 +315,54 @@
       amt: invCycRound2(amt), date: group[0].date, src: src, combined: true
     };
   }
+  /* v179 (D1, owner Oct 20, 2026): the read-time heal for days
+     closed BEFORE the single-rate close fix — an owner-operator
+     day whose revenue entry held the travel hour out
+     (travelInIncome === false) while the same close posted his
+     FULL paid wage (foreman + travel) to the card wages. The
+     day's paid total is the posting's figure: uplift = posting
+     wage − held entry amount, never below zero. A genuinely
+     two-rate day (client billed foreman × a higher billing rate,
+     travel absorbed between the rates) never moves: its posting
+     wage sits BELOW its billed amount, so the uplift is 0. Days
+     with no self posting uplift by 0. Pure: callers pass the
+     day's records. Shared so every reader heals identically. */
+  function invCycDaySelfWageUplift(entries, postings, date) {
+    var held = 0, heldFound = false;
+    (entries || []).forEach(function (e) {
+      if (e && e.date === date && e.travelInIncome === false &&
+          (parseFloat(e.travelHours) || 0) > 0) {
+        held += parseFloat(e.amount) || 0; heldFound = true;
+      }
+    });
+    if (!heldFound) return 0;
+    var wages = 0, wageFound = false;
+    (postings || []).forEach(function (p) {
+      if (p && p.date === date && (p.driverId === 'self' || !p.driverId) &&
+          (parseFloat(p.wage) || 0) > 0) {
+        wages += parseFloat(p.wage) || 0; wageFound = true;
+      }
+    });
+    if (!wageFound) return 0;
+    var up = Math.round((wages - held) * 100) / 100;
+    return up > 0 ? up : 0;
+  }
+  /* The card-wage postings, for the builder calls inside this
+     module (the heal's evidence). Guarded: a world without the
+     store simply builds unhealed, exactly as before v179. */
+  function invCycCardWages() {
+    try { return App._store.get('pnl_card_wages', []) || []; } catch (e) { return []; }
+  }
   /* Build the invoice's revenue lines from period entries + extras.
      Returns {lines, duplicateDates, unconfirmedDates}: ONE line per
      day (see the region header for the source rules); extras are
-     separate charges and pass through untouched. */
-  function invCycBuildRevenueLines(entries, extras, rate, std) {
+     separate charges and pass through untouched. The optional 5th
+     argument is the card-wage postings list: when present, the
+     v179 (D1) heal above is applied per day INSIDE the builder, so
+     Revenue's chart/preview, the invoice, the manifest and P&L —
+     every consumer of this one builder — read the same paid total
+     for the day and can never disagree. */
+  function invCycBuildRevenueLines(entries, extras, rate, std, postings) {
     rate = parseFloat(rate) || 0;
     std = String(std || '').toLowerCase();
     var raw = [];
@@ -332,6 +375,24 @@
        (same discipline as dayHours) so P&L can break the grouped
        income down by type without re-pricing anything itself. */
     var typeByDateSrc = {};
+    /* v179 (D1): per-day heal amounts, computed once up front from
+       the day's own records (see invCycDaySelfWageUplift). */
+    var upliftByDate = {}, heldTravelByDate = {}, upliftApplied = {};
+    if (Array.isArray(postings) && postings.length) {
+      var healDates = {};
+      (entries || []).forEach(function (e) { if (e && e.date) healDates[e.date] = true; });
+      Object.keys(healDates).forEach(function (d) {
+        var up = invCycDaySelfWageUplift(entries, postings, d);
+        if (up > 0) {
+          upliftByDate[d] = up;
+          var th = 0;
+          (entries || []).forEach(function (e2) {
+            if (e2 && e2.date === d && e2.travelInIncome === false) th += parseFloat(e2.travelHours) || 0;
+          });
+          heldTravelByDate[d] = th;
+        }
+      });
+    }
     (entries || []).forEach(function (e) {
       /* v105 pricing: an explicit amount on the entry WINS — it is
          the number that was true when the entry was logged or last
@@ -346,12 +407,23 @@
       else if (std === 'weight') { qty = parseFloat(e.tons) || 0; desc = (e.tons || 0) + ' tons @ $' + rate; }
       else { desc = e.note || e.date; }
       if (!(amt > 0)) amt = qty * rate;
+      /* v179 (D1): the day's heal lands on its first held-out
+         entry — amount becomes the paid total, and the hours the
+         day reports become the PAID hours (foreman + travel). */
+      var eHours = parseFloat(e.hours) || 0;
+      if (upliftByDate[e.date] > 0 && !upliftApplied[e.date] &&
+          e.travelInIncome === false && (parseFloat(e.travelHours) || 0) > 0) {
+        upliftApplied[e.date] = true;
+        amt += upliftByDate[e.date];
+        eHours = invCycRound2((parseFloat(e.foremanHours) || eHours) + (heldTravelByDate[e.date] || 0));
+        if (std === 'hourly') { qty = eHours; desc = eHours + ' hrs @ $' + rate; }
+      }
       if (amt > 0 && qty <= 0 && std && e.note) desc = e.note;
       if (amt > 0) {
         var src = invCycEntrySrc(e);
         raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: src });
         var hd = hoursByDateSrc[e.date] || (hoursByDateSrc[e.date] = {});
-        hd[src] = (hd[src] || 0) + (parseFloat(e.hours) || 0);
+        hd[src] = (hd[src] || 0) + eHours;
         var td = typeByDateSrc[e.date] || (typeByDateSrc[e.date] = {});
         var tt = td[src] || (td[src] = {});
         var et = e.type || (std === 'weight' ? 'weight' : std === 'trip' ? 'load' : 'hourly');
@@ -464,6 +536,7 @@
     window.Meticulous = window.Meticulous || {};
     Meticulous.shared = Meticulous.shared || {};
     Meticulous.shared.buildRevenueLines = invCycBuildRevenueLines;
+    Meticulous.shared.daySelfWageUplift = invCycDaySelfWageUplift; /* v179 (D1) */
     Meticulous.shared.revenueEntrySource = invCycEntrySrc;
     Meticulous.shared.dayLoads = invCycDayLoads;
     /* v146: the invoice document composer + printer, shared with
@@ -951,7 +1024,7 @@
        driver's rates live in their own books / P&L entry. For a
        setup that never split the rates this is the same number
        as before, byte for byte. */
-    return invCycBuildRevenueLines(entries, extras, psWageRate(o), o.payStandard);
+    return invCycBuildRevenueLines(entries, extras, psWageRate(o), o.payStandard, invCycCardWages());
   }
 
   /* lines from revenue entries + extras inside a period, using pay standard */
@@ -1467,7 +1540,7 @@
   function psPeriodGross(o, a, b) {
     var entries = App._store.get('rev_entries', []).filter(function (e) { return e && e.date >= a && e.date <= b; });
     var rate = psWageRate(o);
-    var built = invCycBuildRevenueLines(entries, [], rate, o.payStandard);
+    var built = invCycBuildRevenueLines(entries, [], rate, o.payStandard, invCycCardWages());
     var hours = 0;
     Object.keys(built.dayHours || {}).forEach(function (d) { hours += parseFloat(built.dayHours[d]) || 0; });
     hours = invCycRound2(hours);
