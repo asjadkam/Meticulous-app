@@ -249,7 +249,7 @@ console.log('glue: static checks');
   ok((app.match(/ShiftTrack\.sessionStarted/g) || []).length === 2, '(j) app.js starts native tracking on manual + auto session start');
   ok(/ShiftTrack\.sessionStopped/.test(app) && /ShiftTrack\.syncOnBoot/.test(app) && /ShiftTrack\.drainNow/.test(app),
     '(j) app.js wires stop / boot-sync / end-sheet drain');
-  ok(/var APK_VERSION = 37/.test(app), '(j) APK_VERSION bumped to 37 (v37 release, Oct 22 2026)');
+  ok(/var APK_VERSION = 38/.test(app), '(j) APK_VERSION bumped to 38 (v38 release, Oct 22 2026)');
   const miles = fs.readFileSync(path.join(ROOT, 'js', 'miles.js'), 'utf8');
   ok(/mergeNativeCrumbs: function/.test(miles) && /recordKmFor: function/.test(miles),
     '(j) LiveMiles exposes the native merge + record lookup');

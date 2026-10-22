@@ -161,7 +161,7 @@ function emptyDraft(no) {
   eq('issue 1: confirmation wording', S('cycmsg', ''), 'Invoice #1 saved for Oct 1–15. Next period: Oct 16–31.');
 
   /* Second issue: Oct 16–31 -> cycle rolls to Nov 1–15, number 2. */
-  const r2 = w.invIssue(issueArgs(emptyDraft(''), '2026-10-16', '2026-10-31', 222));
+  const r2 = w.invIssue(issueArgs(emptyDraft(''), '2026-10-16', '2026-10-31', 223));
   eq('issue 2: ok', r2.ok, true);
   eq('issue 2: number is 2', r2.rec.no, '2');
   eq('issue 2: period advanced to Nov 1-15', S('pa', '') + '..' + S('pb', ''), '2026-11-01..2026-11-15');

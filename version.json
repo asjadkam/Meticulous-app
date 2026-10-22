@@ -1,8 +1,8 @@
 {
-  "version": 37,
-  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v37.apk",
-  "webVersion": 222,
-  "notes": "v222 \u2014 the six in-hands fixes from the v220/v37 field test (Oct 22): the session bubble arm now rides the durable web session into the shell (BUBBLE-NO-SHOW); LiveMiles and GeoLoads reseed from the persisted record after a reinstall/restore, so the hero miles and the load count (machine + his signed correction) come back instead of restarting at zero (LIVE-MILES-DISPLAY-RESET, LOADS-RESTORE-FAIL); the Navigator drive view also feeds on the app's own fix stream with a silence watchdog, so the map keeps tracking when its own watch dies quietly (NAV-STUCK); Back from the map parks the drive into an in-app screen-in-screen over the DASHBOARD instead of the launcher (PIP-LANDS-HOME); the home-screen widget defaults to a tight resizable 2x2 and fills its tile (WIDGET-SIZE-3X3, shell side lands with APK v38). Suite: fix-batch-v222 56/56; full suite green except the parked failures, identical on pristine HEAD.",
+  "version": 38,
+  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v38.apk",
+  "webVersion": 223,
+  "notes": "v223 \u2014 APK v38 RELEASE pointer: APK_VERSION 37 -> 38 and version.json publishes the v38 APK (https://asjadkam.github.io/Meticulous-app/meticulous-v38.apk, versionCode 13 / 1.11, sha256 ddd466918e412e19e1dab1a970ae4b8cc43be9f7e70324978c229bed00870f94; APK hosted on gh-pages in commit 81185ef). The v38 shell carries the session-armed PiP bubble (ShiftTrack.setSession \u2014 the web session arms the shell directly, persisted apart from the service flag) and the tight, resizable 2x2 home-screen widget that fills its tile; its cold-start bundle is web v222. Web layer unchanged since v222 beyond this pointer. Standing pin move 222 -> 223 across index.html and the test files; native-generation pins rolled forward (background-day E7/E8/E9, native-track (j)).",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "374a98dba7226b76a5f11f91c2d51c9986b70f5c3a27495a377c0587b622557b",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "cf4d9461bbd55e50d626a89fb48f87d838114ce73028db52ab89e62eeb3d6aa9",
+    "index.html": "7b048814358dcf9cfa3110a949b4e670349912e604f87ac7d1d4a52db66b1972",
     "js/app.js": "c7f75dcccdb786b534a94ecf000799812c79db04a998af9087e041043da3203b",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "61d5fe9cd0d34e62e961b4c9b204e97ce81366625c694f7aa800bae506b4be4c",
