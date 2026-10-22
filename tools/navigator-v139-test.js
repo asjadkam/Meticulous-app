@@ -134,13 +134,13 @@ console.log('— 1. ONE transformed element: the bounded plane —');
     navSrc.indexOf('nv-drive-tilt') < 0 && navSrc.indexOf('nv-drive-spin') < 0 &&
     navSrc.indexOf('nv-drive-mapbox') < 0 && navSrc.indexOf('nvd_spin') < 0);
   const plane = ruleBody('.nv-drive-plane');
-  check('the plane is bounded: 230% x 230%, centred on the anchor by its offsets (left:-65% = 50 - 230/2, top:-51% = 64 - 230/2) — v178 re-pin (A1)',
-    !!plane && /width:230%/.test(plane) && /height:230%/.test(plane) &&
-    /left:-65%/.test(plane) && /top:-51%/.test(plane) && /transform-origin:50% 50%/.test(plane),
+  check('the plane is bounded: 230% x 300%, centred on the anchor by its offsets (left:-65% = 50 - 230/2, top:-86% = 64 - 300/2) — v220 re-pin: the plane grew TALLER for far-field/top coverage (NAV-CUTOFF-REPEAT); width unchanged from the v178 re-pin (A1)',
+    !!plane && /width:230%/.test(plane) && /height:300%/.test(plane) &&
+    /left:-65%/.test(plane) && /top:-86%/.test(plane) && /transform-origin:50% 50%/.test(plane),
     String(plane));
   const sizePct = 230; /* v178 re-pin (A1): plane grew 190 -> 230 for corner coverage; budget claim re-based below */
-  check('the raster budget: the plane area stays under HALF of the v135 340% plane ((230/340)^2 < 0.5) — v178 re-pin: A1 corner coverage bought with a bounded raster increase, still ~2.2x cheaper than v135',
-    Math.pow(sizePct / 340, 2) < 0.5, String(Math.pow(sizePct / 340, 2)));
+  check('the raster budget: the plane area stays under HALF of the v135 340% plane ((230/340)^2 < 0.5) — v178 re-pin: A1 corner coverage bought with a bounded raster increase, still ~2.2x cheaper than v135. v220: the height growth is area-accounted separately — (230x300)/(340x340) = 0.60 of the v135 raster, a bounded, deliberate trade for a map that reaches the top of the glass',
+    Math.pow(sizePct / 340, 2) < 0.5 && (230 * 300) / (340 * 340) < 0.65, String(Math.pow(sizePct / 340, 2)));
   check('340% exists nowhere in the drive CSS any more',
     !rules.some(function (r) { return r.body.indexOf('340%') >= 0; }));
   check('the viewport is a plain overflow-hidden box: NO perspective property, NO transform',

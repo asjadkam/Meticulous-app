@@ -497,6 +497,30 @@
      fallback writes that same one-shot record directly if the
      places component is somehow absent — there is no second
      navigation path, and no pin leaves the app anymore. */
+  /* v220 (DSP-PIN-NAVIGATE): a dispatch with NO pin whose job site
+     NAMES a place the app knows still earns its Navigate — the
+     unique-match lookup GeoLoads already trusts for counting
+     (exactly one known place may answer; ambiguity offers
+     nothing). Returns { lat, lng, label } or null. */
+  function dspPlaceHit(d) {
+    try {
+      if (typeof window !== 'undefined' && window.GeoLoads && GeoLoads.placeByName) {
+        return GeoLoads.placeByName((d && (d.jobSite || d.pickup)) || '');
+      }
+    } catch (e) {}
+    return null;
+  }
+  /* v220 (DSP-PIN-NAVIGATE): the ACTIVE card's Navigate — the
+     driver's own day, so no day gate; the destination is the
+     record's pin, or the known place its site names. Quiet
+     secondary styling: Close stays the card's one primary. */
+  function dspActiveNavBtn(a, isOffice) {
+    if (!a || isOffice) return '';
+    var hasPin = a.lat !== null && a.lat !== undefined && a.lng !== null && a.lng !== undefined &&
+      isFinite(parseFloat(a.lat)) && isFinite(parseFloat(a.lng));
+    if (!hasPin && !dspPlaceHit(a)) return '';
+    return '<button class="btn ghost small" id="dp_nav_active">🧭 Navigate</button>';
+  }
   function dspNavigatePin(lat, lng, name) {
     var la = parseFloat(lat), ln = parseFloat(lng);
     if (!isFinite(la) || !isFinite(ln)) return false;
@@ -1604,6 +1628,7 @@
              this is presentation only. */
           '<button class="btn primary big" id="dp_close_ticket" style="margin-top:10px">📸 Close with ticket photo</button>' +
           '<div class="row dsp-actions">' +
+          dspActiveNavBtn(a, isOffice) +
           '<button class="btn ghost small" id="dp_complete">✅ Complete dispatch</button>' +
           '<button class="btn ghost small" id="dp_edit_active">✏️ Edit</button>' +
           '<button class="btn ghost small" id="dp_cancel">Cancel</button></div>' +
@@ -1680,6 +1705,11 @@
                its own day. */
             (isOffice || !dspNavDayOk(d) ? ' · 📍 Pin set' :
               ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
+          /* v220 (DSP-PIN-NAVIGATE): no pin, but the site NAMES a
+             known place — the same one-tap Navigate, resolved at
+             tap time (data-navname). Same v172 day gate. */
+          ((d.lat === null || d.lat === undefined) && !isOffice && dspNavDayOk(d) && dspPlaceHit(d) ?
+            ' · <button type="button" class="btn small ghost" data-navname="' + i + '" style="padding:2px 8px">🧭 Navigate</button>' : '') +
           (d.material ? ' · ' + esc(d.material) : '') +
           (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
           (d.amount ? ' · $' + esc(d.amount) : '') +
@@ -3550,6 +3580,27 @@
           if (d) dspNavigatePin(d.lat, d.lng, d.jobSite || d.pickup || '');
         };
       });
+      /* v220: a known-place name's Navigate — resolved fresh at
+         the tap (the place may have been added since the paint). */
+      body.querySelectorAll('[data-navname]').forEach(function (b) {
+        b.onclick = function () {
+          var d = list()[+b.getAttribute('data-navname')];
+          var hit = d ? dspPlaceHit(d) : null;
+          if (hit) dspNavigatePin(hit.lat, hit.lng, hit.label || d.jobSite || d.pickup || '');
+        };
+      });
+      /* v220: the active card's Navigate. */
+      var navActiveBtn = body.querySelector('#dp_nav_active');
+      if (navActiveBtn) navActiveBtn.onclick = function () {
+        var cur = active();
+        if (!cur) return;
+        if (cur.lat !== null && cur.lat !== undefined && isFinite(parseFloat(cur.lat))) {
+          dspNavigatePin(cur.lat, cur.lng, cur.jobSite || cur.pickup || '');
+        } else {
+          var hit = dspPlaceHit(cur);
+          if (hit) dspNavigatePin(hit.lat, hit.lng, hit.label || cur.jobSite || cur.pickup || '');
+        }
+      };
       /* v129: a completed record's row View opens its face. */
       body.querySelectorAll('[data-view]').forEach(function (b) {
         b.onclick = function () {

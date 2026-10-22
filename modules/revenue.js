@@ -1375,32 +1375,39 @@
   }
 
   var api = {
-    /* v124: the dashboard card quotes the SAME period the owner
-       selected inside Revenue — his catch, Oct 17 07:45: "why is
-       it not showing me what I have selected inside as my
-       period". The v118 fixed "Last 30d" below was a repair that
-       outlived its day: it stopped the number changing its mind
-       by ignoring his selection altogether. Now the card reads
-       summary() — the module's own aggregation over inPeriod(),
-       no second math path — and NAMES the selected window, so
-       the number can never wear the wrong label. The default
-       (30 days) reads exactly as it did under v118. */
+    /* v220 (owner, Oct 22, 2026 — REV-CARD-GLANCE): the dashboard
+       card's glance is the LAST revenue entry — amount + when —
+       mirroring the Fuel card's "Last fill". His words: the period
+       total was the wrong glance ("the invoice already tells him
+       the last month invoiced"). This supersedes the v124 period
+       mirror deliberately: the period selection still governs
+       everything INSIDE the module; only the card's one-line
+       preview changes. "Last" = the latest-dated entry; a tie on
+       date goes to the entry appended last (the most recent
+       write). The amount is priced by the module's own payFor —
+       no second math path. Self-contained on purpose: the
+       money-truth harness extracts this function alone. */
     status: function () {
-      var s = summary();
-      if (!s.count) return 'No entries yet';
-      var p = S('period', '30');
-      if (p === 'custom') {
-        var a = S('customA', ''), b = S('customB', '');
-        if (a && b && b >= a) {
-          var f = function (ds) {
-            return new Date(ds + 'T12:00:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
-          };
-          return f(a) + ' – ' + f(b) + ': $' + s.total.toFixed(0);
+      var list = entries(), last = null;
+      list.forEach(function (x) {
+        if (x && (!last || String(x.date || '') >= String(last.date || ''))) last = x;
+      });
+      if (!last) return 'No entries yet';
+      var o = App._store.get('onboarding', {});
+      var std = (o.payStandard || 'hourly').toLowerCase();
+      var amt = payFor(last, std, ownRate(o));
+      var when = '';
+      if (last.date) {
+        var today = '';
+        try { today = App._today(); } catch (e) {}
+        if (last.date === today) when = 'today';
+        else {
+          var a = new Date(last.date + 'T12:00:00'), b = new Date(today + 'T12:00:00');
+          if (!isNaN(a) && !isNaN(b) && Math.round((b - a) / 86400000) === 1) when = 'yesterday';
+          else if (!isNaN(a)) when = a.toLocaleDateString('en', { month: 'short', day: 'numeric' });
         }
-        /* invalid custom bounds: inPeriod()/periodDays() fall back
-           to the rolling 30 days, and so does the label. */
       }
-      return 'Last ' + s.days + 'd: $' + s.total.toFixed(0);
+      return 'Last entry: $' + amt.toFixed(2) + (when ? ' · ' + when : '');
     },
     /* Tracker hook — called by app.js when a work session stops.
        v41: the session entry carries the dynamic tracker's tracked

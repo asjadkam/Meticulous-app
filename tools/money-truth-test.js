@@ -446,19 +446,17 @@ console.log('\n— v118: the dashboard Manifest preview quotes the BUILDER’s d
     wT.__manStatus(), 'Today: 9 h 45 m worked');
 }
 
-console.log('\n— v124: the dashboard Revenue preview mirrors the period selected inside —');
+console.log('\n— v220: the dashboard Revenue preview is the LAST entry (supersedes v124) —');
 {
-  /* History: v118 made status() a FIXED "Last 30d" glance that
-     ignored rev_period entirely (it had mirrored the selection
-     before that, and the number seemed to change its mind).
-     v124 (owner, Oct 17 07:45 — "why is it not showing me what I
-     have selected inside as my period") restores the mirror, but
-     through summary() — the module's own aggregation — with the
-     selected window NAMED on the card. The two v118 pins below
-     are flipped deliberately: period=7 now reads "Last 7d", and
-     a custom selection with valid bounds names its own range;
-     custom WITHOUT bounds falls back to the rolling window,
-     exactly as inPeriod()/periodDays() do. */
+  /* History: v118 made status() a FIXED "Last 30d" glance; v124
+     mirrored the period selected inside the module. v220 (owner,
+     Oct 22, 2026 — REV-CARD-GLANCE) supersedes both deliberately:
+     the card shows the LAST revenue entry (amount + when),
+     mirroring the Fuel card's "Last fill" — the invoice already
+     tells him the month. The period selection is now irrelevant
+     to the glance (it still governs the module's insides), so all
+     four worlds below read the same line: the fixture's latest
+     entry is the $282.75 auto entry dated today. */
   const revSrcFull = fs.readFileSync(path.join(ROOT, 'modules', 'revenue.js'), 'utf8');
   function extractRevStatus(src) {
     const i = src.indexOf('status: function');
@@ -475,27 +473,27 @@ console.log('\n— v124: the dashboard Revenue preview mirrors the period select
   const w = world(mem);
   w.App._today = () => '2026-10-16';
   vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w);
-  eq('v124 preview: rev_period=7 selected, the card quotes the selected window',
-    w.__revStatus(), 'Last 7d: $319');
+  eq('v220 preview: rev_period=7 selected, the card still shows the last entry',
+    w.__revStatus(), 'Last entry: $282.75 · today');
   mem.rev_period = 'custom';
   const w2 = world(mem);
   w2.App._today = () => '2026-10-16';
   vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w2);
-  eq('v124 preview: rev_period=custom with NO bounds falls back to the rolling 30d (as inPeriod does)',
-    w2.__revStatus(), 'Last 30d: $319');
+  eq('v220 preview: rev_period=custom with NO bounds, the card still shows the last entry',
+    w2.__revStatus(), 'Last entry: $282.75 · today');
   mem.rev_customA = '2026-10-01';
   mem.rev_customB = '2026-10-31';
   const w3 = world(mem);
   w3.App._today = () => '2026-10-16';
   vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w3);
-  eq('v124 preview: a bounded custom period names its own range on the card',
-    w3.__revStatus(), 'Oct 1 – Oct 31: $319');
+  eq('v220 preview: a bounded custom period no longer names a range on the card',
+    w3.__revStatus(), 'Last entry: $282.75 · today');
   delete mem.rev_period; delete mem.rev_customA; delete mem.rev_customB;
   const w4 = world(mem);
   w4.App._today = () => '2026-10-16';
   vm.runInContext('__revStatus = (' + extractRevStatus(revSrcFull) + ');', w4);
-  eq('v124 preview: no selection stored → the default reads exactly as it did under v118',
-    w4.__revStatus(), 'Last 30d: $319');
+  eq('v220 preview: no selection stored → the last entry, same as any selection',
+    w4.__revStatus(), 'Last entry: $282.75 · today');
 }
 
 console.log('\nmoney-truth: ' + pass + ' passed, ' + fail + ' failed');

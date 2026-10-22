@@ -575,9 +575,57 @@
     /* PiP ARM: while a drive is live, leaving the app drops the
        drive screen into picture-in-picture (MainActivity reads
        this flag in onUserLeaveHint). */
+    _driving: false,
     setDriving: function (on) {
+      ShiftTrack._driving = !!on;
       var p = plugin();
       if (p && typeof p.setDriving === 'function') { try { p.setDriving({ on: !!on }); } catch (e) {} }
+    },
+    /* v220 (PIP-BACK-BEHAVIOR): ask the shell to enter PiP NOW —
+       the Navigator's Back during a live drive. Returns true when
+       the request was dispatched to a shell that has the method
+       (the caller then treats Back as handled and stays put);
+       false off-shell, where the caller's old staircase applies. */
+    enterPip: function () {
+      var p = plugin();
+      if (p && typeof p.enterPip === 'function') {
+        try { p.enterPip(); } catch (e) { return false; }
+        return true;
+      }
+      return false;
+    },
+    /* v220: PiP entry/exit events (the plugin's 'pipChanged').
+       Subscribers swap their faces: the Navigator shows its
+       compact PiP face, the shell shows the tracker bubble. */
+    _pipFns: [],
+    _pipWired: false,
+    addPipListener: function (fn) {
+      if (typeof fn !== 'function') return;
+      if (ShiftTrack._pipFns.indexOf(fn) < 0) ShiftTrack._pipFns.push(fn);
+      if (ShiftTrack._pipWired) return;
+      var p = plugin();
+      if (p && typeof p.addListener === 'function') {
+        ShiftTrack._pipWired = true;
+        try {
+          p.addListener('pipChanged', function (data) {
+            var inPip = !!(data && data.inPip);
+            ShiftTrack._pipFns.slice().forEach(function (f) { try { f(inPip); } catch (e) {} });
+          });
+        } catch (e) { ShiftTrack._pipWired = false; }
+      }
+    },
+    /* v220 (WIDGET-CONTROLS): collect a home-screen widget button
+       tap (start/pause/stop), stashed natively from the widget's
+       intent. Resolves '' when there is nothing (or no shell). */
+    takeWidgetAction: function () {
+      var p = plugin();
+      if (p && typeof p.takeWidgetAction === 'function') {
+        try {
+          return p.takeWidgetAction().then(function (r) { return (r && r.action) || ''; })
+            .catch(function () { return ''; });
+        } catch (e) {}
+      }
+      return Promise.resolve('');
     },
     /* WIDGET: the home-screen widget mirrors the composed
        lines; the web side change-gates before calling. */

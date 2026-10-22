@@ -392,6 +392,23 @@
       return;
     }
     _lockedHeroPainted = false;
+    /* v220 (LIVE-MILES-REINSTALL-RESET): a sign-in can RESTORE a
+       running tracker the boot path never saw (fresh install: the
+       local store was empty at init, the session arrived with the
+       cloud pull). Reattach the live-miles + geofence engines to
+       the restored session here, the same reattach init() runs —
+       without it the restored session's miles never accumulate
+       again (the Oct 22 reinstall: timer and loads restored,
+       live miles stayed 0). Idempotent: startDay is a no-op when
+       the engine already watches this session's key. */
+    try {
+      App.tracker = store.get('tracker', App.tracker);
+      if (App.tracker && (App.tracker.status === 'running' || App.tracker.status === 'paused')) {
+        var rk2 = 's' + trackerSessionKeyMs();
+        if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() !== rk2) LiveMiles.startDay(rk2, { resume: true });
+        if (window.GeoLoads && GeoLoads.startDay) GeoLoads.startDay(rk2, { resume: true });
+      }
+    } catch (e) {}
     el('sbEmail').textContent = user.email || '';
     var nm = store.get('onboarding', {}).accountType || 'Driver';
     el('sbName').textContent = nm;
@@ -1312,8 +1329,31 @@
      bookkeeping itself is unchanged. */
   function trackerAddLoadTap() {
     if (!sessionActive()) return null;
+    /* v220: while GPS counting is armed, +1 corrects the machine
+       count (the day record's signed correction) — the tap count
+       stays the pre-arming fallback only. */
+    try {
+      if (window.GeoLoads && GeoLoads.today && GeoLoads.today().armed && GeoLoads.nudge) {
+        if (GeoLoads.nudge(1) !== null) return trkAccum();
+      }
+    } catch (e) {}
     var a = trkAccum();
     a.manualLoads += 1;
+    trackerSave();
+    return a;
+  }
+  /* v220: the −1 correction (LOADS-CORRECTION-BUTTONS). Mirrors
+     +1 exactly: armed → the day record's correction steps down;
+     unarmed → the tap count steps down, never below zero. */
+  function trackerCutLoadTap() {
+    if (!sessionActive()) return null;
+    try {
+      if (window.GeoLoads && GeoLoads.today && GeoLoads.today().armed && GeoLoads.nudge) {
+        if (GeoLoads.nudge(-1) !== null) return trkAccum();
+      }
+    } catch (e) {}
+    var a = trkAccum();
+    a.manualLoads = Math.max(0, (a.manualLoads || 0) - 1);
     trackerSave();
     return a;
   }
@@ -1398,6 +1438,66 @@
   }
   /* DYN-TRACKER-END */
 
+  /* v220 (APP-BUBBLE-TRACKER, owner spec): the floating bubble
+     (picture-in-picture while NOT navigating) shows ONLY the
+     tracker — the timer, play/stop, and the load count. Big and
+     glanceable, nothing else: no miniature app. The face is a
+     plain overlay swapped in for the dashboard while PiPed; the
+     dashboard underneath never changes. The shell only PiPs a
+     live session (MainActivity), so the bubble never appears
+     without a running/paused day behind it. */
+  App._bubble = false;
+  function bubbleEl(id) { return document.getElementById(id); }
+  function refreshBubbleFace() {
+    var show = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving)
+      && sessionActive() && !App._authLocked();
+    var bf = bubbleEl('bubbleFace');
+    if (bf) bf.classList.toggle('hidden', !show);
+    App._bubble = show;
+    if (show) { try { paintBubble(trackerElapsedSec()); } catch (e) {} }
+  }
+  function paintBubble(sec) {
+    if (!App._bubble) return;
+    var st = App.tracker.status;
+    var c = bubbleEl('bubClock'); if (c && c.textContent !== fmtClock(sec)) c.textContent = fmtClock(sec);
+    var s = bubbleEl('bubStatus');
+    var stTxt = st === 'running' ? 'Working…' : 'Paused';
+    if (s && s.textContent !== stTxt) s.textContent = stTxt;
+    var l = bubbleEl('bubLoads'); var lg = loadsGlance();
+    if (l && l.textContent !== lg) l.textContent = lg;
+    var p = bubbleEl('bubPlay');
+    if (p) {
+      var running = st === 'running';
+      var want = running ? '⏸' : '▶';
+      if (p.textContent !== want) p.textContent = want;
+      p.classList.toggle('bub-pause', running);
+      p.classList.toggle('bub-go', !running);
+    }
+  }
+  /* v220 (WIDGET-CONTROLS): a widget button tap arrives as one
+     word; the tracker lives here, so the tap is performed here —
+     start/pause ride the one big toggle (the same button the
+     dashboard offers), stop opens the dashboard's own stop flow
+     (confirm + ticket photo) with the app already foregrounded
+     by the widget's intent. */
+  function applyWidgetAction(a) {
+    if (!a) return;
+    try {
+      if (a === 'start') { if (App.tracker.status !== 'running') App.trackerToggle(); }
+      else if (a === 'pause') { if (App.tracker.status === 'running') App.trackerToggle(); }
+      else if (a === 'stop') {
+        if (sessionActive()) { App.showDashboard(); App.trackerStopPrompt(); }
+      }
+    } catch (e) {}
+  }
+  App.collectWidgetAction = function () {
+    try {
+      if (window.ShiftTrack && ShiftTrack.takeWidgetAction) {
+        ShiftTrack.takeWidgetAction().then(applyWidgetAction);
+      }
+    } catch (e) {}
+  };
+
   var _heroSig = '';
   /* v212 (WIDGET — Stage E): the Android home-screen widget is a
      dumb mirror of this hero, carried there by the shell's
@@ -1408,6 +1508,20 @@
      mile — never a per-second stream. Inert everywhere the
      bridge is absent (browser, iPhone, old shells). */
   var _widgetSig = '';
+  /* v220: the loads glance — the same source the dashboard's own
+     extra row reads (the armed GPS counter, else the day's taps),
+     shared by the widget line and the PiP bubble face. */
+  function loadsGlance() {
+    try {
+      if (window.GeoLoads && GeoLoads.today) {
+        var gt = GeoLoads.today();
+        if (gt && gt.armed) return '🚛 ' + gt.count + (gt.count === 1 ? ' load' : ' loads');
+      }
+    } catch (e) {}
+    var n = 0;
+    try { n = trkAccum().manualLoads || 0; } catch (e) {}
+    return '🚛 ' + n + (n === 1 ? ' load' : ' loads');
+  }
   function pushWidgetState(m) {
     try {
       if (!window.ShiftTrack || !ShiftTrack.pushWidgetState) return;
@@ -1415,7 +1529,15 @@
         App.tracker.status === 'paused' ? 'Paused' : 'Ready to work';
       var milesEl = el('trkMiles');
       var milesTxt = (milesEl && !milesEl.classList.contains('hidden')) ? (milesEl.textContent || '') : '';
-      var secondary = [m.showSub ? m.sub : '', milesTxt].filter(function (x) { return !!x; }).join(' · ');
+      /* v220 (WIDGET-CONTROLS): the loads count rides BESIDE the
+         timer and the live miles — for an Hourly hero neither the
+         sub line nor the miles line ever named the loads, so the
+         widget stayed silent about them. */
+      var wParts = [];
+      if (m.showSub && m.sub) wParts.push(m.sub);
+      if (m.mode === 'Hourly' || m.mode === 'Miles') wParts.push(loadsGlance());
+      if (milesTxt) wParts.push(milesTxt);
+      var secondary = wParts.join(' · ');
       var primary = m.big + (m.unit ? ' ' + m.unit : '');
       var sig = status + '|' + primary + '|' + secondary;
       if (sig === _widgetSig) return;
@@ -1476,9 +1598,19 @@
     else if (sessionActive()) {
       var machineLoads = (geoToday && geoToday.armed) ? geoToday.count : null;
       var shownLoads = (machineLoads !== null) ? machineLoads : taps;
+      /* v220 (owner, Oct 22, 2026 — LOADS-CORRECTION-BUTTONS): the
+         correction is a PAIR of big, distinct buttons — +1 GREEN,
+         −1 RED — never tiny: a wrong tap is the failure he named.
+         +1 corrects a missed count, −1 corrects an over-count;
+         while GPS counting is armed they move the day record's
+         signed correction (js/geoloads.js), before that they move
+         the tap count itself. */
       h = '<div class="trkLoadCount">🚛 Loads today: <b>' + shownLoads + '</b>' +
           (machineLoads !== null ? ' <span class="trkLoadSrc">counted by GPS</span>' : '') + '</div>' +
-          '<button type="button" class="trkAddBtn trkFixBtn" id="trkLoadTapBtn">+1 load correction</button>';
+          '<div class="trkLoadBtns">' +
+          '<button type="button" class="trkAddBtn trkPlusBtn" id="trkLoadTapBtn">+1 load</button>' +
+          '<button type="button" class="trkAddBtn trkMinusBtn" id="trkLoadCutBtn">−1 load</button>' +
+          '</div>';
     }
     box.innerHTML = h;
   }
@@ -1508,6 +1640,7 @@
   App.trackerAddLoad = function (w, u) { var a = trackerAddLoad(w, u); trackerTick(); return a; };
   App.trackerAddTrip = function () { var a = trackerAddTrip(); trackerTick(); return a; };
   App.trackerAddLoadTap = function () { var a = trackerAddLoadTap(); trackerTick(); return a; };
+  App.trackerCutLoadTap = function () { var a = trackerCutLoadTap(); trackerTick(); return a; };
   App.trackerLoadTaps = function () { return sessionActive() ? trkAccum().manualLoads : 0; };
   App.noteDispatchCompleted = function (info) { var okd = noteDispatchCompleted(info); trackerTick(); return okd; };
 
@@ -1521,6 +1654,8 @@
     // v41: the hero quantity depends on the pay method (dynamic tracker);
     // for Hourly this renders exactly the same clock as before.
     paintHero(sec);
+    /* v220: the PiP bubble face rides the same tick. */
+    try { paintBubble(sec); } catch (e) {}
     // v40: keep the "Miles (live)" dashboard line current
     try { if (window.LiveMiles) LiveMiles.paint(); } catch (e) {}
     // v41: in Miles mode the dial IS the miles display — the small
@@ -1531,6 +1666,16 @@
     if (!trackerTick._as || Date.now() - trackerTick._as > 60000) {
       trackerTick._as = Date.now();
       try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+      /* v220 (SESSION-CLOUD-GAP): while a session runs, re-save
+         the tracker record on this same minute cadence. The
+         record IS the session's cloud face — before this, it was
+         written only at transitions, so a start whose flush was
+         lost (app killed inside the debounce, offline at start)
+         left the cloud showing "Ready to work" for the whole
+         shift while the phone's session ran. A periodic re-save
+         means the running session's state lands within a minute
+         of any start and keeps landing. */
+      try { if (sessionActive()) trackerSave(); } catch (e) {}
     }
   }
   function trackerPaint() {
@@ -1794,6 +1939,25 @@
       if (milesFin && typeof milesFin.liveKm === 'number') {
         entry.liveKm = milesFin.liveKm;
         entry.milesKey = milesFin.key;
+      } else if (window.LiveMiles && LiveMiles.recordKmFor) {
+        /* v220 (LIVE-MILES-REINSTALL-RESET): the engine came back
+           with nothing — the shape of a midday uninstall/reinstall,
+           where the tracker record restores (the timer and loads
+           with it) but the live-miles ENGINE never reattached, so
+           stopDay has no total. The accumulation itself is durable:
+           it sits in the persisted livemiles record under THIS
+           session's key, restored with everything else. Read it
+           from there — the day record carries its true miles, the
+           accumulation lives and dies with the session's own
+           durable records, never only in the engine's memory. */
+        try {
+          var rk = 's' + trackerSessionKeyMs();
+          var recKm = LiveMiles.recordKmFor(rk);
+          if (typeof recKm === 'number') {
+            entry.liveKm = recKm;
+            entry.milesKey = rk;
+          }
+        } catch (e) {}
       }
       // v41: the dynamic tracker's accumulated quantities for the day
       // (Weight: totalWeightKg + loadCount; Trip: tripCount).
@@ -4883,6 +5047,7 @@
       if (id === 'trkAddTripBtn') App.trackerAddTrip();
       else if (id === 'trkAddLoadBtn') App.openLoadSheet();
       else if (id === 'trkLoadTapBtn') App.trackerAddLoadTap();
+      else if (id === 'trkLoadCutBtn') App.trackerCutLoadTap();
     };
     el('trkClock').onclick = function (ev) {
       if (ev.target && ev.target.id === 'trkUnitBtn' && payMode() === 'Weight') {
@@ -4908,6 +5073,26 @@
     trackerPaint();
     setInterval(trackerTick, 1000);
 
+    /* v220: PiP posture changes drive the tracker bubble face;
+       a widget tap may already be waiting from a cold start. */
+    try {
+      if (window.ShiftTrack && ShiftTrack.addPipListener) {
+        ShiftTrack.addPipListener(function (inPip) { App._pip = !!inPip; refreshBubbleFace(); });
+      }
+    } catch (e) {}
+    var bubPlayEl = bubbleEl('bubPlay');
+    if (bubPlayEl) bubPlayEl.addEventListener('click', function () {
+      try { App.trackerToggle(); paintBubble(trackerElapsedSec()); } catch (e) {}
+    });
+    var bubStopEl = bubbleEl('bubStop');
+    if (bubStopEl) bubStopEl.addEventListener('click', function () {
+      /* the bubble's stop is the plain tracker stop — the
+         confirm + ticket-photo sheet stays the dashboard's own
+         flow (owner's choice stays visible in the report). */
+      try { App.trackerStop(); } catch (e) {}
+    });
+    App.collectWidgetAction();
+
     // v26: save tracker state when app goes to background (Android WebView may be killed)
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') {
@@ -4918,6 +5103,8 @@
       }
       // v27: when the app comes back, check whether the auto-start time arrived
       if (document.visibilityState === 'visible') {
+        /* v220: a widget button may have brought us here. */
+        try { App.collectWidgetAction(); } catch (e6) {}
         try { App.checkAutoStart(); } catch (e2) {}
         // v92: a dispatch saved or changed while we were away may
         // have moved the next day's plan — re-arm the native side.

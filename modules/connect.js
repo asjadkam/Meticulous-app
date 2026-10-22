@@ -844,7 +844,13 @@
               scheduledAt: content.scheduledAt || '',
               jobSite: content.jobSite || '',
               material: content.material || '', equipment: content.equipment || '',
-              notes: content.notes || ''
+              notes: content.notes || '',
+              /* v220 (DSP-PIN-NAVIGATE): an existing dispatch's pin
+                 rides along when it is shared — the receiver's
+                 Navigate depends on it. */
+              lat: content.lat, lng: content.lng,
+              dumpLat: content.dumpLat, dumpLng: content.dumpLng,
+              pickup: content.pickup || '', dropoff: content.dropoff || ''
             }).then(function (r) {
               if (r === 'sent') {
                 var o = outbox();

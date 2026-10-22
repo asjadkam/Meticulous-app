@@ -209,6 +209,51 @@
     };
   }
 
+  /* v220 (NAV-FREEZE): a tile layer that can DIE silently is how
+     a drive ends up with a route arc and a dot on a blank field
+     (Oct 22, ~09:34: tiles stopped loading mid-drive and never
+     came back — Leaflet keeps a failed tile as a permanent hole
+     and nothing in the old layer ever asked again). The drive
+     layer now heals itself, in order:
+       1. a failed tile is re-requested once, quietly, in place;
+       2. a streak of failures swaps the layer to the fallback
+          provider (OpenStreetMap standard) — different infra,
+          same map — rather than leaving a dead one up;
+       3. a watchdog: while failures continue with no successful
+          tile for 30 s, the layer redraws (fresh requests for
+          the whole viewport) every 30 s until tiles land again.
+     The layer NEVER just stops: worst case it keeps retrying
+     under the route line for the rest of the drive. */
+  function resilientTileLayer(url, opts) {
+    var layer = L.tileLayer(url, opts || {});
+    var st = { errs: 0, lastOk: Date.now(), swapped: false, watch: null };
+    layer.on('tileload', function () { st.errs = 0; st.lastOk = Date.now(); });
+    layer.on('tileerror', function (e) {
+      st.errs++;
+      try {
+        var img = e && e.tile;
+        if (img && !img._nvRetried) {
+          img._nvRetried = 1;
+          var src = img.src;
+          setTimeout(function () { try { img.src = src; } catch (x) {} }, 1200);
+        }
+      } catch (x) {}
+      if (!st.swapped && st.errs >= 8) {
+        st.swapped = true;
+        try { layer.setUrl('https://tile.openstreetmap.org/{z}/{x}/{y}.png'); } catch (x) {}
+      }
+      if (!st.watch) {
+        st.watch = setInterval(function () {
+          try {
+            if (Date.now() - st.lastOk > 30000) { layer.redraw(); st.lastOk = Date.now(); }
+            else if (st.errs === 0) { clearInterval(st.watch); st.watch = null; }
+          } catch (x) { try { clearInterval(st.watch); } catch (y) {} st.watch = null; }
+        }, 5000);
+      }
+    });
+    return layer;
+  }
+
   /* v125 (owner spec, Oct 17): the direction line RETRACTS as
      travelled — only the route AHEAD of the truck stays drawn.
      Returns the not-yet-travelled part of `line` from the point
@@ -980,6 +1025,34 @@
   var nvFace = 'places';
   var nvBody = null;
 
+  /* v220 (PIP-REDESIGN, owner spec verbatim): in picture-in-
+     picture the drive screen is NOT a miniature clone of the big
+     map. (1) NO big truck avatar hiding the "now" — a POINTED
+     ARROW marks the position. (2) NO directions bar on top — the
+     next direction appears in SMALL WORDS AT THE BOTTOM
+     (#nvd_pip_line, fed by the drive tick). (3) Integrated: the
+     face is this same drive screen wearing .nv-pip, swapped on
+     the shell's pipChanged event and restored on exit — one
+     drive, two postures, no second screen to drift. */
+  var pipWired = false;
+  function applyPipFace(inPip) {
+    try {
+      if (S) S._inPip = !!inPip;
+      var scr = nvBody ? nvBody.querySelector('#nv_drive_screen') : null;
+      if (scr) scr.classList.toggle('nv-pip', !!inPip);
+      var you = nvBody ? nvBody.querySelector('#nvd_you') : null;
+      if (you) {
+        var kind = inPip ? 'arrow' : ((S && S.settings && S.settings.avatar) || 'dump');
+        you.innerHTML = avatarGlyph(kind, 'm');
+        /* the marker's whole inline style IS its box (the class
+           carries position) — the same contract paintYou keeps */
+        you.style.cssText = avatarBoxStyle(kind);
+      }
+      var line = nvBody ? nvBody.querySelector('#nvd_pip_line') : null;
+      if (line) line.classList.toggle('hidden', !inPip);
+    } catch (e) {}
+  }
+
   /* v78: the last destination a route was actually built for in
      this app session — the dashboard card's preview fact. It lives
      OUTSIDE S on purpose: teardown nulls S when the module closes,
@@ -1093,6 +1166,20 @@
        the drive face (the in-module hand-off). */
     back: function () {
       if (nvFace === 'drive') {
+        /* v220 (PIP-BACK-BEHAVIOR, owner spec): while a DRIVE is
+           live, Back on the map page sends the map into
+           picture-in-picture — Back NEVER kills navigation, and
+           leaving the module would tear the drive down, so the
+           module stays exactly where it is and the shell floats
+           the drive's compact PiP face. Navigation ends ONLY via
+           End Drive or the drive screen's own exit. Off-shell
+           (no PiP bridge — a plain browser) the request declines
+           and the v116 staircase below applies as before. */
+        if (S && S.drive) {
+          var pipSent = false;
+          try { pipSent = !!(window.ShiftTrack && ShiftTrack.enterPip && ShiftTrack.enterPip()); } catch (e) {}
+          if (pipSent) return true;
+        }
         if (S && S.drive && typeof S.backFn === 'function' && S.backFn()) return true;
         nvFace = 'places';
         if (nvBody) api.render(nvBody);
@@ -1104,6 +1191,12 @@
 
     render: function (body) {
       nvBody = body;
+      /* v220: hear the shell's PiP changes (once) — applyPipFace
+         swaps this screen's PiP posture. Inert off-shell. */
+      if (!pipWired) {
+        pipWired = true;
+        try { if (window.ShiftTrack && ShiftTrack.addPipListener) ShiftTrack.addPipListener(applyPipFace); } catch (e) {}
+      }
       var hasPending = false;
       try { hasPending = !!App._store.get('nav_pending', null); } catch (e) {}
       if (hasPending) nvFace = 'drive';
@@ -1265,6 +1358,12 @@
         '<div class="nv-drive-viewport">' +
         '<div class="nv-drive-plane" id="nvd_plane"><div id="nv_drive_map" class="nv-drive-map"></div></div>' +
         '</div>' +
+        /* v220 (PIP-REDESIGN): the PiP face's only words — the
+           next direction in SMALL TEXT AT THE BOTTOM, like
+           Google's PiP. Hidden unless the drive screen is in
+           picture-in-picture (the .nv-pip class, driven by the
+           shell's pipChanged event). */
+        '<div class="nv-drive-pip-line hidden" id="nvd_pip_line"></div>' +
         /* v135: the avatar is a TRUCK now (see avatarGlyph), and
            it is TAPPABLE — a tap opens the chooser docked above
            the bar; the choice persists in the navigator settings
@@ -1878,19 +1977,46 @@
            an invented lane (v178's rule). */
         function fetchLaneCount(idx) {
           S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
-          if (S.laneByTurn[idx] !== undefined || S.laneFetch[idx] || !S.plan || !S.line) return;
+          if (S.laneByTurn[idx] !== undefined || !S.plan || !S.line) return;
           var m = S.plan.maneuvers[idx]; if (!m) return;
-          S.laneFetch[idx] = 1;
-          var tp = pointAlongLine(S.line, m.cumEndKm * 1000);
+          /* v220 (NAV-LANES-INHANDS-FAIL): two systematic killers
+             of the v196 lookup, both fixed here.
+             (1) THE QUERY POINT: v196 asked about ways around the
+             TURN POINT — the middle of the junction, where the
+             CROSS street's ways (with their own lanes tags) sit
+             inside the same 30 m circle and make the answer
+             ambiguous, which pickLaneCount honestly reads as
+             "no strip". The question is about the APPROACH road:
+             ask around a point ~40 m BEFORE the turn instead.
+             (2) THE POISONED CACHE: one transient Overpass
+             failure (the public endpoint rate-limits and stalls
+             routinely) used to be cached as a tried-and-none 0
+             for the whole drive — every strip absent, all day.
+             A failure now falls back once to the kumi.systems
+             mirror, and a total failure caches NOTHING: the
+             lookup retries on the tick's later calls after a
+             20 s cooldown. Only a successful-but-empty answer
+             earns the honest 0. */
+          var lastTry = S.laneFetch[idx] || 0;
+          if (lastTry && Date.now() - lastTry < 20000) return;
+          S.laneFetch[idx] = Date.now();
+          var tp = pointAlongLine(S.line, Math.max(0, m.cumEndKm * 1000 - 40));
           var street = (m.streets && m.streets[0]) || '';
-          var q = '[out:json][timeout:8];way(around:30,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
-          fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) })
-            .then(function (r) { return r.ok ? r.json() : null; })
+          var q = '[out:json][timeout:8];way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
+          var endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+          var attempt = function (k) {
+            return fetch(endpoints[k], { method: 'POST', body: 'data=' + encodeURIComponent(q) })
+              .then(function (r) {
+                if (!r.ok) throw new Error('overpass ' + r.status);
+                return r.json();
+              });
+          };
+          attempt(0).catch(function () { return attempt(1); })
             .then(function (j) {
               S.laneByTurn[idx] = j && j.elements ? pickLaneCount(j.elements, street) : 0;
               if (S.drive && S.drive.insetKey && S.drive.insetKey.split(':')[0] === String(idx)) S.drive.insetKey = '';
             })
-            .catch(function () { S.laneByTurn[idx] = 0; });
+            .catch(function () { /* total failure: cache nothing — a later tick retries */ });
         }
 
         function fetchGradeEvents(line) {
@@ -2520,7 +2646,7 @@
               fadeAnimation: false
             }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
             var tspec = driveTileSpec();
-            L.tileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
+            resilientTileLayer(tspec.url, { maxZoom: 18, keepBuffer: 4 }).addTo(S.driveMap);
             /* v183: a user drag enters free-look. Leaflet fires
                dragstart only for real gestures (programmatic
                panTo does not), so the follow camera never
@@ -2816,6 +2942,14 @@
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';
             }
           }
+        }
+        /* v220 (PIP-REDESIGN): the PiP face's bottom line — the
+           next direction in small words, kept current by the same
+           tick that paints the big banner (write-on-change). */
+        var pipLineEl = body.querySelector('#nvd_pip_line');
+        if (pipLineEl && S._inPip) {
+          var pipTxt = dp.next ? (fmtDist(dp.toTurnM) + ' · ' + (dp.next.instruction || '')) : 'Arrived';
+          if (pipLineEl.textContent !== pipTxt) pipLineEl.textContent = pipTxt;
         }
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);

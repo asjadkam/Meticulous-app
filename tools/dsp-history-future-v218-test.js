@@ -313,8 +313,8 @@ function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? 
     dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) < dspTodayStr') !== -1);
   check('future records are collected by date alone',
     dspSrc.indexOf('else if (rd > dspTodayStr) futureItems.push') !== -1);
-  eq('ships as webVersion 218', ver.webVersion, 219);
-  check('index loads dispatch at the 218 pin', idxSrc.indexOf('modules/dispatch.js?v=219') !== -1);
+  eq('ships as webVersion 218', ver.webVersion, 220);
+  check('index loads dispatch at the 218 pin', idxSrc.indexOf('modules/dispatch.js?v=220') !== -1);
 
   console.log('\ndsp-history-future v218: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

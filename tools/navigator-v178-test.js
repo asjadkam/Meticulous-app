@@ -49,8 +49,8 @@ const cssSrc = read('css/style.css');
 const ver = JSON.parse(read('version.json'));
 
 console.log('— A1: the plane covers the corners —');
-check('the plane is 230% x 230%, anchor-centred (left:-65%, top:-51%)',
-  /\.nv-drive-plane\{[^}]*width:230%;height:230%;left:-65%;top:-51%/.test(cssSrc));
+check('the plane is 230% wide x 300% tall, anchor-centred (left:-65%, top:-86%) — v220 re-pin: A1 grew the SQUARE plane for the corners; the top still fell short on diagonal headings, so v220 grows the HEIGHT only (far-field), centre unmoved',
+  /\.nv-drive-plane\{[^}]*width:230%;height:300%;left:-65%;top:-86%/.test(cssSrc));
 check('the raster budget holds: (230/340)^2 < 0.5 of the v135 plane',
   Math.pow(230 / 340, 2) < 0.5);
 
@@ -102,9 +102,9 @@ check('no lane fabrication: the module never claims lane data it does not have',
 
 console.log('— ship pins —');
 check('ships as webVersion 188 with the changed files at the 199 pin',
-  ver.webVersion === 219 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=219"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=219"') >= 0,
+  ver.webVersion === 220 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=220"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=220"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v178: ' + pass + ' passed, ' + fail + ' failed');

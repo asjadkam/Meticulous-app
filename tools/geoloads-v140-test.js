@@ -293,7 +293,11 @@ console.log('\n— (E) the count of record: ladder, dashboard, close —');
   const app = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
   ok(app.includes('trkLoadCount') && app.includes('counted by GPS'), 'the dashboard shows the machine count as the count');
   ok(app.includes('GeoLoads.today'), 'the dashboard reads GeoLoads.today()');
-  ok(app.includes('id="trkLoadTapBtn">+1 load correction</button>'), 'the tap button is demoted to a correction');
+  /* v220 (owner, Oct 22 — LOADS-CORRECTION-BUTTONS): the single
+     small "+1 load correction" button is superseded by his spec —
+     a BIG green +1 and a BIG red −1, both corrections still. */
+  ok(app.includes('id="trkLoadTapBtn">+1 load</button>') && app.includes('id="trkLoadCutBtn">−1 load</button>'),
+    'the correction is a big +1 / −1 pair (v220 supersedes the v140 single-button pin)');
   ok(!app.includes('🚛 +1 load'), 'the old counter-of-record button face is gone');
 
   const dsp = fs.readFileSync(path.join(ROOT, 'modules', 'dispatch.js'), 'utf8');

@@ -206,10 +206,11 @@ function unproject(x, y, zoom) {
   const n = Math.PI - 2 * Math.PI * y / s;
   return [180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))), x / s * 360 - 180];
 }
-/* The plane is 230% of a 412×915 glass (style.css), so the
-   drive map — which fills the plane — measures 948×2105 and
+/* The plane is 230% wide × 300% tall of a 412×915 glass
+   (style.css; height grew in v220 for top coverage), so the
+   drive map — which fills the plane — measures 948×2745 and
    its centre IS the avatar anchor (50% / 64% of the glass). */
-const MAP_W = 948, MAP_H = 2105;
+const MAP_W = 948, MAP_H = 2745;
 
 function makeWorld() {
   const storeData = { navigator: { profile: {}, muted: false, mode: 'truck' } };
@@ -493,8 +494,8 @@ function assertLevelTrue(label, transformStr, headingDeg) {
     /v215 \(NAV-GESTURE-PLANE\): a NEW drive[\s\S]{0,600}S\.viewRot = 0; S\.viewPitch = null;/.test(navSrc));
   ok('still exactly ONE .style.transform writer (paintPlane)',
     (navSrc.match(/\.style\.transform =/g) || []).length === 1);
-  eq('webVersion is 215', ver.webVersion, 219);
-  ok('index.html pins the v215 build', idxSrc.indexOf('?v=219') >= 0);
+  eq('webVersion is 215', ver.webVersion, 220);
+  ok('index.html pins the v215 build', idxSrc.indexOf('?v=220') >= 0);
 
   console.log('\nnav-gesture-plane-v215 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

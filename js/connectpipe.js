@@ -569,6 +569,15 @@
       scheduledAt: String(fields.scheduledAt || ''),
       equipment: String(fields.equipment || ''), material: String(fields.material || ''),
       notes: String(fields.notes || ''),
+      /* v220 (DSP-PIN-NAVIGATE): the job's pin rides the pipe too —
+         a dispatch that carries a pin on the sender's side must
+         still carry it when it lands (it was dropped here and at
+         the landing, so a received dispatch could never offer
+         Navigate and GeoLoads never saw its sites). Facts only,
+         like everything on the pipe — never rates. */
+      lat: Number(fields.lat) || 0, lng: Number(fields.lng) || 0,
+      dumpLat: Number(fields.dumpLat) || 0, dumpLng: Number(fields.dumpLng) || 0,
+      pickup: String(fields.pickup || ''), dropoff: String(fields.dropoff || ''),
       /* v207: a DESTINATION share (sendDestination) rides this
          same doc, flagged — never a job: navShare + the pin. */
       navShare: !!fields.navShare,
@@ -678,7 +687,15 @@
           } catch (e) {}
           return;
         }
+        /* v220 (DSP-CONNECT-DATE-FILE): the record files by the
+           date THE DISPATCH ITSELF states (recordDate: the
+           scheduledAt's date, else the date field) — never by
+           hand, never defaulted to tomorrow. A doc that states
+           NO date files under the day it ARRIVED, flagged
+           pipeDateless so the guess is never silent. */
         var dateStr = CP.recordDate(d);
+        var dateless = !dateStr;
+        if (dateless) { try { dateStr = App._today() || ''; } catch (e) { dateStr = ''; } }
         var conflict = list.some(function (x) {
           return x && CP.recordDate(x) === dateStr && x.status !== 'completed' && x.status !== 'cancelled';
         }) || !!(st.get('dsp_active', null) && CP.recordDate(st.get('dsp_active', null)) === dateStr);
@@ -689,8 +706,17 @@
           ticketNo: '', tickets: [], photo: null, status: 'saved',
           pipeId: d.id, pipeFrom: d.from, pipeFromName: d.fromName || '',
           source: 'Connect — ' + (d.fromName || 'your connection'),
-          pipeConflict: conflict || undefined
+          pipeConflict: conflict || undefined,
+          pipeDateless: dateless || undefined
         };
+        /* v220 (DSP-PIN-NAVIGATE): the pin lands with the record —
+           load pin, dump pin, and the pickup/dropoff text — so
+           the received dispatch offers Navigate and GeoLoads can
+           resolve its sites exactly like a local one. */
+        if (isFinite(+d.lat) && isFinite(+d.lng) && (+d.lat !== 0 || +d.lng !== 0)) { rec.lat = +d.lat; rec.lng = +d.lng; }
+        if (isFinite(+d.dumpLat) && isFinite(+d.dumpLng) && (+d.dumpLat !== 0 || +d.dumpLng !== 0)) { rec.dumpLat = +d.dumpLat; rec.dumpLng = +d.dumpLng; }
+        if (d.pickup) rec.pickup = String(d.pickup);
+        if (d.dropoff) rec.dropoff = String(d.dropoff);
         list.push(rec);
         landed[d.id] = rec.id;
         landedCount++;

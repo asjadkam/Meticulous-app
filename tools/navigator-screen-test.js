@@ -80,8 +80,8 @@ console.log('\n— (a) the map fills its area —');
    viewport's perspective property and the CSS 52° tilt layer
    are GONE — replaced by ONE bounded plane carrying a composed
    transform. The sky-gradient backstop keeps its job. */
-ok('v139+v178: the map rides ONE bounded plane — 230% × 230% (v178 A1 re-pin: 190% left the top corners short at diagonal headings), centred on the anchor by its offsets',
-  /\.nv-drive-plane\{[^}]*width:230%;height:230%;left:-65%;top:-51%/.test(css) &&
+ok('v139+v178+v220: the map rides ONE bounded plane — 230% × 300% (v178 A1 re-pin: 190% left the top corners short at diagonal headings; v220: height grew to 300% so the pitched far field reaches the top of the glass), centred on the anchor by its offsets',
+  /\.nv-drive-plane\{[^}]*width:230%;height:300%;left:-65%;top:-86%/.test(css) &&
   !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
 ok('v139: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform',
   !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&

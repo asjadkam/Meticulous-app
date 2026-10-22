@@ -75,6 +75,12 @@ body{
 .trkLoadCount{margin-top:14px;font-size:16px;font-weight:600;color:#fff;}
 .trkLoadCount .trkLoadSrc{font-size:12px;font-weight:500;opacity:.75;}
 .trkAddBtn.trkFixBtn{padding:6px 16px;font-size:13px;margin-top:8px;opacity:.85;}
+/* v220 (LOADS-CORRECTION-BUTTONS): the correction pair — big,
+   distinct, glove-tappable: +1 green, -1 red, side by side. */
+.trkLoadBtns{display:flex;gap:12px;justify-content:center;margin-top:10px;}
+.trkLoadBtns .trkAddBtn{margin-top:0;padding:14px 26px;font-size:17px;border-radius:26px;border:0;flex:0 1 auto;}
+.trkLoadBtns .trkPlusBtn{background:var(--green,#2e9e4f);}
+.trkLoadBtns .trkMinusBtn{background:var(--red,#e74c3c);}
 .tbtn{border:0;border-radius:50%;width:96px;height:96px;font-size:15px;font-weight:700;color:#fff;
   cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);}
 .tbtn.play{background:var(--green);}
@@ -439,7 +445,42 @@ label.chk input{width:18px;height:18px;}
    conservative; the sky gradient above remains the backstop
    for any residual sliver, exactly its v107 job. */
 .nv-drive-viewport{position:absolute;inset:0;overflow:hidden;background:linear-gradient(180deg,#0b1424 0%,#274b7a 40%,#9db8d9 58%,#e8edf5 64%);}
-.nv-drive-plane{position:absolute;width:230%;height:230%;left:-65%;top:-51%;transform-origin:50% 50%;}
+/* v220 (NAV-CUTOFF-REPEAT): the plane is TALLER than it is wide —
+   230% x 300%, still centred on the anchor (left:-65% = 50 - 230/2,
+   top:-86% = 64 - 300/2). At the 45° pitch the far field is the
+   first thing the projection starves: at 230% tall the plane's top
+   edge projected barely past the screen top and fell short at the
+   corners on diagonal headings — the owner's repeated "the top of
+   the map is cut off". The extra height is all far-field: the map
+   now reaches the top of the glass at every heading. Width is
+   unchanged (side coverage was never the complaint) and the
+   raster grows ~1.3x, bounded and deliberate. */
+.nv-drive-plane{position:absolute;width:230%;height:300%;left:-65%;top:-86%;transform-origin:50% 50%;}
+/* v220 (PIP-REDESIGN): the drive screen's picture-in-picture
+   posture — NOT a miniature of the big map: the top directions
+   bar, the turn inset, the ETA bar and every control go away;
+   the position marker becomes the pointed arrow (JS swap); the
+   next direction rides in small words at the bottom. */
+/* v220 (APP-BUBBLE-TRACKER): the PiP bubble face — the whole
+   app steps aside and ONLY the tracker shows: the timer big,
+   the load count under it, play/stop under that. */
+#bubbleFace{position:fixed;inset:0;z-index:95;background:#0C1424;color:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;}
+#bubbleFace.hidden{display:none;}
+.bub-status{font-size:15px;font-weight:700;color:#9FB3D9;letter-spacing:.04em;}
+.bub-clock{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
+.bub-loads{font-size:20px;font-weight:700;}
+.bub-btns{display:flex;gap:22px;margin-top:8px;}
+.bub-btn{width:84px;height:84px;border-radius:50%;border:none;font-size:30px;color:#fff;cursor:pointer;}
+.bub-btn.bub-go{background:var(--green);}
+.bub-btn.bub-pause{background:var(--amber);color:#1A1A1A;}
+.bub-btn.bub-stop{background:var(--red);}
+.nv-drive-pip-line{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:7;
+  background:rgba(10,18,32,.85);color:#fff;font-size:13px;font-weight:600;line-height:1.25;
+  padding:6px 12px;border-radius:999px;max-width:94%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nv-drive.nv-pip .nv-drive-top,.nv-drive.nv-pip .nv-drive-inset,.nv-drive.nv-pip .nv-drive-bar,
+.nv-drive.nv-pip .nv-avatar-picker,.nv-drive.nv-pip .nv-drive-reroute,.nv-drive.nv-pip .nv-drive-speed,
+.nv-drive.nv-pip #nvd_recenter{display:none !important;}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 /* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
    30px ▲ "arrow as you" was "something puny" — "the moving

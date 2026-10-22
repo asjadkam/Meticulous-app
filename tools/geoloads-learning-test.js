@@ -115,11 +115,19 @@ const storeA = mkStore({ dsp_active: { id: 'dsp-a', jobSite: 'Pit A', lat: LOAD.
   ok(day.blocked === null, 'no longer blocked once taught');
   ok(day.sites && day.sites.dump && day.sites.dump.src === 'learned', 'dump site marked as learned');
   ok(near(day.learnedDump, DUMP, 0.0005), 'learnedDump is the dwell place');
-  const pairs = storeA.get('geoload_pairs', { pairs: {} }).pairs;
-  const pkeys = Object.keys(pairs);
-  ok(pkeys.length === 1 && near(pairs[pkeys[0]].dump, DUMP, 0.0005), 'pair memory written, keyed by the load site');
+  /* v220 (LOADS-TIGHT-GEOFENCE) supersedes the v68 pin here: a
+     first dwell — even a 200 s one — is NOT proof (a mid-leg stop
+     dwells exactly like a tip), so the pair memory is NOT written
+     at teach time any more. It is written when the truck closes
+     the full cycle back at the load site (the drive + park right
+     below), and this test asserts both halves. */
+  let pairs = storeA.get('geoload_pairs', { pairs: {} }).pairs;
+  ok(Object.keys(pairs).length === 0, 'v220: pair memory NOT written at teach time — a dwell alone is not proof');
   drive(w, clock, DUMP, LOAD, 240);
   park(w, clock, LOAD, 70);
+  pairs = storeA.get('geoload_pairs', { pairs: {} }).pairs;
+  const pkeys = Object.keys(pairs);
+  ok(pkeys.length === 1 && near(pairs[pkeys[0]].dump, DUMP, 0.0005), 'pair memory written once the cycle closed, keyed by the load site');
   drive(w, clock, LOAD, DUMP, 240);
   park(w, clock, DUMP, 70);
   day = w.GeoLoads.forDate(DAY);

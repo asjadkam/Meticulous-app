@@ -126,6 +126,11 @@
                                // (same bar as the miles engine)
   var MAX_SPEED_KMH = 160;     // implied speed above this = bad fix, drop
   var MIN_SITE_SEP_M = 250;    // two sites must be at least this far
+  var CAND_GRACE_MS = 25 * 1000; // v220: a zone candidate survives a
+                                 // brief excursion (<= this long) out
+                                 // of its zone — presence accumulates
+                                 // across it instead of restarting
+                                 // (LOADS-MISS-OCT22)
                                // apart to form a countable pair (with a
                                // 120 m fence, <240 m would overlap)
 
@@ -259,11 +264,38 @@
         var raw = classify(+fix.latitude, +fix.longitude);
         if (raw === S.zone) {
           S.cand = null;
-        } else {
-          if (!S.cand || S.cand.zone !== raw) S.cand = { zone: raw, since: t };
+        } else if (!S.cand) {
+          S.cand = { zone: raw, since: t, gapMs: 0, awaySince: null, awayZone: null };
+        } else if (raw === S.cand.zone) {
+          /* v220 (LOADS-MISS-OCT22): a brief excursion out of the
+             candidate zone — GPS wander at the fence edge, the
+             truck creeping while it tips — no longer RESTARTS the
+             confirmation clock. Presence accumulates: excursion
+             time inside the grace window is subtracted, not
+             fatal. Field evidence, Oct 22, 2026: same-site cycles
+             counted 5 of the driver's 7 — the missed tips were
+             the short, creeping ones whose 45 s of continuous
+             in-fence presence kept resetting. A genuine departure
+             still replaces the candidate once the excursion runs
+             past the grace window, and a mid-leg stop (raw 'out'
+             throughout) still counts nothing: counting still
+             requires the armed load->dump alternation itself. */
+          if (S.cand.awaySince) {
+            S.cand.gapMs += t - S.cand.awaySince;
+            S.cand.awaySince = null; S.cand.awayZone = null;
+          }
           var need = (raw === 'out') ? departMs : dwellMs;
-          if (t - S.cand.since >= need) confirmZone(raw, t);
+          if (t - S.cand.since - S.cand.gapMs >= need) confirmZone(raw, t);
+        } else if (!S.cand.awaySince) {
+          S.cand.awaySince = t; S.cand.awayZone = raw; // excursion begins; grace runs
+        } else if (t - S.cand.awaySince > CAND_GRACE_MS) {
+          S.cand = {
+            zone: raw,
+            since: (S.cand.awayZone === raw) ? S.cand.awaySince : t,
+            gapMs: 0, awaySince: null, awayZone: null
+          };
         }
+        // else: inside the grace window — hold the candidate as-is
         return {
           accepted: true, zone: raw, confirmed: S.zone, phase: S.phase,
           counted: S.counted, count: S.count
@@ -410,10 +442,18 @@
         var raw = haversineM(+fix.latitude, +fix.longitude, LOAD.lat, LOAD.lng) <= radiusM ? 'load' : 'out';
         if (raw === S.zone) {
           S.zoneCand = null;
-        } else {
-          if (!S.zoneCand || S.zoneCand.zone !== raw) S.zoneCand = { zone: raw, since: t };
+        } else if (!S.zoneCand) {
+          S.zoneCand = { zone: raw, since: t, gapMs: 0, awaySince: null, awayZone: null };
+        } else if (raw === S.zoneCand.zone) {
+          /* v220: same presence accumulation as the counter
+             (LOADS-MISS-OCT22) — a brief fence-edge excursion
+             inside the grace window is subtracted, not fatal. */
+          if (S.zoneCand.awaySince) {
+            S.zoneCand.gapMs += t - S.zoneCand.awaySince;
+            S.zoneCand.awaySince = null; S.zoneCand.awayZone = null;
+          }
           var need = (raw === 'out') ? departMs : dwellMs;
-          if (t - S.zoneCand.since >= need) {
+          if (t - S.zoneCand.since - S.zoneCand.gapMs >= need) {
             S.zone = raw; S.zoneCand = null;
             if (raw === 'load') {
               S.atLoad = true; S.legArmed = false; S.cluster = null;
@@ -421,7 +461,16 @@
               S.atLoad = false; S.legArmed = true; S.cluster = null;
             }
           }
+        } else if (!S.zoneCand.awaySince) {
+          S.zoneCand.awaySince = t; S.zoneCand.awayZone = raw;
+        } else if (t - S.zoneCand.awaySince > CAND_GRACE_MS) {
+          S.zoneCand = {
+            zone: raw,
+            since: (S.zoneCand.awayZone === raw) ? S.zoneCand.awaySince : t,
+            gapMs: 0, awaySince: null, awayZone: null
+          };
         }
+        // else: inside the grace window — hold the candidate as-is
         res.zone = S.zone;
 
         /* Candidate watching: only on a loaded leg (confirmed load
@@ -487,24 +536,55 @@
          at-home dwell is not a pit).
        - The FIRST confirmed work place is the ANCHOR (the load
          site): a dump day starts empty, leaves home, and its
-         first work dwell is where the truck loads. A second
-         confirmed place >= LEARN_MIN_SEP_M away IS the dump —
-         by the time a cluster has confirmed there, the truck
-         has unmistakably left the anchor and sat loaded-side
-         for minutes; the pair is emitted and the caller arms
-         the counter and credits the teaching cycle.
-       - A THIRD distinct place confirming before the truck
-         closes the cycle back at the anchor CONTESTS the pair
-         (the day cannot tell its places apart — teach nothing,
-         the same verdict the dump learner reaches). Confirming
-         back at the anchor LOCKS the pair for the day.
+         first work dwell is where the truck loads.
+       - v220 SUPERSEDES the v203 emission rule below it: a
+         second confirmed place is only a CANDIDATE — the pair
+         is emitted when the full cycle (anchor -> candidate ->
+         anchor) has completed TWICE (see the v220 note at
+         createPatternLearner). A third distinct place before
+         proof contests the day; two tight sub-spots inside the
+         anchor's own area can prove an intra-site pair the
+         same way.
      Direction honesty: even if a day's first work dwell were
      somehow the dump side, the cycle COUNT is the same — the
      counter counts completed alternations either way; only
      the load/dump labels could sit swapped. */
+  /* v220 (owner, Oct 22, 2026 — LOADS-TIGHT-GEOFENCE): the proof
+     bar for a learned dump site, in the owner's words: a place is
+     learned as a dump site ONLY when the full loaded cycle
+     (pit -> place -> pit) completes there AND REPEATS — and a
+     mid-leg stop (arrive loaded, leave loaded — a washroom break,
+     off site, several minutes) must NEVER be learned or counted.
+     Dwell length alone does not discriminate; the completed,
+     repeated cycle does. Changes against the v203 learner:
+       - The second place is only a CANDIDATE. The pair is emitted
+         (and the counter armed, and the pair remembered) when the
+         truck has closed the cycle back at the anchor TWICE —
+         two proven cycles, both credited. A third distinct place
+         confirming before proof contests the day, exactly as
+         before — a mid-leg stop on the way to a different real
+         dump can therefore never become the teaching.
+       - SAME-SITE jobs: when load and dump are the same place,
+         no second place ever confirms. The learner then reads
+         the pattern INSIDE the anchor's own area with TIGHT
+         sub-clusters (INTRA_CLUSTER_M around a running centroid,
+         only fixes accurate to INTRA_ACC_MAX_M): two sub-spots
+         >= INTRA_SEP_M apart — the loading spot and the tipping
+         spot — alternating through the same two proven cycles
+         emit an intra-site pair, and the counter arms on the
+         sub-spots with a tight INTRA_RADIUS_M fence. A third
+         sub-spot abandons intra tracking for the day (the spots
+         cannot be told apart); it never poisons the outer
+         machine. */
+  var INTRA_CLUSTER_M = 35;  // a sub-spot: fixes stay within this of its centroid
+  var INTRA_SEP_M = 50;      // sub-spots must sit at least this far apart
+  var INTRA_ACC_MAX_M = 30;  // only fixes this accurate may speak intra-site
+  var INTRA_RADIUS_M = 30;   // the counter fence for an intra-site pair
+
   function createPatternLearner(cfg) {
     cfg = cfg || {};
     var HOME = (cfg.home && isCoord(cfg.home)) ? { lat: +cfg.home.lat, lng: +cfg.home.lng } : null;
+    var SEED = (cfg.anchor && isCoord(cfg.anchor)) ? { lat: +cfg.anchor.lat, lng: +cfg.anchor.lng, t: +cfg.anchor.t || 0 } : null;
     var learnDwellMs = cfg.learnDwellMs || LEARN_DWELL_MS;
     var clusterM = cfg.clusterM || LEARN_CLUSTER_M;
     var accMaxM = cfg.accMaxM || ACC_MAX_M;
@@ -513,53 +593,158 @@
     function isHome(lat, lng) {
       return !!HOME && haversineM(lat, lng, HOME.lat, HOME.lng) <= 250;
     }
+    function placeOf(p) { return p ? { lat: +p.lat, lng: +p.lng, t: +p.t || 0 } : null; }
+
+    /* The outer machine: anchor / candidate / proof. */
     function confirmPlace(place, res) {
       if (S.ambiguous) return;
       if (isHome(place.lat, place.lng)) return;
       if (!S.anchor) {
         S.anchor = place;
+        S.lastPlace = 'anchor';
         res.anchor = place;
         return;
       }
+      if (S.pair) return; // proven + locked at emission: nothing revisits it
       var dA = haversineM(place.lat, place.lng, S.anchor.lat, S.anchor.lng);
       if (dA <= CONTEST_SEP_M) {
-        // back at the anchor: a return, never a new place — and
-        // once a pair stands, the return CLOSES the first cycle:
-        // the teaching is proven for the day.
-        if (S.pair && !S.locked) { S.locked = true; res.locked = true; }
+        // back at the anchor: a return closes a cycle — if the
+        // last confirmed place was the candidate, a full loaded
+        // cycle (pit -> place -> pit) has completed.
+        if (S.cand && S.lastPlace === 'cand') {
+          S.cycles++;
+          if (S.cycles >= 2) {
+            S.pair = {
+              load: S.anchor, dump: S.cand, t: place.t,
+              credits: S.visits,
+              events: S.visitTs.map(function (vt, i) { return { t: vt, site: 'dump', n: i + 1 }; })
+            };
+            S.locked = true;
+            res.pair = S.pair;
+            res.locked = true;
+          }
+        }
+        S.lastPlace = 'anchor';
         return;
       }
-      if (!S.pair) {
-        if (dA < LEARN_MIN_SEP_M) return; // too close to call a second site — no-man's land
-        S.pair = { load: S.anchor, dump: place, t: place.t };
-        res.pair = S.pair;
+      if (S.cand && haversineM(place.lat, place.lng, S.cand.lat, S.cand.lng) <= CONTEST_SEP_M) {
+        // another visit to the candidate place
+        if (S.lastPlace !== 'cand') { S.visits++; S.visitTs.push(place.t); }
+        S.lastPlace = 'cand';
         return;
       }
-      if (S.locked) return;
-      if (haversineM(place.lat, place.lng, S.pair.dump.lat, S.pair.dump.lng) <= CONTEST_SEP_M) return; // another tip at the dump
+      if (dA < LEARN_MIN_SEP_M) return; // too close to call a second site — no-man's land
+      if (!S.cand) {
+        S.cand = place;
+        S.visits = 1;
+        S.visitTs = [place.t];
+        S.lastPlace = 'cand';
+        res.candidate = place;
+        return;
+      }
+      // a third distinct place before proof: the day cannot tell
+      // its places apart — teach nothing (a mid-leg stop on the
+      // way to the real dump lands exactly here).
       S.ambiguous = true;
-      res.contested = { anchor: S.anchor, pair: S.pair, rival: place };
+      res.contested = { anchor: S.anchor, pair: { load: S.anchor, dump: S.cand, t: S.cand.t || 0 }, rival: place };
+    }
+
+    /* The intra-site machine: tight sub-spots inside the anchor's
+       own area, same two-cycle proof. */
+    function intraConfirm(place, res) {
+      var I = S.intra;
+      if (!I.a) { I.a = place; I.lastSub = 'a'; return; }
+      if (haversineM(place.lat, place.lng, I.a.lat, I.a.lng) < INTRA_SEP_M) {
+        if (I.b && I.lastSub === 'b') {
+          I.cycles++;
+          if (I.cycles >= 2) {
+            S.pair = {
+              load: I.a, dump: I.b, t: place.t, intra: true,
+              credits: I.visits,
+              events: I.visitTs.map(function (vt, i) { return { t: vt, site: 'dump', n: i + 1 }; })
+            };
+            S.locked = true;
+            res.pair = S.pair;
+            res.locked = true;
+          }
+        }
+        I.lastSub = 'a';
+        return;
+      }
+      if (!I.b) {
+        I.b = place; I.visits = 1; I.visitTs = [place.t]; I.lastSub = 'b';
+        return;
+      }
+      if (haversineM(place.lat, place.lng, I.b.lat, I.b.lng) < INTRA_SEP_M) {
+        if (I.lastSub !== 'b') { I.visits++; I.visitTs.push(place.t); }
+        I.lastSub = 'b';
+        return;
+      }
+      I.dead = true; // a third sub-spot: this site's spots cannot be told apart
+    }
+    function intraFix(fix, res) {
+      var I = S.intra;
+      if (!I || I.dead || !S.anchor || S.cand || S.pair || S.ambiguous) return;
+      var lat = +fix.latitude, lng = +fix.longitude;
+      if (fix.accuracy === null || fix.accuracy === undefined || fix.accuracy > INTRA_ACC_MAX_M) { I.sub = null; return; }
+      if (haversineM(lat, lng, S.anchor.lat, S.anchor.lng) > CONTEST_SEP_M) { I.sub = null; return; }
+      var t = fix.time, sub = I.sub;
+      if (!sub) {
+        I.sub = { sumLat: lat, sumLng: lng, n: 1, since: t, confirmed: false };
+        return;
+      }
+      if (haversineM(sub.sumLat / sub.n, sub.sumLng / sub.n, lat, lng) <= INTRA_CLUSTER_M) {
+        sub.sumLat += lat; sub.sumLng += lng; sub.n++;
+        if (!sub.confirmed && t - sub.since >= learnDwellMs) {
+          sub.confirmed = true;
+          intraConfirm({ lat: sub.sumLat / sub.n, lng: sub.sumLng / sub.n, t: t }, res);
+        }
+      } else {
+        I.sub = { sumLat: lat, sumLng: lng, n: 1, since: t, confirmed: false };
+      }
     }
 
     return {
       /* saved: a previous snapshot() from the same day. Anchor,
-         pair and verdicts carry over; a half-built dwell cluster
-         is dropped, exactly as in the dump learner — a relaunch
-         can never invent a place. */
+         candidate, proof progress, pair and verdicts carry over;
+         half-built dwell clusters (outer and intra) are dropped,
+         exactly as before — a relaunch can never invent a place,
+         but it cannot erase a confirmed visit or a closed cycle
+         either. */
       begin: function (saved) {
         S = {
-          active: true, anchor: null, pair: null, locked: false,
-          ambiguous: false, cluster: null, lastT: 0, lastLat: null, lastLng: null
+          active: true, anchor: SEED, pair: null, locked: false,
+          ambiguous: false, cluster: null, lastT: 0, lastLat: null, lastLng: null,
+          cand: null, visits: 0, cycles: 0, lastPlace: SEED ? 'anchor' : null, visitTs: [],
+          intra: { a: null, b: null, visits: 0, cycles: 0, lastSub: null, visitTs: [], dead: false, sub: null }
         };
         if (saved && typeof saved === 'object') {
           if (saved.anchor && isCoord(saved.anchor)) {
-            S.anchor = { lat: +saved.anchor.lat, lng: +saved.anchor.lng, t: +saved.anchor.t || 0 };
+            S.anchor = placeOf(saved.anchor);
+            if (S.lastPlace === null) S.lastPlace = 'anchor';
+          }
+          if (saved.cand && isCoord(saved.cand)) S.cand = placeOf(saved.cand);
+          if (typeof saved.visits === 'number') S.visits = saved.visits;
+          if (typeof saved.cycles === 'number') S.cycles = saved.cycles;
+          if (saved.lastPlace === 'anchor' || saved.lastPlace === 'cand') S.lastPlace = saved.lastPlace;
+          if (Array.isArray(saved.visitTs)) S.visitTs = saved.visitTs.slice();
+          if (saved.intra && typeof saved.intra === 'object') {
+            var si = saved.intra;
+            if (si.a && isCoord(si.a)) S.intra.a = placeOf(si.a);
+            if (si.b && isCoord(si.b)) S.intra.b = placeOf(si.b);
+            if (typeof si.visits === 'number') S.intra.visits = si.visits;
+            if (typeof si.cycles === 'number') S.intra.cycles = si.cycles;
+            if (si.lastSub === 'a' || si.lastSub === 'b') S.intra.lastSub = si.lastSub;
+            if (Array.isArray(si.visitTs)) S.intra.visitTs = si.visitTs.slice();
+            S.intra.dead = !!si.dead;
           }
           if (saved.pair && saved.pair.load && saved.pair.dump && isCoord(saved.pair.load) && isCoord(saved.pair.dump)) {
             S.pair = {
-              load: { lat: +saved.pair.load.lat, lng: +saved.pair.load.lng, t: +saved.pair.load.t || 0 },
-              dump: { lat: +saved.pair.dump.lat, lng: +saved.pair.dump.lng, t: +saved.pair.dump.t || 0 },
-              t: +saved.pair.t || 0
+              load: placeOf(saved.pair.load),
+              dump: placeOf(saved.pair.dump),
+              t: +saved.pair.t || 0,
+              credits: saved.pair.credits || 0,
+              intra: !!saved.pair.intra
             };
           }
           S.locked = !!saved.locked;
@@ -584,6 +769,8 @@
         S.lastT = t; S.lastLat = +fix.latitude; S.lastLng = +fix.longitude;
         res.accepted = true;
 
+        intraFix({ latitude: fix.latitude, longitude: fix.longitude, accuracy: (fix.accuracy === undefined ? null : fix.accuracy), time: t }, res);
+
         var cl = S.cluster;
         if (!cl) {
           S.cluster = { sumLat: +fix.latitude, sumLng: +fix.longitude, n: 1, since: t, confirmed: false };
@@ -606,11 +793,23 @@
       snapshot: function () {
         if (!S) return null;
         return {
-          anchor: S.anchor ? { lat: S.anchor.lat, lng: S.anchor.lng, t: S.anchor.t || 0 } : null,
+          anchor: S.anchor ? placeOf(S.anchor) : null,
+          cand: S.cand ? placeOf(S.cand) : null,
+          visits: S.visits, cycles: S.cycles, lastPlace: S.lastPlace,
+          visitTs: S.visitTs.slice(),
+          intra: {
+            a: S.intra.a ? placeOf(S.intra.a) : null,
+            b: S.intra.b ? placeOf(S.intra.b) : null,
+            visits: S.intra.visits, cycles: S.intra.cycles,
+            lastSub: S.intra.lastSub, visitTs: S.intra.visitTs.slice(),
+            dead: S.intra.dead
+          },
           pair: S.pair ? {
-            load: { lat: S.pair.load.lat, lng: S.pair.load.lng, t: S.pair.load.t || 0 },
-            dump: { lat: S.pair.dump.lat, lng: S.pair.dump.lng, t: S.pair.dump.t || 0 },
-            t: S.pair.t || 0
+            load: placeOf(S.pair.load),
+            dump: placeOf(S.pair.dump),
+            t: S.pair.t || 0,
+            credits: S.pair.credits || 0,
+            intra: !!S.pair.intra
           } : null,
           locked: S.locked, ambiguous: S.ambiguous, lastT: S.lastT
         };
@@ -632,7 +831,10 @@
     RADIUS_M: RADIUS_M, DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
     ACC_MAX_M: ACC_MAX_M, MIN_SITE_SEP_M: MIN_SITE_SEP_M,
     LEARN_DWELL_MS: LEARN_DWELL_MS, LEARN_MIN_SEP_M: LEARN_MIN_SEP_M,
-    LEARN_CLUSTER_M: LEARN_CLUSTER_M, CONTEST_SEP_M: CONTEST_SEP_M
+    LEARN_CLUSTER_M: LEARN_CLUSTER_M, CONTEST_SEP_M: CONTEST_SEP_M,
+    INTRA_CLUSTER_M: INTRA_CLUSTER_M, INTRA_SEP_M: INTRA_SEP_M,
+    INTRA_ACC_MAX_M: INTRA_ACC_MAX_M, INTRA_RADIUS_M: INTRA_RADIUS_M,
+    CAND_GRACE_MS: CAND_GRACE_MS
   };
   /* GEOLOADS-ENGINE-END */
 
@@ -1043,6 +1245,15 @@
      must never erase loads already counted today. */
   var baseCount = 0;
   var baseEvents = [];
+  /* v220 (owner, Oct 22, 2026 — LOADS-CORRECTION-BUTTONS): the
+     driver's signed correction to the MACHINE count, carried on
+     the day record as `corr`, apart from the raw machine count —
+     persist() never folds it into rec.count, so it can never
+     double-apply across a restart: today()/forDate() always read
+     max(0, machine + corr). The hero's big −1 / +1 buttons move
+     it (js/app.js); while no site pair is armed the taps keep
+     their older fallback role (the session's manualLoads). */
+  var corrNow = 0;
 
   function persist(force) {
     if (!curDate) return;
@@ -1053,6 +1264,7 @@
     rec.dispatchId = curDispatchId;
     rec.sessionKey = sessionKey;
     rec.sites = curSites;
+    rec.corr = corrNow;
     rec.updatedAt = now;
     if (counter) {
       rec.count = baseCount + counter.count();
@@ -1143,14 +1355,26 @@
          Now the PATTERN learner watches the driving itself: the
          day's own dwell clusters are the two sites (see the
          engine). A day already proven ambiguous stays unteachable. */
-      if (why === 'no-site-coords' && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
+      /* v220 (LOADS-TIGHT-GEOFENCE): 'sites-too-close' — the
+         dispatch's own pins name ONE place for load and dump (the
+         standard on-site job) — joins the pattern path too, with
+         the learner SEEDED on the known place as its anchor: the
+         day is no longer blind; the learner reads the tip pattern
+         INSIDE the one place (tight sub-spots, two proven cycles)
+         or an outer candidate if the truck really runs to a
+         second site. */
+      if ((why === 'no-site-coords' || why === 'sites-too-close') && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
         learnMode = 'pattern';
         curSites = null;
-        learner = ENGINE.createPatternLearner({ home: homePlace() });
+        learner = ENGINE.createPatternLearner({
+          home: homePlace(),
+          anchor: (why === 'sites-too-close' && sites.load) ? { lat: sites.load.lat, lng: sites.load.lng } : null
+        });
         var prevN = recordFor(curDate);
         var sameN = !!(prevN && prevN.sessionKey === sessionKey);
         baseCount = (!sameN && prevN) ? (prevN.count || 0) : 0;
         baseEvents = (!sameN && prevN && prevN.events) ? prevN.events.slice() : [];
+        corrNow = prevN ? (prevN.corr || 0) : 0; // v220
         /* a pair taught earlier today arms the counter again at
            once — its count rides the base. The teaching wrote it
            on the day record (patternPair) precisely so a NEW
@@ -1158,7 +1382,7 @@
            learner's own snapshot carries it. */
         var restoredPair = null;
         if (prevN && prevN.patternPair && prevN.patternPair.load && prevN.patternPair.dump) {
-          restoredPair = { load: prevN.patternPair.load, dump: prevN.patternPair.dump, t: prevN.patternPair.t || 0 };
+          restoredPair = { load: prevN.patternPair.load, dump: prevN.patternPair.dump, t: prevN.patternPair.t || 0, intra: !!prevN.patternPair.intra };
         } else if (sameN && prevN.pattern && prevN.pattern.pair) {
           restoredPair = prevN.pattern.pair;
         }
@@ -1187,6 +1411,7 @@
         learner.begin(sameT ? prevT.learn : null);
         baseCount = (!sameT && prevT) ? (prevT.count || 0) : 0;
         baseEvents = (!sameT && prevT && prevT.events) ? prevT.events.slice() : [];
+        corrNow = prevT ? (prevT.corr || 0) : 0; // v220
         /* v140: he may ALREADY have navigated to today's dump
            (the tap is recorded before the drive) — adopt it now
            and the day counts from the first load, no teaching. */
@@ -1216,8 +1441,15 @@
     var prev = recordFor(curDate);
     var sameSession = !!(prev && prev.sessionKey === sessionKey);
     var saved = (sameSession && prev.state) ? prev.state : null;
-    baseCount = (!sameSession && prev) ? (prev.count || 0) : 0;
+    /* v220: the day count = the restored counter's own count +
+       whatever part of the record's count is NOT inside it. The
+       old same-session zeroing lost the carried part: a session
+       whose count included an earlier session's base read 0
+       after a relaunch (record 3, snapshot 0, base zeroed). */
+    var savedCount = (saved && typeof saved.count === 'number') ? saved.count : 0;
+    baseCount = prev ? Math.max(0, (prev.count || 0) - savedCount) : 0;
     baseEvents = (!sameSession && prev && prev.events) ? prev.events.slice() : [];
+    corrNow = prev ? (prev.corr || 0) : 0; // v220: the day's correction survives restarts
     counter = ENGINE.createGeoLoadCounter({ load: sites.load, dump: sites.dump });
     counter.begin(key, saved);
     if (learnMode === 'observe') {
@@ -1240,7 +1472,12 @@
     var dump = { lat: cand.lat, lng: cand.lng, label: 'Dump site', src: 'learned' };
     curSites = { load: curLoad, dump: dump };
     var taught = { lat: cand.lat, lng: cand.lng, learnedAt: cand.t, source: 'learned' };
-    rememberPair(curLoad, taught);
+    /* v220 (LOADS-TIGHT-GEOFENCE): the pair MEMORY is NOT written
+       here. A first dwell — even a long one — is not proof: a
+       mid-leg stop (arrive loaded, leave loaded) dwells exactly
+       like a tip. The teaching arms the counter for TODAY only;
+       rememberPair waits until the truck closes the full cycle
+       back at the load site (the lock in feedFix). */
     var key = sitesKeyFor(curDispatchId, curLoad, dump);
     counter = ENGINE.createGeoLoadCounter({ load: curLoad, dump: dump });
     counter.begin(key, {
@@ -1272,25 +1509,40 @@
     var dump = { lat: +pair.dump.lat, lng: +pair.dump.lng, label: 'Dump site', src: 'pattern' };
     curLoad = load;
     curSites = { load: load, dump: dump };
-    if (credit) {
+    /* v220: a fresh pattern pair arrives PROVEN (two completed
+       cycles — see the learner). It is remembered at once (an
+       intra-site pair is the exception: sub-spot coordinates
+       would collide with the site-level pair memory's 250 m
+       matching, so intra pairs live on the day record only).
+       The counter seeds at the anchor with BOTH proven cycles
+       credited — the truck is standing at the load spot as the
+       second cycle closes. Nothing is "outstanding": the pair
+       was locked by the learner at emission. */
+    if (credit && !pair.intra) {
       rememberPair(load, { lat: dump.lat, lng: dump.lng, label: '', learnedAt: Date.now() });
     }
     var key = sitesKeyFor(curDispatchId, load, dump);
-    counter = ENGINE.createGeoLoadCounter({ load: load, dump: dump });
+    counter = ENGINE.createGeoLoadCounter({
+      load: load, dump: dump,
+      radiusM: pair.intra ? ENGINE.INTRA_RADIUS_M : undefined
+    });
     if (credit) {
+      var credits = pair.credits || 1;
+      var evts = (pair.events && pair.events.length) ? pair.events
+        : [{ t: pair.t || Date.now(), site: 'dump', n: 1 }];
       counter.begin(key, {
-        sitesKey: key, zone: 'dump', phase: 'at-dump', armed: false,
-        count: 1, events: [{ t: pair.t || Date.now(), site: 'dump', n: 1 }], lastT: pair.t || 0
+        sitesKey: key, zone: 'load', phase: 'at-load', armed: true,
+        count: credits, events: evts, lastT: pair.t || 0
       });
-      taughtOutstanding = true;
-      wasDumpSinceTeach = true;
+      taughtOutstanding = false;
+      wasDumpSinceTeach = false;
     } else {
       counter.begin(key, null);
     }
     var rec = recordFor(curDate) || blankDay(curDate);
     rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
     rec.sites = curSites; rec.blocked = null; rec.updatedAt = Date.now();
-    if (credit) rec.patternPair = { load: { lat: load.lat, lng: load.lng }, dump: { lat: dump.lat, lng: dump.lng }, t: pair.t || Date.now() };
+    if (credit) rec.patternPair = { load: { lat: load.lat, lng: load.lng }, dump: { lat: dump.lat, lng: dump.lng }, t: pair.t || Date.now(), intra: !!pair.intra };
     if (learner) rec.pattern = learner.snapshot();
     writeDay(rec);
     persist(true);
@@ -1384,6 +1636,17 @@
           learner.lock();
           taughtOutstanding = false;
           wasDumpSinceTeach = false;
+          /* v220: only NOW is a taught dump written to the pair
+             memory (onLearned deliberately withheld it) — the
+             full loaded cycle (pit -> place -> pit) completed,
+             so the place earned the memory. */
+          if (curLoad && curSites && curSites.dump && curSites.dump.src === 'learned') {
+            var lrec = recordFor(curDate);
+            rememberPair(curLoad, {
+              lat: curSites.dump.lat, lng: curSites.dump.lng, label: '',
+              learnedAt: (lrec && lrec.learnedDump && lrec.learnedDump.learnedAt) || Date.now()
+            });
+          }
         }
       }
     }
@@ -1492,6 +1755,7 @@
       navArmDone = false;
       baseCount = 0;
       baseEvents = [];
+      corrNow = 0;
     },
 
     flush: function () { if (sessionKey) persist(true); },
@@ -1526,7 +1790,8 @@
       var rec = recordFor(date);
       if (!rec) return null;
       return {
-        count: rec.count || 0,
+        count: Math.max(0, (rec.count || 0) + (rec.corr || 0)), // v220: the driver's correction rides the day's count
+        corr: rec.corr || 0,
         events: rec.events || [],
         sites: rec.sites || null,
         blocked: rec.blocked || null,
@@ -1549,7 +1814,8 @@
       var rec = recordFor(date);
       var out = {
         date: date,
-        count: rec ? (rec.count || 0) : 0,
+        count: rec ? Math.max(0, (rec.count || 0) + (rec.corr || 0)) : 0,
+        corr: rec ? (rec.corr || 0) : 0,
         blocked: rec ? (rec.blocked || null) : null,
         sites: rec ? (rec.sites || null) : null,
         armed: !!(rec && rec.sites)
@@ -1557,7 +1823,8 @@
       if (watching && curDate === date) {
         out.armed = !!counter;
         if (counter) {
-          out.count = baseCount + counter.count();
+          out.count = Math.max(0, baseCount + counter.count() + corrNow);
+          out.corr = corrNow;
           out.sites = curSites || out.sites;
           out.blocked = null;
         }
@@ -1565,7 +1832,28 @@
       return out;
     },
 
+    /* v220: the hero's correction buttons — move the day's signed
+       correction by delta (+1 / −1) and persist it at once. Only
+       meaningful while a day is being watched; returns the new
+       correction, or null when no day is active (the caller then
+       falls back to the session's tap count). */
+    nudge: function (delta) {
+      if (!curDate || !watching) return null;
+      corrNow += (parseInt(delta, 10) || 0);
+      /* the buttons move the DISPLAYED count: it floors at 0, so
+         the clamp lives in the correction itself — extra −1 taps
+         at zero bank no invisible debt for +1 to repay first. */
+      var machine = baseCount + (counter ? counter.count() : 0);
+      if (machine + corrNow < 0) corrNow = -machine;
+      persist(true);
+      return corrNow;
+    },
+
     sitesCheck: ENGINE.sitesCheck,
+    /* v220 (DSP-PIN-NAVIGATE): the unique known-place lookup, shared
+       with the Dispatch module so a dispatch naming a known place
+       can offer Navigate even when it carries no pin. */
+    placeByName: placeByName,
     phase: function () { return counter ? counter.phase() : 'away'; }
   };
 
