@@ -5,17 +5,107 @@
   window.Meticulous = window.Meticulous || {};
   Meticulous.modules = Meticulous.modules || {};
 
+  /* v219 (CONNECT-DELETE-CROSS-ACCOUNT): the Connect family's
+     local keys are ACCOUNT data — the connection list, the
+     removal memory, the module outbox, the pipe's landed/seen
+     books, the shared-destination inbox, the history-sweep set,
+     and the peer-wage cache. They used to live in ONE device-wide
+     slot per key, so a removal made while signed in as one
+     account edited the list every account on the phone rendered,
+     and CloudSync carried the edit into another account's cloud
+     tree (verified in the field Oct 21–22, 2026: connections
+     removed in a tester session vanished from the main account).
+     Now each family key is stored under a PHYSICAL key carrying
+     its owner's uid — con_list__<uid>, 'local' when signed out —
+     the ownership discipline v216 gave the profile record.
+     CloudSync mirrors the physical key, so the kv doc carries
+     the same namespacing: one account's session physically
+     cannot write another account's namespace, on-device or in
+     the cloud. Every reader/writer keeps the logical name — the
+     translation lives here, in the one store they all share.
+     The machinery sits INSIDE the store literal and reaches
+     itself by name, so the literal stays self-contained (suite
+     harnesses slice it out of this file and eval it alone). */
   var store = {
+    /* v219: the Connect-family keys (see the note above). */
+    _conFamily: { con_list: 1, con_hidden: 1, con_outbox: 1,
+      pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1,
+      __peer_wages: 1 },
+    /* v219: adoption refusals, remembered per physical key for
+       the page session — the sync meta's uid is re-stamped by
+       the CURRENT account's own pull/push as the session runs,
+       so a verdict reached at first touch must stand. */
+    _adoptRefused: {},
+    _conOwner: function () {
+      try { if (typeof App !== 'undefined' && App && App.user && App.user.uid) return App.user.uid; } catch (e) {}
+      try { if (window.FB && FB.user && FB.user.uid) return FB.user.uid; } catch (e) {}
+      try { if (window.CloudSync && CloudSync.uid) return CloudSync.uid; } catch (e) {}
+      return 'local';
+    },
+    /* v219: the physical (owner-namespaced) form of a store
+       key. CloudSync keys its sync meta by this, so the kv doc
+       carries the same namespacing as the local slot. */
+    physKey: function (k) {
+      return store._conFamily[k] ? k + '__' + store._conOwner() : k;
+    },
+    /* v219: first touch of a family key under this build — if
+       the owner's namespaced slot is still empty, the PRE-FIX
+       shared slot may seed it, but only when the slot is
+       attributable to this owner. Attribution reads the
+       PREVIOUS sync owner's snapshot (CloudSync._prevSyncUid,
+       captured at the auth gate before the current session's
+       pull/push could re-stamp the meta — the same discipline
+       the v216 profile gate runs on), falling back to the
+       stored meta only when no sync engine is present.
+       Attributable = the snapshot names this owner, or no
+       account has ever synced here (the first-run claim,
+       v107/v216). When the slot is NOT attributable, the cloud
+       copy seeds the account instead (js/cloudsync.js pull),
+       never another session's edits. con_hidden NEVER seeds
+       from the shared slot: a hide recorded in another
+       account's session must not suppress this account's pairs;
+       his OWN hides still reach him from his own cloud tree
+       through the same pull seed. */
+    _adoptLegacy: function (k) {
+      var pk = store.physKey(k);
+      try {
+        if (localStorage.getItem('mt_' + pk) !== null) return pk;
+        if (k === 'con_hidden' || store._adoptRefused[pk]) return pk;
+        var raw = localStorage.getItem('mt_' + k);
+        if (raw === null) return pk;
+        var prevUid;
+        if (window.CloudSync && CloudSync._prevSyncUid !== undefined) {
+          prevUid = CloudSync._prevSyncUid;
+        } else {
+          prevUid = null;
+          try {
+            var m = JSON.parse(localStorage.getItem('mt___syncmeta') || 'null');
+            if (m && m.uid) prevUid = m.uid;
+          } catch (e) {}
+        }
+        var owner = store._conOwner();
+        if (!prevUid || (owner !== 'local' && prevUid === owner)) {
+          localStorage.setItem('mt_' + pk, raw);
+        } else {
+          store._adoptRefused[pk] = 1;
+        }
+      } catch (e) {}
+      return pk;
+    },
     get: function (k, d) {
-      try { var v = localStorage.getItem('mt_' + k); return v === null || v === undefined ? d : JSON.parse(v); }
+      try {
+        var key = store._conFamily[k] ? store._adoptLegacy(k) : k;
+        var v = localStorage.getItem('mt_' + key);
+        return v === null || v === undefined ? d : JSON.parse(v);
+      }
       catch (e) { return d; }
     },
     /* v48: set/del REPORT success (true) or failure (false) — a failed
        write (e.g. storage full) used to be silently swallowed, making a
        lost save look exactly like a good one. Returning a boolean is
        backward-compatible: existing callers ignore it. */
-    set: function (k, v) { try { localStorage.setItem('mt_' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
-    del: function (k) { try { localStorage.removeItem('mt_' + k); return true; } catch (e) { return false; } }
+    set: function (k, v) { try { localStorage.setItem('mt_' + store.physKey(k), JSON.stringify(v)); return true; } catch (e) { return false; } },
+    del: function (k) { try { localStorage.removeItem('mt_' + store.physKey(k)); return true; } catch (e) { return false; } }
   };
 
   var TIERS = { none: -1, basic: 0, pro: 1, premium: 2 };

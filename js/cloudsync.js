@@ -48,6 +48,11 @@
   var LS_PREFIX = 'mt_';
   var META_KEY = '__syncmeta';          // -> mt___syncmeta (never synced)
   var KV_COLLECTION = 'kv';
+  /* v219: the Connect-family keys js/app.js namespaces per owner
+     (kept in step with CON_FAMILY there; __peer_wages is in the
+     family too but starts '__', so it never syncs either way). */
+  var CON_FAMILY_KEYS = { con_list: 1, con_hidden: 1, con_outbox: 1,
+    pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1 };
   var DEBOUNCE_MS = 2500;
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
@@ -384,10 +389,19 @@
 
     var origSet = store.set, origDel = store.del;
 
+    /* v219: sync meta is keyed by the store's PHYSICAL key, so a
+       namespaced Connect key (con_list__<uid>) mirrors to the kv
+       doc of the same name in the owner's own tree. A store with
+       no namespacing (suite stubs) keys exactly as before. */
+    function physOf(k) {
+      try { return store.physKey ? store.physKey(k) : k; } catch (e) { return k; }
+    }
+
     store.set = function (k, v) {
       var _ok = origSet(k, v); // v48: pass the write result through (see js/app.js)
-      if (isSyncable(k)) {
-        var km = keyMeta(k);
+      var pk = physOf(k);
+      if (isSyncable(pk)) {
+        var km = keyMeta(pk);
         km.t = Date.now();
         km.u = S.uid || getMeta().uid || null; // owner of this change
         delete km.d; // resurrected
@@ -399,8 +413,9 @@
     };
     store.del = function (k) {
       var _ok = origDel(k); // v48: pass the result through, same as set
-      if (isSyncable(k)) {
-        var km = keyMeta(k);
+      var pk = physOf(k);
+      if (isSyncable(pk)) {
+        var km = keyMeta(pk);
         km.d = Date.now(); km.t = 0; // tombstone; flush() deletes the cloud doc
         km.u = S.uid || getMeta().uid || null;
         saveMeta();
@@ -497,6 +512,14 @@
   S.profileOwner = profOwnerNow; // exposed for the v216 suite
   S.profileGate = function (user) {
     try {
+      /* v219: snapshot the PREVIOUS sync owner at the gate —
+         the funnel's first step, before this session's pull or
+         push can re-stamp meta.uid. js/app.js's Connect-key
+         adoption reads this snapshot to decide whether the
+         pre-fix shared slot is attributable to the account now
+         signing in (the same before-the-pull discipline this
+         gate itself runs on). */
+      S._prevSyncUid = getMeta().uid || null;
       var newOwner = user ? user.uid : 'local';
       var meta = getMeta();
       var curOwner = profOwnerNow();
@@ -867,6 +890,26 @@
         var raw = lsGetRaw(key);
         var localDirty = (km.t || 0) > (km.s || 0);
         var cloudChanged = cloudTs > (km.s || 0);
+
+        /* v219 (CONNECT-DELETE-CROSS-ACCOUNT): a legacy Connect-
+           family doc in MY OWN tree seeds my namespaced slot the
+           first time this build pulls — the list (and my own
+           hides) I held before the fix become mine under the new
+           names, sourced from my cloud copy, never from the
+           device-shared local slot another account's session may
+           have edited. The generic pass below still settles the
+           legacy key as before; a namespaced cloud doc is its
+           own key here and takes over through the same pass.
+           Clean stamps: the seed is identical to the cloud
+           value, so nothing pushes until the owner edits. */
+        if (CON_FAMILY_KEYS[key] && S.uid) {
+          var pk219 = key + '__' + S.uid;
+          if (lsGetRaw(pk219) === null && d.v !== undefined) {
+            lsSetRaw(pk219, JSON.stringify(d.v));
+            meta.keys[pk219] = { t: cloudTs, s: cloudTs, u: S.uid };
+            applied++;
+          }
+        }
 
         /* v107 (Stage 8): the two convergence rules (see the
            helpers above) run BEFORE the whole-key rules below. */
