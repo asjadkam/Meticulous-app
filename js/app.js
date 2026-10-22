@@ -1499,7 +1499,11 @@
      plain overlay swapped in for the dashboard while PiPed; the
      dashboard underneath never changes. The shell only PiPs a
      live session (MainActivity), so the bubble never appears
-     without a running/paused day behind it. */
+     without a running/paused day behind it.
+     v224 (owner restated Oct 22 16:40): the face carries the
+     timer, the load count WITH its +/− correction buttons, and
+     the start/stop buttons — and it is swapped in BEFORE the
+     window shrinks (the pipWillEnter seam in init), not after. */
   App._bubble = false;
   function bubbleEl(id) { return document.getElementById(id); }
   function refreshBubbleFace() {
@@ -5138,10 +5142,33 @@
       if (window.ShiftTrack && ShiftTrack.addPipListener) {
         ShiftTrack.addPipListener(function (inPip) { App._pip = !!inPip; refreshBubbleFace(); });
       }
+      /* v224 (BUBBLE-FACE-WRONG-OCT22): the pre-entry swap — the
+         shell announces the leave BEFORE the window shrinks, so
+         the bubble face is already up when PiP's first frame is
+         drawn. (The v220 flow waited for pipChanged, which is
+         delivered after the activity is already miniaturized —
+         the float showed the whole app, header and banner and
+         all.) The pipChanged handler above still confirms entry
+         and restores the app face on expand. */
+      if (window.ShiftTrack && ShiftTrack.addPipWillEnterListener) {
+        ShiftTrack.addPipWillEnterListener(function () { App._pip = true; refreshBubbleFace(); });
+      }
     } catch (e) {}
     var bubPlayEl = bubbleEl('bubPlay');
     if (bubPlayEl) bubPlayEl.addEventListener('click', function () {
       try { App.trackerToggle(); paintBubble(trackerElapsedSec()); } catch (e) {}
+    });
+    /* v224 (BUBBLE-FACE-WRONG-OCT22): the bubble's +/- are the
+       dashboard's own load corrections (the same two actions —
+       the machine count's nudge when armed, the tap count when
+       not), repainted on both faces. */
+    var bubPlusEl = bubbleEl('bubPlus');
+    if (bubPlusEl) bubPlusEl.addEventListener('click', function () {
+      try { trackerAddLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); } catch (e) {}
+    });
+    var bubMinusEl = bubbleEl('bubMinus');
+    if (bubMinusEl) bubMinusEl.addEventListener('click', function () {
+      try { trackerCutLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); } catch (e) {}
     });
     var bubStopEl = bubbleEl('bubStop');
     if (bubStopEl) bubStopEl.addEventListener('click', function () {

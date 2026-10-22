@@ -9,7 +9,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=223">
+<link rel="stylesheet" href="css/style.css?v=224">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 /* critical splash: visible before style.css / JS load */
@@ -171,11 +171,19 @@
 <!-- v220 (APP-BUBBLE-TRACKER): the picture-in-picture tracker
      face — shown INSTEAD of the app while PiPed mid-shift (not
      navigating). ONLY the timer, play/stop, and the load count.
-     Big and glanceable; nothing else. -->
+     Big and glanceable; nothing else.
+     v223 (BUBBLE-FACE-WRONG-OCT22): the owner's restated spec —
+     the floating piece carries the timer, the load tracker, the
+     +/- buttons, and the start/stop buttons. The count row below
+     (+/- around the count) is part of the face now. -->
 <div id="bubbleFace" class="hidden">
   <div class="bub-status" id="bubStatus">Working…</div>
   <div class="bub-clock" id="bubClock">00:00:00</div>
-  <div class="bub-loads" id="bubLoads"></div>
+  <div class="bub-countrow">
+    <button id="bubMinus" class="bub-btn bub-count" aria-label="One load less">−</button>
+    <div class="bub-loads" id="bubLoads"></div>
+    <button id="bubPlus" class="bub-btn bub-count" aria-label="One more load">+</button>
+  </div>
   <div class="bub-btns">
     <button id="bubPlay" class="bub-btn bub-go" aria-label="Start or pause the tracker">▶</button>
     <button id="bubStop" class="bub-btn bub-stop" aria-label="Stop the tracker">■</button>
@@ -284,41 +292,41 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
-<script src="js/firebase.js?v=223"></script>
-<script src="js/cloudsync.js?v=223"></script>
-<script src="js/connectlive.js?v=223"></script>
-<script src="js/connectpipe.js?v=223"></script>
+<script src="js/firebase.js?v=224"></script>
+<script src="js/cloudsync.js?v=224"></script>
+<script src="js/connectlive.js?v=224"></script>
+<script src="js/connectpipe.js?v=224"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/ticket-ocr.js?v=223"></script>
+<script src="js/ticket-ocr.js?v=224"></script>
 <script src="js/powerread.js?v=102"></script>
 <script src="js/dispatch-ingest.js?v=96"></script>
-<script src="js/pdfexport.js?v=223"></script>
-<script src="modules/revenue.js?v=223"></script>
-<script src="modules/dispatch.js?v=223"></script>
-<script src="modules/navigation.js?v=223"></script>
+<script src="js/pdfexport.js?v=224"></script>
+<script src="modules/revenue.js?v=224"></script>
+<script src="modules/dispatch.js?v=224"></script>
+<script src="modules/navigation.js?v=224"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="modules/navigator.js?v=223"></script>
-<script src="modules/fuel.js?v=223"></script>
-<script src="modules/pnl.js?v=223"></script>
-<script src="modules/maintenance.js?v=223"></script>
-<script src="modules/pti.js?v=223"></script>
+<script src="modules/navigator.js?v=224"></script>
+<script src="modules/fuel.js?v=224"></script>
+<script src="modules/pnl.js?v=224"></script>
+<script src="modules/maintenance.js?v=224"></script>
+<script src="modules/pti.js?v=224"></script>
 <script src="modules/damage.js?v=96"></script>
-<script src="modules/manifest.js?v=223"></script>
-<script src="modules/invoice.js?v=223"></script>
-<script src="modules/connect.js?v=223"></script>
-<script src="modules/reminders.js?v=223"></script>
+<script src="modules/manifest.js?v=224"></script>
+<script src="modules/invoice.js?v=224"></script>
+<script src="modules/connect.js?v=224"></script>
+<script src="modules/reminders.js?v=224"></script>
 <script src="modules/autostart.js?v=96"></script>
-<script src="modules/preferences.js?v=223"></script>
-<script src="modules/account.js?v=223"></script>
+<script src="modules/preferences.js?v=224"></script>
+<script src="modules/account.js?v=224"></script>
 <script src="modules/subscription.js?v=96"></script>
-<script src="js/app.js?v=223"></script>
+<script src="js/app.js?v=224"></script>
 <script src="js/geo.js?v=96"></script>
 <script src="js/miles.js?v=96"></script>
-<script src="js/geoloads.js?v=223"></script>
+<script src="js/geoloads.js?v=224"></script>
 <script src="js/shifttrack.js?v=96"></script>
-<script src="js/parkplace.js?v=223"></script>
+<script src="js/parkplace.js?v=224"></script>
 <script src="js/yardstart.js?v=96"></script>
-<script src="js/chatbot.js?v=223"></script>
+<script src="js/chatbot.js?v=224"></script>
 <script>
 /* splash safety: never trap the user if app JS fails (but stay visible during an OTA download) */
 setTimeout(function () {

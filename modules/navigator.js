@@ -1339,7 +1339,7 @@
            (the dedupe watermark for the fallback stream), and the
            watchdog that restarts a silently-dead watch. parked:
            the drive floated in the shell dock (PIP-LANDS-HOME). */
-        lastFixAt: 0, lastFixT: 0, watchdogId: null, parked: false,
+        lastFixAt: 0, lastFixT: 0, streamFixT: 0, watchdogId: null, parked: false,
         offSince: 0, rerouting: false, arrived: false, searching: false,
         /* v103: the auto-route latch — setDest arms it for the NEW
            destination only (autoKey), maybeAutoRoute consumes it
@@ -1972,10 +1972,11 @@
       }
       function onPos(lat, lon, heading, speed, fixT) {
         /* v222 (NAV-STUCK): stamp the stream's health on EVERY
-           accepted fix — the watchdog below reads lastFixAt, and
-           lastFixT is the dedupe watermark that keeps the fallback
-           stream (LiveMiles) from re-feeding a fix this stream
-           already took. */
+           accepted fix — the watchdog below reads lastFixAt.
+           v224: lastFixT is now only a record of the newest fix
+           stamp seen; the fallback stream's dedupe runs on its
+           OWN watermark (streamFixT, see currentOnPos) so the
+           two streams' clocks can never silence each other. */
         S.lastFixAt = Date.now();
         if (typeof fixT === 'number' && fixT > 0) S.lastFixT = Math.max(S.lastFixT || 0, fixT);
         var first = !S.pos;
@@ -2036,7 +2037,20 @@
          keeps the two streams from double-feeding one fix. */
       currentOnPos = function (lat, lon, heading, speed, fixT) {
         if (!S) return;
-        if (typeof fixT === 'number' && fixT > 0 && S.lastFixT && fixT <= S.lastFixT) return;
+        /* v224 (NAV-NO-MOVEMENT-V38): the dedupe watermark is the
+           STREAM'S OWN last fix, never a mark the module watch set.
+           The two feeds keep different clocks — the watch stamps
+           fixes with the device clock, the app stream carries the
+           GPS fix clock — and on the owner's phone the stream's
+           stamps ran behind the watch's marks, so the shared
+           watermark ate EVERY stream fix: with the watch dead
+           (backgrounded WebView) the drive view froze solid while
+           the miles engine, fed by the same stream, kept counting.
+           Each stream now dedupes only against itself: a repeated
+           or stale fix FROM THIS STREAM is still refused, and a
+           fix from the other stream can never be silenced by it. */
+        if (typeof fixT === 'number' && fixT > 0 && S.streamFixT && fixT <= S.streamFixT) return;
+        if (typeof fixT === 'number' && fixT > 0) S.streamFixT = Math.max(S.streamFixT || 0, fixT);
         onPos(lat, lon, heading, speed, fixT);
       };
       if (!fixSubWired) {
@@ -2059,7 +2073,12 @@
           startWatch();
           try {
             var lf = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) || null;
-            if (lf && lf.latitude && (!S.lastFixT || (lf.time || 0) > S.lastFixT)) {
+            /* v224: the bridge feeds through the same stream rule
+               as the subscription (the stream's own watermark) —
+               the geo wrapper's last fix IS an app-stream fix, and
+               the old shared-watermark test starved it under the
+               same clock skew that froze the drive. */
+            if (lf && lf.latitude && (!S.streamFixT || (lf.time || 0) > S.streamFixT)) {
               currentOnPos(lf.latitude, lf.longitude, lf.bearing, lf.speed, lf.time);
             }
           } catch (e) {}

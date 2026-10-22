@@ -820,6 +820,57 @@
     return out;
   }
 
+  /* v224 (LIVE-MILES-RESTORE-V38-FAIL): the telemetry keys
+     (livemiles, geoloads) hold PER-DAY records whose totals only
+     ever GROW within a day — the day's miles, the day's counted
+     loads. The generic "both changed, latest stamp wins" rule is
+     wrong for them in exactly the reinstall case: a fresh install
+     begins the engines against an empty store, the young engine
+     persists a ~0 km snapshot stamped NOW, and that stamp then
+     beats the cloud's whole day (stamped when it was pushed,
+     hours earlier) — the pull kept the 0.3 km snapshot, the hero
+     showed 0.3 km over a 138.5 km day, and the flush pushed the
+     young record UP over the cloud (the field proof, Oct 22:
+     v37 and v38 installs both reset the hero mid-shift). For
+     these two keys the pull therefore merges DAY BY DAY: each
+     day keeps the record with the larger total, whichever side
+     holds it — a stamp can no longer outvote a day's driving.
+     Ties (and near-ties in content) go to the later-updated
+     record. The merged union is what the engines then reseed
+     from, and it stays dirty when it holds anything the cloud
+     lacks, so the flush carries the union UP — never a young
+     snapshot over a full day. */
+  function telemetryDayTotal(key, rec) {
+    if (!rec || typeof rec !== 'object') return -1;
+    if (key === 'livemiles') return (typeof rec.totalM === 'number' && isFinite(rec.totalM)) ? rec.totalM : -1;
+    var c = (typeof rec.count === 'number' ? rec.count : 0) + (typeof rec.corr === 'number' ? rec.corr : 0);
+    return Math.max(0, c);
+  }
+  function mergeTelemetryDays(key, localV, cloudV) {
+    var out = {}, k, seen = {};
+    var a = (localV && localV.days) || {}, b = (cloudV && cloudV.days) || {};
+    for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) seen[k] = true;
+    for (k in b) if (Object.prototype.hasOwnProperty.call(b, k)) seen[k] = true;
+    for (k in seen) {
+      var lr = a[k], cr = b[k];
+      if (!lr) { out[k] = cr; continue; }
+      if (!cr) { out[k] = lr; continue; }
+      var lt = telemetryDayTotal(key, lr), ct = telemetryDayTotal(key, cr);
+      if (ct > lt) out[k] = cr;
+      else if (lt > ct) out[k] = lr;
+      else out[k] = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+    }
+    /* the merged value rides the CLOUD shell (any top-level
+       fields it carries) with the unioned day map; when the cloud
+       value is not a day-map object, the local shell carries it. */
+    var shell = (cloudV && typeof cloudV === 'object' && cloudV.days) ? cloudV
+      : (localV && typeof localV === 'object' ? localV : {});
+    var merged = {}, sk;
+    for (sk in shell) if (Object.prototype.hasOwnProperty.call(shell, sk)) merged[sk] = shell[sk];
+    merged.days = out;
+    return merged;
+  }
+
   function syncNow() {
     // v34: self-heal a desync where Firebase HAS a signed-in user but this
     // engine never got (or lost) that sign-in — on device the dot then sat
@@ -941,6 +992,31 @@
             lsSetRaw(key, JSON.stringify(d.v));
             meta.keys[key] = { t: cloudTs, s: cloudTs };
             applied++;
+            return;
+          }
+        }
+
+        /* v224 (LIVE-MILES-RESTORE-V38-FAIL): the telemetry keys
+           merge day by day on TOTALS (see mergeTelemetryDays) —
+           never by stamp. Runs whenever both sides hold a day
+           map; a side with no day map falls through to the
+           generic rules below. */
+        if ((key === 'livemiles' || key === 'geoloads') && raw !== null &&
+            d.v && typeof d.v === 'object' && d.v.days && typeof d.v.days === 'object') {
+          var teleLocal = parseJson(raw, undefined);
+          if (teleLocal && typeof teleLocal === 'object' && teleLocal.days && typeof teleLocal.days === 'object') {
+            var teleMerged = mergeTelemetryDays(key, teleLocal, d.v);
+            if (JSON.stringify(teleMerged) !== JSON.stringify(teleLocal)) {
+              lsSetRaw(key, JSON.stringify(teleMerged));
+              applied++;
+            }
+            if (JSON.stringify(teleMerged) !== JSON.stringify(d.v)) {
+              /* the union holds days the cloud lacks — keep the
+                 key dirty so the flush pushes the union UP. */
+              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+            } else {
+              meta.keys[key] = { t: cloudTs, s: cloudTs };
+            }
             return;
           }
         }

@@ -636,6 +636,29 @@
         } catch (e) { ShiftTrack._pipWired = false; }
       }
     },
+    /* v224 (BUBBLE-FACE-WRONG-OCT22): the shell announces PiP
+       entry BEFORE it happens (the plugin's 'pipWillEnter',
+       fired from onUserLeaveHint) — subscribers swap their face
+       while the app is still full-size, so the first frame the
+       PiP window shows is already the compact face, never a
+       miniature of the whole app waiting on the after-the-fact
+       'pipChanged' event. */
+    _pipWillFns: [],
+    _pipWillWired: false,
+    addPipWillEnterListener: function (fn) {
+      if (typeof fn !== 'function') return;
+      if (ShiftTrack._pipWillFns.indexOf(fn) < 0) ShiftTrack._pipWillFns.push(fn);
+      if (ShiftTrack._pipWillWired) return;
+      var p = plugin();
+      if (p && typeof p.addListener === 'function') {
+        ShiftTrack._pipWillWired = true;
+        try {
+          p.addListener('pipWillEnter', function () {
+            ShiftTrack._pipWillFns.slice().forEach(function (f) { try { f(); } catch (e) {} });
+          });
+        } catch (e) { ShiftTrack._pipWillWired = false; }
+      }
+    },
     /* v220 (WIDGET-CONTROLS): collect a home-screen widget button
        tap (start/pause/stop), stashed natively from the widget's
        intent. Resolves '' when there is nothing (or no shell). */

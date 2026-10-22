@@ -470,6 +470,8 @@ label.chk input{width:18px;height:18px;}
 .bub-status{font-size:15px;font-weight:700;color:#9FB3D9;letter-spacing:.04em;}
 .bub-clock{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
 .bub-loads{font-size:20px;font-weight:700;}
+.bub-countrow{display:flex;align-items:center;gap:18px;}
+.bub-btn.bub-count{width:60px;height:60px;font-size:28px;background:#22314F;color:#fff;}
 .bub-btns{display:flex;gap:22px;margin-top:8px;}
 .bub-btn{width:84px;height:84px;border-radius:50%;border:none;font-size:30px;color:#fff;cursor:pointer;}
 .bub-btn.bub-go{background:var(--green);}
