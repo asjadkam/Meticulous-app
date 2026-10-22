@@ -324,8 +324,8 @@ console.log('— H: statics —');
      consistency dynamically; H2's durable content is the FLOOR those
      v104 behaviours shipped at (the OTA number only moves forward). */
   ok(Number.isInteger(ver.webVersion) && ver.webVersion >= 104, 'H2 webVersion at/after 104 (v104: auto-enter Drive on go-now arms + while moving, Drive pinned at the sheet top, real route errors, opening-balloon fix)');
-  eq('H3 native is the current generation (37 — v37 release, Oct 22 2026)', ver.version, 37);
-  ok(ver.apkUrl.indexOf('meticulous-v37.apk') !== -1, 'H4 apkUrl points at the v37 APK', ver.apkUrl);
+  eq('H3 native is the current generation (38 — v38 release, Oct 22 2026)', ver.version, 38);
+  ok(ver.apkUrl.indexOf('meticulous-v38.apk') !== -1, 'H4 apkUrl points at the v38 APK', ver.apkUrl);
   /* The key correction (owner, Oct 16, 2026): no API-key field,
      prompt, or nag anywhere in this feature. The seam READS the
      pre-existing Power Read setup; it never asks for anything. */
