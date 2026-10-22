@@ -24,6 +24,18 @@
  * and the choice is named in the ship report for his
  * overrule. No new home was invented for them.
  *
+ * v218 SUPERSESSION (owner, Oct 21, 2026 19:02 MDT, his
+ * screenshot: tomorrow's dispatch stood FIRST in History —
+ * "Why is tomorrows dispatch in history and today's
+ * completed one is not?"): future-dated records no longer
+ * stand in History; they stand in their own "Upcoming"
+ * card under the Today card. History is past days ONLY.
+ * v172's pin ruling is untouched (a future row's pin is
+ * still plain, no Navigate offer). The pins below that
+ * asserted the old placement were updated in place with
+ * this ruling cited; the full fixture set lives in
+ * dsp-history-future-v218-test.js.
+ *
  * Driven against the REAL modules/dispatch.js over the
  * stub-DOM pattern of the sibling suites; the world clock
  * is fixed at 2026-10-21.
@@ -204,6 +216,15 @@ function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? 
 function todayRegion(h) {
   const a = h.indexOf('id="dp_today_card"');
   if (a === -1) return '';
+  /* v218: the Upcoming card now stands between the Today
+     card and dp_ingest — the Today region ends at it. */
+  let b = h.indexOf('id="dp_upcoming_card"');
+  if (b === -1 || b < a) b = h.indexOf('id="dp_ingest"');
+  return h.slice(a, b === -1 ? undefined : b);
+}
+function upcomingRegion(h) {
+  const a = h.indexOf('id="dp_upcoming_card"');
+  if (a === -1) return '';
   const b = h.indexOf('id="dp_ingest"');
   return h.slice(a, b === -1 ? undefined : b);
 }
@@ -222,13 +243,17 @@ function todayRegion(h) {
     check('today\'s dispatch carries its Start button in the Today card', t.indexOf('data-start') !== -1);
     check('today\'s dispatch is NOT in History', hist.indexOf('Aecon Inf') === -1);
     check('the future dispatch is NOT in the Today card', t.indexOf('Future Job') === -1);
-    check('the future dispatch keeps its History place (v172 stands)', hist.indexOf('Future Job') !== -1);
+    /* v218 supersession: the future record no longer keeps
+       a History place — it stands in the Upcoming card;
+       v172's pin ruling itself is untouched. */
+    check('the future dispatch stands in the Upcoming card, NOT in History (v218)',
+      upcomingRegion(h).indexOf('Future Job') !== -1 && hist.indexOf('Future Job') === -1);
     check('the future row\'s pin is plainly marked, no Navigate offer (v172)',
-      hist.indexOf('📍 Pin set') !== -1);
-    check('History\'s first screen: the future record + the two newest past days (HIST-3 cap unchanged)',
-      hist.indexOf('Future Job') !== -1 && hist.indexOf('Past Four') !== -1 && hist.indexOf('Past Three') !== -1);
+      upcomingRegion(h).indexOf('📍 Pin set') !== -1);
+    check('History\'s first screen: the three newest past days (HIST-3 cap; future consumes no slot — v218)',
+      hist.indexOf('Past Four') !== -1 && hist.indexOf('Past Three') !== -1 && hist.indexOf('Past Two') !== -1);
     check('older past days wait behind the full-history door',
-      hist.indexOf('Past Two') === -1 && hist.indexOf('Past One') === -1 && h.indexOf('Show full history (5)') !== -1);
+      hist.indexOf('Past One') === -1 && h.indexOf('Show full history (4)') !== -1);
     check('the driver face stands (v186): no crew/send on a Driver account',
       h.indexOf('Crew today') === -1 && h.indexOf('Send a dispatch') === -1);
   }
@@ -266,12 +291,12 @@ function todayRegion(h) {
   check('one shared row builder serves both lists',
     dspSrc.indexOf('function dspRowHtml(it)') !== -1 && dspSrc.indexOf('histRender.map(dspRowHtml)') !== -1 &&
     dspSrc.indexOf('todayItems.map(dspRowHtml)') !== -1);
-  check('History drops exactly today\'s records (future keeps its v172 place)',
-    dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) !== dspTodayStr') !== -1);
-  check('the Today card takes exactly today\'s records',
-    dspSrc.indexOf('(dspRecordDate(td) || dspTodayStr) === dspTodayStr') !== -1);
-  eq('ships as webVersion 198', ver.webVersion, 217);
-  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=217') !== -1);
+  check('History keeps only past-dated records (v218; the v197 today-only filter is superseded)',
+    dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) < dspTodayStr') !== -1);
+  check('the Today card takes exactly today\'s records (v218: one shared date read feeds both lists)',
+    dspSrc.indexOf('if (rd === dspTodayStr) todayItems.push') !== -1);
+  eq('ships as webVersion 198', ver.webVersion, 218);
+  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=218') !== -1);
 
   console.log('\ndsp-today-top v197: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

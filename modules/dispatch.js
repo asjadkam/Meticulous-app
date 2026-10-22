@@ -1720,13 +1720,11 @@
          record open in the edit form (v117's one-presence
          rule). The date truth is the module's own
          (dspRecordDate); a dateless record is today's, as it
-         always was. Future-dated records keep their History
-         place below (v172's ruling stands — see the filter
-         there; the choice is named in the ship report for
-         the owner's overrule, per the Oct 21 scope + design
-         rules — no new home was invented for them). ---- */
+         always was. (Future-dated records' placement was
+         settled here in v197 — v218 below moves them to
+         their own Upcoming card.) ---- */
       var dspTodayStr = ''; try { dspTodayStr = App._today(); } catch (e) {}
-      var todayItems = [];
+      var todayItems = [], futureItems = [];
       (function () {
         var lst = list();
         for (var ti = lst.length - 1; ti >= 0; ti--) {
@@ -1734,12 +1732,45 @@
           if (editingId && td.id === editingId) continue;
           if (a && td.id === a.id) continue;
           if (viewRec && td.id === viewRec.id) continue;
-          if ((dspRecordDate(td) || dspTodayStr) === dspTodayStr) todayItems.push({ d: td, i: ti });
+          var rd = dspRecordDate(td) || dspTodayStr;
+          if (rd === dspTodayStr) todayItems.push({ d: td, i: ti });
+          else if (rd > dspTodayStr) futureItems.push({ d: td, i: ti });
         }
       })();
+      /* v218: nearest future day first; records sharing a
+         day keep the collection order above (stable sort). */
+      futureItems.sort(function (x, y) {
+        var dx = dspRecordDate(x.d), dy = dspRecordDate(y.d);
+        if (dx === dy) return 0;
+        return dx < dy ? -1 : 1;
+      });
       if (todayItems.length) {
         h += '<div class="card" id="dp_today_card"><h3>🚛 Today\'s dispatch</h3>' +
           todayItems.map(dspRowHtml).join('') + '</div>';
+      }
+
+      /* ---- v218 (DSP-HISTORY-FUTURE, owner, Oct 21, 2026
+         19:02 MDT, his screenshot + words): tomorrow's
+         dispatch (2026-10-22, saved) stood as the FIRST
+         entry inside History while today's COMPLETED
+         dispatch stood in the Today card — "I don't
+         understand the logic? Why is tomorrows dispatch in
+         history and today's completed one is not?" His
+         ruling: History is past days ONLY; future-dated
+         dispatches stand in their own card, "Upcoming",
+         directly under Today's dispatch and above Add from
+         a message. This supersedes the placement the v197
+         note left standing for future records (v172's).
+         v172's pin ruling itself is untouched — a future
+         row still shows its pin plainly, no Navigate offer,
+         wherever it stands. NAMED CHOICE (his to overrule):
+         the rows are the same dspRowHtml rows History used,
+         with their existing Start / Edit / Delete buttons
+         and behaviour — only the section and placement
+         changed. ---- */
+      if (futureItems.length) {
+        h += '<div class="card" id="dp_upcoming_card"><h3>📅 Upcoming</h3>' +
+          futureItems.map(dspRowHtml).join('') + '</div>';
       }
 
       h += '<div id="dp_ingest"></div>';
@@ -1876,15 +1907,16 @@
       });
       /* v197 (DSP-TODAY-TOP): today's records leave History —
          they stand in their own card at the top of the screen
-         (built above). Future-dated records KEEP their place
-         here, pin plainly marked (v172's ruling, Oct 18 —
-         tomorrow's dispatch still shows; its Navigate offer
-         waits for its day). Where item 12's "past days only"
-         meets v172, the earlier specific ruling for future
-         records stands — the choice is named in the ship
-         report for the owner's overrule. */
+         (built above). v218 (DSP-HISTORY-FUTURE, owner,
+         Oct 21, 2026 19:02 MDT): FUTURE-dated records leave
+         it too — they stand in the Upcoming card (built
+         above); History is past days ONLY. The filing is by
+         DATE alone — a past-dated record stands here
+         whatever its status (a never-started saved past
+         dispatch included), and a dateless record is
+         today's (excluded), as it always was. */
       histShown = histShown.filter(function (it) {
-        return (dspRecordDate(it.d) || dspTodayStr) !== dspTodayStr;
+        return (dspRecordDate(it.d) || dspTodayStr) < dspTodayStr;
       });
       /* v184 (HIST-3): at most 3 records stand on this working
          screen; the rest are one tap away on the same card. */
