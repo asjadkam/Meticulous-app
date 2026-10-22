@@ -485,7 +485,7 @@ function partD() {
   const tw = readN('android/app/src/main/java/com/meticuloustechnologies/app/TrackerWidget.java');
   ok(tw.indexOf('onAppWidgetOptionsChanged') >= 0, 'D16: a resize re-pushes the widget views at once');
   const gradle = readN('android/app/build.gradle');
-  ok(gradle.indexOf('versionCode 13') >= 0, 'D17: the shell carrying all this is v38 (versionCode 13)');
+  ok(gradle.indexOf('versionCode 14') >= 0, 'D17: the shell carrying all this is v39 (versionCode 14) — rolled forward at the v39 pointer; the v222 facts ride in its bundle');
 
   console.log('\nfix-batch-v222: ' + pass + ' passed, ' + fail + ' failed');
   process.exitCode = fail ? 1 : 0;
