@@ -407,6 +407,38 @@
         var rk2 = 's' + trackerSessionKeyMs();
         if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() !== rk2) LiveMiles.startDay(rk2, { resume: true });
         if (window.GeoLoads && GeoLoads.startDay) GeoLoads.startDay(rk2, { resume: true });
+        /* v222 (LIVE-MILES-DISPLAY-RESET + LOADS-RESTORE-FAIL,
+           Oct 22): the engines may already be running for this
+           session's key — begun at boot against an EMPTY store on
+           a fresh install — in which case startDay above no-ops
+           and the day's restored totals never enter them (his
+           hero read 0.4 km and 0 loads after the v37 install
+           while the records held ~131 km and his counted loads).
+           Reseed from whatever the store already holds, and again
+           when the first pull completes — the pull is what lands
+           the records on a fresh install. Both reseeds are
+           adopt-only-when-ahead, so a live engine that has counted
+           past the record is never rewound. */
+        try { if (window.LiveMiles && LiveMiles.reseedFromStore) LiveMiles.reseedFromStore(); } catch (e2) {}
+        try { if (window.GeoLoads && GeoLoads.reseedFromStore) GeoLoads.reseedFromStore(); } catch (e2) {}
+        /* v222 (BUBBLE-NO-SHOW): the session PiP arm is the web
+           tracker's own fact — raise it for the restored session
+           (the native side's own arm died with the old install). */
+        try { if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true); } catch (e2) {}
+        try {
+          if (window.CloudSync && CloudSync.whenFirstPullDone) {
+            CloudSync.whenFirstPullDone(12000).then(function () {
+              try {
+                App.tracker = store.get('tracker', App.tracker);
+                if (App.tracker && (App.tracker.status === 'running' || App.tracker.status === 'paused')) {
+                  if (window.LiveMiles && LiveMiles.reseedFromStore) LiveMiles.reseedFromStore();
+                  if (window.GeoLoads && GeoLoads.reseedFromStore) GeoLoads.reseedFromStore();
+                  if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true);
+                }
+              } catch (e3) {}
+            }, function () {});
+          }
+        } catch (e2) {}
       }
     } catch (e) {}
     el('sbEmail').textContent = user.email || '';
@@ -855,7 +887,16 @@
   function teardownModule() {
     try {
       var prev = App._modKey && Meticulous.modules[App._modKey];
-      if (prev && prev.teardown) prev.teardown();
+      /* v222 (PIP-LANDS-HOME-OCT22): a module holding a LIVE
+         parked view (the Navigator's drive, floated over the
+         dashboard in its in-app screen-in-screen) is NOT torn
+         down when the shell moves on — tearing it down would kill
+         the very drive the driver parked. The module's DOM state
+         rides in the shell-level dock (index.html #pipDock); the
+         module restores itself on its next open (its render sees
+         the parked state). _modKey still clears: the parked view
+         is a floater now, not the open module. */
+      if (prev && !(prev.keepAlive && prev.keepAlive()) && prev.teardown) prev.teardown();
     } catch (e) {}
     App._modKey = null;
   }
@@ -929,6 +970,19 @@
     var title = meta ? moduleTitle(key) : ({ reminders: 'Reminders', preferences: 'Preferences', subscription: 'Subscription', account: 'Account & login' }[key] || key);
     el('modTitle').textContent = title;
     var body = el('modBody');
+    /* v222 (PIP-LANDS-HOME): a module with a live PARKED view
+       restores it instead of re-rendering — the wipe below would
+       destroy the parked drive screen (it lives in the shell
+       dock while parked, and the module's render re-homes it). */
+    var keepLive = false;
+    try { keepLive = !!(mod.keepAlive && mod.keepAlive()); } catch (e) {}
+    if (keepLive) {
+      try { mod.render(body); } catch (e) { body.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
+      paintPowerBanner(body);
+      try { App.ptrNoteRepainted(); } catch (e) {}
+      window.scrollTo(0, 0);
+      return;
+    }
     body.innerHTML = '';
     /* v116: fresh entry always lands on the module's main view. */
     try { if (mod.resetView) mod.resetView(); } catch (e) {}
@@ -4915,6 +4969,11 @@
     if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
       try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
+      /* v222 (BUBBLE-NO-SHOW): a session that survived a relaunch
+         raises the native session PiP arm from the web side — the
+         shell's own arm is a start() side effect that a restored
+         session may never re-run. */
+      try { if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true); } catch (e) {}
     }
     // v63: reconcile with the native background tracker — it may hold
     // breadcrumbs (or a whole orphaned session) from while we were dead.

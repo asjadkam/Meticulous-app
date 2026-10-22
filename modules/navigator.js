@@ -1011,6 +1011,31 @@
 
   /* ---- live session state (one navigation at a time) ---- */
   var S = null; // built fresh on every render; torn down on exit
+  /* v222 (NAV-STUCK-OCT22): the drive view froze solid on
+     Deerfoot Trl — route + position static for the whole of the
+     owner's recording while the truck moved. The drive consumes
+     ONLY its own watchPosition stream, and a WebView geolocation
+     watch can die SILENTLY (backgrounding, PiP round-trips,
+     permission churn) — with the watch dead, no fix ever reaches
+     onPos and the whole face stands still while the phone clock
+     advances. Two nets now guard the stream: (1) the module also
+     rides the app's own fix stream (LiveMiles.subscribe — the
+     stream js/geo.js maintains with its own revive logic), routed
+     through currentOnPos with timestamp dedupe; (2) a watchdog
+     restarts the module's watch when fixes stop arriving. The
+     subscription is wired ONCE per module lifetime (LiveMiles has
+     no unsubscribe) and always routes to the CURRENT render. */
+  var fixSubWired = false;
+  var currentOnPos = null;
+  function navFixFromMiles(fix) {
+    if (!fix || !currentOnPos) return;
+    if (typeof fix.latitude !== 'number' || typeof fix.longitude !== 'number') return;
+    try {
+      currentOnPos(fix.latitude, fix.longitude,
+        (fix.bearing !== null && fix.bearing !== undefined) ? fix.bearing : fix.heading,
+        fix.speed, fix.time);
+    } catch (e) {}
+  }
   /* v119: THE MERGE (owner, Oct 16 22:00 MDT: "Why are there 2
      modules? Navigation and navigator?") — this module is the
      ONE door. Its front face ('places') is the old Navigation
@@ -1035,12 +1060,25 @@
      the shell's pipChanged event and restored on exit — one
      drive, two postures, no second screen to drift. */
   var pipWired = false;
+  /* v222: document-level lookup, feature-detected (the parked
+     drive screen lives outside the module body; partial DOMs
+     without getElementById simply miss, as the body lookup did). */
+  function docEl(id) {
+    try { return (document && typeof document.getElementById === 'function') ? document.getElementById(id) : null; }
+    catch (e) { return null; }
+  }
   function applyPipFace(inPip) {
     try {
       if (S) S._inPip = !!inPip;
-      var scr = nvBody ? nvBody.querySelector('#nv_drive_screen') : null;
+      /* v222: the drive screen may live in the shell dock (parked,
+         in-app screen-in-screen) instead of the module body — the
+         ids are unique in the document, so look them up globally
+         (the body-scoped lookup silently missed the parked face). */
+      var scr = docEl('nv_drive_screen') ||
+        (nvBody ? nvBody.querySelector('#nv_drive_screen') : null);
       if (scr) scr.classList.toggle('nv-pip', !!inPip);
-      var you = nvBody ? nvBody.querySelector('#nvd_you') : null;
+      var you = docEl('nvd_you') ||
+        (nvBody ? nvBody.querySelector('#nvd_you') : null);
       if (you) {
         var kind = inPip ? 'arrow' : ((S && S.settings && S.settings.avatar) || 'dump');
         you.innerHTML = avatarGlyph(kind, 'm');
@@ -1048,9 +1086,46 @@
            carries position) — the same contract paintYou keeps */
         you.style.cssText = avatarBoxStyle(kind);
       }
-      var line = nvBody ? nvBody.querySelector('#nvd_pip_line') : null;
+      var line = docEl('nvd_pip_line') ||
+        (nvBody ? nvBody.querySelector('#nvd_pip_line') : null);
       if (line) line.classList.toggle('hidden', !inPip);
     } catch (e) {}
+  }
+
+  /* v222 (PIP-LANDS-HOME-OCT22, owner spec): Back on the map page
+     sends the map into screen-in-screen AND OPENS THE MAIN
+     DASHBOARD — the driver lands on his dashboard with the drive
+     floated over it, never on the phone's home screen. v220 sent
+     Back to the SYSTEM PiP instead, which floats the app over
+     the LAUNCHER (Android PiP has no in-app surface) — that is
+     the landing he rejected. So the screen-in-screen is now an
+     IN-APP state: the drive screen moves into the shell dock
+     (index.html #pipDock, above the dashboard), wearing the same
+     compact PiP face (arrow + bottom line); the module stays
+     alive underneath (the shell's keepAlive spares its teardown)
+     and the drive keeps ticking. A tap on the floated drive
+     reopens the Navigator full-screen. TRUE system PiP remains
+     only for genuinely leaving the app (Home), via the native
+     arm — Android gives no way to PiP over one's own dashboard
+     from outside the app, and none is faked here. */
+  function parkDrive() {
+    if (!S || !S.drive || S.parked) return false;
+    var scr = docEl('nv_drive_screen');
+    var dock = docEl('pipDock');
+    if (!scr || !dock) return false;
+    S.parked = true;
+    scr.classList.add('nv-mini');
+    dock.appendChild(scr);
+    applyPipFace(true);
+    if (!scr._miniTapWired) {
+      scr._miniTapWired = true;
+      scr.addEventListener('click', function () {
+        if (S && S.parked) { try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {} }
+      });
+    }
+    try { if (S.driveMap && S.driveMap.invalidateSize) S.driveMap.invalidateSize(); } catch (e) {}
+    try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
+    return true;
   }
 
   /* v78: the last destination a route was actually built for in
@@ -1061,6 +1136,14 @@
 
   function teardown() {
     if (!S) return;
+    /* v222 (PIP-LANDS-HOME): a PARKED live drive is not torn down —
+       the drive is the thing the driver floated on purpose. The
+       shell already skips teardown via keepAlive(); this guard is
+       the same law inside the module (render's own teardown call
+       included). */
+    if (S.drive && S.parked) return;
+    currentOnPos = null;
+    try { if (S.watchdogId) clearInterval(S.watchdogId); } catch (e) {}
     try { if (S.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(S.watchId); } catch (e) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
     try { if (S.map) S.map.remove(); } catch (e) {}
@@ -1164,18 +1247,27 @@
        resetView lands fresh entry on the front face — unless a
        pending destination is waiting, which render promotes to
        the drive face (the in-module hand-off). */
+    /* v222 (PIP-LANDS-HOME): the shell asks before tearing this
+       module down — a parked live drive holds the module open
+       (its state + the floated drive screen are the driver's
+       live navigation; killing them was never the ask). */
+    keepAlive: function () { return !!(S && S.drive && S.parked); },
+
     back: function () {
       if (nvFace === 'drive') {
-        /* v220 (PIP-BACK-BEHAVIOR, owner spec): while a DRIVE is
-           live, Back on the map page sends the map into
-           picture-in-picture — Back NEVER kills navigation, and
-           leaving the module would tear the drive down, so the
-           module stays exactly where it is and the shell floats
-           the drive's compact PiP face. Navigation ends ONLY via
-           End Drive or the drive screen's own exit. Off-shell
-           (no PiP bridge — a plain browser) the request declines
-           and the v116 staircase below applies as before. */
+        /* v222 (PIP-LANDS-HOME-OCT22, owner spec — supersedes the
+           v220 system-PiP behaviour): while a DRIVE is live, Back
+           on the map page sends the map into screen-in-screen
+           AND opens the main dashboard beneath it (parkDrive) —
+           Back NEVER kills navigation (it ends only via End
+           Drive or the drive screen's own exit), and the driver
+           never lands on the phone's home screen. Only where the
+           in-app park is impossible (no shell dock — a partial
+           page) does the old request fall to the system PiP
+           bridge, and where that too is absent the v116
+           staircase applies as before. */
         if (S && S.drive) {
+          try { if (parkDrive()) return true; } catch (e) {}
           var pipSent = false;
           try { pipSent = !!(window.ShiftTrack && ShiftTrack.enterPip && ShiftTrack.enterPip()); } catch (e) {}
           if (pipSent) return true;
@@ -1197,6 +1289,34 @@
         pipWired = true;
         try { if (window.ShiftTrack && ShiftTrack.addPipListener) ShiftTrack.addPipListener(applyPipFace); } catch (e) {}
       }
+      /* v222 (PIP-LANDS-HOME): reopening the Navigator with a
+         drive PARKED in the shell dock restores the drive full-
+         screen — the same drive, the same state bag, the drive
+         screen re-homed into this body. The module is NOT
+         re-initialised (a fresh render would rebuild S and kill
+         the live drive — the exact tear-down the park exists to
+         avoid). _restoredParked tells exitDrive to rebuild the
+         module fresh when this drive finally ends, since the
+         plan face was never rebuilt under it. */
+      if (S && S.drive && S.parked) {
+        var dockScr = docEl('nv_drive_screen');
+        if (dockScr) {
+          S.parked = false;
+          S._restoredParked = true;
+          nvFace = 'drive';
+          body.innerHTML = '';
+          body.appendChild(dockScr);
+          dockScr.classList.remove('nv-mini');
+          dockScr.classList.remove('hidden');
+          applyPipFace(false);
+          try { if (S.driveMap && S.driveMap.invalidateSize) S.driveMap.invalidateSize(); } catch (e) {}
+          try { driveTick(); } catch (e) {}
+          return;
+        }
+        /* the parked screen is gone (page rebuilt under it):
+           fall through to a fresh render rather than a ghost. */
+        S.parked = false;
+      }
       var hasPending = false;
       try { hasPending = !!App._store.get('nav_pending', null); } catch (e) {}
       if (hasPending) nvFace = 'drive';
@@ -1214,6 +1334,12 @@
         settings: settings, map: null, userMarker: null, destMarker: null,
         routeLine: null, line: null, plan: null, dest: null, destLabel: '',
         pos: null, follow: true, watchId: null, manIdx: -1,
+        /* v222 (NAV-STUCK): fix-stream health — the wall-clock of
+           the last fix onPos accepted, the fix's own timestamp
+           (the dedupe watermark for the fallback stream), and the
+           watchdog that restarts a silently-dead watch. parked:
+           the drive floated in the shell dock (PIP-LANDS-HOME). */
+        lastFixAt: 0, lastFixT: 0, watchdogId: null, parked: false,
         offSince: 0, rerouting: false, arrived: false, searching: false,
         /* v103: the auto-route latch — setDest arms it for the NEW
            destination only (autoKey), maybeAutoRoute consumes it
@@ -1844,7 +1970,14 @@
           else S.map.setView(S.pos, S.map.getZoom());
         }
       }
-      function onPos(lat, lon, heading, speed) {
+      function onPos(lat, lon, heading, speed, fixT) {
+        /* v222 (NAV-STUCK): stamp the stream's health on EVERY
+           accepted fix — the watchdog below reads lastFixAt, and
+           lastFixT is the dedupe watermark that keeps the fallback
+           stream (LiveMiles) from re-feeding a fix this stream
+           already took. */
+        S.lastFixAt = Date.now();
+        if (typeof fixT === 'number' && fixT > 0) S.lastFixT = Math.max(S.lastFixT || 0, fixT);
         var first = !S.pos;
         var prevPos = S.pos;
         S.pos = [lat, lon];
@@ -1870,23 +2003,68 @@
         if (S.drive) driveTick();
       }
       /* Seed from the native geo wrapper's last fix when present,
-         then follow the browser watcher (works in every build). */
-      try {
-        var lastFix = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) ||
-          (window.App && App.geo && App.geo.last && App.geo.last());
-        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude, lastFix.bearing, lastFix.speed);
-      } catch (e) {}
-      if (navigator.geolocation) {
+         then follow the browser watcher (works in every build).
+         v222 (NAV-STUCK): the watcher registration lives in
+         startWatch() because the watchdog restarts it — a WebView
+         watch can die without ever calling its error callback. */
+      function startWatch() {
+        if (!navigator.geolocation) return;
         try {
+          if (S.watchId !== null) { try { navigator.geolocation.clearWatch(S.watchId); } catch (e) {} S.watchId = null; }
           S.watchId = navigator.geolocation.watchPosition(
-            function (p) { onPos(p.coords.latitude, p.coords.longitude, p.coords.heading, p.coords.speed); },
+            function (p) { onPos(p.coords.latitude, p.coords.longitude, p.coords.heading, p.coords.speed, p.timestamp); },
             function () { if (!S.pos) note('Location is unavailable — allow location for Meticulous to navigate.'); },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
           );
         } catch (e) {}
+      }
+      try {
+        var lastFix = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) ||
+          (window.App && App.geo && App.geo.last && App.geo.last());
+        if (lastFix && lastFix.latitude) onPos(lastFix.latitude, lastFix.longitude, lastFix.bearing, lastFix.speed, lastFix.time);
+      } catch (e) {}
+      if (navigator.geolocation) {
+        startWatch();
       } else {
         note('This device has no location service — routing from your position is unavailable.');
       }
+      /* v222 (NAV-STUCK): net 1 — ride the app's own fix stream.
+         LiveMiles' stream is fed by js/geo.js, which maintains
+         its watcher with revive-on-visible logic this module
+         never had; fixes arrive through navFixFromMiles with the
+         fix's own timestamp, and onPos's watermark (lastFixT)
+         keeps the two streams from double-feeding one fix. */
+      currentOnPos = function (lat, lon, heading, speed, fixT) {
+        if (!S) return;
+        if (typeof fixT === 'number' && fixT > 0 && S.lastFixT && fixT <= S.lastFixT) return;
+        onPos(lat, lon, heading, speed, fixT);
+      };
+      if (!fixSubWired) {
+        fixSubWired = true;
+        try { if (window.LiveMiles && typeof LiveMiles.subscribe === 'function') LiveMiles.subscribe(navFixFromMiles); } catch (e) {}
+      }
+      /* v222 (NAV-STUCK): net 2 — the watchdog. While this module
+         lives, a stream silent for >12 s is restarted: clearWatch
+         + a fresh watchPosition, and the geo wrapper's last fix
+         bridges the gap when it is newer than what we hold. A
+         frozen drive view (his Deerfoot recording: clock
+         advancing, map still) is exactly a silent stream, and it
+         now heals itself instead of standing still all drive. */
+      try {
+        if (S.watchdogId) clearInterval(S.watchdogId);
+        S.watchdogId = setInterval(function () {
+          if (!S) return;
+          if (!S.lastFixAt) { S.lastFixAt = Date.now(); return; } // the silence clock starts at first check, not at epoch
+          if (Date.now() - (S.lastFixAt || 0) <= 12000) return;
+          startWatch();
+          try {
+            var lf = (window.MeticulousGeo && MeticulousGeo.last && MeticulousGeo.last()) || null;
+            if (lf && lf.latitude && (!S.lastFixT || (lf.time || 0) > S.lastFixT)) {
+              currentOnPos(lf.latitude, lf.longitude, lf.bearing, lf.speed, lf.time);
+            }
+          } catch (e) {}
+        }, 2500);
+      } catch (e) {}
 
       /* ---------- routing ---------- */
       function clearRoute() {
@@ -2770,6 +2948,14 @@
         S.driveMap = null; S.driveLine = null; S.driveMarker = null;
         var scr = body.querySelector('#nv_drive_screen');
         if (scr) scr.classList.add('hidden');
+        /* v222: a drive that was restored from the park has no
+           plan face rebuilt beneath it — rebuild the module fresh
+           now that the drive is over, so End Drive lands on the
+           module's real face, never a blank body. */
+        if (S._restoredParked) {
+          S._restoredParked = false;
+          try { api.render(nvBody); } catch (e) {}
+        }
       }
 
       /* v116: the shell's back hook for this render — Back while
@@ -2946,7 +3132,7 @@
         /* v220 (PIP-REDESIGN): the PiP face's bottom line — the
            next direction in small words, kept current by the same
            tick that paints the big banner (write-on-change). */
-        var pipLineEl = body.querySelector('#nvd_pip_line');
+        var pipLineEl = body.querySelector('#nvd_pip_line') || docEl('nvd_pip_line');
         if (pipLineEl && S._inPip) {
           var pipTxt = dp.next ? (fmtDist(dp.toTurnM) + ' · ' + (dp.next.instruction || '')) : 'Arrived';
           if (pipLineEl.textContent !== pipTxt) pipLineEl.textContent = pipTxt;
@@ -3052,7 +3238,7 @@
            from the first tick: with no heading yet it composes
            at the last applied heading, or north-up — a nav view
            from the first frame, never a flat map. */
-        var plane = body.querySelector('#nvd_plane');
+        var plane = body.querySelector('#nvd_plane') || docEl('nvd_plane');
         if (plane && (S.drive.headingApplied === null || S.drive.headingApplied === undefined ||
             (S.heading !== null && S.heading !== undefined &&
              angDeltaDeg(S.heading, S.drive.headingApplied) >= 2))) {
@@ -3084,7 +3270,10 @@
          re-checks S.drive). Where rAF does not exist (test
          harnesses, old WebViews) Drive behaves exactly as before. */
       function paintPlane(hdg) {
-        var plane = body.querySelector('#nvd_plane');
+        /* v222: while the drive is parked in the shell dock the
+           screen is outside this body — fall back to the document
+           lookup so the mini map keeps rotating with the truck. */
+        var plane = body.querySelector('#nvd_plane') || docEl('nvd_plane');
         if (plane) plane.style.transform = planeTransform(hdg);
       }
       function driveAnim() {

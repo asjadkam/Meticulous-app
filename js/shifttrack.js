@@ -409,6 +409,7 @@
       var p = plugin();
       if (!p || !key) return;
       currentKey = key;
+      ShiftTrack.setSession(true); // v222: the session arm is the web tracker's own fact
       p.start({ sessionKey: key }).then(function () {
         if (typeof p.disarmDay === 'function') {
           try { p.disarmDay(); } catch (e) {}
@@ -479,6 +480,7 @@
         if (!key) return;
         currentKey = key;
         if (trackerActive()) {
+          ShiftTrack.setSession(true); // v222: a live tracker + a native session = the bubble arm is up
           p.start({ sessionKey: key }).then(function () {
             return refreshStatus();
           }).then(function () {
@@ -505,6 +507,7 @@
        session entry, then stop the service. */
     sessionStopped: function (key) {
       var p = plugin();
+      ShiftTrack.setSession(false); // v222: the bubble arm comes down with the session
       stopDrainLoop();
       var elm = bannerEl();
       if (elm) { elm.classList.add('hidden'); elm.innerHTML = ''; }
@@ -580,6 +583,25 @@
       ShiftTrack._driving = !!on;
       var p = plugin();
       if (p && typeof p.setDriving === 'function') { try { p.setDriving({ on: !!on }); } catch (e) {} }
+    },
+    /* v222 (BUBBLE-NO-SHOW-OCT22): the SESSION PiP arm, owned by
+       the WEB tracker — a live session floats the tracker bubble
+       when the driver leaves the app. v220 armed this only as a
+       side effect of the native service's start(), so any session
+       whose service start never ran — above all a session
+       RESTORED after a reinstall, whose native preferences were
+       wiped with the old install — left the app with the arm down
+       and no bubble ever appeared. The web layer knows the truth
+       (its tracker is running), so it sets the arm directly:
+       session start, session restore (boot + sign-in), and stops
+       it at session end. The plugin persists the arm so it also
+       survives a process death inside one install. Inert on
+       shells without the method (pre-v38 APKs). */
+    _session: false,
+    setSession: function (on) {
+      ShiftTrack._session = !!on;
+      var p = plugin();
+      if (p && typeof p.setSession === 'function') { try { p.setSession({ on: !!on }); } catch (e) {} }
     },
     /* v220 (PIP-BACK-BEHAVIOR): ask the shell to enter PiP NOW —
        the Navigator's Back during a live drive. Returns true when

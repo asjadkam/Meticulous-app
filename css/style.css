@@ -481,6 +481,18 @@ label.chk input{width:18px;height:18px;}
 .nv-drive.nv-pip .nv-drive-top,.nv-drive.nv-pip .nv-drive-inset,.nv-drive.nv-pip .nv-drive-bar,
 .nv-drive.nv-pip .nv-avatar-picker,.nv-drive.nv-pip .nv-drive-reroute,.nv-drive.nv-pip .nv-drive-speed,
 .nv-drive.nv-pip #nvd_recenter{display:none !important;}
+/* v222 (PIP-LANDS-HOME): the IN-APP screen-in-screen. The dock is
+   a fixed, click-through shell layer above the dashboard; the
+   parked drive screen inside it shrinks to a floating window
+   (bottom-right, above the dashboard's own bars) wearing the
+   compact PiP face. A tap on the window reopens the Navigator
+   full-screen (modules/navigator.js parkDrive). */
+#pipDock{position:fixed;inset:0;z-index:2900;pointer-events:none;}
+#pipDock:empty{display:none;}
+.nv-drive.nv-mini{inset:auto;right:12px;bottom:calc(86px + env(safe-area-inset-bottom));
+  width:min(47vw,340px);height:auto;aspect-ratio:4/3;border-radius:16px;overflow:hidden;
+  box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);
+  pointer-events:auto;cursor:pointer;}
 .nv-drive-map{width:100%;height:100%;background:#e8edf5;}
 /* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
    30px ▲ "arrow as you" was "something puny" — "the moving

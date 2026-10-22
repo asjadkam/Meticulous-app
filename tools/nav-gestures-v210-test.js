@@ -332,8 +332,8 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
   ok('gesture handlers are passive observers', (navSrc.match(/passive: true/g) || []).length >= 4);
   ok('still exactly ONE .style.transform writer (paintPlane)',
     (navSrc.match(/\.style\.transform =/g) || []).length === 1);
-  eq('webVersion is 210', ver.webVersion, 221);
-  ok('index.html pins the v210 build', idxSrc.indexOf('?v=221') >= 0 && idxSrc.indexOf('?v=' + '209') < 0);
+  eq('webVersion is 210', ver.webVersion, 222);
+  ok('index.html pins the v210 build', idxSrc.indexOf('?v=222') >= 0 && idxSrc.indexOf('?v=' + '209') < 0);
 
   console.log('\nnav-gestures-v210 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

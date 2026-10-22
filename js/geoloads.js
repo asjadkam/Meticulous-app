@@ -1254,6 +1254,10 @@
      it (js/app.js); while no site pair is armed the taps keep
      their older fallback role (the session's manualLoads). */
   var corrNow = 0;
+  /* v222: set by nudge() — a correction the driver made THIS page
+     life is newer than any pulled record's corr and survives a
+     reseed (see GeoLoads.reseedFromStore). */
+  var nudgedLive = false;
 
   function persist(force) {
     if (!curDate) return;
@@ -1756,6 +1760,7 @@
       baseCount = 0;
       baseEvents = [];
       corrNow = 0;
+      nudgedLive = false;
     },
 
     flush: function () { if (sessionKey) persist(true); },
@@ -1839,6 +1844,7 @@
        falls back to the session's tap count). */
     nudge: function (delta) {
       if (!curDate || !watching) return null;
+      nudgedLive = true; // v222: a live correction outranks a pulled record's older corr on reseed
       corrNow += (parseInt(delta, 10) || 0);
       /* the buttons move the DISPLAYED count: it floors at 0, so
          the clamp lives in the correction itself — extra −1 taps
@@ -1847,6 +1853,37 @@
       if (machine + corrNow < 0) corrNow = -machine;
       persist(true);
       return corrNow;
+    },
+
+    /* v222 (LOADS-RESTORE-FAIL-OCT22): re-seed the RUNNING counter
+       from the persisted day record. The same reinstall trap as
+       live miles: startDay at boot configures from an EMPTY store
+       (fresh install, first pull not yet landed), and startDay
+       thereafter no-ops for the same session key — so when the
+       pull lands the day's real record (machine count + the signed
+       correction), the live counter keeps showing its young zeros
+       and its next persist would overwrite the restored record.
+       When the record's machine count EXCEEDS the live one, adopt
+       the record wholesale by re-running configure() against it —
+       configure() rebuilds the counter from the record's own
+       snapshot, carries the base as record-minus-snapshot, and
+       restores corr from the record. A correction nudged THIS
+       page life is newer than the record and is kept (then
+       re-persisted). When the live count is already ahead, or no
+       record exists, this is a no-op. */
+    reseedFromStore: function () {
+      if (!watching || !sessionKey || !curDate) return false;
+      var rec = recordFor(curDate);
+      if (!rec) return false;
+      var liveMachine = baseCount + (counter ? counter.count() : 0);
+      if (!((rec.count || 0) > liveMachine)) return false;
+      var keepCorr = nudgedLive ? corrNow : null;
+      configure();
+      if (keepCorr !== null && corrNow !== keepCorr) {
+        corrNow = keepCorr;
+        persist(true);
+      }
+      return true;
     },
 
     sitesCheck: ENGINE.sitesCheck,

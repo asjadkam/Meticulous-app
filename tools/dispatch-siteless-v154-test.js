@@ -288,8 +288,8 @@ function crewPipe(day) {
   /* v155 pin move (the standing convention): 154 -> 155.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('pins: version.json webVersion is 162', ver.webVersion, 221);
-  check('pins: index cohort is ?v=221', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=221') !== -1);
+  eq('pins: version.json webVersion is 162', ver.webVersion, 222);
+  check('pins: index cohort is ?v=222', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=222') !== -1);
   check('statics: the site hard-block copy is GONE from dispatch.js',
     dspSrc.indexOf('Enter the job site first') === -1);
   check('statics: the verified-save storage error copy is intact (the remaining gate)',

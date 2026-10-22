@@ -55,9 +55,9 @@ check('the raster budget holds: (230/340)^2 < 0.5 of the v135 plane',
   Math.pow(230 / 340, 2) < 0.5);
 
 console.log('— A2: movement is interpolated —');
-check('exactly ONE .style.transform writer remains, inside paintPlane, with the pinned composed call',
+check('exactly ONE .style.transform writer remains, inside paintPlane, with the pinned composed call (v222 pin move: the plane lookup gained the docEl fallback — a PARKED drive screen lives in the shell dock, outside this render body, and its plane must still paint; the writer count and the composed call are unchanged)',
   (navSrc.match(/\.style\.transform\s*=/g) || []).length === 1 &&
-  /function paintPlane\(hdg\) \{\s*var plane = body\.querySelector\('#nvd_plane'\);\s*if \(plane\) plane\.style\.transform = planeTransform\(hdg\);/.test(navSrc));
+  /function paintPlane\(hdg\) \{[\s\S]{0,320}?var plane = body\.querySelector\('#nvd_plane'\) \|\| docEl\('nvd_plane'\);\s*if \(plane\) plane\.style\.transform = planeTransform\(hdg\);/.test(navSrc));
 check('the tick keeps its v128 >=2° gate and writes through paintPlane',
   navSrc.indexOf('angDeltaDeg(S.heading, S.drive.headingApplied) >= 2') >= 0 &&
   navSrc.indexOf('paintPlane(hdg);') >= 0 && navSrc.indexOf('driveAnimKick();') >= 0);
@@ -102,9 +102,9 @@ check('no lane fabrication: the module never claims lane data it does not have',
 
 console.log('— ship pins —');
 check('ships as webVersion 188 with the changed files at the 199 pin',
-  ver.webVersion === 221 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=221"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=221"') >= 0,
+  ver.webVersion === 222 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=222"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=222"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v178: ' + pass + ' passed, ' + fail + ' failed');

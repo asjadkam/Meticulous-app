@@ -281,7 +281,7 @@ console.log('— 2/3/8/9/10/11/14/15: source pins —');
   ok(app.indexOf('LiveMiles.recordKmFor(rk)') >= 0,
     '3: a close with a detached engine stamps the persisted live-km record');
   ok(nav.indexOf('ShiftTrack.enterPip()') >= 0 && nav.indexOf('if (S && S.drive)') >= 0,
-    '9: Back during a live drive asks the shell for PiP, module untouched (PIP-BACK-BEHAVIOR)');
+    '9: Back during a live drive enters PiP posture, module untouched (PIP-BACK-BEHAVIOR; v222 pin move: back() now PARKS in-app first — PIP-LANDS-HOME — with the native enterPip kept as the fallback; the park behaviour itself is pinned in fix-batch-v222-test)');
   ok(nav.indexOf('nvd_pip_line') >= 0 && sht.indexOf('addPipListener') >= 0,
     '8: the PiP bottom line exists and pip changes are heard (PIP-REDESIGN)');
   ok(idx.indexOf('id="bubbleFace"') >= 0 && idx.indexOf('id="bubClock"') >= 0 &&

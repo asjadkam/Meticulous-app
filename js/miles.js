@@ -1093,6 +1093,41 @@
       return rec && rec.crumbs ? rec.crumbs : [];
     },
 
+    /* v222 (LIVE-MILES-DISPLAY-RESET-OCT22): re-seed the RUNNING
+       engine from the persisted record for its own day key. The
+       reinstall trap this closes: on a fresh install the boot path
+       starts the engine BEFORE the first cloud pull lands — the
+       local store is empty, so the engine begins at zero — and the
+       sign-in reattach then skips startDay because the key already
+       matches, so the pulled record (the day's real total, e.g.
+       131 km) never enters the engine and the hero counts up from
+       ~0 while later persists overwrite the restored record with
+       the young engine's numbers. Call this once the store may
+       hold more than the engine does (after the first pull, on
+       sign-in): when the persisted total EXCEEDS the engine's, the
+       engine re-begins from the persisted snapshot and the live
+       engine's own crumbs fold back through mergeCrumbs — its
+       counted-coverage dedupe keeps every stretch exactly-once,
+       so ground counted since boot survives the adoption and
+       ground the record already counted is never counted twice.
+       When the engine is already ahead, this is a no-op. */
+    reseedFromStore: function () {
+      if (!dayKey) return false;
+      var saved = recordFor(dayKey);
+      if (!saved || typeof saved.totalM !== 'number') return false;
+      var live = engine.snapshot();
+      var liveTotal = live ? (live.totalM || 0) : 0;
+      if (!(saved.totalM > liveTotal)) return false;
+      var liveCrumbs = live ? live.crumbs : [];
+      engine.begin(dayKey, saved);
+      if (liveCrumbs && liveCrumbs.length) {
+        try { engine.mergeCrumbs(liveCrumbs); } catch (e) {}
+      }
+      persist(true);
+      paint();
+      return true;
+    },
+
     /* v63 (native v34): fold native-service breadcrumbs for the LIVE
        session into the engine. Only meaningful while this session's
        day is active — the native run belongs to the session the

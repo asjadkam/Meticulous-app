@@ -312,8 +312,8 @@ function v35Plugin() {
   ok('the shim carries all five bridges',
     ['speakText', 'stopSpeak', 'navNotify', 'setDriving', 'widgetState'].every(function (k) { return shimSrc.indexOf(k) >= 0; }));
   ok('the Navigator hooks are in', navSrc.indexOf('ShiftTrack.speakNative') >= 0 && navSrc.indexOf('ShiftTrack.navNotify') >= 0 && navSrc.indexOf('ShiftTrack.setDriving') >= 0);
-  eq('webVersion is 212', ver.webVersion, 221);
-  ok('index.html pins the v212 build', idxSrc.indexOf('?v=221') >= 0 && idxSrc.indexOf('?v=' + '211') < 0);
+  eq('webVersion is 212', ver.webVersion, 222);
+  ok('index.html pins the v212 build', idxSrc.indexOf('?v=222') >= 0 && idxSrc.indexOf('?v=' + '211') < 0);
 
   console.log('\nnative-bridge-v212 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
