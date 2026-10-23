@@ -107,7 +107,7 @@ console.log('PART B — the map side of the law is intact');
 console.log('PART C — release pins (web v234 / native v42, versionCode 17)');
 {
   const vj = JSON.parse(read('version.json'));
-  ok('C1 version.json: webVersion 234, native version 42', vj.webVersion === 238 && vj.version === 42,
+  ok('C1 version.json: webVersion 234, native version 42', vj.webVersion === 239 && vj.version === 42,
     'webVersion=' + vj.webVersion + ' version=' + vj.version);
   ok('C2 APK_VERSION 42 in js/app.js', /var APK_VERSION = 42;/.test(read('js/app.js')));
   ok('C3 native versionCode 17 / versionName 1.15', /versionCode 17/.test(gradle) && /versionName "1\.15"/.test(gradle));

@@ -200,7 +200,17 @@
      mirror serves the same placeholder), and this app ships
      keyless. Esri's tile service is keyless with attribution.
      NOTE the Esri template order: {z}/{y}/{x}. The planning
-     map keeps the OSM source + its gentler lift. */
+     map keeps the OSM source + its gentler lift.
+     v239 (NAV-MAP-COLORS-3D, owner, Oct 23, 2026 11:36 MDT:
+     "the colours on our map are abysmal"): re-measured on the
+     fixed (z15) build — no keyless source beats this one
+     (OSM standard measures LESS saturated on the same tiles,
+     Esri World Topo is near-greyscale at z15 here; CARTO
+     still demands a key). The source stays; the DRIVE tiles
+     get a measured colour lift via the nv-tile-street class
+     (see the layer creation in startDrive + style.css):
+     home tile mean saturation 0.150 -> 0.202 simulated, the
+     blank-map coverage contract untouched. */
   function driveTileSpec() {
     return {
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
@@ -2969,7 +2979,13 @@
                block; 15 is the level that always has the roads.
                The drive view stays at zoom 18 (v178 framing);
                Leaflet scales the z15 tiles up to it. */
-            resilientTileLayer(tspec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4 }).addTo(S.driveMap);
+            /* v239 (NAV-MAP-COLORS-3D): the street layer wears
+               the nv-tile-street class — the sheet's colour
+               lift (contrast/saturate, measured on the live
+               tiles) applies to exactly these tiles and no
+               others; the satellite/hillshade layers (v240)
+               carry their own classes, unlifted. */
+            resilientTileLayer(tspec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4, className: 'nv-tile-street' }).addTo(S.driveMap);
             /* v183: a user drag enters free-look. Leaflet fires
                dragstart only for real gestures (programmatic
                panTo does not), so the follow camera never

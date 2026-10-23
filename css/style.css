@@ -690,8 +690,21 @@ body.mt-driving #chatSheet{z-index:2120;}
    a full tile repaint on every composite — half the flicker.
    The Esri basemap ships calm and is drawn exactly as served:
    NO filter on drive tiles. The planning map is unchanged (OSM
-   source + the gentler shared lift). */
+   source + the gentler shared lift).
+   v239 (NAV-MAP-COLORS-3D, owner, Oct 23, 2026: "the colours
+   on our map are abysmal" — pale/washed against the Rand
+   McNally benchmark): the no-filter rule is superseded for
+   the DRIVE street layer only, on measurements taken from
+   the live tiles (see nav-map-colors-v239-test.js): the
+   street layer's tiles wear the nv-tile-street class and get
+   contrast(1.06) saturate(1.38) — simulated mean saturation
+   on his home tile 0.150 -> 0.202, downtown vivid share
+   3.3% -> 9.0%. The v125 hot-pink failure was OSM's salmon
+   motorways under a lift; Esri's palette has no such band.
+   Satellite/hillshade layers (v240 classes) get NO lift —
+   aerial photos are already true colour. */
 .nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
+.nv-tile-street{filter:contrast(1.06) saturate(1.38);}
 /* v177 (F4): the Navigator's own settings menu — a full-width overlay
    panel inside the module (shell face or drive face; the node moves
    to whichever face opened it). */
