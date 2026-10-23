@@ -10,17 +10,22 @@
  * home coordinates (51.15709, -113.93862) — but the loaded tiles
  * are EMPTY: Esri World Street Map serves a single-colour blank
  * tile (2,421 B, one colour #f3f0cf) at zoom 18 AND 17 for his
- * newer suburb, while the same source has real content at zoom
- * 16 (and downtown has content at 18). The drive map is pinned
- * to zoom 18 (v178 "one zoom closer"), so around his home — and
- * any fringe/new area Esri hasn't detailed — the road network
+ * newer suburb, and the detailed-cache hole over his own block
+ * reaches down through zoom 16 (his crescent's z16 tile is empty
+ * too; the arterial one tile south is drawn, his work areas are
+ * rich at z16). The z15 tile is the deepest level that carries
+ * his street network. The drive map is pinned to zoom 18
+ * (v178 "one zoom closer"), so around his home — and any
+ * fringe/new area Esri hasn't detailed — the road network
  * simply isn't in the tiles. Routing/inset/ETA are app-drawn,
  * which is why only the map was blank.
  *
- * THE FIX: the drive tile layer caps its NATIVE zoom at 16
+ * THE FIX: the drive tile layer caps its NATIVE zoom at 15
  * (maxNativeZoom) while the view stays at 18 — Leaflet scales
- * the z16 tiles up, so the framing/readability he chose is
- * unchanged and the roads that exist at z16 always draw.
+ * the z15 tiles up, so the framing he chose is unchanged and
+ * the roads always draw. (v232 first shipped 16; the v235
+ * corrective deepened it to 15 on the tile-by-tile evidence
+ * above — 16 healed other areas but not his own block.)
  *
  * This suite drives the REAL modules/navigator.js in a vm world
  * with a RECORDING Leaflet stub and pins the layer contract:
@@ -230,8 +235,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 15); }); }
   check('A3: the view framing stays at zoom 18 (his v178 readability choice)',
     driveMap._views.some(function (v) { return v[1] === 18; }) && rec.opts.maxZoom === 18,
     'views=' + JSON.stringify(driveMap._views) + ' maxZoom=' + rec.opts.maxZoom);
-  check('A4: THE FIX — tiles are fetched at native zoom 16, where Esri actually has the road network, and scaled up to the z18 view',
-    rec.opts.maxNativeZoom === 16, 'maxNativeZoom=' + rec.opts.maxNativeZoom);
+  check('A4: THE FIX — tiles are fetched at native zoom 15, the deepest level where Esri actually has his road network, and scaled up to the z18 view',
+    rec.opts.maxNativeZoom === 15, 'maxNativeZoom=' + rec.opts.maxNativeZoom);
   try { api.teardown(); } catch (e) {}
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

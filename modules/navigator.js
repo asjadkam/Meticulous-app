@@ -2854,16 +2854,21 @@
               fadeAnimation: false
             }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
             var tspec = driveTileSpec();
-            /* v232 (NAV-MAP-BLANK-V40): maxNativeZoom 16 — Esri
-               serves a BLANK single-colour tile at zooms 17-18
-               for newer/fringe areas it hasn't detailed (the
-               owner's home suburb included: verified live, the
-               z18/z17 tiles at his coordinates are one flat
-               colour, the z16 tile carries the road network).
+            /* v232/v235 (NAV-MAP-BLANK-V40): maxNativeZoom 15 —
+               Esri serves BLANK single-colour tiles at zooms
+               17-18 for newer/fringe areas it hasn't detailed,
+               and the hole over the owner's own home block
+               reaches down through zoom 16 (verified tile by
+               tile against the live CDN at 51.15709,-113.93862:
+               z18/z17 one flat colour, the z16 tile over his
+               crescent empty too — the z15 tile is the deepest
+               level that carries his street network; his work
+               areas are rich at every level). v232 first capped
+               at 16, which healed other areas but not his
+               block; 15 is the level that always has the roads.
                The drive view stays at zoom 18 (v178 framing);
-               Leaflet scales the z16 tiles up, so the roads
-               that exist always draw instead of a beige field. */
-            resilientTileLayer(tspec.url, { maxZoom: 18, maxNativeZoom: 16, keepBuffer: 4 }).addTo(S.driveMap);
+               Leaflet scales the z15 tiles up to it. */
+            resilientTileLayer(tspec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4 }).addTo(S.driveMap);
             /* v183: a user drag enters free-look. Leaflet fires
                dragstart only for real gestures (programmatic
                panTo does not), so the follow camera never
