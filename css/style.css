@@ -675,6 +675,9 @@ body.mt-driving #chatSheet{z-index:2120;}
 .nv-drive-bar{left:8px;right:8px;bottom:calc(6px + env(safe-area-inset-bottom));padding:8px 12px;}
 .nv-drive-reroute{bottom:calc(78px + env(safe-area-inset-bottom));}
 .nv-avatar-picker{bottom:calc(84px + env(safe-area-inset-bottom));}
+/* v237: in landscape the banner is the compact flex row (~64px
+   tall) — the inset's top-right dock rides the line under it. */
+.nv-drive-inset{top:calc(76px + env(safe-area-inset-top));}
 }
 /* v107: tile readability — a contrast/saturation lift on the map
    tiles themselves (the lever the OSM tile source leaves us).
@@ -710,26 +713,35 @@ body.mt-driving #chatSheet{z-index:2120;}
    under the banner and cut it. Standing rule: nothing is cut
    off at the top of the map, and the chrome stacks without
    overlap — banner top, map clear beneath it, bar at the foot.
-   The inset now docks bottom-right, level with the speedometer
-   docked bottom-left (same 96px + safe-area line over the bar):
-   off the road's path at any heading, clear of the centred
-   truck (max-width 46vw keeps it right of centre), and clear of
-   the centred recenter pill that floats at bottom:84px. */
-.nv-drive-inset{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));right:10px;z-index:4;background:#1F3764;color:#fff;border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 4px 18px rgba(0,0,0,.45);max-width:46vw;width:46vw;}
+   The inset docked bottom-right (the v193 move).
+   v237 (NAV-INSET-SMALL-TOPRIGHT, owner, Fri Oct 23, 2026
+   11:36 MDT, drive video): the bottom-right card "takes HALF
+   the screen and is mostly empty dark panel" — his order
+   supersedes the v193 dock: the card becomes SMALL and moves
+   to the TOP RIGHT. The v193 stack law survives the move: the
+   card hangs BELOW the banner (198px + safe-area clears the
+   banner's worst case — 3-line instruction — by a gap), on
+   the right, plain chrome, and its foot (~215px tall) still
+   clears the centred truck's box. Nothing inside was cut:
+   junction drawing, lane strip and header all stay, drawn
+   compact (junction capped at 140px, 27px lane cells, 38px
+   header arrow) so the card reads at a glance. */
+.nv-drive-inset{position:absolute;top:calc(198px + env(safe-area-inset-top));right:10px;z-index:4;background:#1F3764;color:#fff;border-radius:16px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;box-shadow:0 4px 18px rgba(0,0,0,.45);width:200px;max-width:54vw;}
 /* v195 (NAV-POPUP): the junction view inside the pop-up — the
    enlarged drawing of the upcoming turn (route highlighted),
    over the v178 header row (bent arrow + distance + words). */
-.nv-inset-junction{background:rgba(255,255,255,.08);border-radius:10px;padding:4px;}
+.nv-inset-junction{background:rgba(255,255,255,.08);border-radius:10px;padding:4px;max-width:140px;width:100%;margin:0 auto;box-sizing:border-box;}
 .nv-inset-junction svg{display:block;width:100%;height:auto;}
 /* v196 (NAV-LANES): the lane strip inside the turn pop-up —
    one cell per OSM lane on the approach road; the route lane
    burns bright with the turn's arrow, the rest sit dim. Absent
    entirely when OSM carries no lane count for the road. */
 .nv-inset-lanes{display:flex;gap:4px;justify-content:center;padding:2px 2px 4px;}
-.nv-lane{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.10);}
+.nv-lane{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:7px;background:rgba(255,255,255,.10);}
+.nv-lane svg{width:21px;height:21px;}
 .nv-lane.on{background:#e67e00;box-shadow:0 0 0 2px #ffffff inset;}
-.nv-inset-head{display:flex;align-items:center;gap:10px;}
+.nv-inset-head{display:flex;align-items:center;gap:8px;}
 .nv-inset-text{display:flex;flex-direction:column;min-width:0;}
-.nv-inset-text b{font-size:20px;line-height:1.1;}
-.nv-inset-text span{font-size:13.5px;color:#D9E1F3;line-height:1.25;}
+.nv-inset-text b{font-size:17px;line-height:1.1;}
+.nv-inset-text span{font-size:12.5px;color:#D9E1F3;line-height:1.25;}
 .nv-route-arrow{background:transparent;border:none;}

@@ -57,14 +57,18 @@ ok('the v192 reversal suppression still gates the pop-up',
   navSrc.indexOf('Math.abs(reversalDeltaDeg(S.plan, S.line, dp.idx)) >= 150') !== -1);
 ok('repaint stays write-on-change (insetKey)',
   navSrc.indexOf('S.drive.insetKey !== insetKey') !== -1);
-ok('CSS: the pop-up is a column (junction over header) on the bottom dock',
+ok('CSS: the pop-up is a column (junction over header)',
   css.indexOf('.nv-inset-junction{') !== -1 && css.indexOf('.nv-inset-head{') !== -1 &&
   /\.nv-drive-inset\{[^}]*flex-direction:column/.test(css));
-ok('CSS: the v193 dock stands (bottom, right, 46vw, no top, no transform)',
-  /\.nv-drive-inset\{[^}]*bottom:calc\(96px/.test(css) &&
-  /\.nv-drive-inset\{[^}]*max-width:46vw/.test(css) &&
-  !/\.nv-drive-inset\{[^}]*top:/.test(css) &&
-  !/\.nv-drive-inset\{[^}]*transform/.test(css));
+/* The v195-era pin "the v193 dock stands (bottom, 46vw)" is
+   SUPERSEDED by v237 (NAV-INSET-SMALL-TOPRIGHT, owner, Fri
+   Oct 23, 2026 11:36 MDT): the card is small and docked top
+   right under the banner. The main rule is the LAST
+   .nv-drive-inset rule in the sheet. */
+ok('CSS: the v237 dock stands (top below banner, right, small, no bottom, no transform)',
+  (() => { const i = css.lastIndexOf('.nv-drive-inset{'); const r = css.slice(i, css.indexOf('}', i));
+    return /top:calc\(198px/.test(r) && /right:10px/.test(r) && /width:200px/.test(r) &&
+      !/bottom:/.test(r) && !/transform/.test(r); })());
 
 console.log('— v195: the junction drawing, driven off fixture geometry —');
 function leg(latA, lonA, latB, lonB, stepM) {

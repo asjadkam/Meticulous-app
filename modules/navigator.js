@@ -3210,7 +3210,11 @@
              Oct 21 08:09 drive video no pop-up registered at
              all. The pop-up is now the junction view: an enlarged
              drawing of the turn itself (junctionViewSvg) over
-             the v178 header (bent arrow + distance + words). */
+             the v178 header (bent arrow + distance + words).
+             v237 (NAV-INSET-SMALL-TOPRIGHT): the card itself is
+             now SMALL and docked top-right under the banner
+             (CSS only — this paint is unchanged apart from the
+             compact 38px header arrow). */
           /* v196 (NAV-LANES): warm the OSM lane lookup for
              the upcoming turn while it is still 3 km out, so
              the strip is ready when the pop-up shows. Lazy,
@@ -3234,7 +3238,7 @@
             if (showInset) {
               insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
                 laneStripHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : 0, dDeg) +
-                '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
+                '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';
             }
