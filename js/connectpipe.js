@@ -775,10 +775,80 @@
 
   /* ---------------- down: boss-sent dispatches ---------------- */
 
+  /* v233 (DSP-REVOCATION-GATE, owner Oct 23, 2026 — the physical
+     proof run): a connection REMOVED between compose and send
+     must fail honestly, by name, not land silently. Removal in
+     this app is local by design (v131: the entry leaves con_list
+     and the uid is remembered in con_hidden; the pair's request
+     doc is never touched) — so the gates live on the two clients
+     it can actually govern: the sender never writes to a man he
+     removed, and the receiver never lands a doc from a man HE
+     removed (pullInbox below). _pairLive answers whether a pair
+     may carry a send right now: never to a hidden (removed) uid;
+     yes when my con_list holds the peer as connected; otherwise
+     the pair's own request doc decides — accepted and not ended
+     (a one-time pair whose end is already stamped is over; a
+     fresh request re-opens it, per the kind law). A pair with
+     NO record at all keeps the shipped share posture (the v207
+     destination-share contract): no screen offers a send to a
+     non-connection, so an unmodelled pair is the share sheet's
+     own context, never a revoked one. */
+  CP._pairLive = function (peerUid) {
+    var f = fb();
+    if (!f || !peerUid) return Promise.resolve(false);
+    var st = store();
+    var hasEntry = false;
+    if (st) {
+      var hidden = st.get('con_hidden', []) || [];
+      if (hidden.indexOf(peerUid) !== -1) return Promise.resolve(false);
+      var entryLive = false;
+      (st.get('con_list', []) || []).forEach(function (c) {
+        if (c && c.uid === peerUid) { hasEntry = true; if (c.status === 'connected') entryLive = true; }
+      });
+      if (entryLive) return Promise.resolve(true);
+    }
+    function liveDoc(snap) {
+      if (!snap || !snap.exists) return false;
+      var v = snap.data() || {};
+      return v.status === 'accepted' && !((v.endedAt || 0) > 0);
+    }
+    return f.db.collection('requests').doc(f.user.uid + '_' + peerUid).get()
+      .then(function (s1) {
+        if (liveDoc(s1)) return true;
+        return f.db.collection('requests').doc(peerUid + '_' + f.user.uid).get()
+          .then(function (s2) {
+            if (liveDoc(s2)) return true;
+            /* Positive evidence of a dead pair — a request doc
+               that exists but is declined/ended, or a con_list
+               entry that never reached connected — refuses. NO
+               pair record at all keeps the shipped share posture
+               (the v207 destination-share contract): no screen in
+               the app offers a send to a non-connection, so an
+               unmodelled pair is the share sheet's own context,
+               not a stranger. */
+            if ((s1 && s1.exists) || (s2 && s2.exists) || hasEntry) return false;
+            return true;
+          });
+      })
+      .catch(function () { return false; });
+  };
+
   /* Send a dispatch to a connected driver. The doc IS the
      delivery: status starts 'sent' (one tick); the driver's app
-     advances it to delivered, then seen. Resolves 'sent'|'error'. */
+     advances it to delivered, then seen. Resolves 'sent'|'error'.
+     v233: the write goes out only over a LIVE pair (above) — a
+     peer removed since the card was composed resolves 'error',
+     so the fan-out names him in its failed list instead of
+     claiming a send that should never have happened. */
   CP.sendDispatch = function (peerUid, fields) {
+    var f = fb();
+    if (!f || !peerUid || peerUid === f.user.uid || !fields) return Promise.resolve('error');
+    return CP._pairLive(peerUid).then(function (live) {
+      if (!live) return 'error';
+      return CP._sendDispatchDoc(peerUid, fields);
+    });
+  };
+  CP._sendDispatchDoc = function (peerUid, fields) {
     var f = fb();
     if (!f || !peerUid || peerUid === f.user.uid || !fields) return Promise.resolve('error');
     var me = { name: '', business: '' };
@@ -916,7 +986,13 @@
       var list = st.get('dsp_list', []) || [];
       var changedDates = {};
       var landedCount = 0;
+      /* v233: senders I removed (con_hidden) never land on my
+         screen — my removal governs my side even though removal
+         is local by design (v131). The doc is not marked landed
+         and never materializes here. */
+      var hiddenFrom = st.get('con_hidden', []) || [];
       fresh.forEach(function (d) {
+        if (hiddenFrom.indexOf(d.from) !== -1) return;
         /* v207: a DESTINATION share lands in the nav_shares
            inbox — never the dispatch list — and only when the
            pair allows 'navigation'. Not allowed: NOT landed, so

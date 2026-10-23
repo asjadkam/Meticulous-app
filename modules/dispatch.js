@@ -1319,9 +1319,16 @@
          driver — one press, one dispatch each. The result line
          names who got it and who did NOT, per driver; it never
          claims a blanket "sent" for a partial send. */
-      var uids = [];
+      var uids = [], tickNames = {};
       body.querySelectorAll('.dp_send_chk').forEach(function (ch) {
-        if (ch && ch.checked && ch.value) uids.push(ch.value);
+        if (ch && ch.value) {
+          /* v233: remember the name AS RENDERED beside the box —
+             if the connection is revoked between compose and
+             send, the peer vanishes from connectedPeers and the
+             honest failure line would degrade to "a driver". */
+          tickNames[ch.value] = String(ch.parentNode ? ch.parentNode.textContent : '').trim();
+          if (ch.checked) uids.push(ch.value);
+        }
       });
       var date = (body.querySelector('#dp_send_date') || {}).value || '';
       var time = (body.querySelector('#dp_send_time') || {}).value || '';
@@ -1343,6 +1350,7 @@
         var names = {};
         try {
           ConnectPipe.connectedPeers().forEach(function (c) { names[c.uid] = c.name; });
+          Object.keys(tickNames).forEach(function (u) { if (tickNames[u]) names[u] = tickNames[u]; });
         } catch (e) {}
         var nameOf = function (u) { return names[u] || 'a driver'; };
         var sentNames = (res.sent || []).map(nameOf);

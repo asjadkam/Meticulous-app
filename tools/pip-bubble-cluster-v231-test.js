@@ -326,7 +326,7 @@ const plugin = fs.readFileSync(path.join(NAT, 'java', 'com', 'meticuloustechnolo
 console.log('PART D — release pins (shipped as APK v41 / web v231; pins since moved to v234 / v42)');
 {
   const vj = JSON.parse(read('version.json'));
-  ok('D1 version.json pins (current standing move)', vj.webVersion === 235 && vj.version === 42,
+  ok('D1 version.json pins (current standing move)', vj.webVersion === 236 && vj.version === 42,
     'webVersion=' + vj.webVersion + ' version=' + vj.version);
   const app = read('js/app.js');
   ok('D2 APK_VERSION 42 in js/app.js (was 41 at the v231 ship)', /var APK_VERSION = 42;/.test(app));
