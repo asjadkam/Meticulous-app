@@ -459,7 +459,14 @@
     var travelBonus = parseFloat(o.travelBonus) || 0;
     var dispatches = [];
     (st.get('dsp_list', []) || []).forEach(function (d) {
-      if (d && CP.recordDate(d) === dateStr && d.status !== 'cancelled') {
+      /* v228 (UMAR-CONNECT-VIABILITY S3): a CANCELLED dispatch
+         rides the record too, marked cancelled — the partner's
+         board must show the day as no-work, never keep showing
+         the job as open after the driver cancelled it, and
+         never lose the day entirely. The day's facts stay
+         clean: buildCloseFacts already skips cancelled
+         records, and the loads counter below skips them too. */
+      if (d && CP.recordDate(d) === dateStr) {
         dispatches.push(CP.sharedDispatch(d, travelBonus));
       }
     });
@@ -480,6 +487,7 @@
     try { if (window.ConnectLive) idn = ConnectLive.identity(); } catch (e) {}
     var loads = 0, ticketsClosed = 0;
     dispatches.forEach(function (x) {
+      if (x.status === 'cancelled') return;   /* v228: no phantom loads */
       loads += x.loads || 0;
       if (x.status === 'completed') ticketsClosed += x.tickets.length;
     });
@@ -553,6 +561,158 @@
       }
       return out;
     }).catch(function () { return doc; });
+  };
+
+  /* v228 (UMAR-CONNECT-VIABILITY S8, owner Oct 23, 2026 06:57
+     MDT: "make sure a million times that umars connection is
+     viable and he sees everything that is going on daily"): the
+     v226 preserve discipline extends to the OTHER shared docs.
+     The day doc was fixed in v226, but the records doc, the
+     per-peer billing docs and the limited peers' manifests docs
+     could still be rewritten BACKWARD by a rolled-back store —
+     and the clearing passes then mistook "the rolled-back build
+     matched nothing" for "the peer is gone" and EMPTIED live
+     docs (Umar's invoice doc, Maria's manifests doc). The rules
+     here mirror _preserveClose: published facts are preserved
+     by UNION (fresh values win per record); a record may leave
+     the published doc only when the driver's CURRENT books
+     still hold it and deliberately exclude it (an invoice
+     settled outside, retargeted to another bill-to); and the
+     clearing passes fire only when the peer is no longer
+     ENTITLED (removed, or their kind/modules no longer cover
+     the doc) — never merely because a build came back empty.
+     ACCESS IS NEVER PRESERVED: viewers always come from the
+     fresh doc, so a revoke still prunes exactly as before.
+     Reproduced RED in tools/umar-connect-viability-test.js
+     (S8/S8b/S10) before this fix. */
+  CP._preserveRecords = function (fresh, existing) {
+    if (!existing || typeof existing !== 'object') return fresh;
+    var out = clone(fresh) || {};
+    function unionBy(freshArr, oldArr, keyFn, cap, cmp) {
+      var map = {}, order = [];
+      (oldArr || []).forEach(function (x) {
+        if (!x) return;
+        var k = keyFn(x);
+        if (!(k in map)) order.push(k);
+        map[k] = x;
+      });
+      (freshArr || []).forEach(function (x) {
+        if (!x) return;
+        var k = keyFn(x);
+        if (!(k in map)) order.push(k);
+        map[k] = x;   /* the fresh build wins per record */
+      });
+      var arr = order.map(function (k) { return map[k]; });
+      if (cmp) arr.sort(cmp);
+      return cap ? arr.slice(0, cap) : arr;
+    }
+    out.fuel = unionBy(out.fuel, existing.fuel,
+      function (f) { return CP.fillKey(f); }, 600, byDateDesc);
+    out.expenses = unionBy(out.expenses, existing.expenses,
+      function (e) { return [e && e.date, e && e.what, e && e.cost].join('|'); },
+      300, byDateDesc);
+    out.pti = unionBy(out.pti, existing.pti,
+      function (p) { return [p && p.date, p && p.filedAt, p && p.kind].join('|'); },
+      14, function (a, b) { return (parseFloat(b && b.filedAt) || 0) - (parseFloat(a && a.filedAt) || 0); });
+    /* maintenance: the block follows the HIGHER odometer
+       reading; whichever block loses still fills the fields
+       the winner lacks, and services union by their facts */
+    var em = existing.maintenance, om = out.maintenance;
+    if (em && !om) {
+      out.maintenance = em;
+    } else if (em && om) {
+      var win = (parseFloat(em.odometer) || 0) > (parseFloat(om.odometer) || 0) ? em : om;
+      var other = win === em ? om : em;
+      var merged = {};
+      Object.keys(other || {}).forEach(function (k) { merged[k] = other[k]; });
+      Object.keys(win || {}).forEach(function (k) { merged[k] = win[k]; });
+      merged.services = unionBy(win.services, other.services,
+        function (s) { return [s && s.date, s && s.type, s && s.odo, s && s.cost].join('|'); },
+        40, function (a, b) { return String((b && b.date) || '').localeCompare(String((a && a.date) || '')); });
+      out.maintenance = merged;
+    }
+    if (!out.driverWage && existing.driverWage) out.driverWage = existing.driverWage;
+    return out;
+  };
+
+  /* A peer's billing doc under the same discipline: invoices
+     union by id — an invoice leaves only when the current
+     books still hold its id (settled outside / retargeted:
+     a deliberate exclusion); an id ABSENT from the books is
+     the rollback signature and the published copy is kept.
+     Manifest day lines union by date inside the period. */
+  CP._preserveBilling = function (fresh, existing, localInvoices) {
+    if (!existing || typeof existing !== 'object') return fresh;
+    var out = clone(fresh) || { invoices: [], manifests: [] };
+    var localById = {};
+    (localInvoices || []).forEach(function (inv) {
+      if (inv && inv.id != null) localById[String(inv.id)] = true;
+    });
+    var byId = {}, order = [];
+    (existing.invoices || []).forEach(function (inv) {
+      if (!inv || inv.id == null) return;
+      var k = String(inv.id);
+      if (!(k in byId)) order.push(k);
+      byId[k] = inv;
+    });
+    (out.invoices || []).forEach(function (inv) {
+      if (!inv || inv.id == null) return;
+      var k = String(inv.id);
+      if (!(k in byId)) order.push(k);
+      byId[k] = inv;
+    });
+    var freshIds = {};
+    (out.invoices || []).forEach(function (inv) {
+      if (inv && inv.id != null) freshIds[String(inv.id)] = true;
+    });
+    out.invoices = order.map(function (k) { return byId[k]; }).filter(function (inv) {
+      if (!inv || inv.id == null) return false;
+      var k = String(inv.id);
+      if (freshIds[k]) return true;   /* in the fresh build for this peer */
+      /* published before, absent from the fresh build: drop it
+         ONLY when the current books still hold the id (settled
+         outside / retargeted — a deliberate exclusion). An id
+         the books no longer hold at all is the rollback
+         signature — the published copy stays. */
+      return !localById[k];
+    });
+    var man = (out.manifests && out.manifests[0]) || null;
+    var eman = (existing.manifests && existing.manifests[0]) || null;
+    if (!man && eman) {
+      out.manifests = existing.manifests;
+    } else if (man && eman) {
+      var seen = {};
+      (man.days || []).forEach(function (d) { if (d) seen[String(d.date)] = true; });
+      var days = (man.days || []).slice();
+      (eman.days || []).forEach(function (d) {
+        if (d && !seen[String(d.date)]) { seen[String(d.date)] = true; days.push(d); }
+      });
+      days.sort(function (a, b) { return String((a && a.date) || '').localeCompare(String((b && b.date) || '')); });
+      man.days = days;
+    }
+    return out;
+  };
+
+  /* A limited peer's manifests doc: the same day-line union —
+     a dispatched day once published is never unpublished by a
+     weaker rebuild. */
+  CP._preserveManifests = function (fresh, existing) {
+    if (!existing || typeof existing !== 'object') return fresh;
+    var out = clone(fresh) || { manifests: [] };
+    var man = (out.manifests && out.manifests[0]) || null;
+    var eman = (existing.manifests && existing.manifests[0]) || null;
+    if (!man && eman) { out.manifests = existing.manifests; return out; }
+    if (man && eman) {
+      var seen = {};
+      (man.days || []).forEach(function (d) { if (d) seen[String(d.date)] = true; });
+      var days = (man.days || []).slice();
+      (eman.days || []).forEach(function (d) {
+        if (d && !seen[String(d.date)]) { seen[String(d.date)] = true; days.push(d); }
+      });
+      days.sort(function (a, b) { return String((a && a.date) || '').localeCompare(String((b && b.date) || '')); });
+      man.days = days;
+    }
+    return out;
   };
 
   /* Publish one of MY days to my connected peers. Content-guarded
@@ -1481,8 +1641,17 @@
          last peer goes away it is written ONCE more with an empty
          viewers list (access actually revoked), then stays silent */
       if (doc.viewers.length || CP._recCache[me]) {
-        var j = guardedSet('sharedrecords', me, doc);
-        if (j) jobs.push(j);
+        /* v228: read-merge-write — a rolled-back store must
+           not shrink what my peers already see (S8) */
+        var j = f.db.collection('sharedrecords').doc(me).get()
+          .then(function (snap) {
+            var ex = null;
+            try { ex = snap && snap.exists ? snap.data() : null; } catch (e) { ex = null; }
+            if (ex) doc = CP._preserveRecords(doc, ex);
+            return guardedSet('sharedrecords', me, doc);
+          })
+          .catch(function () { return guardedSet('sharedrecords', me, doc); });
+        jobs.push(j);
       }
       var matched = {};
       CP.connectedPeers().forEach(function (peer) {
@@ -1498,8 +1667,19 @@
         var bill = CP.buildBilling(peer.uid);
         if (!bill) return;
         matched[peer.uid] = true;
-        var j2 = guardedSet('sharedbilling', me + '_' + peer.uid, bill);
-        if (j2) jobs.push(j2);
+        /* v228: read-merge-write (S8) — published invoices and
+           manifest lines survive a rolled-back rebuild */
+        var stB = store();
+        var localInvs = stB ? stB.get('inv_list', []) : [];
+        var j2 = f.db.collection('sharedbilling').doc(me + '_' + peer.uid).get()
+          .then(function (snap) {
+            var ex = null;
+            try { ex = snap && snap.exists ? snap.data() : null; } catch (e) { ex = null; }
+            if (ex) bill = CP._preserveBilling(bill, ex, localInvs);
+            return guardedSet('sharedbilling', me + '_' + peer.uid, bill);
+          })
+          .catch(function () { return guardedSet('sharedbilling', me + '_' + peer.uid, bill); });
+        jobs.push(j2);
       });
       /* v148: the limited peers' manifests docs.
          v176 (L1): written only when Manifest was ticked. */
@@ -1510,15 +1690,32 @@
         var mdoc = CP.buildManifestsFor(peer.uid);
         if (!mdoc) return;
         mfMatched[peer.uid] = true;
-        var j3 = CP._setManifestsDoc(peer.uid, mdoc);
-        if (j3) jobs.push(j3);
+        /* v228: read-merge-write (S8b) — her dispatched days
+           survive a rolled-back rebuild */
+        var j3 = f.db.collection('sharedmanifests').doc(me + '_' + peer.uid).get()
+          .then(function (snap) {
+            var ex = null;
+            try { ex = snap && snap.exists ? snap.data() : null; } catch (e) { ex = null; }
+            if (ex) mdoc = CP._preserveManifests(mdoc, ex);
+            return CP._setManifestsDoc(peer.uid, mdoc);
+          })
+          .catch(function () { return CP._setManifestsDoc(peer.uid, mdoc); });
+        jobs.push(j3);
       });
       /* peers who had a billing doc and no longer match: empty it */
       var known = {};
       Object.keys(CP._billedKnown || {}).forEach(function (u) { known[u] = true; });
       Object.keys(CP._billedSession || {}).forEach(function (u) { known[u] = true; });
+      /* v228: who is connected RIGHT NOW — the clearing passes
+         below may only fire on a peer who is gone or no longer
+         entitled, never on a live peer whose build came back
+         empty (the S8 misfire) */
+      var peerNow = {};
+      CP.connectedPeers().forEach(function (p) { if (p && p.uid) peerNow[p.uid] = true; });
       Object.keys(known).forEach(function (uid) {
         if (matched[uid] || CP._recCache[me + '_' + uid] === 'CLEARED') return;
+        if (peerNow[uid] && (CP.kindFor(uid) !== 'limited' ||
+            CP.allowsModule(uid, 'invoices') || CP.allowsModule(uid, 'pnl'))) return;
         CP._recCache[me + '_' + uid] = 'CLEARED';
         var empty = {
           driver: me, viewer: uid,
@@ -1539,6 +1736,9 @@
       Object.keys(mfKnown).forEach(function (uid) {
         var mfKey = 'sharedmanifests:' + me + '_' + uid;
         if (mfMatched[uid] || CP._recCache[mfKey] === 'CLEARED') return;
+        /* v228: a still-entitled limited peer keeps her doc —
+           an empty build is not a revocation (S8b) */
+        if (peerNow[uid] && CP.kindFor(uid) === 'limited' && CP.allowsModule(uid, 'manifest')) return;
         CP._recCache[mfKey] = 'CLEARED';
         var mfEmpty = {
           driver: me, viewer: uid,
@@ -1550,10 +1750,16 @@
           .catch(function () { CP._recCache[mfKey] = ''; return false; }));
       });
       CP._mfSession = mfMatched;
-      var wroteAny = jobs.length > 0;
-      return Promise.all(jobs).then(function () {
-        return doc.viewers.length ? CP.publishPhotos(doc) : CP.clearPhotoViewers();
-      }).then(function (ph) { return wroteAny || !!ph; });
+      return Promise.all(jobs).then(function (rs) {
+        /* v228: "wrote" means a write actually landed — the
+           read-merge chains resolve with their guarded write's
+           own result (null/false when the facts were unchanged),
+           so a republish of unchanged facts still reports no
+           write, exactly as the pre-merge discipline did */
+        var wroteAny = (rs || []).some(function (r) { return !!r; });
+        return (doc.viewers.length ? CP.publishPhotos(doc) : CP.clearPhotoViewers())
+          .then(function (ph) { return wroteAny || !!ph; });
+      });
     });
   };
 
@@ -1593,6 +1799,13 @@
     var photoFills = (st.get('fuel_fills', []) || []).filter(function (x) { return x && x.photo; });
     var currentKeys = {};
     photoFills.forEach(function (fl) { currentKeys[CP.fillKey(fl)] = true; });
+    /* v228: fills preserved into the records doc by the S8
+       merge keep their renditions too — the prune follows the
+       PUBLISHED records, not only the (possibly rolled-back)
+       local store, or a preserved fill loses its photo */
+    (recDoc.fuel || []).forEach(function (fl) {
+      if (fl && fl.photoKey) currentKeys[fl.photoKey] = true;
+    });
     var viewersKey = recDoc.viewers.slice().sort().join(',');
     var jobs = photoFills.slice().sort(byDateDesc).slice(0, 120).map(function (fl) {
       var key = CP.fillKey(fl);

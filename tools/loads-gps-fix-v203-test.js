@@ -222,7 +222,7 @@ console.log('— no active dispatch: nothing watches, nothing counted —');
 /* statics + pins */
 ok('the engine exports the pattern learner', src.includes('createPatternLearner: createPatternLearner'));
 ok('configure routes anchorless dispatches to pattern mode', src.includes("learnMode = 'pattern'"));
-eq('webVersion', ver.webVersion, 226);
+eq('webVersion', ver.webVersion, 228);
 ok('index pin agrees', idxSrc.includes('js/geoloads.js?v=' + ver.webVersion));
 
 console.log('loads-gps-fix-v203: ' + pass + ' passed, ' + fail + ' failed');
