@@ -712,6 +712,14 @@
        web side composes the same facts the in-app bubble shows
        and pushes them (change-gated in js/app.js); the native
        face renders them over whatever app is beneath the float. */
+    /* v231 (PIP-DOUBLE-FACE): does this shell DRAW its own PiP
+       face? True exactly when the plugin carries bubbleState
+       (native v40+). The web face stands down in system PiP
+       when the shell draws — one float, never two stacked. */
+    shellDrawsBubble: function () {
+      var p = plugin();
+      return !!(p && typeof p.bubbleState === 'function');
+    },
     pushBubbleState: function (state) {
       var p = plugin();
       if (p && typeof p.bubbleState === 'function' && state) {

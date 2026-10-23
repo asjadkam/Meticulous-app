@@ -461,37 +461,63 @@ label.chk input{width:18px;height:18px;}
    bar, the turn inset, the ETA bar and every control go away;
    the position marker becomes the pointed arrow (JS swap); the
    next direction rides in small words at the bottom. */
-/* v220 (APP-BUBBLE-TRACKER): the PiP bubble face — the whole
-   app steps aside and ONLY the tracker shows: the timer big,
-   the load count under it, play/stop under that. */
-#bubbleFace{position:fixed;inset:0;z-index:95;background:#0C1424;color:#fff;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;}
+/* v231 (PIP-FACE-DESIGN-V41): the PiP bubble face is the
+   owner's BUBBLE CLUSTER, not a card and not a rectangle: a BIG
+   bubble top-left (the tracker's own toggle — GREEN while
+   working, YELLOW while paused), a SMALLER RED stop bubble at
+   the big bubble's right-bottom, and one WIDE PILL BAR under
+   both carrying the running timer and the load tracker (count
+   with its big −1 RED / +1 GREEN correction pair). The spaces
+   BETWEEN the shapes are SEE-THROUGH (owner, Oct 23 10:54:
+   "all the space between them are see through! Not on a
+   card."): the container and the wrappers paint NOTHING and
+   let taps fall through the gaps; only the bubbles and the bar
+   are solid. Same cluster in both postures: full (system PiP
+   on shells without their own drawn face) and docked (Back on
+   the map page, floated over the dashboard). */
+#bubbleFace{position:fixed;inset:0;z-index:95;color:#fff;background:transparent;
+  pointer-events:none;padding:14px;}
 #bubbleFace.hidden{display:none;}
-/* v227 (BUBBLE-FACE-V39-FAIL): the DOCKED posture — the tracker
-   face as a floating card over the MAIN DASHBOARD (Back on the
-   map page), not a full-screen takeover and never a map. Same
-   face, compact: smaller clock, the big +/- and the colour
-   buttons stay thumb-sized. */
+.bub-cluster{pointer-events:none;width:100%;}
+.bub-bubbles{position:relative;height:170px;pointer-events:none;}
+.bub-main{position:absolute;left:0;top:0;width:148px;height:148px;border-radius:50%;
+  border:none;font-size:56px;color:#fff;cursor:pointer;pointer-events:auto;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 10px 28px rgba(0,0,0,.45);}
+.bub-main.bub-go{background:var(--green);}
+.bub-main.bub-pause{background:var(--yellow);color:#1A1A1A;}
+.bub-stopb{position:absolute;left:112px;top:84px;width:88px;height:88px;border-radius:50%;
+  border:none;background:var(--red);font-size:32px;color:#fff;cursor:pointer;pointer-events:auto;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);}
+.bub-bar{margin-top:10px;background:#0C1424;border-radius:999px;pointer-events:auto;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px 18px;
+  display:flex;align-items:center;flex-wrap:wrap;gap:2px 14px;}
+.bub-clock{font-size:32px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;color:#fff;}
+.bub-loadbox{display:flex;align-items:center;gap:10px;margin-left:auto;}
+.bub-loads{font-size:18px;font-weight:700;color:#fff;white-space:nowrap;}
+.bub-cnt{width:48px;height:48px;border-radius:50%;border:none;color:#fff;
+  font-size:19px;font-weight:800;line-height:1;cursor:pointer;flex:none;
+  display:flex;align-items:center;justify-content:center;}
+#bubPlus{background:var(--green);}
+#bubMinus{background:var(--red);}
+.bub-line{flex:1 0 100%;font-size:12.5px;font-weight:600;color:#C7D0E0;letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bub-line:empty{display:none;}
+/* v231: the DOCKED posture — the same cluster, compact, floated
+   over the MAIN DASHBOARD (Back on the map page). Still no card:
+   the container paints nothing; the cluster hugs the left, the
+   bar spans the float's width. */
 #bubbleFace.bub-dock{inset:auto;left:12px;right:12px;
-  bottom:calc(86px + env(safe-area-inset-bottom));z-index:2901;
-  border-radius:18px;padding:12px 14px;gap:6px;
-  box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);}
-#bubbleFace.bub-dock .bub-clock{font-size:34px;}
-#bubbleFace.bub-dock .bub-loads{font-size:17px;}
-#bubbleFace.bub-dock .bub-btn.bub-count{width:48px;height:48px;font-size:24px;}
-#bubbleFace.bub-dock .bub-btn{width:60px;height:60px;font-size:24px;}
-#bubbleFace.bub-dock .bub-btns{margin-top:2px;gap:16px;}
-#bubbleFace.bub-dock .bub-status{font-size:13px;text-align:center;}
-.bub-status{font-size:15px;font-weight:700;color:#9FB3D9;letter-spacing:.04em;}
-.bub-clock{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
-.bub-loads{font-size:20px;font-weight:700;}
-.bub-countrow{display:flex;align-items:center;gap:18px;}
-.bub-btn.bub-count{width:60px;height:60px;font-size:28px;background:#22314F;color:#fff;}
-.bub-btns{display:flex;gap:22px;margin-top:8px;}
-.bub-btn{width:84px;height:84px;border-radius:50%;border:none;font-size:30px;color:#fff;cursor:pointer;}
-.bub-btn.bub-go{background:var(--green);}
-.bub-btn.bub-pause{background:var(--amber);color:#1A1A1A;}
-.bub-btn.bub-stop{background:var(--red);}
+  bottom:calc(86px + env(safe-area-inset-bottom));z-index:2901;padding:0;}
+#bubbleFace.bub-dock .bub-bubbles{height:106px;}
+#bubbleFace.bub-dock .bub-main{width:94px;height:94px;font-size:36px;}
+#bubbleFace.bub-dock .bub-stopb{left:76px;top:50px;width:56px;height:56px;font-size:21px;}
+#bubbleFace.bub-dock .bub-bar{margin-top:8px;padding:8px 14px;}
+#bubbleFace.bub-dock .bub-clock{font-size:27px;}
+#bubbleFace.bub-dock .bub-loads{font-size:16px;}
+#bubbleFace.bub-dock .bub-cnt{width:44px;height:44px;font-size:17px;}
+#bubbleFace.bub-dock .bub-line{font-size:12px;}
 .nv-drive-pip-line{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:7;
   background:rgba(10,18,32,.85);color:#fff;font-size:13px;font-weight:600;line-height:1.25;
   padding:6px 12px;border-radius:999px;max-width:94%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}

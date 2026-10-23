@@ -273,7 +273,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 40; // <- bump on every native (APK) release
+      var APK_VERSION = 41; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -1518,16 +1518,31 @@
     refreshBubbleFace();
   };
   function bubbleEl(id) { return document.getElementById(id); }
+  /* v231 (PIP-DOUBLE-FACE): on a shell that draws its own PiP
+     face (v227+), the web face STANDS DOWN in system PiP — the
+     owner's screenshot had BOTH faces floating at once, the
+     in-WebView face stacked under the shell's. One float only:
+     the shell's bubble cluster there; this face still owns the
+     Back-dock over the dashboard, and stays the PiP face on
+     shells too old to draw their own. The fact mirror
+     (pushBubbleFace) keeps feeding the shell face every tick
+     regardless — standing down never starves it. */
+  function shellDrawsBubbleFace() {
+    try {
+      return !!(window.ShiftTrack && ShiftTrack.shellDrawsBubble && ShiftTrack.shellDrawsBubble());
+    } catch (e) { return false; }
+  }
   function refreshBubbleFace() {
-    var pipShow = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving);
+    var pipShow = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving) && !shellDrawsBubbleFace();
     var show = (pipShow || !!App._docked)
       && sessionActive() && !App._authLocked();
     var bf = bubbleEl('bubbleFace');
     if (bf) {
       bf.classList.toggle('hidden', !show);
-      /* v227: docked wears the floating-card posture (compact,
-         over the dashboard); the PiP posture stays the plain
-         full-bleed face. */
+      /* v231: docked wears the compact posture (over the
+         dashboard); the PiP posture is the same bubble
+         cluster at full size. Neither is a card — the
+         container paints nothing in both. */
       bf.classList.toggle('bub-dock', show && !!App._docked);
     }
     App._bubble = show;
@@ -1576,8 +1591,12 @@
       var running = st === 'running';
       var want = running ? '⏸' : '▶';
       if (p.textContent !== want) p.textContent = want;
-      p.classList.toggle('bub-pause', running);
-      p.classList.toggle('bub-go', !running);
+      /* v231: the colour law on the big bubble — GREEN while
+         working (and when ready), YELLOW while paused. The
+         pre-v231 paint had them swapped: green showed only
+         when the session was NOT running. */
+      p.classList.toggle('bub-pause', st === 'paused');
+      p.classList.toggle('bub-go', st !== 'paused');
     }
   }
   /* v220 (WIDGET-CONTROLS): a widget button tap arrives as one
