@@ -328,8 +328,8 @@ const HOME_ROW = [{ lat: '51.15710', lon: '-113.93862', display_name: '1243 Corn
   console.log('— pins —');
   ok('the auto-pick reads pendGoNow inside the search success', navSrc.indexOf('NAV-2STEP') >= 0 && navSrc.indexOf('navLearn.learnCoords') >= 0);
   ok('the no-results branch spends the intent', navSrc.indexOf("S.pendName = '';") >= 0);
-  eq('webVersion is 209', ver.webVersion, 228);
-  ok('index.html pins the v209 build', idxSrc.indexOf('?v=228') >= 0 && idxSrc.indexOf('?v=' + '208') < 0);
+  eq('webVersion is 209', ver.webVersion, 229);
+  ok('index.html pins the v209 build', idxSrc.indexOf('?v=229') >= 0 && idxSrc.indexOf('?v=' + '208') < 0);
 
   console.log('\nnav-2step-v209 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

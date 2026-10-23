@@ -295,8 +295,8 @@ function upcomingRegion(h) {
     dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) < dspTodayStr') !== -1);
   check('the Today card takes exactly today\'s records (v218: one shared date read feeds both lists)',
     dspSrc.indexOf('if (rd === dspTodayStr) todayItems.push') !== -1);
-  eq('ships as webVersion 198', ver.webVersion, 228);
-  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=228') !== -1);
+  eq('ships as webVersion 198', ver.webVersion, 229);
+  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=229') !== -1);
 
   console.log('\ndsp-today-top v197: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

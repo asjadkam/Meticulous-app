@@ -3014,6 +3014,46 @@
     } catch (e2) {}
   }
 
+  /* v229 (AUTOSTART-FIRED-ON-UNSELECTED-DAY, owner, Fri Oct 23,
+     2026): the start decision must be taken on the SETTLED store.
+     Boot and resume run checkAutoStart on this device's local copy
+     BEFORE the boot's first cloud pull lands — and the local copy
+     can lag the account's truth: his Friday edits (today's dispatch
+     deleted, Friday unchecked on the card) were saved to the
+     account, while this phone's local store still held Friday
+     selected with the dispatch in it. The boot check started a
+     session from the stale read — anchored 8:00, exactly as
+     designed — and seconds later the pull settled the store to the
+     state his Auto-start card showed ("Today: no auto-start
+     scheduled", Fri OFF) with nothing able to un-start the session.
+     So while a signed-in pull for this boot is still outstanding,
+     the START — and the native arm decision, a starter in its own
+     right — waits for it. The waiter settles on pull success, pull
+     failure, or its own timeout: offline, the local copy is the
+     only truth the phone has and the start proceeds on it,
+     backdated as always. Local mode (no CloudSync in the world)
+     never waits. One latch per boot: when the pull settles, the
+     check and the arm re-run once on the settled store — the same
+     store the card reads, so the card and the engine can never
+     again disagree about whether today was scheduled. */
+  var _asPullLatch = 'open'; // open -> waiting -> done
+  function autostartPullSettled() {
+    if (typeof window === 'undefined' || !window.CloudSync ||
+        typeof window.CloudSync.whenFirstPullDone !== 'function') return true;
+    return _asPullLatch === 'done';
+  }
+  function autostartAwaitPull() {
+    if (_asPullLatch !== 'open') return;
+    _asPullLatch = 'waiting';
+    try {
+      window.CloudSync.whenFirstPullDone(30000).then(function () {
+        _asPullLatch = 'done';
+        try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+        try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+      });
+    } catch (e) { _asPullLatch = 'done'; }
+  }
+
   /* ------------- v53: dispatch-driven auto-start -------------
      The owner (Oct 14, 2026): "whatever the start time says on the Dispatch…
      It should be automatically set as an auto starter" — refined the
@@ -3151,6 +3191,11 @@
          only ARMS: yardstart flips the dispatch ACTIVE; it stamps
          nothing). A late start announces itself by notification,
          exactly like an on-time one. */
+      /* v229: never start on an unsettled store (see
+         autostartAwaitPull above). The fired flag stays unset
+         here, so the post-pull re-check judges the day fresh on
+         the settled state. */
+      if (!autostartPullSettled()) { autostartAwaitPull(); return 'deferred-pull'; }
       var label = autoStartLabel(plan.time);
       markAutoStartFired(today);
       var anchorMs = autostartTodayMs(today, plan.time);
@@ -3260,6 +3305,11 @@
   var ARM_LEAD_MS = 60 * 60 * 1000; // = ADOPT_FIRST_SLACK_MS in js/miles.js
   App.armNativeDay = function () {
     try {
+      /* v229: the arm is a starter too — it is placed (or stood
+         down) on the settled store, never on the boot's first
+         read of a local copy the pending pull may be about to
+         replace. The gate's settle re-runs this once. */
+      if (!autostartPullSettled()) { autostartAwaitPull(); return; }
       var ST = window.ShiftTrack;
       if (!ST || typeof ST.armDay !== 'function') return;
       if (App.userRole && App.userRole() === 'office') { ST.disarmDay(); return; }
