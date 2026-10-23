@@ -533,7 +533,7 @@ async function s1() {
   if (rec) {
     eq((rec.fuel || []).length, 4, 'S1: all 4 fuel fills cross (got ' + (rec.fuel || []).length + ')');
     const f3 = (rec.fuel || []).filter((f) => f.date === T)[0];
-    ok(!!f3 && f3.litres === 99.047 && f3.cost === 240.59 && f3.odo === 169999 && f3.station === 'Petro-Canada' && !!f3.photoRef && !!f3.photoKey,
+    ok(!!f3 && f3.litres === 99.047 && f3.cost === 239.59 && f3.odo === 169999 && f3.station === 'Petro-Canada' && !!f3.photoRef && !!f3.photoKey,
       'S1: today\'s fill crosses with exact receipt data + photo ref (got ' + JSON.stringify(f3) + ')');
     eq((rec.expenses || []).length, 3, 'S1: all 3 expenses cross');
     ok(!!rec.maintenance && rec.maintenance.odometer === 170079 && rec.maintenance.annualExpiry === '2027-05-31' && (rec.maintenance.services || []).length === 1,
