@@ -500,15 +500,77 @@
 
   CP.dayDocId = function (driverUid, dateStr) { return driverUid + '_' + dateStr; };
 
+  /* v226 (UMAR-CONNECT-BLANK, owner Oct 22, 2026 21:05 MDT): a
+     publish must never move a partner's record BACKWARD. Tonight
+     the driver closed his day in the app — dispatch completed,
+     haul card #22864, foreman 10.0h — yet his Full-access partner
+     saw nothing: the evening's cold starts (two installs) pulled
+     cloud copies that predated the close over the just-closed
+     local records, and every later publish from that rolled-back
+     store cheerfully rewrote the shared day from the weaker
+     state — session-only hours in place of the foreman close, the
+     completed dispatch back to active — the same stamp-war
+     fingerprint as the close being re-posted from raw tracker
+     elapsed on his own books. The discipline here: close facts
+     and completed dispatches, once published, are PRESERVED.
+     Before a write, the existing day doc is read; when it holds
+     a real close (foreman hours from the dispatch/entry record —
+     not a session-derived stand-in) and the freshly built doc
+     does not, the published close rides the new doc; a completed
+     dispatch the new build lost or un-completed is restored
+     whole, matched by ticket/id. A fresh real close (a corrected
+     card, a re-completion) is itself strong and wins as before.
+     Reproduced RED in tools/umar-connect-blank-test.js (V5/V7)
+     before this fix; the exact sequences are the ship gate. */
+  function strongClose(c) {
+    return !!(c && (parseFloat(c.foremanHours) > 0) && c.source !== 'session');
+  }
+  CP._preserveClose = function (f, id, doc) {
+    return f.db.collection('shareddays').doc(id).get().then(function (snap) {
+      if (!snap || !snap.exists) return doc;
+      var old = snap.data() || {};
+      var out = clone(doc);
+      if (strongClose(old.close) && !strongClose(out.close)) out.close = old.close;
+      var olds = (old.dispatches || []).filter(function (d) { return d && d.status === 'completed'; });
+      var merged = false;
+      olds.forEach(function (od) {
+        var hit = -1;
+        (out.dispatches || []).forEach(function (nd, i) {
+          if (hit < 0 && nd && ((od.ticketNo && nd.ticketNo === od.ticketNo) || (od.id && nd.id === od.id))) hit = i;
+        });
+        if (hit >= 0) {
+          if (out.dispatches[hit].status !== 'completed') { out.dispatches[hit] = od; merged = true; }
+        } else { out.dispatches.push(od); merged = true; }
+      });
+      if (merged || (old.close && out.close === old.close)) {
+        var loads = 0, ticketsClosed = 0;
+        out.dispatches.forEach(function (x) {
+          loads += x.loads || 0;
+          if (x.status === 'completed') ticketsClosed += (x.tickets || []).length;
+        });
+        out.loads = r2(loads);
+        out.ticketsClosed = ticketsClosed;
+      }
+      return out;
+    }).catch(function () { return doc; });
+  };
+
   /* Publish one of MY days to my connected peers. Content-guarded
      per session: the same facts are never written twice in a row.
      Resolves true when a write happened. */
   CP.publishDay = function (dateStr) {
     var f = fb();
     if (!f) return Promise.resolve(false);
-    var doc = CP.buildDay(dateStr);
-    if (!doc) return Promise.resolve(false);
+    var built = CP.buildDay(dateStr);
+    if (!built) return Promise.resolve(false);
     var id = CP.dayDocId(f.user.uid, dateStr);
+    if (!built.viewers.length) return CP._publishDayDoc(f, id, built);
+    return CP._preserveClose(f, id, built).then(function (doc) {
+      return CP._publishDayDoc(f, id, doc);
+    });
+  };
+
+  CP._publishDayDoc = function (f, id, doc) {
     /* the write guard compares FACTS, not the stamp: updatedAt
        changes on every publish by design, so it is excluded from
        the key — unchanged facts are never written twice in a row */
