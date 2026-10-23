@@ -263,11 +263,16 @@ const CP = () => sb.ConnectPipe;
 const dirDoc = (uid) => db._col('directory').get(uid);
 const reqDoc = (id) => db._col('requests').get(id);
 
-/* options of a rendered send card, in order: [value, label] */
+/* offered drivers of a rendered send card, in order: [value, label].
+   v230 (DSP-MULTI-SEND): the picker is a CHECK-OFF LIST now, not a
+   dropdown — this probe reads the tick boxes; the LAW it verifies
+   (exactly the driving peers are offered, in connection order) is
+   the v155 law unchanged. Full multi-send behavior lives in
+   tools/dispatch-multi-send-test.js. */
 function optionsOf(html) {
   const out = [];
-  const re = /<option value="([^"]*)">([^<]*)<\/option>/g;
-  let m; while ((m = re.exec(html)) !== null) out.push([m[1], m[2]]);
+  const re = /<input type="checkbox" class="dp_send_chk" value="([^"]*)"[^>]*>\s*([^<]*)<\/label>/g;
+  let m; while ((m = re.exec(html)) !== null) out.push([m[1], m[2].trim()]);
   return out;
 }
 /* a stub body for wirePipe: querySelector(All) over a selector map */
@@ -430,19 +435,22 @@ function stubBody(map) {
   console.log('(f) statics + pins');
   check('f: the picker reads the peer face in dispatch.js',
     dspSrc.indexOf("c.face === 'driver'") !== -1 && dspSrc.indexOf("c.face === 'both'") !== -1);
-  check('f: the pipe send validator is untouched (a send is not a picker)',
-    dspSrc.indexOf('Pick the driver, the date, and the job site first') !== -1 &&
-    dspSrc.indexOf('ConnectPipe.sendDispatch') !== -1);
+  /* v230 SUPERSEDES the validator wording + send call (DSP-MULTI-
+     SEND): the pick is a tick list, so the line says tick, and the
+     send is the fan-out over the untouched single send. */
+  check('f: the pipe send validator names the tick (a send is not a picker)',
+    dspSrc.indexOf('Tick at least one driver, pick the date, and add the job site first') !== -1 &&
+    dspSrc.indexOf('ConnectPipe.sendDispatchToMany') !== -1);
   check('f: ConnectPipe.connectedPeers stays the FULL peer set (publishing/viewers untouched)',
     cpSrc.indexOf("c.status === 'connected'") !== -1);
   /* v155 deliberate pin move: ships as webVersion 155.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('f: version ships as 199', ver.webVersion, 229);
+  eq('f: version ships as 199', ver.webVersion, 230);
   check('f: index loads the touched files at the 199 pin',
-    idxSrc.indexOf('js/connectlive.js?v=229') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=229') !== -1 &&
-    idxSrc.indexOf('modules/connect.js?v=229') !== -1);
+    idxSrc.indexOf('js/connectlive.js?v=230') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=230') !== -1 &&
+    idxSrc.indexOf('modules/connect.js?v=230') !== -1);
 
   console.log('\ndispatch-picker-v155 test: ' + pass + '/' + (pass + fail) + ' passed');
   if (fail) process.exitCode = 1;

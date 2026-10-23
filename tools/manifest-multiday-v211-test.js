@@ -164,8 +164,8 @@ function makeWorld(extra) {
     manSrc.indexOf('function dayBodyHtml(dd, cc, tt)') >= 0 && manSrc.indexOf('dayBodyHtml(rd, rc, t)') >= 0 && manSrc.indexOf('h += dayBodyHtml(d, c, t);') >= 0);
   ok('one reducer: sumCollected + rangeTotals shared',
     manSrc.indexOf('function sumCollected(list)') >= 0 && manSrc.indexOf('rangeTotals(rangeDays)') >= 0 && manSrc.indexOf('sumCollected(rcs)') >= 0);
-  eq('webVersion is 211', ver.webVersion, 229);
-  ok('index.html pins the v211 build', idxSrc.indexOf('?v=229') >= 0 && idxSrc.indexOf('?v=' + '210') < 0);
+  eq('webVersion is 211', ver.webVersion, 230);
+  ok('index.html pins the v211 build', idxSrc.indexOf('?v=230') >= 0 && idxSrc.indexOf('?v=' + '210') < 0);
 
   console.log('\nmanifest-multiday-v211 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

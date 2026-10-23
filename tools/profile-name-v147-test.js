@@ -692,7 +692,9 @@ function stepIndex(ob, key) {
 
     /* the dispatch picker offers him by his person name */
     const send = sb.sendHtml();
-    has('f: the picker label is the person', send, '>Mike Reyes</option>');
+    /* v230 (DSP-MULTI-SEND): the picker is a check-off list now —
+       the label beside the tick box is still the PERSON. */
+    has('f: the picker label is the person', send, '> Mike Reyes</label>');
 
     /* P&L groups and labels those same shared days by
        day.driverName (the doc pinned above is its input) */
@@ -801,13 +803,13 @@ function stepIndex(ob, key) {
   /* ============ (i) ship pins ============ */
   console.log('(i) ship pins');
   /* v147 ship pins: 155 -> 156. v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. v162 pin move: 161 -> 162, same convention. */
-  eq('i: version ships as 199', ver.webVersion, 229);
+  eq('i: version ships as 199', ver.webVersion, 230);
   check('i: index loads every touched file at the 199 pin',
-    idxSrc.indexOf('js/app.js?v=229') !== -1 &&
-    idxSrc.indexOf('js/connectlive.js?v=229') !== -1 &&
-    idxSrc.indexOf('modules/connect.js?v=229') !== -1 &&
-    idxSrc.indexOf('modules/preferences.js?v=229') !== -1 &&
-    idxSrc.indexOf('modules/dispatch.js?v=229') !== -1);
+    idxSrc.indexOf('js/app.js?v=230') !== -1 &&
+    idxSrc.indexOf('js/connectlive.js?v=230') !== -1 &&
+    idxSrc.indexOf('modules/connect.js?v=230') !== -1 &&
+    idxSrc.indexOf('modules/preferences.js?v=230') !== -1 &&
+    idxSrc.indexOf('modules/dispatch.js?v=230') !== -1);
   check('i: index cohort carries no stale 156 pin', idxSrc.indexOf('?v=156') === -1);
   has('i: the dashboard carries the one-time ask slot', idxSrc, 'id="nameCard"');
 

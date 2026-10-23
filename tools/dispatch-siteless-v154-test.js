@@ -288,14 +288,19 @@ function crewPipe(day) {
   /* v155 pin move (the standing convention): 154 -> 155.
      v147 pin move: 155 -> 156, same convention.
      v148 pin move: 156 -> 157, same convention. v156 pin move: 157 -> 158, same convention. v159 pin move: 158 -> 159, same convention. v160 pin move: 159 -> 160, same convention. v161 pin move: 160 -> 161, same convention. */
-  eq('pins: version.json webVersion is 162', ver.webVersion, 229);
-  check('pins: index cohort is ?v=229', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=229') !== -1);
+  eq('pins: version.json webVersion is 162', ver.webVersion, 230);
+  check('pins: index cohort is ?v=230', idxSrc.indexOf('?v=156') === -1 && idxSrc.indexOf('?v=230') !== -1);
   check('statics: the site hard-block copy is GONE from dispatch.js',
     dspSrc.indexOf('Enter the job site first') === -1);
   check('statics: the verified-save storage error copy is intact (the remaining gate)',
     dspSrc.indexOf('did NOT go through') !== -1 && dspSrc.indexOf('dspSaveRecord') !== -1 && dspSrc.indexOf('dspUpdateRecord') !== -1);
-  check('statics: the pipe SEND validator is untouched (a send is not a save — characterized, not changed)',
-    dspSrc.indexOf('Pick the driver, the date, and the job site first') !== -1);
+  /* v230 SUPERSEDES the pinned wording (DSP-MULTI-SEND): the send
+     pick is a tick list, so the validator now says tick — but the
+     siteless law this pin guards is unchanged and stricter: a pipe
+     SEND still gates on the date AND the job site (a blank site
+     writes nothing — proven in dispatch-multi-send-test (f)). */
+  check('statics: the pipe SEND validator still gates on date + job site (a send is not a save)',
+    dspSrc.indexOf('Tick at least one driver, pick the date, and add the job site first') !== -1);
   check('statics: manifest lines keep their site fallback',
     manSrc.indexOf("x.jobSite || x.pickup || 'Dispatch'") !== -1);
   check('statics: the Connect picker name keeps its site fallback',

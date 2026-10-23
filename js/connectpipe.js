@@ -821,6 +821,36 @@
       .catch(function () { return 'error'; });
   };
 
+  /* v230 (DSP-MULTI-SEND, owner Oct 22, 2026 21:13 MDT):
+     send the SAME dispatch to several connected drivers at
+     once. Each ticked driver gets his OWN pipe doc through the
+     untouched sendDispatch above — one send per driver, the
+     exact record a single send lands; his copy is his alone
+     from the moment it is written. Resolves a PER-DRIVER
+     verdict { sent: [uids], failed: [uids] } in the caller's
+     tick order — never a blanket verdict: a driver whose write
+     failed is named in failed so the sender can retry just him.
+     Duplicate ticks collapse; an empty list is an honest no-op. */
+  CP.sendDispatchToMany = function (peerUids, fields) {
+    var uids = [];
+    (peerUids || []).forEach(function (u) {
+      u = String(u || '');
+      if (u && uids.indexOf(u) === -1) uids.push(u);
+    });
+    if (!uids.length) return Promise.resolve({ sent: [], failed: [] });
+    if (!fields) return Promise.resolve({ sent: [], failed: uids.slice() });
+    var sent = [], failed = [];
+    var chain = Promise.resolve();
+    uids.forEach(function (uid) {
+      chain = chain.then(function () {
+        return CP.sendDispatch(uid, fields).then(function (r) {
+          if (r === 'sent') sent.push(uid); else failed.push(uid);
+        });
+      });
+    });
+    return chain.then(function () { return { sent: sent, failed: failed }; });
+  };
+
   /* v207 (CONNECT-PICK part 3): send a DESTINATION to a connected
      party — "I can share directions on where to go" (owner,
      Oct 21, 2026 13:19 MDT). The destination rides the dispatch

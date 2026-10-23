@@ -1287,8 +1287,19 @@
     }
     var today = ''; try { today = App._today(); } catch (e) {}
     var tom = today; try { tom = ConnectPipe.dateShift(today, 1); } catch (e) {}
-    return '<label class="f">Driver</label><select id="dp_send_to">' +
-      drivers.map(function (c) { return '<option value="' + esc(c.uid) + '">' + esc(c.name) + '</option>'; }).join('') + '</select>' +
+    /* v230 (DSP-MULTI-SEND): the Driver dropdown is now a CHECK-OFF
+       LIST — the sender ticks every driver this dispatch goes to
+       and presses Send ONCE (owner, Oct 22, 2026). Who is offered
+       is unchanged (peerDrives, the v155 face law). No tick-all:
+       the card has never had a select-all pattern, and a crew-wide
+       send stays a deliberate tick per driver — except a sender
+       with exactly ONE driver, whose box starts ticked (the old
+       dropdown always had him picked). */
+    return '<label class="f">Drivers — tick everyone this dispatch goes to</label>' +
+      drivers.map(function (c) {
+        return '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" class="dp_send_chk" value="' +
+          esc(c.uid) + '"' + (drivers.length === 1 ? ' checked' : '') + '> ' + esc(c.name) + '</label>';
+      }).join('') +
       '<div class="row"><div><label class="f">Date</label><input type="date" id="dp_send_date" value="' + esc(tom) + '"></div>' +
       '<div><label class="f">Start time</label><input type="time" id="dp_send_time" value="08:00"></div></div>' +
       '<label class="f">Job site</label><input id="dp_send_site" placeholder="e.g. Maple Ridge">' +
@@ -1304,27 +1315,49 @@
        boss never sets a connected driver's pay rate. */
     var sendBtn = body.querySelector('#dp_send_btn');
     if (sendBtn) sendBtn.onclick = function () {
-      var to = body.querySelector('#dp_send_to');
+      /* v230 (DSP-MULTI-SEND): Send fans out to EVERY ticked
+         driver — one press, one dispatch each. The result line
+         names who got it and who did NOT, per driver; it never
+         claims a blanket "sent" for a partial send. */
+      var uids = [];
+      body.querySelectorAll('.dp_send_chk').forEach(function (ch) {
+        if (ch && ch.checked && ch.value) uids.push(ch.value);
+      });
       var date = (body.querySelector('#dp_send_date') || {}).value || '';
       var time = (body.querySelector('#dp_send_time') || {}).value || '';
       var site = (body.querySelector('#dp_send_site') || {}).value || '';
       site = String(site).trim();
-      if (!to || !to.value || !date || !site) {
-        pipeSendMsg = 'Pick the driver, the date, and the job site first — nothing was sent.';
+      if (!uids.length || !date || !site) {
+        pipeSendMsg = 'Tick at least one driver, pick the date, and add the job site first — nothing was sent.';
         var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
         return;
       }
       sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
-      ConnectPipe.sendDispatch(to.value, {
+      ConnectPipe.sendDispatchToMany(uids, {
         date: date, scheduledAt: dspComposeSched(date, time, date),
         jobSite: site,
         material: (body.querySelector('#dp_send_mat') || {}).value || '',
         equipment: (body.querySelector('#dp_send_eq') || {}).value || '',
         notes: (body.querySelector('#dp_send_notes') || {}).value || ''
-      }).then(function (r) {
-        pipeSendMsg = r === 'sent'
-          ? 'Sent ✓ — it lands in his Dispatch as his scheduled job for that day.'
-          : 'Could not send — check your connection and try again.';
+      }).then(function (res) {
+        var names = {};
+        try {
+          ConnectPipe.connectedPeers().forEach(function (c) { names[c.uid] = c.name; });
+        } catch (e) {}
+        var nameOf = function (u) { return names[u] || 'a driver'; };
+        var sentNames = (res.sent || []).map(nameOf);
+        var failNames = (res.failed || []).map(nameOf);
+        if (!failNames.length && sentNames.length === 1) {
+          pipeSendMsg = 'Sent to ' + sentNames[0] + ' ✓ — it lands in his Dispatch as his scheduled job for that day.';
+        } else if (!failNames.length) {
+          pipeSendMsg = 'Sent to ' + sentNames.length + ' drivers ✓ — ' + sentNames.join(', ') +
+            '. It lands in each driver\'s Dispatch as his scheduled job for that day.';
+        } else if (!sentNames.length) {
+          pipeSendMsg = 'Could not send — check your connection and try again. Nothing was sent.';
+        } else {
+          pipeSendMsg = 'Sent to ' + sentNames.join(', ') + ' ✓ — NOT sent to ' + failNames.join(', ') +
+            ': check the connection, then tick ' + (failNames.length === 1 ? 'him' : 'them') + ' and send again.';
+        }
         var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
         ConnectPipe.listSent().then(function (sent) {
           pipeSent = sent;
