@@ -405,7 +405,13 @@ async function partC() {
   const handled = w.api.back();
   ok(handled === true, 'C7: Back during a drive is handled by the module');
   ok(w.dock._kids.indexOf(w.reg.nv_drive_screen) >= 0, 'C8: the drive screen lands in the in-app dock (screen-in-screen)');
-  ok(w.reg.nv_drive_screen.classList.contains('nv-mini'), 'C9: the parked screen wears the mini posture');
+  /* v227 (BUBBLE-FACE-V39-FAIL) supersedes the mini posture this
+     pin asserted: the parked screen is no longer the floated
+     piece — it survives HIDDEN in the dock (.nv-parked) while
+     the tracker face floats (drive-surface-v227-test.js B3-B5). */
+  ok(w.reg.nv_drive_screen.classList.contains('nv-parked') &&
+     w.reg.nv_drive_screen.classList.contains('hidden') &&
+     !w.reg.nv_drive_screen.classList.contains('nv-mini'), 'C9: the parked screen survives hidden in the dock (v227 — no mini map posture)');
   ok(w.calls.dashboards === dashBefore + 1, 'C10: the DASHBOARD is raised beneath it — never the launcher');
   ok(w.api.keepAlive() === true, 'C11: a parked drive reports keepAlive (the shell must not tear it down)');
   const setsParked = w.calls.panTos.length;
@@ -478,8 +484,11 @@ function partD() {
   const winfo = readN('android/app/src/main/res/xml/widget_tracker_info.xml');
   ok(winfo.indexOf('targetCellWidth="2"') >= 0 && winfo.indexOf('targetCellHeight="2"') >= 0,
     'D13: the widget defaults to a tight 2x2 tile');
-  ok(winfo.indexOf('resizeMode="horizontal|vertical"') >= 0 && winfo.indexOf('minResizeWidth="110dp"') >= 0,
-    'D14: the widget is user-resizable with a sane floor');
+  /* v227 (WIDGET-COMPACT-SIZES) supersedes the 110dp floor:
+     the widget must now shrink to a single cell (compact faces
+     pinned in drive-surface-v227-test.js Part D). */
+  ok(winfo.indexOf('resizeMode="horizontal|vertical"') >= 0 && winfo.indexOf('minResizeWidth="40dp"') >= 0,
+    'D14: the widget is user-resizable down to a 1x1 floor (v227)');
   const wlay = readN('android/app/src/main/res/layout/widget_tracker.xml');
   ok(wlay.indexOf('layout_weight="1"') >= 0, 'D15: the layout fills the tile (weighted spacer — no empty body)');
   const tw = readN('android/app/src/main/java/com/meticuloustechnologies/app/TrackerWidget.java');

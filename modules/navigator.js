@@ -1036,6 +1036,46 @@
         fix.speed, fix.time);
     } catch (e) {}
   }
+  /* v227 (NAV-NO-MOVEMENT-V39 — the DIFFERENT approach, owner
+     Oct 22 evening: "Map is stuck"): nets 1 and 2 both ride
+     WebView-fed streams, and BOTH can die the same silent death
+     — the watch and js/geo.js's watcher live in the same WebView
+     geolocation pipeline. The one GPS consumer that provably
+     kept working in his worst incidents is the SHELL's own
+     native listener (it is what kept the shift's miles counting
+     while the faces froze). So the drive now takes a third
+     intake fed by the shell itself: ShiftTrackPlugin pushes a
+     'navFix' bridge event for every native fix while driving is
+     armed (setDriving), over the Capacitor bridge — no WebView
+     geolocation anywhere in the path. Wired ONCE per module
+     lifetime like the LiveMiles net and always routed to the
+     CURRENT render's native intake (currentNavOnPos), which
+     dedupes on the native stream's OWN watermark (S.navFixT) —
+     the v224 rule: streams never silence each other. On web /
+     old shells the wrapper is absent and nets 1+2 carry on
+     exactly as before. */
+  var navFeedWired = false;
+  var currentNavOnPos = null;
+  function navFixFromNative(fix) {
+    if (!fix || !currentNavOnPos) return;
+    var la = Number(fix.latitude), lo = Number(fix.longitude);
+    if (!isFinite(la) || !isFinite(lo)) return;
+    try {
+      currentNavOnPos(la, lo,
+        (fix.bearing !== null && fix.bearing !== undefined) ? Number(fix.bearing) : null,
+        (fix.speed !== null && fix.speed !== undefined) ? Number(fix.speed) : null,
+        Number(fix.time) || 0);
+    } catch (e) {}
+  }
+  function wireNavFeed() {
+    if (navFeedWired) return;
+    navFeedWired = true;
+    try {
+      if (window.ShiftTrack && typeof ShiftTrack.addNavFixListener === 'function') {
+        ShiftTrack.addNavFixListener(navFixFromNative);
+      }
+    } catch (e) {}
+  }
   /* v119: THE MERGE (owner, Oct 16 22:00 MDT: "Why are there 2
      modules? Navigation and navigator?") — this module is the
      ONE door. Its front face ('places') is the old Navigation
@@ -1095,35 +1135,33 @@
   /* v222 (PIP-LANDS-HOME-OCT22, owner spec): Back on the map page
      sends the map into screen-in-screen AND OPENS THE MAIN
      DASHBOARD — the driver lands on his dashboard with the drive
-     floated over it, never on the phone's home screen. v220 sent
-     Back to the SYSTEM PiP instead, which floats the app over
-     the LAUNCHER (Android PiP has no in-app surface) — that is
-     the landing he rejected. So the screen-in-screen is now an
-     IN-APP state: the drive screen moves into the shell dock
-     (index.html #pipDock, above the dashboard), wearing the same
-     compact PiP face (arrow + bottom line); the module stays
-     alive underneath (the shell's keepAlive spares its teardown)
-     and the drive keeps ticking. A tap on the floated drive
-     reopens the Navigator full-screen. TRUE system PiP remains
-     only for genuinely leaving the app (Home), via the native
-     arm — Android gives no way to PiP over one's own dashboard
-     from outside the app, and none is faked here. */
+     floated over it, never on the phone's home screen.
+     v227 (BUBBLE-FACE-V39-FAIL — owner law restated Oct 22
+     evening, in his hands): what FLOATS over the dashboard is
+     the TRACKER FACE (the App bubble: timer, load count with
+     big +/-, start/pause/stop colours, small words at the
+     bottom) — NOT a miniature of the map. v222 floated the
+     drive SCREEN itself wearing .nv-mini, and in his hands
+     that was "the whole map miniaturized" — the exact face he
+     rejected. So the drive screen now only SURVIVES in the
+     dock, parked hidden (.nv-parked): the live drive (map,
+     state, tick) stays intact underneath for the tap-back
+     restore, while App.setDriveDocked raises the tracker face.
+     A tap on the face reopens the Navigator full-screen (App
+     wires the face); only End-drive or the map's X ends the
+     drive. TRUE system PiP remains only for genuinely leaving
+     the app (Home), via the native arm. */
   function parkDrive() {
     if (!S || !S.drive || S.parked) return false;
     var scr = docEl('nv_drive_screen');
     var dock = docEl('pipDock');
     if (!scr || !dock) return false;
     S.parked = true;
-    scr.classList.add('nv-mini');
+    scr.classList.remove('nv-mini');
+    scr.classList.add('nv-parked');
+    scr.classList.add('hidden');
     dock.appendChild(scr);
-    applyPipFace(true);
-    if (!scr._miniTapWired) {
-      scr._miniTapWired = true;
-      scr.addEventListener('click', function () {
-        if (S && S.parked) { try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {} }
-      });
-    }
-    try { if (S.driveMap && S.driveMap.invalidateSize) S.driveMap.invalidateSize(); } catch (e) {}
+    try { if (window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
     try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
     return true;
   }
@@ -1143,6 +1181,7 @@
        included). */
     if (S.drive && S.parked) return;
     currentOnPos = null;
+    currentNavOnPos = null;
     try { if (S.watchdogId) clearInterval(S.watchdogId); } catch (e) {}
     try { if (S.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(S.watchId); } catch (e) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
@@ -1307,8 +1346,12 @@
           body.innerHTML = '';
           body.appendChild(dockScr);
           dockScr.classList.remove('nv-mini');
+          dockScr.classList.remove('nv-parked');
           dockScr.classList.remove('hidden');
           applyPipFace(false);
+          /* v227: the tracker face stands down — the drive is
+             full-screen again. */
+          try { if (window.App && App.setDriveDocked) App.setDriveDocked(false); } catch (e) {}
           try { if (S.driveMap && S.driveMap.invalidateSize) S.driveMap.invalidateSize(); } catch (e) {}
           try { driveTick(); } catch (e) {}
           return;
@@ -1339,7 +1382,7 @@
            (the dedupe watermark for the fallback stream), and the
            watchdog that restarts a silently-dead watch. parked:
            the drive floated in the shell dock (PIP-LANDS-HOME). */
-        lastFixAt: 0, lastFixT: 0, streamFixT: 0, watchdogId: null, parked: false,
+        lastFixAt: 0, lastFixT: 0, streamFixT: 0, navFixT: 0, watchdogId: null, parked: false,
         offSince: 0, rerouting: false, arrived: false, searching: false,
         /* v103: the auto-route latch — setDest arms it for the NEW
            destination only (autoKey), maybeAutoRoute consumes it
@@ -2057,6 +2100,26 @@
         fixSubWired = true;
         try { if (window.LiveMiles && typeof LiveMiles.subscribe === 'function') LiveMiles.subscribe(navFixFromMiles); } catch (e) {}
       }
+      /* v227 (NAV-NO-MOVEMENT-V39): net 3 — the native feed. Its
+         intake dedupes on the NATIVE stream's own watermark
+         (S.navFixT), the v224 rule applied to a third stream:
+         the watch and the app stream may both be dead or skewed;
+         a native fix is refused only if THIS stream already
+         delivered it (or a newer one). */
+      currentNavOnPos = function (lat, lon, heading, speed, fixT) {
+        if (!S) return;
+        if (typeof fixT === 'number' && fixT > 0 && S.navFixT && fixT <= S.navFixT) return;
+        if (typeof fixT === 'number' && fixT > 0) S.navFixT = Math.max(S.navFixT || 0, fixT);
+        onPos(lat, lon, heading, speed, fixT);
+      };
+      wireNavFeed();
+      /* seed from the shell's last native fix — the freshest
+         position the phone holds when the module opens. */
+      try {
+        if (window.ShiftTrack && typeof ShiftTrack.navLastFix === 'function') {
+          ShiftTrack.navLastFix().then(function (f) { if (f) navFixFromNative(f); }, function () {});
+        }
+      } catch (e) {}
       /* v222 (NAV-STUCK): net 2 — the watchdog. While this module
          lives, a stream silent for >12 s is restarted: clearWatch
          + a fresh watchPosition, and the geo wrapper's last fix
@@ -2162,59 +2225,7 @@
            invented grade. Runs off the route's critical path:
            the route is usable the moment it lands; events fill
            in when the answer arrives. */
-        /* v196 (NAV-LANES): the lane count for the approach
-           road of maneuver `idx`, read lazily from
-           OpenStreetMap (Overpass) — the route response
-           carries no lane data (verified live, Oct 21).
-           Fires once per maneuver per route; the answer (or
-           a tried-and-none 0) lands in S.laneByTurn, and if
-           the pop-up is showing that maneuver the inset key
-           clears so the strip paints on the next fix. Any
-           failure leaves NO strip — honest absence, never
-           an invented lane (v178's rule). */
-        function fetchLaneCount(idx) {
-          S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
-          if (S.laneByTurn[idx] !== undefined || !S.plan || !S.line) return;
-          var m = S.plan.maneuvers[idx]; if (!m) return;
-          /* v220 (NAV-LANES-INHANDS-FAIL): two systematic killers
-             of the v196 lookup, both fixed here.
-             (1) THE QUERY POINT: v196 asked about ways around the
-             TURN POINT — the middle of the junction, where the
-             CROSS street's ways (with their own lanes tags) sit
-             inside the same 30 m circle and make the answer
-             ambiguous, which pickLaneCount honestly reads as
-             "no strip". The question is about the APPROACH road:
-             ask around a point ~40 m BEFORE the turn instead.
-             (2) THE POISONED CACHE: one transient Overpass
-             failure (the public endpoint rate-limits and stalls
-             routinely) used to be cached as a tried-and-none 0
-             for the whole drive — every strip absent, all day.
-             A failure now falls back once to the kumi.systems
-             mirror, and a total failure caches NOTHING: the
-             lookup retries on the tick's later calls after a
-             20 s cooldown. Only a successful-but-empty answer
-             earns the honest 0. */
-          var lastTry = S.laneFetch[idx] || 0;
-          if (lastTry && Date.now() - lastTry < 20000) return;
-          S.laneFetch[idx] = Date.now();
-          var tp = pointAlongLine(S.line, Math.max(0, m.cumEndKm * 1000 - 40));
-          var street = (m.streets && m.streets[0]) || '';
-          var q = '[out:json][timeout:8];way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
-          var endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-          var attempt = function (k) {
-            return fetch(endpoints[k], { method: 'POST', body: 'data=' + encodeURIComponent(q) })
-              .then(function (r) {
-                if (!r.ok) throw new Error('overpass ' + r.status);
-                return r.json();
-              });
-          };
-          attempt(0).catch(function () { return attempt(1); })
-            .then(function (j) {
-              S.laneByTurn[idx] = j && j.elements ? pickLaneCount(j.elements, street) : 0;
-              if (S.drive && S.drive.insetKey && S.drive.insetKey.split(':')[0] === String(idx)) S.drive.insetKey = '';
-            })
-            .catch(function () { /* total failure: cache nothing — a later tick retries */ });
-        }
+
 
         function fetchGradeEvents(line) {
           S.gradeEvents = [];
@@ -2943,6 +2954,10 @@
         try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(false); } catch (e) {}
         try { if (window.ShiftTrack && ShiftTrack.navNotifyClear) ShiftTrack.navNotifyClear(); } catch (e) {}
         try { if (window.ShiftTrack && ShiftTrack.stopNativeSpeak) ShiftTrack.stopNativeSpeak(); } catch (e) {}
+        /* v227: the docked tracker face stands down with the
+           drive — End-drive is one of the two ways the map (and
+           its float) shuts off. */
+        if (S.parked) { S.parked = false; try { if (window.App && App.setDriveDocked) App.setDriveDocked(false); } catch (e) {} }
         /* v183: free-look state dies with the drive. */
         if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
         S.driveFree = false;
@@ -3048,6 +3063,69 @@
       /* One drive paint per GPS fix, off the module's one watch.
          Returns the text spoken (if any) so startDrive can avoid
          double-announcing. */
+      /* v227 (NAV-LANE-WARMUP-SCOPE — found on the F1 path):
+         fetchLaneCount was declared INSIDE the map-init block
+         above, where strict-mode block scoping hides it from
+         driveTick — every tick within 3 km of a turn threw a
+         ReferenceError BEFORE the tick's final driveAnimKick(),
+         so the camera animator was never kicked in exactly the
+         stretch where turns approach. The declaration now lives
+         at render-body level, where its caller is. Pure move —
+         the body is byte-identical. */
+      /* v196 (NAV-LANES): the lane count for the approach
+         road of maneuver `idx`, read lazily from
+         OpenStreetMap (Overpass) — the route response
+         carries no lane data (verified live, Oct 21).
+         Fires once per maneuver per route; the answer (or
+         a tried-and-none 0) lands in S.laneByTurn, and if
+         the pop-up is showing that maneuver the inset key
+         clears so the strip paints on the next fix. Any
+         failure leaves NO strip — honest absence, never
+         an invented lane (v178's rule). */
+      function fetchLaneCount(idx) {
+        S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
+        if (S.laneByTurn[idx] !== undefined || !S.plan || !S.line) return;
+        var m = S.plan.maneuvers[idx]; if (!m) return;
+        /* v220 (NAV-LANES-INHANDS-FAIL): two systematic killers
+           of the v196 lookup, both fixed here.
+           (1) THE QUERY POINT: v196 asked about ways around the
+           TURN POINT — the middle of the junction, where the
+           CROSS street's ways (with their own lanes tags) sit
+           inside the same 30 m circle and make the answer
+           ambiguous, which pickLaneCount honestly reads as
+           "no strip". The question is about the APPROACH road:
+           ask around a point ~40 m BEFORE the turn instead.
+           (2) THE POISONED CACHE: one transient Overpass
+           failure (the public endpoint rate-limits and stalls
+           routinely) used to be cached as a tried-and-none 0
+           for the whole drive — every strip absent, all day.
+           A failure now falls back once to the kumi.systems
+           mirror, and a total failure caches NOTHING: the
+           lookup retries on the tick's later calls after a
+           20 s cooldown. Only a successful-but-empty answer
+           earns the honest 0. */
+        var lastTry = S.laneFetch[idx] || 0;
+        if (lastTry && Date.now() - lastTry < 20000) return;
+        S.laneFetch[idx] = Date.now();
+        var tp = pointAlongLine(S.line, Math.max(0, m.cumEndKm * 1000 - 40));
+        var street = (m.streets && m.streets[0]) || '';
+        var q = '[out:json][timeout:8];way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
+        var endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+        var attempt = function (k) {
+          return fetch(endpoints[k], { method: 'POST', body: 'data=' + encodeURIComponent(q) })
+            .then(function (r) {
+              if (!r.ok) throw new Error('overpass ' + r.status);
+              return r.json();
+            });
+        };
+        attempt(0).catch(function () { return attempt(1); })
+          .then(function (j) {
+            S.laneByTurn[idx] = j && j.elements ? pickLaneCount(j.elements, street) : 0;
+            if (S.drive && S.drive.insetKey && S.drive.insetKey.split(':')[0] === String(idx)) S.drive.insetKey = '';
+          })
+          .catch(function () { /* total failure: cache nothing — a later tick retries */ });
+      }
+
       function driveTick() {
         if (!S.drive || !S.plan || !S.line || !S.pos || S.arrived) return null;
         var pr = distToRouteM(S.pos, S.line);
@@ -3155,6 +3233,14 @@
         if (pipLineEl && S._inPip) {
           var pipTxt = dp.next ? (fmtDist(dp.toTurnM) + ' · ' + (dp.next.instruction || '')) : 'Arrived';
           if (pipLineEl.textContent !== pipTxt) pipLineEl.textContent = pipTxt;
+        }
+        /* v227: while the drive is DOCKED, the floating piece is
+           the tracker face — its small-words bottom line is this
+           same next direction, fed through the face's own line
+           field (paintBubble renders App._pipLine). */
+        if (S.parked) {
+          var dockTxt = dp.next ? (fmtDist(dp.toTurnM) + ' · ' + (dp.next.instruction || '')) : 'Arrived';
+          try { if (window.App) App._pipLine = dockTxt; } catch (e) {}
         }
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);

@@ -344,8 +344,13 @@ function partB() {
   ok(/android:targetCellWidth="2"/.test(info) && /android:targetCellHeight="2"/.test(info), 'B5: the default tile is a tight 2x2');
   ok(/android:resizeMode="horizontal\|vertical"/.test(info), 'B6: the owner can resize it both ways');
   const mw = /android:minWidth="(\d+)dp"/.exec(info), mh = /android:minHeight="(\d+)dp"/.exec(info);
-  ok(mw && mh && +mw[1] >= 80 && +mw[1] <= 160 && +mh[1] >= 80 && +mh[1] <= 160,
-    'B7: min sizes sit at the 2x2 footprint (not above the 2-cell size)', info.replace(/\s+/g, ' ').slice(0, 120));
+  /* v227 (WIDGET-COMPACT-SIZES — supersedes the v38 floor this
+     pin asserted): the owner's Oct 22 17:38 ask is that the
+     widget LIVE at 1x1 and 2x1, so the floor is one cell now;
+     the 2x2 default home above (B5) is unchanged. The compact
+     faces themselves are pinned in drive-surface-v227-test.js. */
+  ok(mw && mh && +mw[1] <= 80 && +mh[1] <= 80,
+    'B7: min sizes reach the 1x1 floor (v227 compact sizes; the 2x2 sits in targetCell, B5)', info.replace(/\s+/g, ' ').slice(0, 120));
   const man = readN('android/app/src/main/AndroidManifest.xml');
   ok(/<receiver[^>]*\.TrackerWidget/.test(man) && /APPWIDGET_UPDATE/.test(man) &&
      /android\.appwidget\.provider/.test(man) && /widget_tracker_info/.test(man),

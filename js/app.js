@@ -273,7 +273,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 39; // <- bump on every native (APK) release
+      var APK_VERSION = 40; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -1505,21 +1505,69 @@
      the start/stop buttons — and it is swapped in BEFORE the
      window shrinks (the pipWillEnter seam in init), not after. */
   App._bubble = false;
+  /* v227 (BUBBLE-FACE-V39-FAIL): the DOCKED state — a live drive
+     parked by Back on the map page (the Navigator calls
+     setDriveDocked). The float over the dashboard is THIS
+     tracker face in its dock posture; the map itself is never
+     the floated piece again. */
+  App._docked = false;
+  App._pipLine = '';
+  App.setDriveDocked = function (on) {
+    App._docked = !!on;
+    if (!App._docked) App._pipLine = '';
+    refreshBubbleFace();
+  };
   function bubbleEl(id) { return document.getElementById(id); }
   function refreshBubbleFace() {
-    var show = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving)
+    var pipShow = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving);
+    var show = (pipShow || !!App._docked)
       && sessionActive() && !App._authLocked();
     var bf = bubbleEl('bubbleFace');
-    if (bf) bf.classList.toggle('hidden', !show);
+    if (bf) {
+      bf.classList.toggle('hidden', !show);
+      /* v227: docked wears the floating-card posture (compact,
+         over the dashboard); the PiP posture stays the plain
+         full-bleed face. */
+      bf.classList.toggle('bub-dock', show && !!App._docked);
+    }
     App._bubble = show;
     if (show) { try { paintBubble(trackerElapsedSec()); } catch (e) {} }
   }
+  /* v227: the shell-drawn PiP face is a native MIRROR of this
+     face — the web side owns the tracker, so it composes the
+     facts and pushes them (change-gated on everything but the
+     clock, which the native face needs once a second while the
+     float is up); the shell only draws. Inert off-shell. */
+  var _bubbleSig = '';
+  function pushBubbleFace(sec) {
+    try {
+      if (!App._pip) return; // the native face exists only in system PiP
+      if (!window.ShiftTrack || !ShiftTrack.pushBubbleState) return;
+      var status = App.tracker.status === 'running' ? 'Working…' :
+        App.tracker.status === 'paused' ? 'Paused' : 'Ready to work';
+      var secondary = loadsGlance();
+      var line = App._pipLine || '';
+      var sig = status + '|' + secondary + '|' + line;
+      var clock = fmtClock(sec);
+      if (sig === _bubbleSig && pushBubbleFace._clock === clock) return;
+      _bubbleSig = sig; pushBubbleFace._clock = clock;
+      ShiftTrack.pushBubbleState({ status: status, primary: clock, secondary: secondary, line: line });
+    } catch (e) {}
+  }
   function paintBubble(sec) {
+    /* v227: mirror to the native face even when the web face is
+       not the visible float (system PiP while driving — there
+       the shell draws the face and this WebView is shrunk). */
+    try { pushBubbleFace(sec); } catch (e) {}
     if (!App._bubble) return;
     var st = App.tracker.status;
     var c = bubbleEl('bubClock'); if (c && c.textContent !== fmtClock(sec)) c.textContent = fmtClock(sec);
     var s = bubbleEl('bubStatus');
-    var stTxt = st === 'running' ? 'Working…' : 'Paused';
+    /* v227: docked, the face's small-words bottom line is the
+       drive's next direction (the Navigator feeds App._pipLine
+       per tick); otherwise the status word, as before. */
+    var stTxt = (App._docked && App._pipLine) ? App._pipLine :
+      (st === 'running' ? 'Working…' : 'Paused');
     if (s && s.textContent !== stTxt) s.textContent = stTxt;
     var l = bubbleEl('bubLoads'); var lg = loadsGlance();
     if (l && l.textContent !== lg) l.textContent = lg;
@@ -1552,6 +1600,26 @@
     try {
       if (window.ShiftTrack && ShiftTrack.takeWidgetAction) {
         ShiftTrack.takeWidgetAction().then(applyWidgetAction);
+      }
+    } catch (e) {}
+  };
+  /* v227 (BUBBLE-FACE): a button tap on the shell-drawn PiP face
+     arrives as one word, exactly like a widget tap — plus the
+     load corrections, which ride the same two load actions the
+     in-app face's +/- perform. Performed here, where the
+     tracker lives. */
+  function applyPipAction(a) {
+    if (!a) return;
+    try {
+      if (a === 'loadPlus') { trackerAddLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
+      else if (a === 'loadMinus') { trackerCutLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
+      else applyWidgetAction(a);
+    } catch (e) {}
+  }
+  App.collectPipAction = function () {
+    try {
+      if (window.ShiftTrack && ShiftTrack.takePipAction) {
+        ShiftTrack.takePipAction().then(applyPipAction);
       }
     } catch (e) {}
   };
@@ -5153,7 +5221,25 @@
       if (window.ShiftTrack && ShiftTrack.addPipWillEnterListener) {
         ShiftTrack.addPipWillEnterListener(function () { App._pip = true; refreshBubbleFace(); });
       }
+      /* v227: PiP face taps stream in live while the process
+         lives; a cold start collects the stash instead. */
+      if (window.ShiftTrack && ShiftTrack.addPipActionListener) {
+        ShiftTrack.addPipActionListener(applyPipAction);
+      }
     } catch (e) {}
+    App.collectPipAction();
+    /* v227: docked, a tap on the tracker face (outside its
+       buttons) reopens the Navigator full-screen — the same
+       tap-back the v222 mini carried, moved to the face the
+       owner actually sees. */
+    var bubFaceEl = bubbleEl('bubbleFace');
+    if (bubFaceEl) bubFaceEl.addEventListener('click', function (ev) {
+      try {
+        if (!App._docked) return;
+        if (ev && ev.target && ev.target.closest && ev.target.closest('button')) return;
+        if (window.App && App.openModule) App.openModule('navigator');
+      } catch (e) {}
+    });
     var bubPlayEl = bubbleEl('bubPlay');
     if (bubPlayEl) bubPlayEl.addEventListener('click', function () {
       try { App.trackerToggle(); paintBubble(trackerElapsedSec()); } catch (e) {}

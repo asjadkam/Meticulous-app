@@ -467,6 +467,21 @@ label.chk input{width:18px;height:18px;}
 #bubbleFace{position:fixed;inset:0;z-index:95;background:#0C1424;color:#fff;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;}
 #bubbleFace.hidden{display:none;}
+/* v227 (BUBBLE-FACE-V39-FAIL): the DOCKED posture — the tracker
+   face as a floating card over the MAIN DASHBOARD (Back on the
+   map page), not a full-screen takeover and never a map. Same
+   face, compact: smaller clock, the big +/- and the colour
+   buttons stay thumb-sized. */
+#bubbleFace.bub-dock{inset:auto;left:12px;right:12px;
+  bottom:calc(86px + env(safe-area-inset-bottom));z-index:2901;
+  border-radius:18px;padding:12px 14px;gap:6px;
+  box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);}
+#bubbleFace.bub-dock .bub-clock{font-size:34px;}
+#bubbleFace.bub-dock .bub-loads{font-size:17px;}
+#bubbleFace.bub-dock .bub-btn.bub-count{width:48px;height:48px;font-size:24px;}
+#bubbleFace.bub-dock .bub-btn{width:60px;height:60px;font-size:24px;}
+#bubbleFace.bub-dock .bub-btns{margin-top:2px;gap:16px;}
+#bubbleFace.bub-dock .bub-status{font-size:13px;text-align:center;}
 .bub-status{font-size:15px;font-weight:700;color:#9FB3D9;letter-spacing:.04em;}
 .bub-clock{font-size:56px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
 .bub-loads{font-size:20px;font-weight:700;}
@@ -491,6 +506,11 @@ label.chk input{width:18px;height:18px;}
    full-screen (modules/navigator.js parkDrive). */
 #pipDock{position:fixed;inset:0;z-index:2900;pointer-events:none;}
 #pipDock:empty{display:none;}
+/* v227: the parked drive screen SURVIVES in the dock hidden —
+   it is not the floated piece any more (the tracker face is);
+   display:none keeps the live drive's state and tick intact
+   for the tap-back restore without showing a map miniature. */
+.nv-drive.nv-parked{display:none !important;}
 .nv-drive.nv-mini{inset:auto;right:12px;bottom:calc(86px + env(safe-area-inset-bottom));
   width:min(47vw,340px);height:auto;aspect-ratio:4/3;border-radius:16px;overflow:hidden;
   box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);

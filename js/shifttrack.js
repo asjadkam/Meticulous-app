@@ -679,6 +679,81 @@
       if (p && typeof p.widgetState === 'function' && state) {
         try { p.widgetState({ status: String(state.status || ''), primary: String(state.primary || ''), secondary: String(state.secondary || '') }); } catch (e) {}
       }
+    },
+    /* v227 (NAV-NO-MOVEMENT-V39): the NATIVE nav feed. The shell
+       pushes a 'navFix' bridge event per native GPS fix while
+       driving is armed; the wrapper fans it out to subscribers
+       (the Navigator's third intake). navLastFix() seeds from
+       the shell's newest held fix. All inert off-shell. */
+    _navFixFns: [],
+    _navFixWired: false,
+    addNavFixListener: function (fn) {
+      if (typeof fn === 'function') ShiftTrack._navFixFns.push(fn);
+      if (!ShiftTrack._navFixWired) {
+        ShiftTrack._navFixWired = true;
+        var p = plugin();
+        if (p && typeof p.addListener === 'function') {
+          try {
+            p.addListener('navFix', function (ev) {
+              ShiftTrack._navFixFns.slice().forEach(function (f) { try { f(ev); } catch (e) {} });
+            });
+          } catch (e) { ShiftTrack._navFixWired = false; }
+        }
+      }
+    },
+    navLastFix: function () {
+      var p = plugin();
+      if (p && typeof p.navLastFix === 'function') {
+        try { return p.navLastFix().then(function (r) { return r || null; }).catch(function () { return null; }); } catch (e) {}
+      }
+      return Promise.resolve(null);
+    },
+    /* v227 (BUBBLE-FACE): the shell-drawn PiP face state — the
+       web side composes the same facts the in-app bubble shows
+       and pushes them (change-gated in js/app.js); the native
+       face renders them over whatever app is beneath the float. */
+    pushBubbleState: function (state) {
+      var p = plugin();
+      if (p && typeof p.bubbleState === 'function' && state) {
+        try {
+          p.bubbleState({
+            status: String(state.status || ''), primary: String(state.primary || ''),
+            secondary: String(state.secondary || ''), line: String(state.line || '')
+          });
+        } catch (e) {}
+      }
+    },
+    /* v227: collect a face-button tap from system PiP (start/
+       pause/stop, load +/-), stashed natively by the PiP action
+       receiver. Resolves '' when there is nothing (or no shell). */
+    takePipAction: function () {
+      var p = plugin();
+      if (p && typeof p.takePipAction === 'function') {
+        try {
+          return p.takePipAction().then(function (r) { return (r && r.action) || ''; })
+            .catch(function () { return ''; });
+        } catch (e) {}
+      }
+      return Promise.resolve('');
+    },
+    /* v227: live delivery of PiP face taps while the app process
+       is alive (the collect path above is the cold-start twin). */
+    _pipActionFns: [],
+    _pipActionWired: false,
+    addPipActionListener: function (fn) {
+      if (typeof fn === 'function') ShiftTrack._pipActionFns.push(fn);
+      if (!ShiftTrack._pipActionWired) {
+        ShiftTrack._pipActionWired = true;
+        var p = plugin();
+        if (p && typeof p.addListener === 'function') {
+          try {
+            p.addListener('pipAction', function (ev) {
+              var a = (ev && ev.action) || '';
+              ShiftTrack._pipActionFns.slice().forEach(function (f) { try { f(a); } catch (e) {} });
+            });
+          } catch (e) { ShiftTrack._pipActionWired = false; }
+        }
+      }
     }
   };
 
