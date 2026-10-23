@@ -314,10 +314,6 @@ function hav(a, b) {
     w.firePos(51.09625, -114.09825, 45, 9);
     await settle();
     const ctr = driveMap.getCenter();
-    if (process.env.DBG) console.log('    [dbg] planViews=' + w.calls.maps[0]._views.length +
-      ' driveViews=' + driveMap._views.length + ' dist=' + JSON.stringify(w.reg.nvd_dist.textContent) +
-      ' etaSub=' + JSON.stringify(w.reg.nvd_eta_sub.textContent) + ' spoken=' + w.calls.spoken.length +
-      ' maps=' + w.calls.maps.map(function (m, i) { return i + ':v' + m._views.length + '/p' + m._panTos.length; }).join(' '));
     check('A5: watch-fed fixes still move the camera with no native feed present',
       !!ctr && hav([ctr.lat, ctr.lng], [51.09625, -114.09825]) < 5,
       ctr ? 'centre=' + ctr.lat + ',' + ctr.lng : 'no centre');
