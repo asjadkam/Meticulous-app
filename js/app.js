@@ -5427,11 +5427,83 @@
      one download door every record view uses: an anchor on the
      record's own stored photo (a data URL), named for the record.
      Modules guard on its presence, like every App helper. */
+  /* v241 (DOWNLOAD-BUTTON-DEAD, owner Oct 22, 2026 20:06 MDT):
+     the v182 door above was an <a href="data:…" download>
+     anchor — the native shell's WebView ignores download
+     anchors entirely, so the tap went nowhere in his hands
+     (his Dispatch recording: the card photo's button did
+     nothing). The door is now a real button: the photo
+     registers under a token, and ONE delegated click handler
+     delivers it — in the native shell through the Capacitor
+     Filesystem plugin into the phone's Documents (the exact
+     path MetPdf saves PDFs by, js/pdfexport.js), in a plain
+     browser as a Blob download. The stored photo goes
+     straight to the phone; no file host is involved. */
+  var photoDlReg = {};
+  var photoDlSeq = 0;
+  function photoDlDeliver(rec, btn) {
+    function say(msg) {
+      if (!btn) return;
+      var old = btn.textContent;
+      btn.textContent = msg;
+      setTimeout(function () { try { btn.textContent = old; } catch (e) {} }, 4000);
+    }
+    var b64 = rec.photo.slice(rec.photo.indexOf('base64,') + 7);
+    var fs = null, native = false;
+    try {
+      fs = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (fs) native = (typeof window.Capacitor.isNativePlatform === 'function')
+        ? !!window.Capacitor.isNativePlatform() : true;
+    } catch (e) { fs = null; native = false; }
+    if (fs && native && typeof fs.writeFile === 'function') {
+      fs.writeFile({ path: 'Meticulous/' + rec.name, data: b64, directory: 'DOCUMENTS', recursive: true }).then(
+        function () { say('✓ Saved to Documents'); },
+        function () { say('Couldn’t save — try again'); });
+      return;
+    }
+    try {
+      var bin = atob(b64), bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var blob = new Blob([bytes], { type: rec.mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = rec.name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () {
+        try { document.body.removeChild(a); } catch (e) {}
+        try { URL.revokeObjectURL(url); } catch (e) {}
+      }, 800);
+      say('✓ Download started');
+    } catch (e) { say('Couldn’t download — try again'); }
+  }
   App._photoDl = function (photo, label) {
     if (!photo || typeof photo !== 'string' || photo.indexOf('data:') !== 0) return '';
-    var name = 'meticulous-' + String(label || 'photo').replace(/[^A-Za-z0-9._-]+/g, '-') + '.jpg';
-    return '<a class="btn small ghost" href="' + photo + '" download="' + name + '" style="display:inline-block;margin-top:6px;text-decoration:none">\u2B07 Download this photo</a>';
+    var isPng = photo.indexOf('data:image/png') === 0;
+    var name = 'meticulous-' + String(label || 'photo').replace(/[^A-Za-z0-9._-]+/g, '-') + (isPng ? '.png' : '.jpg');
+    var token = 'pd' + (++photoDlSeq);
+    photoDlReg[token] = { photo: photo, name: name, mime: isPng ? 'image/png' : 'image/jpeg' };
+    return '<button type="button" class="btn small ghost" data-photodl="' + token + '" style="margin-top:6px">\u2B07 Download this photo</button>';
   };
+  try {
+    document.addEventListener('click', function (ev) {
+      var t = ev && ev.target, btn = null;
+      if (t && t.closest) btn = t.closest('[data-photodl]');
+      if (!btn) {
+        var n = t;
+        while (n && !btn) {
+          if (n.getAttribute && n.getAttribute('data-photodl')) btn = n;
+          n = n.parentNode;
+        }
+      }
+      if (!btn) return;
+      var rec = photoDlReg[btn.getAttribute('data-photodl')];
+      if (!rec) return;
+      if (ev.preventDefault) ev.preventDefault();
+      photoDlDeliver(rec, btn);
+    });
+  } catch (e) {}
+  /* DOWNLOAD-BUTTON-DEAD-END */
   App._bumpOdometer = bumpOdometer; // v39: upward-only master write for every capture point
   App._logOdoReading = logOdoReading; // v122: the dated readings log (odo_readings) — every master write path appends
   App._importOdoReadings = importOdoReadings; // v185: the confirm-first bulk import (ODO-BACKFILL)

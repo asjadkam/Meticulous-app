@@ -218,8 +218,11 @@ function section(h, startMark, endMarks) {
   });
   return h.slice(a, b);
 }
-function todayRegion(h) { return section(h, 'id="dp_today_card"', ['id="dp_upcoming_card"', 'id="dp_ingest"']); }
-function upcomingRegion(h) { return section(h, 'id="dp_upcoming_card"', ['id="dp_ingest"']); }
+function todayRegion(h) { return section(h, 'id="dp_today_card"', ['id="dp_upcoming_card"', 'id="dp_done_today_card"', 'id="dp_ingest"']); }
+function upcomingRegion(h) { return section(h, 'id="dp_upcoming_card"', ['id="dp_done_today_card"', 'id="dp_ingest"']); }
+/* v241 (DSP-COMPLETED-DROPS): completed-today records stand in
+   their own card below Upcoming — a region of their own. */
+function doneTodayRegion(h) { return section(h, 'id="dp_done_today_card"', ['id="dp_ingest"']); }
 function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? '' : h.slice(i); }
 
 (async function () {
@@ -230,19 +233,26 @@ function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? 
     const h = w.body._html;
     const t = todayRegion(h), up = upcomingRegion(h), hist = histRegion(h);
 
-    /* (a) today completed → the Today card only */
-    check('(a) the Today card renders', t !== '');
-    check('(a) today\'s completed dispatch (#21625) is IN the Today card',
-      t.indexOf('Aecon Inf') !== -1 && t.indexOf('#21625') !== -1);
+    /* (a) today completed → the Completed-today card below
+       Upcoming (v241, DSP-COMPLETED-DROPS, owner Oct 22, 2026
+       18:01 MDT — supersedes this suite's original placement,
+       where the completed record stood IN the Today card: once
+       today's dispatch is completed it drops BELOW, and the
+       Upcoming dispatch becomes the priority at the top) */
+    const dn = doneTodayRegion(h);
+    check('(a) with no OPEN today record, the Today card does not render', t === '');
+    check('(a) today\'s completed dispatch (#21625) stands in the Completed-today card',
+      dn.indexOf('Aecon Inf') !== -1 && dn.indexOf('#21625') !== -1);
     check('(a) today\'s completed dispatch is NOT in History', hist.indexOf('Aecon Inf') === -1);
     check('(a) today\'s completed dispatch is NOT in Upcoming', up.indexOf('Aecon Inf') === -1);
 
-    /* placement: Upcoming under Today's card, above Add from a message */
+    /* placement (v241 order): Upcoming above the Completed-
+       today card, both above Add from a message */
     check('the Upcoming card renders', up !== '');
-    check('Upcoming stands under the Today card and above Add from a message',
-      h.indexOf('id="dp_today_card"') !== -1 &&
-      h.indexOf('id="dp_today_card"') < h.indexOf('id="dp_upcoming_card"') &&
-      h.indexOf('id="dp_upcoming_card"') < h.indexOf('id="dp_ingest"'));
+    check('Upcoming stands above the Completed-today card, both above Add from a message',
+      h.indexOf('id="dp_upcoming_card"') !== -1 &&
+      h.indexOf('id="dp_upcoming_card"') < h.indexOf('id="dp_done_today_card"') &&
+      h.indexOf('id="dp_done_today_card"') < h.indexOf('id="dp_ingest"'));
     check('the section is labelled Upcoming', h.indexOf('📅 Upcoming') !== -1);
 
     /* (c) tomorrow saved → Upcoming only */
@@ -313,8 +323,8 @@ function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? 
     dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) < dspTodayStr') !== -1);
   check('future records are collected by date alone',
     dspSrc.indexOf('else if (rd > dspTodayStr) futureItems.push') !== -1);
-  eq('ships as webVersion 218', ver.webVersion, 240);
-  check('index loads dispatch at the 218 pin', idxSrc.indexOf('modules/dispatch.js?v=240') !== -1);
+  eq('ships as webVersion 218', ver.webVersion, 241);
+  check('index loads dispatch at the 218 pin', idxSrc.indexOf('modules/dispatch.js?v=241') !== -1);
 
   console.log('\ndsp-history-future v218: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

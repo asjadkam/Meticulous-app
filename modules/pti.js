@@ -126,6 +126,20 @@
     return d;
   }
   function saveDraft(d) { W('draft', d); }
+  /* v241 (PTI-SIGNATURE-SAVE): a reports write is VERIFIED the
+     way Fuel's saveFillsVerified verifies its fills — the store
+     reports failure (App._store.set, v48) and a reports array
+     carrying drawn signatures + defect photos is exactly the
+     write a full phone refuses. Callers that file or sign check
+     this and STOP on false instead of sailing on. */
+  function saveReportsVerified(reps) {
+    W('reports', reps);
+    var back = S('reports', null);
+    /* content equality, not mere presence: a sign-later write
+       changes no length and adds no id — only the bytes tell
+       whether the write landed. */
+    return JSON.stringify(back) === JSON.stringify(reps);
+  }
   /* A draft field: what the driver typed wins; until he types, the
      Preferences profile fills it. null on the draft = untouched. */
   function dVal(d, prof, key) {
@@ -804,6 +818,13 @@
     if ((v = gv('pti_plate')) !== null) d.plate = v;
     if ((v = gv('pti_loc')) !== null) d.loc = v;
     if ((v = gv('pti_driver')) !== null) d.driverName = v;
+    /* v241 (PTI-PLATE-SAVE): the filed plate resolves typed ->
+       draft -> truck record. Before v241 the truck record had NO
+       plate writer anywhere (onboarding and Preferences carried
+       the truck number only), so the field pre-filled blank and
+       the blank harvest is what got filed — the Oct 22 report
+       carried no plate. A blank can never blank it again. */
+    if (!String(d.plate || '').trim()) d.plate = prof.plate || '';
     d.driverNameEffective = String((d.driverName !== null && d.driverName !== undefined && String(d.driverName).trim()) ? d.driverName : prof.driverName).trim();
     saveDraft(d);
 
@@ -825,8 +846,28 @@
     var reps = reports();
     reps.push(rep);
     if (reps.length > 400) reps = reps.slice(reps.length - 400);
-    W('reports', reps);
+    /* v241 (PTI-SIGNATURE-SAVE): the filing write is verified —
+       a failed write used to sail on (draft wiped below, view
+       switched to a report that was never stored) and the
+       inspection, signature and all, was simply gone. Now the
+       flow stops here: the draft stays whole and the form
+       says so. */
+    if (!saveReportsVerified(reps)) {
+      formErr = 'That inspection did NOT save — the app storage on your phone looks full, or the write failed. Your inspection (and your signature) is still in the form — free up some phone space and tap “Sign & file” again.';
+      Meticulous.modules.pti.render(body);
+      return;
+    }
     try { if (window.FB && FB.saveDoc) { var c = Object.assign({}, rep); FB.saveDoc('pti', rep.id, c); } } catch (e) {}
+    /* v241 (PTI-PLATE-SAVE): a plate that reaches a filed report
+       becomes the truck record's plate (set-once law) — typed
+       once on any PTI or in Preferences, it pre-fills every
+       PTI from then on. */
+    if (rep.plate) {
+      try {
+        var ob241 = App._store.get('onboarding', {}) || {};
+        if (ob241.plate !== rep.plate) { ob241.plate = rep.plate; App._store.set('onboarding', ob241); }
+      } catch (e) {}
+    }
     /* v187 (PTI-DASH): the standing dashboard banner repaints the
        moment a PTI lands — filing is the event it was waiting for. */
     try { if (App.paintPtiFlag) App.paintPtiFlag(); } catch (e) {}
@@ -946,7 +987,13 @@
           r = reps2[i];
         }
       }
-      W('reports', reps2);
+      /* v241 (PTI-SIGNATURE-SAVE): the sign-later write-back is
+         verified too — a silent failure here left the report
+         unsigned while the screen moved on. */
+      if (!saveReportsVerified(reps2)) {
+        if (eEl) eEl.innerHTML = '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ That signature did NOT save — the app storage on your phone looks full, or the write failed. Free up some phone space and sign again.</div>';
+        return;
+      }
       try { if (window.FB && FB.saveDoc) FB.saveDoc('pti', r.id, Object.assign({}, r)); } catch (e) {}
       try { if (window.ConnectPipe && ConnectPipe.publishRecords) ConnectPipe.publishRecords(); } catch (e) {}
       Meticulous.modules.pti.render(body);

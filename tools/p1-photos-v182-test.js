@@ -13,19 +13,46 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 let pass = 0, fail = 0;
 function ok(name, cond, extra) { if (cond) { pass++; } else { fail++; console.log('  FAIL ' + name + (extra ? ' — ' + extra : '')); } }
 const appSrc = read('js/app.js');
-/* extract the helper and run it */
-const a = appSrc.indexOf('App._photoDl = function');
-const b = appSrc.indexOf('};', a);
-const sb = { App: {} };
+/* extract the download door and run it. v241 SUPERSEDE
+ * (DOWNLOAD-BUTTON-DEAD, owner Oct 22, 2026 20:06 MDT): the
+ * v182 door was an <a href="data:…" download> anchor — the
+ * native shell's WebView ignores download anchors entirely,
+ * so the tap did nothing in his hands. The door is now a real
+ * button + one delegated handler (native shell: Capacitor
+ * Filesystem -> the phone's Documents; plain browser: a Blob
+ * download). The anchor pins below are superseded accordingly;
+ * the keepKey + surface-wiring pins stand. Full behaviour:
+ * tools/photo-download-v241-test.js. */
+const mStart = appSrc.indexOf('DOWNLOAD-BUTTON-DEAD');
+const mEnd = appSrc.indexOf('DOWNLOAD-BUTTON-DEAD-END', mStart);
+const doorSrc = appSrc.slice(appSrc.lastIndexOf('/*', mStart), appSrc.indexOf('*/', mEnd) + 2);
+const clickListeners = [];
+const fsWrites = [];
+const sb = { App: {}, console: console, setTimeout: setTimeout, atob: atob,
+  URL: { createObjectURL: function () { return 'blob:x'; }, revokeObjectURL: function () {} },
+  Blob: function () {},
+  document: { addEventListener: function (t, fn) { if (t === 'click') clickListeners.push(fn); },
+    createElement: function () { return { click: function () {} }; },
+    body: { appendChild: function () {}, removeChild: function () {} } },
+  Capacitor: { isNativePlatform: function () { return true; },
+    Plugins: { Filesystem: { writeFile: function (o) { fsWrites.push(o); return Promise.resolve({}); } } } } };
+sb.window = sb;
 vm.createContext(sb);
-vm.runInContext(appSrc.slice(a, b + 2), sb);
+vm.runInContext(doorSrc, sb);
 const dl = sb.App._photoDl;
 ok('helper exists', typeof dl === 'function');
 const link = dl('data:image/jpeg;base64,AAAA', 'fuel-receipt-2026-10-20');
-ok('link is a download anchor on the photo', link.indexOf('<a ') === 0 && link.indexOf('href="data:image/jpeg;base64,AAAA"') !== -1 && link.indexOf('download="meticulous-fuel-receipt-2026-10-20.jpg"') !== -1, link);
-ok('no photo -> no link', dl(null, 'x') === '' && dl('', 'x') === '');
-ok('non-data photo -> no link', dl('https://example.com/x.jpg', 'x') === '');
-ok('label is filename-safe', dl('data:image/png;base64,AA', 'a/b c').indexOf('download="meticulous-a-b-c.jpg"') !== -1);
+ok('the door is a button carrying a download token (v241; the dead data:-anchor is gone)',
+  link.indexOf('<button') === 0 && /data-photodl="pd\d+"/.test(link) && link.indexOf('href="data:') === -1, link);
+ok('no photo -> no button', dl(null, 'x') === '' && dl('', 'x') === '');
+ok('non-data photo -> no button', dl('https://example.com/x.jpg', 'x') === '');
+/* the label becomes the saved filename, sanitized — driven
+   through the real click handler into a fake native shell */
+const tok = /data-photodl="([^"]+)"/.exec(dl('data:image/png;base64,AA', 'a/b c'))[1];
+const fakeBtn = { textContent: '', getAttribute: function (n) { return n === 'data-photodl' ? tok : null; },
+  closest: function () { return this; }, parentNode: null };
+clickListeners.forEach(function (fn) { fn({ target: fakeBtn, preventDefault: function () {} }); });
+ok('label is filename-safe (the saved file name)', fsWrites.length === 1 && fsWrites[0].path === 'Meticulous/meticulous-a-b-c.png', JSON.stringify(fsWrites));
 /* keepKey persistence in the shared photo pipeline */
 ok('pipeline keeps the photo when a host asks (keepKey)', appSrc.indexOf("opts.keepKey) store.set(opts.keepKey, dataUrl)") !== -1);
 /* surfaces */

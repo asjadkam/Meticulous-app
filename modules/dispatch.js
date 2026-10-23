@@ -1795,7 +1795,7 @@
          settled here in v197 — v218 below moves them to
          their own Upcoming card.) ---- */
       var dspTodayStr = ''; try { dspTodayStr = App._today(); } catch (e) {}
-      var todayItems = [], futureItems = [];
+      var todayItems = [], futureItems = [], doneTodayItems = [];
       (function () {
         var lst = list();
         for (var ti = lst.length - 1; ti >= 0; ti--) {
@@ -1804,7 +1804,13 @@
           if (a && td.id === a.id) continue;
           if (viewRec && td.id === viewRec.id) continue;
           var rd = dspRecordDate(td) || dspTodayStr;
-          if (rd === dspTodayStr) todayItems.push({ d: td, i: ti });
+          if (rd === dspTodayStr) {
+            /* v241 (DSP-COMPLETED-DROPS): a COMPLETED today record
+               leaves the Today card — it stands in its own card
+               BELOW Upcoming (rendered after it, below). */
+            if (td.status === 'completed') doneTodayItems.push({ d: td, i: ti });
+            else todayItems.push({ d: td, i: ti });
+          }
           else if (rd > dspTodayStr) futureItems.push({ d: td, i: ti });
         }
       })();
@@ -1842,6 +1848,22 @@
       if (futureItems.length) {
         h += '<div class="card" id="dp_upcoming_card"><h3>📅 Upcoming</h3>' +
           futureItems.map(dspRowHtml).join('') + '</div>';
+      }
+
+      /* ---- v241 (DSP-COMPLETED-DROPS, owner, Oct 22, 2026
+         18:01 MDT, his Dispatch screenshot): today's dispatch
+         showed COMPLETED ($319.00, #22864) yet still led the
+         screen under "Today's dispatch". His rule: today's
+         dispatch leads only while it is open — once today's
+         dispatch is completed it drops BELOW, and the Upcoming
+         dispatch becomes the priority at the top. Completed-
+         today records therefore stand in their own card under
+         Upcoming. (Refines DSP-TODAY-TOP: the v197/v218 cards
+         above are untouched in shape; the rows are the same
+         dspRowHtml rows — only the placement moved.) ---- */
+      if (doneTodayItems.length) {
+        h += '<div class="card" id="dp_done_today_card"><h3>✅ Completed today</h3>' +
+          doneTodayItems.map(dspRowHtml).join('') + '</div>';
       }
 
       h += '<div id="dp_ingest"></div>';

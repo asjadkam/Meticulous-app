@@ -293,10 +293,11 @@ function upcomingRegion(h) {
     dspSrc.indexOf('todayItems.map(dspRowHtml)') !== -1);
   check('History keeps only past-dated records (v218; the v197 today-only filter is superseded)',
     dspSrc.indexOf('(dspRecordDate(it.d) || dspTodayStr) < dspTodayStr') !== -1);
-  check('the Today card takes exactly today\'s records (v218: one shared date read feeds both lists)',
-    dspSrc.indexOf('if (rd === dspTodayStr) todayItems.push') !== -1);
-  eq('ships as webVersion 198', ver.webVersion, 240);
-  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=240') !== -1);
+  check('the Today card takes today\'s OPEN records — a completed today record drops to its own card below Upcoming (v241, DSP-COMPLETED-DROPS, superseding the v218 one-list shape)',
+    dspSrc.indexOf("if (td.status === 'completed') doneTodayItems.push") !== -1 &&
+    dspSrc.indexOf('else todayItems.push') !== -1);
+  eq('ships as webVersion 198', ver.webVersion, 241);
+  check('index loads dispatch at the 199 pin', idxSrc.indexOf('modules/dispatch.js?v=241') !== -1);
 
   console.log('\ndsp-today-top v197: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

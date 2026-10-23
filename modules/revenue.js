@@ -1457,7 +1457,22 @@
       } else if (rate > 0) {
         e.amount = (hrs * rate).toFixed(2);
       }
-      var list = entries(); list.push(e); saveEntries(list);
+      var list = entries();
+      /* v241 (SHIFT-CLOSE-DUP-ENTRY, owner Oct 22 close-out +
+         Oct 23 15:07): one close, one entry. A completion entry
+         (dspId) for this date IS the day's revenue — foreman
+         hours + travel — and the tracker stop adds nothing on
+         top of it. With no completion, the day's tracker entry
+         is REPLACED, never stacked: a second stop (or a
+         recovered session re-stopping) converges to the latest
+         session instead of appending a second figure for the
+         dashboard glance to show (the $270.51 -> $280.92 drift,
+         no edit by him). */
+      var day = e.date;
+      var spoken = list.some(function (x) { return x && x.dspId && x.date === day; });
+      if (spoken) return;
+      list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === day); });
+      list.push(e); saveEntries(list);
       manifestFeedPush('revenue', feed);
     },
     /* Cross-module: dispatch completion logs earnings here. */
@@ -1471,6 +1486,12 @@
          the day's card numbers — ride along on the stored entry:
          P&L and the invoice read them from here. */
       if (e.dspId) list = list.filter(function (x) { return !x || x.dspId !== e.dspId; });
+      /* v241 (SHIFT-CLOSE-DUP-ENTRY): a completion supersedes the
+         tracker's auto entry for the same date — the stop may
+         have landed first; the day still ends with ONE entry,
+         the foreman-based one. (Entries without a dspId — manual
+         adds — never trigger this.) */
+      if (e.dspId) list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === (e.date || App._today())); });
       var entry = {
         date: e.date || App._today(),
         amount: e.amount || 0,

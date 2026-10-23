@@ -871,6 +871,81 @@
     return merged;
   }
 
+  /* v241 (FUEL-HISTORY-LOST-OCT20-22 + the sync half of
+     SHIFT-CLOSE-DUP-ENTRY and PTI-SIGNATURE-SAVE): APPEND-ONLY
+     RECORD LISTS. fuel_fills, rev_entries, rev_extras,
+     pti_reports and sessions are lists of records that are only
+     ever ADDED to (an edit rewrites a record in place; nothing
+     legitimately un-happens). The generic whole-key stamp rule
+     is wrong for them in exactly the way v224 proved it wrong
+     for the telemetry day maps: a rolled-back cloud copy — a
+     stale store instance's push, stamped fresh — wins the pull
+     and this device's own saved records vanish (Oct 20 + Oct 22's
+     fuel fills; a signed PTI coming back bare; the $319
+     completion entry). For these keys the pull therefore merges
+     BY RECORD IDENTITY: the union of both sides; when both sides
+     hold the same record, the MORE COMPLETE copy wins (a signed
+     PTI beats its bare copy; a photo-bearing fill beats its
+     photo-less twin). Two guards keep the old semantics where
+     they matter: the merge runs only while the local key is
+     SETTLED (a dirty key — an edit/delete not yet flushed —
+     keeps the generic stamp rules for that cycle, so a delete
+     is never resurrected by its own sync), and never when the
+     key's recorded owner is a DIFFERENT account (a shared phone
+     never unions one account's records into another's tree).
+     When the union holds anything the cloud lacks, the key
+     stays dirty so the flush pushes the union UP — the cloud
+     copy heals instead of the phone losing records. */
+  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1 };
+  function recordIdentity(key, rec) {
+    if (!rec || typeof rec !== 'object') return null;
+    if (key === 'pti_reports') return rec.id ? 'id:' + rec.id : null;
+    if (key === 'rev_entries' && rec.dspId) return 'dsp:' + rec.dspId;
+    var fields = (key === 'fuel_fills') ? ['date', 'time', 'litres', 'cost', 'station', 'odo']
+      : (key === 'sessions') ? ['date', 'seconds', 'endedAt']
+      : null;
+    if (!fields) {
+      /* rev_extras + the id-less fallback: the whole record,
+         photo excluded (a photo can be dropped/replaced without
+         the record becoming a different record). */
+      var ks = Object.keys(rec).filter(function (k) { return k !== 'photo'; }).sort();
+      return 'fp:' + ks.map(function (k) { return k + '=' + JSON.stringify(rec[k]); }).join('|');
+    }
+    return 'fp:' + fields.map(function (k) {
+      return k + '=' + JSON.stringify(rec[k] === undefined ? null : rec[k]);
+    }).join('|');
+  }
+  function recordCompleteness(key, rec) {
+    var n = 0, k;
+    for (k in rec) {
+      if (Object.prototype.hasOwnProperty.call(rec, k)) {
+        var v = rec[k];
+        if (v !== null && v !== undefined && v !== '' && v !== false) n++;
+      }
+    }
+    if (key === 'pti_reports') {
+      if (rec.signature) n += 10;
+      if (rec.signed) n += 5;
+      if (rec.plate) n += 2;
+    }
+    if (rec.photo) n += 3;
+    return n;
+  }
+  function mergeRecordLists(key, localArr, cloudArr) {
+    var out = [], pos = {};
+    function offer(rec, isLocal) {
+      var id = recordIdentity(key, rec);
+      if (id === null) { out.push(rec); return; }
+      if (!(id in pos)) { pos[id] = out.length; out.push(rec); return; }
+      var cur = out[pos[id]];
+      var cs = recordCompleteness(key, cur), ns = recordCompleteness(key, rec);
+      if (ns > cs || (isLocal && ns === cs)) out[pos[id]] = rec;
+    }
+    (cloudArr || []).forEach(function (r) { offer(r, false); });
+    (localArr || []).forEach(function (r) { offer(r, true); });
+    return out;
+  }
+
   function syncNow() {
     // v34: self-heal a desync where Firebase HAS a signed-in user but this
     // engine never got (or lost) that sign-in — on device the dot then sat
@@ -1013,6 +1088,31 @@
             if (JSON.stringify(teleMerged) !== JSON.stringify(d.v)) {
               /* the union holds days the cloud lacks — keep the
                  key dirty so the flush pushes the union UP. */
+              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+            } else {
+              meta.keys[key] = { t: cloudTs, s: cloudTs };
+            }
+            return;
+          }
+        }
+
+        /* v241: the record-list union (see mergeRecordLists
+           above) — runs before the generic whole-key rules
+           whenever this device holds a settled, own-account
+           array for the key; a stamp outcome never deletes a
+           record from these keys. */
+        if (RECORD_LIST_KEYS[key] && raw !== null && Array.isArray(d.v) && !localDirty &&
+            !(km.u && S.uid && km.u !== S.uid)) {
+          var rlLocal = parseJson(raw, undefined);
+          if (Array.isArray(rlLocal)) {
+            var rlMerged = mergeRecordLists(key, rlLocal, d.v);
+            if (JSON.stringify(rlMerged) !== JSON.stringify(rlLocal)) {
+              lsSetRaw(key, JSON.stringify(rlMerged));
+              applied++;
+            }
+            if (JSON.stringify(rlMerged) !== JSON.stringify(d.v)) {
+              /* the union holds records the cloud lacks — keep
+                 the key dirty so the flush pushes the union UP. */
               meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
             } else {
               meta.keys[key] = { t: cloudTs, s: cloudTs };

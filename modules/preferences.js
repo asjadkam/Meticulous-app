@@ -325,7 +325,12 @@
       if (effRole !== 'office') {
       h += '<div class="card"><h3>🚛 Truck</h3>' +
         '<label class="f">Truck number</label><input id="pf_tnum" value="' + esc(o.truckNo || '') + '">' +
-        '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">';
+        '<label class="f">Load / trailer type</label><input id="pf_ttype" value="' + esc(o.truckType || '') + '">' +
+        /* v241 (PTI-PLATE-SAVE): the licence plate lives on the
+           truck record, set-once like the truck number — before
+           v241 nothing in the app wrote onboarding.plate at all,
+           so every PTI's plate field pre-filled blank. */
+        '<label class="f">Licence plate</label><input id="pf_plate" value="' + esc(o.plate || o.plateNo || '') + '">';
       /* v76 (F6, boss QA Oct 14): the odometer-baseline photo flow and
          the Daily-odometer-photos tracker toggle are DRIVER tools —
          hidden for office-only users (a man who never starts a tracker
@@ -550,6 +555,7 @@
            for missing inputs (the v76 guard pattern, widened to
            the whole card). */
         if (body.querySelector('#pf_tnum')) { o.truckNo = g('pf_tnum'); o.truckType = g('pf_ttype'); }
+        if (body.querySelector('#pf_plate')) { o.plate = g('pf_plate'); } /* v241 (PTI-PLATE-SAVE) */
         /* v76 (F6): office renders have no odometer field/toggle —
            keep whatever is stored, never reach for missing inputs. */
         if (body.querySelector('#pf_odo')) o.odometerBaseline = g('pf_odo');

@@ -77,8 +77,8 @@ function fakeBody() {
 /* ---------- ship pins ---------- */
 {
   console.log('\n— v205: ship pins —');
-  eq('version.json webVersion ships as 205', ver.webVersion, 240);
-  ok('index.html pins modules/pnl.js at ?v=240', idxSrc.indexOf('modules/pnl.js?v=240') !== -1);
+  eq('version.json webVersion ships as 205', ver.webVersion, 241);
+  ok('index.html pins modules/pnl.js at ?v=241', idxSrc.indexOf('modules/pnl.js?v=241') !== -1);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
