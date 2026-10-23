@@ -215,9 +215,28 @@
     return {
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
       subdomains: '',
+      cls: 'nv-tile-street',
       attribution: 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN, Esri Japan, METI, TomTom'
     };
   }
+
+  /* v240 (NAV-LAYERS-BUTTON): the satellite layer spec — Esri
+     World Imagery, keyless like the street source, same
+     {z}/{y}/{x} template; probed live at z15 over the owner's
+     suburb before shipping (real aerial tiles answer). Its
+     class carries NO colour lift (v239): aerial photos are
+     already true colour. */
+  function satelliteTileSpec() {
+    return {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      cls: 'nv-tile-sat'
+    };
+  }
+  /* v240: the elevation overlay — Esri's World Hillshade
+     (Elevation service), probed live at z15; paintDriveLayers
+     lays it over the street layer at 45% so the relief reads
+     without hiding the roads. */
+  var HILLSHADE_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}';
 
   /* v220 (NAV-FREEZE): a tile layer that can DIE silently is how
      a drive ends up with a route arc and a dot on a blank field
@@ -1099,7 +1118,12 @@
       gradeAlerts: s.gradeAlerts === undefined ? true : !!s.gradeAlerts,
       viewMode: s.viewMode === '2d' ? '2d' : '3d',
       showSpeed: s.showSpeed === undefined ? true : !!s.showSpeed,
-      showSpeedLimit: s.showSpeedLimit === undefined ? true : !!s.showSpeedLimit
+      showSpeedLimit: s.showSpeedLimit === undefined ? true : !!s.showSpeedLimit,
+      /* v240 (NAV-LAYERS-BUTTON): the drive map's base layer —
+         standard / satellite / elevation. Traffic is NOT a
+         layer value: no data source is wired for it yet, so
+         no stored value can name it. */
+      driveLayer: (s.driveLayer === 'satellite' || s.driveLayer === 'elevation') ? s.driveLayer : 'standard'
     };
     setNavViewMode(out.viewMode);
     return out;
@@ -1673,6 +1697,26 @@
         '<div class="nv-drive-speed" id="nvd_speedwrap">' +
         '<div class="nv-drive-speedo" id="nvd_speed">–</div>' +
         '<div class="nv-drive-limit hidden" id="nvd_limit"></div></div>' +
+        /* v240 (NAV-LAYERS-BUTTON): the Google-style layers
+           control — a corner button docked bottom-right on the
+           speedometer's line (the dock v237 vacated), opening
+           a small panel: Standard / Satellite / Traffic /
+           Elevation. Traffic's entry exists NOW because the
+           owner ordered the button ahead of the data ("I want
+           the button because in future traffic will be
+           there"); it wears a "soon" tag and its tap explains
+           in the panel that traffic is not live yet — it
+           switches nothing and fakes no layer. */
+        '<button class="nv-layers-btn" id="nvd_layers" aria-label="Map layers" title="Map layers">' +
+        '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 3 L22 8.5 L12 14 L2 8.5 Z" fill="#ffffff"/><path d="M3.5 12.5 L12 17 L20.5 12.5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/><path d="M3.5 16.5 L12 21 L20.5 16.5" fill="none" stroke="#9db8e8" stroke-width="2" stroke-linejoin="round"/></svg></button>' +
+        '<div class="nv-layers-panel hidden" id="nvd_layers_panel">' +
+        '<div class="nv-layers-title">Map layers</div>' +
+        '<button class="nv-layer-opt" id="nvd_layer_standard">🗺️ Standard</button>' +
+        '<button class="nv-layer-opt" id="nvd_layer_satellite">🛰️ Satellite</button>' +
+        '<button class="nv-layer-opt" id="nvd_layer_traffic">🚦 Traffic<span class="nv-layer-soon">soon</span></button>' +
+        '<button class="nv-layer-opt" id="nvd_layer_elevation">⛰️ Elevation</button>' +
+        '<div class="nv-layers-note hidden" id="nvd_layers_note"></div>' +
+        '</div>' +
         '<div class="nv-drive-bar">' +
         /* v125: the ETA stack is NEVER blank — it renders with a
            visible placeholder from the moment Drive opens, and
@@ -2964,7 +3008,6 @@
                  reads as constant flicker. Tiles now land whole. */
               fadeAnimation: false
             }).setView(S.pos || S.line[0], 18); /* v178 (A3): one zoom closer — road names read bigger at a glance */
-            var tspec = driveTileSpec();
             /* v232/v235 (NAV-MAP-BLANK-V40): maxNativeZoom 15 —
                Esri serves BLANK single-colour tiles at zooms
                17-18 for newer/fringe areas it hasn't detailed,
@@ -2978,14 +3021,16 @@
                at 16, which healed other areas but not his
                block; 15 is the level that always has the roads.
                The drive view stays at zoom 18 (v178 framing);
-               Leaflet scales the z15 tiles up to it. */
-            /* v239 (NAV-MAP-COLORS-3D): the street layer wears
-               the nv-tile-street class — the sheet's colour
-               lift (contrast/saturate, measured on the live
-               tiles) applies to exactly these tiles and no
-               others; the satellite/hillshade layers (v240)
-               carry their own classes, unlifted. */
-            resilientTileLayer(tspec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4, className: 'nv-tile-street' }).addTo(S.driveMap);
+               Leaflet scales the z15 tiles up to it.
+               v240 (NAV-LAYERS-BUTTON): the base stack is
+               painted by paintDriveLayers (below) — the same
+               painter the layers button re-runs on a switch,
+               so the drive never opens on a different stack
+               than a switch would build, and EVERY layer in
+               the stack fetches at native 15 under the z18
+               view: the coverage contract holds on all of
+               them. */
+            paintDriveLayers();
             /* v183: a user drag enters free-look. Leaflet fires
                dragstart only for real gestures (programmatic
                panTo does not), so the follow camera never
@@ -3194,6 +3239,33 @@
       /* One drive paint per GPS fix, off the module's one watch.
          Returns the text spoken (if any) so startDrive can avoid
          double-announcing. */
+      /* v240 (NAV-LAYERS-BUTTON): the drive map's base stack —
+         painted at Drive-open and re-painted by the layers
+         button on a switch. Standard = the Esri street layer
+         (with its v239 lift class); Satellite = Esri World
+         Imagery (real aerial tiles, probed live); Elevation =
+         the street layer PLUS the World Hillshade at 45% —
+         real shaded relief over the streets, roads still
+         readable. Every layer fetches at native z15 under
+         the z18 view (the v232/v235 coverage contract), so a
+         switch can never reintroduce a blank map. Traffic
+         has no layer here by design — no data source is
+         wired; its panel entry says so and switches nothing.
+         A switched-away resilient layer's self-heal watchdog
+         keeps its own (now detached) layer — a no-op off-map,
+         the shipped v220 posture. */
+      function paintDriveLayers() {
+        if (!S || !S.driveMap) return;
+        var kind = (S.settings && S.settings.driveLayer) || 'standard';
+        if (S.driveBaseLayer) { try { S.driveMap.removeLayer(S.driveBaseLayer); } catch (e) {} S.driveBaseLayer = null; }
+        if (S.driveHillLayer) { try { S.driveMap.removeLayer(S.driveHillLayer); } catch (e) {} S.driveHillLayer = null; }
+        var spec = kind === 'satellite' ? satelliteTileSpec() : driveTileSpec();
+        S.driveBaseLayer = resilientTileLayer(spec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4, className: spec.cls }).addTo(S.driveMap);
+        if (kind === 'elevation') {
+          S.driveHillLayer = L.tileLayer(HILLSHADE_TILE_URL, { maxZoom: 18, maxNativeZoom: 15, opacity: 0.45, className: 'nv-tile-hill' }).addTo(S.driveMap);
+        }
+      }
+
       /* v227 (NAV-LANE-WARMUP-SCOPE — found on the F1 path):
          fetchLaneCount was declared INSIDE the map-init block
          above, where strict-mode block scoping hides it from
@@ -3604,6 +3676,46 @@
       if (dExit) dExit.onclick = function () { exitDrive(); };
       var dRecenter = body.querySelector('#nvd_recenter');
       if (dRecenter) dRecenter.onclick = function () { setDriveFree(false); };
+
+      /* v240 (NAV-LAYERS-BUTTON): the layers control's wiring.
+         Standard / Satellite / Elevation switch the base
+         stack through paintDriveLayers and persist in the
+         navigator settings; the panel closes on a switch.
+         Traffic is wired to WORDS ONLY — its tap paints the
+         plain not-live-yet note in the panel and touches
+         nothing on the map (see the markup note). */
+      var layersBtn = body.querySelector('#nvd_layers');
+      var layersPanel = body.querySelector('#nvd_layers_panel');
+      var layersNote = body.querySelector('#nvd_layers_note');
+      function paintLayerOpts() {
+        ['standard', 'satellite', 'traffic', 'elevation'].forEach(function (k) {
+          var b = body.querySelector('#nvd_layer_' + k);
+          if (b) b.classList.toggle('on', S.settings.driveLayer === k);
+        });
+      }
+      if (layersBtn) layersBtn.onclick = function () {
+        if (layersPanel) { layersPanel.classList.toggle('hidden'); paintLayerOpts(); }
+      };
+      ['standard', 'satellite', 'elevation'].forEach(function (k) {
+        var b = body.querySelector('#nvd_layer_' + k);
+        if (b) b.onclick = function () {
+          if (S.settings.driveLayer !== k) {
+            S.settings.driveLayer = k;
+            saveSettings({ driveLayer: k });
+            paintDriveLayers();
+          }
+          if (layersNote) layersNote.classList.add('hidden');
+          paintLayerOpts();
+          if (layersPanel) layersPanel.classList.add('hidden');
+        };
+      });
+      var trafficOpt = body.querySelector('#nvd_layer_traffic');
+      if (trafficOpt) trafficOpt.onclick = function () {
+        if (layersNote) {
+          layersNote.textContent = 'Traffic isn\u2019t live yet \u2014 this button is ready for the day the traffic feed is wired.';
+          layersNote.classList.remove('hidden');
+        }
+      };
 
       /* v135: the avatar tap — opens/closes the chooser; a choice
          applies AT THE TAP (glyph swapped, 'on' marker moved) and

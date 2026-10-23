@@ -55,8 +55,12 @@ const ORIGIN = [51.0955, -114.099], DEST = [51.1075, -114.0845];
 console.log('— v239: wiring pins —');
 check('the drive tile spec is STILL the Esri street source (no source swap)',
   /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Street_Map/.test(navSrc));
+/* v240 supersede note: the layer creation moved into
+   paintDriveLayers (the layers switch re-runs it); the class
+   now rides the spec (driveTileSpec().cls) into that call. */
 check('the drive layer is created with the street class (the lift scope)',
-  /resilientTileLayer\(tspec\.url, \{[^}]*className: 'nv-tile-street'/.test(navSrc));
+  /cls: 'nv-tile-street'/.test(navSrc) &&
+  /resilientTileLayer\(spec\.url, \{[^}]*className: spec\.cls/.test(navSrc));
 {
   const i = css.indexOf('.nv-tile-street{');
   const r = i === -1 ? '' : css.slice(i, css.indexOf('}', i) + 1);

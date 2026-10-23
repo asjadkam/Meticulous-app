@@ -523,6 +523,7 @@ label.chk input{width:18px;height:18px;}
   padding:6px 12px;border-radius:999px;max-width:94%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nv-drive.nv-pip .nv-drive-top,.nv-drive.nv-pip .nv-drive-inset,.nv-drive.nv-pip .nv-drive-bar,
 .nv-drive.nv-pip .nv-avatar-picker,.nv-drive.nv-pip .nv-drive-reroute,.nv-drive.nv-pip .nv-drive-speed,
+.nv-drive.nv-pip .nv-layers-btn,.nv-drive.nv-pip .nv-layers-panel,
 .nv-drive.nv-pip #nvd_recenter{display:none !important;}
 /* v222 (PIP-LANDS-HOME): the IN-APP screen-in-screen. The dock is
    a fixed, click-through shell layer above the dashboard; the
@@ -705,6 +706,19 @@ body.mt-driving #chatSheet{z-index:2120;}
    aerial photos are already true colour. */
 .nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
 .nv-tile-street{filter:contrast(1.06) saturate(1.38);}
+/* v240 (NAV-LAYERS-BUTTON): the layers control — the button
+   docked bottom-right on the speedometer's own 96px line
+   (the dock the inset vacated in v237), its panel floating
+   above it. Plain chrome, no transform (v139 budget). The
+   active layer wears the app's orange; Traffic's "soon" tag
+   and the not-live-yet note live here too. */
+.nv-layers-btn{position:absolute;right:10px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:5;width:46px;height:46px;border:none;border-radius:14px;background:#1F3764;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.45);cursor:pointer;padding:0;}
+.nv-layers-panel{position:absolute;right:10px;bottom:calc(152px + env(safe-area-inset-bottom));z-index:5;width:196px;background:#1F3764;color:#fff;border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:6px;box-shadow:0 4px 18px rgba(0,0,0,.45);}
+.nv-layers-title{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#D9E1F3;padding:0 2px;}
+.nv-layer-opt{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.08);color:#fff;border:2px solid transparent;border-radius:10px;padding:9px 10px;font-size:14.5px;font-weight:600;text-align:left;cursor:pointer;}
+.nv-layer-opt.on{border-color:#e67e00;background:rgba(230,126,0,.18);}
+.nv-layer-soon{margin-left:auto;font-size:10.5px;font-weight:700;background:rgba(255,255,255,.16);color:#D9E1F3;padding:2px 7px;border-radius:999px;}
+.nv-layers-note{font-size:12.5px;line-height:1.35;color:#FFE1B3;background:rgba(230,126,0,.15);border-radius:8px;padding:7px 9px;}
 /* v177 (F4): the Navigator's own settings menu — a full-width overlay
    panel inside the module (shell face or drive face; the node moves
    to whichever face opened it). */
