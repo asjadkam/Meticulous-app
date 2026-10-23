@@ -737,7 +737,15 @@ body.mt-driving #chatSheet{z-index:2120;}
    burns bright with the turn's arrow, the rest sit dim. Absent
    entirely when OSM carries no lane count for the road. */
 .nv-inset-lanes{display:flex;gap:4px;justify-content:center;padding:2px 2px 4px;}
+/* v238 (NAV-LANE-INFO-REAL): a dense real-lane strip (many
+   lanes, several multi-arrow) may wrap inside the small card —
+   order stays left-to-right, top row first. */
+.nv-inset-lanes.wrap{flex-wrap:wrap;}
 .nv-lane{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:7px;background:rgba(255,255,255,.10);}
+/* v238: a real-lane cell sizes to its arrows (a lane can allow
+   two movements); single-arrow cells keep the 27px box. */
+.nv-lane.nv-lane-arrows{width:auto;min-width:27px;padding:0 3px;gap:1px;}
+.nv-lane.nv-lane-arrows svg{flex:none;}
 .nv-lane svg{width:21px;height:21px;}
 .nv-lane.on{background:#e67e00;box-shadow:0 0 0 2px #ffffff inset;}
 .nv-inset-head{display:flex;align-items:center;gap:8px;}

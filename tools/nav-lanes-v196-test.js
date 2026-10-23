@@ -18,6 +18,14 @@
  * `turn:lanes`) are not read; the route lane is derived
  * from the turn direction alone.
  *
+ * SUPERSEDED IN PART by v238 (NAV-LANE-INFO-REAL, owner, Fri
+ * Oct 23, 2026 11:36 MDT): the named limitation is lifted —
+ * the fetcher now also reads `turn:lanes` (pickTurnLanes,
+ * one-way orientation rule) and the pop-up paints through
+ * laneGuidanceHtml (real lanes first, this count strip as
+ * the fallback). The two pins below moved with the code;
+ * every pure-function pin in this suite stands unchanged.
+ *
  * Run: node tools/nav-lanes-v196-test.js
  */
 'use strict';
@@ -58,12 +66,12 @@ ok('the tick warms the lookup 3 km out',
 ok('the fetcher reads Overpass for the lanes tag',
   navSrc.indexOf('https://overpass-api.de/api/interpreter') !== -1 &&
   navSrc.indexOf('["highway"]["lanes"]') !== -1);
-ok('the fetcher chooses via pickLaneCount',
-  navSrc.indexOf('pickLaneCount(j.elements, street)') !== -1);
+ok('the fetcher chooses via pickLaneCount (v238: over the shared els)',
+  navSrc.indexOf('pickLaneCount(els, street)') !== -1);
 ok('a new route resets the lane cache',
   navSrc.indexOf('S.laneByTurn = {}; S.laneFetch = {};') !== -1);
-ok('the pop-up paints the strip between junction and header',
-  navSrc.indexOf("laneStripHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : 0, dDeg) +") !== -1);
+ok('the pop-up paints the strip between junction and header (v238: via laneGuidanceHtml)',
+  navSrc.indexOf("laneGuidanceHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : null, dDeg) +") !== -1);
 ok('the strip CSS exists', css.indexOf('.nv-inset-lanes{') !== -1 && css.indexOf('.nv-lane.on{') !== -1);
 ok('no version-196 claim leaks into the module header pins of older suites',
   navSrc.indexOf('webVersion, 198') === -1);

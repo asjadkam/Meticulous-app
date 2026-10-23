@@ -509,6 +509,107 @@
     return '<div class="nv-inset-lanes">' + cells + '</div>';
   }
 
+  /* v238 (NAV-LANE-INFO-REAL, owner, Fri Oct 23, 2026 11:36
+     MDT, drive video + Rand McNally screenshots: the pop-up
+     "shows NO lane information" — it must show REAL lane
+     guidance, arrows over the actual lanes). Beyond the v196
+     lane COUNT, OpenStreetMap carries `turn:lanes` — the
+     marked movement(s) of EACH lane on the approach road.
+     That is the real data, and this is its reader:
+       parseTurnLanes(raw) — "left|through;right" -> per-lane
+         movement-token arrays, or null on ANY junk (unknown
+         token, empty slot, implausible count): the value is
+         trusted whole or not at all.
+       pickTurnLanes(elements, streetName) — chooses the strip
+         from an Overpass answer with pickLaneCount's honesty
+         discipline (name match wins; a single distinct value
+         wins; ambiguity answers nothing), PLUS the orientation
+         rule: only `turn:lanes:forward` on a ONE-WAY way (or a
+         motorway, one-way by construction) is read — there
+         the forward lanes are exactly the driver's lanes in
+         travel order. A lanes:forward count that contradicts
+         the strip distrusts it.
+       laneArrowsHtml(turnLanes, deltaDeg) — one cell per REAL
+         lane, each showing the arrow(s) that lane actually
+         allows; the lanes whose movements serve the maneuver
+         (from its own geometry) burn bright. If no lane serves
+         it, none is lit — the tagging is shown, never faked.
+       laneGuidanceHtml(data, deltaDeg) — the pop-up's one
+         door: real turn lanes when they exist, else the v196
+         count strip, else nothing. A bare number (the
+         pre-v238 cache shape) still reads as a count. */
+  var LANE_MOVE_ROT = {
+    left: -90, slight_left: -45, through: 0, none: 0,
+    slight_right: 45, right: 90, merge_to_left: -45,
+    merge_to_right: 45, reverse: 180
+  };
+  function parseTurnLanes(raw) {
+    var parts = String(raw === undefined || raw === null ? '' : raw).split('|');
+    if (parts.length < 1 || parts.length > 6) return null;
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var toks = parts[i].split(';').map(function (s) { return s.trim().toLowerCase(); })
+        .filter(function (s) { return !!s; });
+      if (!toks.length) return null;
+      for (var j = 0; j < toks.length; j++) {
+        if (LANE_MOVE_ROT[toks[j]] === undefined) return null;
+      }
+      out.push(toks);
+    }
+    return out.length ? out : null;
+  }
+  function pickTurnLanes(elements, streetName) {
+    if (!elements || !elements.length) return null;
+    var want = String(streetName || '').trim().toLowerCase();
+    var named = null, values = {}, order = [];
+    elements.forEach(function (el) {
+      var t = (el && el.tags) || {};
+      var oneway = String(t.oneway || '').trim().toLowerCase();
+      var hw = String(t.highway || '').trim().toLowerCase();
+      if (!(oneway === 'yes' || oneway === 'true' || oneway === '1' ||
+          hw === 'motorway' || hw === 'motorway_link')) return;
+      var parsed = parseTurnLanes(t['turn:lanes:forward']);
+      if (!parsed) return;
+      var lf = parseInt(t['lanes:forward'], 10);
+      if (lf >= 1 && lf !== parsed.length) return;
+      var key = JSON.stringify(parsed);
+      if (!values[key]) { values[key] = parsed; order.push(key); }
+      if (want && String(t.name || '').trim().toLowerCase() === want) named = parsed;
+    });
+    if (named) return named;
+    return order.length === 1 ? values[order[0]] : null;
+  }
+  function laneServes(tokens, d) {
+    function has(a, b) { return tokens.indexOf(a) >= 0 || (b !== undefined && tokens.indexOf(b) >= 0); }
+    if (d <= -8) return has('left', 'slight_left');
+    if (d >= 8) return has('right', 'slight_right');
+    return has('through', 'none');
+  }
+  function laneArrowsHtml(turnLanes, deltaDeg) {
+    if (!turnLanes || !turnLanes.length || turnLanes.length > 6) return '';
+    var d = Number(deltaDeg) || 0;
+    var cells = '';
+    turnLanes.forEach(function (tokens) {
+      var on = laneServes(tokens, d);
+      var size = tokens.length > 1 ? 14 : 21;
+      var arrows = '';
+      tokens.slice(0, 3).forEach(function (tk) {
+        var rot = LANE_MOVE_ROT[tk];
+        if (rot === undefined) rot = 0;
+        arrows += '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '" aria-hidden="true"><g transform="rotate(' + rot + ' 24 24)">' +
+          '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="' + (on ? '#ffffff' : '#8fa3c8') + '"/></g></svg>';
+      });
+      cells += '<span class="nv-lane' + (on ? ' on' : '') + ' nv-lane-arrows">' + arrows + '</span>';
+    });
+    return '<div class="nv-inset-lanes wrap">' + cells + '</div>';
+  }
+  function laneGuidanceHtml(data, deltaDeg) {
+    if (data === null || data === undefined) return '';
+    if (typeof data === 'number') return laneStripHtml(data, deltaDeg);
+    if (data.turn && data.turn.length) return laneArrowsHtml(data.turn, deltaDeg);
+    return laneStripHtml(data.count || 0, deltaDeg);
+  }
+
   /* v135 layer 2 — the presentation guarantee. If every
      U-turn-free re-request failed and a plan STILL carries a
      U-turn, the maneuver is rewritten before anything can show
@@ -3095,7 +3196,10 @@
          the pop-up is showing that maneuver the inset key
          clears so the strip paints on the next fix. Any
          failure leaves NO strip — honest absence, never
-         an invented lane (v178's rule). */
+         an invented lane (v178's rule).
+         v238 (NAV-LANE-INFO-REAL): the same lookup now also
+         reads OSM turn:lanes (see pickTurnLanes) — the answer
+         cached per maneuver is the pair {count, turn}. */
       function fetchLaneCount(idx) {
         S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
         if (S.laneByTurn[idx] !== undefined || !S.plan || !S.line) return;
@@ -3123,7 +3227,11 @@
         S.laneFetch[idx] = Date.now();
         var tp = pointAlongLine(S.line, Math.max(0, m.cumEndKm * 1000 - 40));
         var street = (m.streets && m.streets[0]) || '';
-        var q = '[out:json][timeout:8];way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];out tags 12;';
+        /* v238 (NAV-LANE-INFO-REAL): the query also asks for
+           ways carrying turn:lanes tagging — the REAL per-lane
+           movements — alongside the v196 count ways. */
+        var q = '[out:json][timeout:8];(way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];' +
+          'way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"][~"^turn:lanes"~"."];);out tags 24;';
         var endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
         var attempt = function (k) {
           return fetch(endpoints[k], { method: 'POST', body: 'data=' + encodeURIComponent(q) })
@@ -3134,7 +3242,15 @@
         };
         attempt(0).catch(function () { return attempt(1); })
           .then(function (j) {
-            S.laneByTurn[idx] = j && j.elements ? pickLaneCount(j.elements, street) : 0;
+            /* v238: the cached answer is the pair — the v196
+               count AND the real per-lane movements (or null).
+               A successful-but-empty answer still earns the
+               honest empty pair, never a cached failure. */
+            var els = j && j.elements ? j.elements : null;
+            S.laneByTurn[idx] = {
+              count: els ? pickLaneCount(els, street) : 0,
+              turn: els ? pickTurnLanes(els, street) : null
+            };
             if (S.drive && S.drive.insetKey && S.drive.insetKey.split(':')[0] === String(idx)) S.drive.insetKey = '';
           })
           .catch(function () { /* total failure: cache nothing — a later tick retries */ });
@@ -3237,7 +3353,7 @@
             insetEl.classList.toggle('hidden', !showInset);
             if (showInset) {
               insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
-                laneStripHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : 0, dDeg) +
+                laneGuidanceHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : null, dDeg) +
                 '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';
