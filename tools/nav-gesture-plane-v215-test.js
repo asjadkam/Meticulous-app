@@ -494,8 +494,8 @@ function assertLevelTrue(label, transformStr, headingDeg) {
     /v215 \(NAV-GESTURE-PLANE\): a NEW drive[\s\S]{0,600}S\.viewRot = 0; S\.viewPitch = null;/.test(navSrc));
   ok('still exactly ONE .style.transform writer (paintPlane)',
     (navSrc.match(/\.style\.transform =/g) || []).length === 1);
-  eq('webVersion is 215', ver.webVersion, 231);
-  ok('index.html pins the v215 build', idxSrc.indexOf('?v=231') >= 0);
+  eq('webVersion is 215', ver.webVersion, 232);
+  ok('index.html pins the v215 build', idxSrc.indexOf('?v=232') >= 0);
 
   console.log('\nnav-gesture-plane-v215 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

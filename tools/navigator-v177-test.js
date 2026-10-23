@@ -119,10 +119,10 @@ check('the settings + overlay CSS shipped', cssSrc.indexOf('.nv-settings{') >= 0
 
 console.log('— ship pins —');
 check('ships as webVersion 188 with the changed files at the 199 pin',
-  ver.webVersion === 231 &&
-  idxSrc.indexOf('src="modules/navigator.js?v=231"') >= 0 &&
-  idxSrc.indexOf('src="modules/preferences.js?v=231"') >= 0 &&
-  idxSrc.indexOf('href="css/style.css?v=231"') >= 0,
+  ver.webVersion === 232 &&
+  idxSrc.indexOf('src="modules/navigator.js?v=232"') >= 0 &&
+  idxSrc.indexOf('src="modules/preferences.js?v=232"') >= 0 &&
+  idxSrc.indexOf('href="css/style.css?v=232"') >= 0,
   'webVersion=' + ver.webVersion);
 
 console.log('\nnavigator-v177: ' + pass + ' passed, ' + fail + ' failed');

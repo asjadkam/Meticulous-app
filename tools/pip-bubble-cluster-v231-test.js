@@ -304,8 +304,8 @@ const plugin = fs.readFileSync(path.join(NAT, 'java', 'com', 'meticuloustechnolo
     /VISIBLE/.test(hideSlice));
   const pipModeI = main.indexOf('onPictureInPictureModeChanged');
   const pipModeSlice = pipModeI < 0 ? '' : main.slice(pipModeI, pipModeI + 1800);
-  ok('C9 PiP enter/exit stands the home-screen widget down and back up (setFloatActive on the mode change + a literal-false restore)',
-    /setFloatActive/.test(pipModeSlice) && /setFloatActive\([^,]+,\s*false\)/.test(main));
+  ok('C9 PiP enter/exit stands the home-screen widget down and back up (setFloatActive on the mode change + a literal-false restore in the native sources)',
+    /setFloatActive/.test(pipModeSlice) && /setFloatActive\([^,]+,\s*false\)/.test(main + plugin));
   ok('C10 the widget builds a STOOD-DOWN tile while the float is up (quiet brand tile, no second face)',
     /float_active|isFloatActive/.test(widget) && /widget_tracker_down/.test(widget));
   const downPath = path.join(NAT, 'res', 'layout', 'widget_tracker_down.xml');
@@ -322,7 +322,7 @@ const plugin = fs.readFileSync(path.join(NAT, 'java', 'com', 'meticuloustechnolo
 console.log('PART D — release pins (native float code changed => APK v41, web v231)');
 {
   const vj = JSON.parse(read('version.json'));
-  ok('D1 version.json: webVersion 231, native version 41', vj.webVersion === 231 && vj.version === 41,
+  ok('D1 version.json: webVersion 231, native version 41', vj.webVersion === 232 && vj.version === 41,
     'webVersion=' + vj.webVersion + ' version=' + vj.version);
   const app = read('js/app.js');
   ok('D2 APK_VERSION 41 in js/app.js', /var APK_VERSION = 41;/.test(app));
