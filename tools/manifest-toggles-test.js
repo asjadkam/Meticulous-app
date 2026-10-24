@@ -141,7 +141,8 @@ function makeWorld(mem, writes) {
   const mem = fixtureMem(), writes = [];
   const w = makeWorld(mem, writes);
   w.render();
-  eq('a: 10 toggle checkboxes rendered (v87: the two odometer lines merged into one)', w.body._toggles.length, 10);
+  /* v247 (MANIFEST-PTI): the count moved 10 → 11 ON PURPOSE — the PTI section is the owner's named eleventh section, with its own toggle like every other. */
+  eq('a: 11 toggle checkboxes rendered (v87: the two odometer lines merged into one; v247: + PTI)', w.body._toggles.length, 11);
   check('a: all 10 default ON', w.body._toggles.every(function (t) { return t.checked; }));
   check('a: mft_sections created in the store on first read', 'mft_sections' in mem);
   check('a: no legacy mani_toggles created', !('mani_toggles' in mem));
@@ -181,7 +182,7 @@ function makeWorld(mem, writes) {
   w.render();
   check('d: after relaunch expense is still off', w.body.toggle('expense').checked === false);
   check('d: after relaunch nav is still off', w.body.toggle('nav').checked === false);
-  check('d: after relaunch the other 8 are on', w.body._toggles.filter(function (t) { return t.checked; }).length === 8);
+  check('d: after relaunch the other 9 are on (v247: + PTI, default on)', w.body._toggles.filter(function (t) { return t.checked; }).length === 9);
   check('d: preview after relaunch still drops Fuel & expenses', w.body._html.indexOf('Fuel & expenses') < 0);
 }
 

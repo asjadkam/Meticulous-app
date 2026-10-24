@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 246,
-  "notes": "v246 — MANIFEST-ODO-END-WRONG (owner, Oct 22, 2026 20:02 MDT, same printed manifest): the Odometer line read 169,888 → 170,117 km (229 km); his actual closing odometer (post-trip PTI 17:21 + the 17:13 fuel read) was 170,079 — a 191 km day. 170,117 was the NEXT MORNING's reading (Oct 23 personal driving). Root cause (modules/manifest.js, the v122 readings-log end fill): the fill reached two days forward from the day's end anchor, and Oct 22's last session fragment ended 17:30 — after the 17:21 PTI — so the first reading the window met was next day's. Fix: the end fill reads the day's OWN readings inside the day's CLOSING WINDOW — the last odo_readings entry stamped on the day, at/after an hour before the day's end anchor (session end, else the dispatch close). The closing captures (the post-trip inspection, the night dash save) land in that last hour; the administrative closes trail them by minutes, never hours. A mid-day reading hours before the end still never closes a day (the v87/v122 honesty law, manifest-odo case i, holds), and a day with nothing in the window still prints \"end not recorded\". Harness: tools/manifest-odo-end-v246-test.js on the Oct 22 fixture — RED 3 (printed his screenshot's exact 229 km line; end null without the next-day reading), GREEN 9/9 incl. the window-edge honesty case; manifest-odo 31/31 and every manifest/odo suite holds. PIN MOVES (cited): ?v=245 index cohort (26) + standing webVersion/?v= pins in the suites move 245 -> 246. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: Oct 22's manifest Odometer line must read 169,888 → 170,079 km (191 km).",
+  "webVersion": 247,
+  "notes": "v247 — MANIFEST-PTI (owner, Oct 22, 2026 20:04 MDT + Oct 23): the manifest is the full day record — dispatch, GPS route, PTI, summary — but it carried no PTI at all: Oct 22 HAD both inspections filed (pre 07:24 @ 169,888, post 17:21 @ 170,079) and the printed manifest showed none of it, because collect() never read pti_reports. Fix (modules/manifest.js): collect now reads the day's PTI reports (latest filing of each kind; the v242 profile fence in the app's own stamping — an unstamped record belongs to p1) and returns them as manifest facts: time, odometer reading, defects result, filed/signed status. A new PTI section (its own remembered toggle, default on, like every section) prints both rows in the document and the screen preview — a side never filed says \"Not filed\". Completeness is now a printed fact: a manifest is COMPLETE only with PTI (pre + post) AND the GPS trail on file; a closed day that lacks a piece closes with \"Manifest incomplete — missing: …\" naming the pieces, and a complete day says so. A day still in progress makes no completeness claim. An unsigned filing counts as filed — its row shows \"Filed — not signed\" honestly. Harness: tools/manifest-pti-v247-test.js on the Oct 22 fixture — RED 19/19 (no PTI anywhere), GREEN 19/19; every manifest suite holds. PIN MOVES (cited): ?v=246 index cohort (26) + standing webVersion/?v= pins in the suites move 246 -> 247. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: Oct 22's manifest shows both inspections and reads Manifest complete.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "21b0be9cd7376306904c8568f82804186cb938fe1f6c18482dce4833ab209674",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "ee154652ea7f722df4eb826a968ceb31510916a83f602de59b770fd7687c95c8",
+    "index.html": "823297b6680df8d7c15d9f62ea003d9d3949bc8565806eb744f4e8a4fe1e5a0e",
     "js/app.js": "b877cde62a74ea12a27ad1bccff64b040e5b0d4c87474d0d5bc646cf7bea99b3",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -45,7 +45,7 @@
     "modules/fuel.js": "58e782d6f7edc6aaca29d4cbde65166bd3c205ce35d084c8e8ba02f17af2e4bc",
     "modules/invoice.js": "189eeb9e96c4f821670b9d53eed9d805cda2f3fd1d18b6f1e0582b4a9fe85981",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
-    "modules/manifest.js": "bb2182af6843d2669190fa763899a03533fe3eb284d40cf2303d592ab0c5b4e4",
+    "modules/manifest.js": "f9e78ceecbd464e7175d726ce9cdfebee612d5858d6823daf5dbae6da8523031",
     "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
     "modules/navigator.js": "1008e429833cd6516bd2f069c09638a5149b8d4ea942f60d74de504df3ab851a",
     "modules/pnl.js": "ca6b59a7143e2e9e47b46846aa80dfb3d45c33f22282abc500d88daa63882f4b",

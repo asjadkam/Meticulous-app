@@ -13,7 +13,7 @@
 
   var SECTIONS = [
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
-    ['incident', 'Incident list'], ['start', 'Start Time'], ['end', 'End Time'],
+    ['incident', 'Incident list'], ['pti', 'PTI (inspections)'], ['start', 'Start Time'], ['end', 'End Time'],
     ['odo', 'Odometer'], ['loads', 'Loads hauled'],
     ['geoloads', 'GPS-counted loads'],
     ['earned', 'Total Earned Income']
@@ -673,6 +673,7 @@
        anything else prints as its coordinates — never a guessed
        name. */
     var routeStops = [];
+    var gpsTrail = false;
     try {
       var lmDays = (G('livemiles', { days: {} }) || {}).days || {};
       /* v245 (MANIFEST-GPS-EMPTY-OCT22): the day's crumbs join
@@ -703,6 +704,7 @@
           allCrumbs.push(cr);
         });
       });
+      gpsTrail = allCrumbs.length > 0;
       routeStops = trailStops(allCrumbs).map(function (s) {
         var label = '';
         if (geoDay && geoDay.sites) {
@@ -748,7 +750,52 @@
     var edited = applyDayEdit({ odoEnd: odoEnd, milesIssues: milesIssues }, dayEdit);
     odoEnd = edited.odoEnd; milesIssues = edited.milesIssues;
     var dayNote = edited.dayNote;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit };
+    /* v247 (MANIFEST-PTI, owner Oct 22, 2026 20:04 MDT + Oct 23):
+       the day's inspections ride the manifest — pre + post, each
+       with its time, odometer reading, defects result and
+       filed/signed status — and completeness is a fact of the
+       record: a manifest is COMPLETE only when the PTI pair AND
+       the GPS trail are both on file. The latest filing of each
+       kind is the day's operative inspection; another work
+       profile's reports never fill this day (the v242 fence,
+       stamped the app's own way — App's wpStampOf: a record
+       with no stamp belongs to 'p1', and the day's profile is
+       dayPid or 'p1' when nothing on it is stamped). */
+    var ptiPre = null, ptiPost = null;
+    var dayPidEff = dayPid || 'p1';
+    (G('pti_reports', []) || []).forEach(function (r) {
+      if (!r || r.date !== d) return;
+      if (String(r.profileId || 'p1') !== dayPidEff) return;
+      var s = ptiSummary(r);
+      if (r.kind === 'pre') { if (!ptiPre || s.at >= ptiPre.at) ptiPre = s; }
+      else if (r.kind === 'post') { if (!ptiPost || s.at >= ptiPost.at) ptiPost = s; }
+    });
+    var pti = { pre: ptiPre, post: ptiPost };
+    var missing = [];
+    if (!ptiPre) missing.push('pre-trip PTI');
+    if (!ptiPost) missing.push('post-trip PTI');
+    if (!gpsTrail) missing.push('GPS trail');
+    var complete = missing.length === 0;
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+  }
+
+  /* v247: one filed PTI report as the manifest prints it —
+     time, odometer, defects result, filed/signed status. */
+  function ptiSummary(r) {
+    var n = (r.defects || []).length;
+    return {
+      at: stampMs(r.filedAt) || 0,
+      time: fmtClock(stampMs(r.filedAt)),
+      odometer: (typeof r.odometer === 'number' && isFinite(r.odometer)) ? r.odometer : null,
+      result: r.result || null,
+      defects: n,
+      defectsText: n === 0 ? 'No defects' : n + (n === 1 ? ' defect' : ' defects') + ' — ' + (r.result || '—'),
+      signed: !!r.signed
+    };
+  }
+  function ptiRowText(s) {
+    return s.time + ' · ' + (s.odometer !== null ? Number(s.odometer).toLocaleString('en-CA') + ' km' : 'odometer not recorded') +
+      ' · ' + s.defectsText + ' · ' + (s.signed ? 'Signed' : 'Filed — not signed');
   }
 
   /* v67 — THE REMEMBERED-TOGGLES RULE (owner, Oct 14: "no user wants to
@@ -869,6 +916,14 @@
       L.push({ k: 'h', a: 'Incidents' });
       c.incidents.forEach(function (x) { L.push({ k: 'kv', a: x.tab, b: String(x.desc || '').slice(0, 40) }); });
     }
+    /* v247 (MANIFEST-PTI): the day's inspections print with the
+       rest of the day record — both rows always, a side that was
+       never filed says so (see dayBodyHtml for the screen twin). */
+    if (t.pti && c.pti && (c.pti.pre || c.pti.post)) {
+      L.push({ k: 'h', a: 'PTI — inspections' });
+      L.push({ k: 'kv', a: 'Pre-trip', b: c.pti.pre ? ptiRowText(c.pti.pre) : 'Not filed' });
+      L.push({ k: 'kv', a: 'Post-trip', b: c.pti.post ? ptiRowText(c.pti.post) : 'Not filed' });
+    }
     /* v134 (owner, Oct 17: "Same clean up on manifest"): the day's
        figures get their OWN section, the way the invoice's totals
        stand apart — a "Day summary" heading over the start/end /
@@ -959,6 +1014,16 @@
        the Edit door — an explicit driver note always prints,
        behind no section toggle. */
     if (c.dayNote) L.push({ k: 'note', a: 'Day note: ' + c.dayNote });
+    /* v247: the completeness fact closes the document — a
+       manifest is complete only with PTI (pre + post) AND the
+       GPS trail on file (owner, Oct 23); what is missing is
+       named, the way the record stands. A day still in progress
+       makes no completeness claim (its live note above already
+       says the numbers land when the tracker stops). */
+    if (t.pti && !c.live) {
+      if (c.complete) L.push({ k: 'note', a: 'Manifest complete — PTI (pre + post) and GPS trail on file.' });
+      else L.push({ k: 'note', a: 'Manifest incomplete — missing: ' + (c.missing || []).join(' · ') + '.' });
+    }
     return L;
   }
 
@@ -1161,6 +1226,13 @@
           return '<div class="kv"><span>' + esc(x.tab) + '</span><b>' + esc(x.desc.slice(0, 40)) + '</b></div>';
         }).join('');
       }
+      /* v247 (MANIFEST-PTI): the screen twin of the printed PTI
+         section — same rows, same words (the v69 law). */
+      if (t.pti && c.pti && (c.pti.pre || c.pti.post)) {
+        h += '<h3>PTI — inspections</h3>' +
+          '<div class="kv"><span>Pre-trip</span><b>' + esc(c.pti.pre ? ptiRowText(c.pti.pre) : 'Not filed') + '</b></div>' +
+          '<div class="kv"><span>Post-trip</span><b>' + esc(c.pti.post ? ptiRowText(c.pti.post) : 'Not filed') + '</b></div>';
+      }
       if (t.start) h += '<div class="kv"><span>Start Time</span><b>' + esc(c.startT) + '</b></div>';
       if (t.end) h += '<div class="kv"><span>End Time</span><b>' + esc(c.endT) + '</b></div>';
       /* v83: tracker-sourced times are labelled as such (see docLines) */
@@ -1239,6 +1311,13 @@
       /* v191 (MANIFEST-EDIT): the day's own note, when the Edit
          door wrote one, shows on the face of the day. */
       if (c.dayNote) h += '<div class="note" style="margin-top:6px">📝 ' + esc(c.dayNote) + '</div>';
+      /* v247: the completeness fact, same words as the printed
+         document (see docLines). */
+      if (t.pti && !c.live) {
+        h += c.complete
+          ? '<div class="note" style="margin-top:6px">✅ Manifest complete — PTI (pre + post) and GPS trail on file.</div>'
+          : '<div class="note" style="margin-top:6px">Manifest incomplete — missing: ' + esc((c.missing || []).join(' · ')) + '.</div>';
+      }
         return h;
       }
 

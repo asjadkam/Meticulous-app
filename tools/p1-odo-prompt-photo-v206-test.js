@@ -199,10 +199,10 @@ console.log('— C: ship pins —');
   ok('a fresh prompt clears any stale photo', appSrc.indexOf('_odoPromptKind = kind;\n    _odoSheetPhoto = null;') >= 0);
   ok('stopSessionAt lands startPhoto on the entry', appSrc.indexOf('entry.startPhoto = pendingStartPhoto') >= 0);
   ok('collect returns the photo fields', manSrc.indexOf('odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto') >= 0);
-  eq('webVersion is 206', ver.webVersion, 246);
+  eq('webVersion is 206', ver.webVersion, 247);
   ok('manifest notes name the current webVersion', (ver.notes || '').indexOf('v' + ver.webVersion) === 0);
   ok('files map carries manifest.js', !!(ver.files && ver.files['modules/manifest.js']));
-  ok('index.html pins the v206 build', idxSrc.indexOf('?v=246') >= 0 && idxSrc.indexOf('?v=205') < 0);
+  ok('index.html pins the v206 build', idxSrc.indexOf('?v=247') >= 0 && idxSrc.indexOf('?v=205') < 0);
 }
 
 console.log('\np1-odo-prompt-photo-v206 test: ' + pass + ' passed, ' + fail + ' failed');
