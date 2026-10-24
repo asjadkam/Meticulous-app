@@ -292,7 +292,14 @@
          here to edit, by design. */
       try {
         var peerWages = App._store.get('__peer_wages', {}) || {};
-        var pwUids = Object.keys(peerWages).filter(function (u) { return peerWages[u] && parseFloat(peerWages[u].rate) > 0; });
+        /* v243 (OWN-WAGE-AS-CONNECTED-DRIVER): this list holds
+           only OTHER connected drivers' wages — the account's
+           own uid is filtered out here too, so a cache written
+           before the fix (or by any other path) still renders
+           clean: he is not his own connected driver. */
+        var selfUid = '';
+        try { selfUid = (window.FB && FB.user && FB.user.uid) || (App.user && App.user.uid) || ''; } catch (e) {}
+        var pwUids = Object.keys(peerWages).filter(function (u) { return u !== selfUid && peerWages[u] && parseFloat(peerWages[u].rate) > 0; });
         if (pwUids.length) {
           var pwUnit = { hourly: '/hour', permile: '/mile', perload: '/load' };
           h += '<div class="card"><h3>🚛 Drivers\u2019 wages — set by each driver</h3>' +

@@ -875,7 +875,10 @@
      SHIFT-CLOSE-DUP-ENTRY and PTI-SIGNATURE-SAVE): APPEND-ONLY
      RECORD LISTS. fuel_fills, rev_entries, rev_extras,
      pti_reports and sessions are lists of records that are only
-     ever ADDED to (an edit rewrites a record in place; nothing
+     ever ADDED to (v243: dmg_reports joins them — CONNECT-
+     SENDDOC: the same whole-key wipe emptied the Connect damage
+     picker of reports the owner had saved; identity =
+     tab+desc+at+dispatch). (An edit rewrites a record in place; nothing
      legitimately un-happens). The generic whole-key stamp rule
      is wrong for them in exactly the way v224 proved it wrong
      for the telemetry day maps: a rolled-back cloud copy — a
@@ -896,13 +899,18 @@
      When the union holds anything the cloud lacks, the key
      stays dirty so the flush pushes the union UP — the cloud
      copy heals instead of the phone losing records. */
-  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1 };
+  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1 };
   function recordIdentity(key, rec) {
     if (!rec || typeof rec !== 'object') return null;
     if (key === 'pti_reports') return rec.id ? 'id:' + rec.id : null;
     if (key === 'rev_entries' && rec.dspId) return 'dsp:' + rec.dspId;
     var fields = (key === 'fuel_fills') ? ['date', 'time', 'litres', 'cost', 'station', 'odo']
       : (key === 'sessions') ? ['date', 'seconds', 'endedAt']
+      /* v243: damage records carry no id — their identity is
+         their own facts; the v243 birth stamps (date, profileId)
+         stay OUT so a stamped and an unstamped copy of the same
+         report still merge into one. */
+      : (key === 'dmg_reports') ? ['tab', 'desc', 'at', 'dispatch']
       : null;
     if (!fields) {
       /* rev_extras + the id-less fallback: the whole record,

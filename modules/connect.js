@@ -61,9 +61,21 @@
   var W = function (k, v) { App._store.set('con_' + k, v); };
   var esc = function (s) { return App._esc(s); };
 
-  var TYPE_ICON = { dispatch: '🚚', damage: '📸', manifest: '📋', location: '📍', doc: '📎', destination: '📍' };
-  var TYPE_LABEL = { dispatch: 'Dispatch', damage: 'Damage photo', manifest: 'Manifest', location: 'Location', doc: 'Document', destination: 'Destination' };
-  var DOC_TYPES = ['damage', 'manifest', 'location'];
+  var TYPE_ICON = { dispatch: '🚚', damage: '📸', ticket: '🎫', fuel: '⛽', pti: '🔍', odo: '⏱', sticker: '🏷', invoice: '🧾', manifest: '📋', location: '📍', doc: '📎', destination: '📍' };
+  var TYPE_LABEL = { dispatch: 'Dispatch', damage: 'Damage photo', ticket: 'Ticket photo', fuel: 'Fuel receipt', pti: 'Inspection photo', odo: 'Odometer photo', sticker: 'Sticker photo', invoice: 'Invoice', manifest: 'Manifest', location: 'Location', doc: 'Document', destination: 'Destination' };
+  /* v243 (CONNECT-SENDDOC, owner Oct 23 21:18 MDT: "this
+     shouldn't be damage photo, but generally any image from the
+     directory or document from the directory or messages... Or
+     really anything"): the Send-doc door is a GENERAL share
+     picker over the app's own stores — every photo kind and
+     every stored document gets a kind here; contentItems below
+     reads the same stores the modules write. */
+  var DOC_TYPES = ['damage', 'ticket', 'fuel', 'pti', 'odo', 'sticker', 'invoice', 'manifest', 'location'];
+  /* an empty kind's shortest path: one tap into the module
+     that creates it (never a dead-end line). Kinds with no
+     create door of their own (odo — its photos come from the
+     tracker/PTI flow; location — synthetic) carry no entry. */
+  var CREATE_JUMP = { damage: ['damage', 'Damage'], ticket: ['dispatch', 'Dispatch'], fuel: ['fuel', 'Fuel'], pti: ['pti', 'Inspection'], invoice: ['invoice', 'Invoices'], manifest: ['manifest', 'Manifest'], sticker: ['maintenance', 'Maintenance'] };
 
   /* v171: the list the FACE reads is deduped by account — one
      card per real connection (owner, Oct 18, 2026 21:35 MDT:
@@ -105,6 +117,7 @@
   var uiPicker = null;      // {conn: index, type: 'dispatch'|DOC_TYPES…}
   var uiConfirmDel = -1;    // connection index awaiting its inline confirm
   var uiFlash = '';         // one-shot note at the top of the connections card
+  var uiShareBlock = '';    // v243: why queueShare refused (the profile fence), surfaced as the flash
   var uiResults = null;     // last directory search results (v131)
   var uiSearchMsg = '';     // general line under the search box (v131)
   var uiPeerNote = null;    // {uid, name} the results tail is ABOUT (v145)
@@ -270,6 +283,52 @@
      the CONTENT a share packages (packaged locally into the outbox
      item — the same payload cross-account delivery will send when
      sharing ships). */
+  /* v243: the v242 seam, read the same way the writers stamp —
+     the ACTIVE profile's records are what the picker offers;
+     an unstamped record reads as Profile 1. */
+  function wpActiveId() {
+    try { if (App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpIdOf(rec) {
+    try { if (App.workProfiles) return App.workProfiles.idOf(rec); } catch (e) {}
+    return (rec && rec.profileId) ? String(rec.profileId) : 'p1';
+  }
+  /* The v242 Connect day-fence, judged on the same stores
+     CP._dayFenced reads: a date carrying ANY non-Profile-1
+     stamp never reaches connections, so a Profile-1 item dated
+     on a fenced day is not offered either. */
+  function dayFenced(ds) {
+    if (!ds) return false;
+    try {
+      var hit = false;
+      var scan = function (list, getD) {
+        (list || []).forEach(function (r) {
+          if (r && wpIdOf(r) !== 'p1' && String(getD(r) || '').slice(0, 10) === ds) hit = true;
+        });
+      };
+      scan(App._store.get('dsp_list', []), function (d) { return d.scheduledAt || d.date; });
+      var act = App._store.get('dsp_active', null);
+      if (act && wpIdOf(act) !== 'p1' && String(act.scheduledAt || act.date || '').slice(0, 10) === ds) return true;
+      scan(App._store.get('sessions', []), function (s) { return s.date; });
+      scan(App._store.get('rev_entries', []), function (e) { return e.date; });
+      return hit;
+    } catch (e) { return false; }
+  }
+  /* A damage report's day: the v243 birth `date` when present;
+     older records carry only the locale `at` string — its head
+     is the date in en-CA ("2026-10-22, …") or en-US
+     ("10/22/2026, …") shape. '' when neither reads. */
+  function dmgDate(d) {
+    if (d && d.date) return String(d.date).slice(0, 10);
+    var at = String((d && d.at) || '');
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+    if (m) return m[1] + '-' + m[2] + '-' + m[3];
+    m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(at);
+    if (m) return m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
+    return '';
+  }
+
   function contentItems(type) {
     var out = [];
     if (type === 'dispatch') {
@@ -295,11 +354,109 @@
         });
       });
     } else if (type === 'damage') {
+      /* v243: the picker reads the store the Damage module
+         writes (dmg_reports), offers the ACTIVE profile's
+         reports, and the PHOTO ITSELF rides the share — the
+         pre-v243 package carried only {title, desc, date},
+         fields the module never even writes. */
+      var pidD = wpActiveId();
       App._store.get('dmg_reports', []).forEach(function (d, i) {
+        if (!d || wpIdOf(d) !== pidD) return;
+        var dsD = dmgDate(d);
+        if (pidD === 'p1' && dayFenced(dsD)) return;
         out.push({
           id: d.id || ('g' + i),
-          label: (d.date || d.at || '') + ' — ' + (d.title || d.desc || 'Damage report'),
-          content: { title: d.title || '', desc: d.desc || '', date: d.date || d.at || '' }
+          label: (dsD || d.at || '') + ' — ' + (d.desc || 'Damage report'),
+          content: { title: d.desc || 'Damage report', desc: d.desc || '', date: dsD, photo: d.photo || '' }
+        });
+      });
+    } else if (type === 'ticket') {
+      /* v243: haul-ticket photos — the dispatch record's own
+         photo (inside tickets[] on new records, top-level on
+         legacy ones: the same resolution dspPhotoFor applies). */
+      var pidT = wpActiveId();
+      App._store.get('dsp_list', []).forEach(function (d) {
+        if (!d || wpIdOf(d) !== pidT) return;
+        var photo = d.photo || '';
+        if (!photo && d.tickets && d.tickets.length) {
+          for (var ti = 0; ti < d.tickets.length; ti++) {
+            if (d.tickets[ti] && d.tickets[ti].photo) { photo = d.tickets[ti].photo; break; }
+          }
+        }
+        if (!photo) return;
+        var dsT = String(d.date || d.scheduledAt || '').slice(0, 10);
+        if (pidT === 'p1' && dayFenced(dsT)) return;
+        out.push({
+          id: 'tkt-' + (d.id || out.length),
+          label: dsT + ' — ' + dispatchName(d),
+          content: { date: dsT, photo: photo }
+        });
+      });
+    } else if (type === 'fuel') {
+      /* v243: fuel receipt photos, from the fills store. */
+      var pidF = wpActiveId();
+      App._store.get('fuel_fills', []).forEach(function (f, i) {
+        if (!f || !f.photo || wpIdOf(f) !== pidF) return;
+        if (pidF === 'p1' && dayFenced(String(f.date || '').slice(0, 10))) return;
+        out.push({
+          id: 'fuel' + i,
+          label: (f.date || '') + (f.station ? ' — ' + f.station : ''),
+          content: { date: f.date || '', station: f.station || '', litres: f.litres || '', cost: f.cost || '', photo: f.photo }
+        });
+      });
+    } else if (type === 'pti') {
+      /* v243: PTI defect photos — the filed report's defect
+         list names them; the photo itself lives on its item. */
+      var pidP = wpActiveId();
+      App._store.get('pti_reports', []).forEach(function (r) {
+        if (!r || wpIdOf(r) !== pidP) return;
+        var dsP = String(r.date || '').slice(0, 10);
+        if (pidP === 'p1' && dayFenced(dsP)) return;
+        (r.defects || []).forEach(function (df) {
+          if (!df || !df.hasPhoto) return;
+          var e = r.items && r.items[df.id];
+          var photo = (e && e.photo) || '';
+          if (!photo) return;
+          out.push({
+            id: 'pti-' + (r.id || '') + '-' + df.id,
+            label: dsP + ' — ' + (df.item || 'Defect'),
+            content: { date: dsP, note: df.note || '', photo: photo }
+          });
+        });
+      });
+    } else if (type === 'odo') {
+      /* v243: the session odometer photos (start / end of shift). */
+      var pidO = wpActiveId();
+      App._store.get('sessions', []).forEach(function (s) {
+        if (!s || wpIdOf(s) !== pidO) return;
+        var dsO = String(s.date || '').slice(0, 10);
+        if (pidO === 'p1' && dayFenced(dsO)) return;
+        if (s.startPhoto) out.push({ id: 'odo-' + dsO + '-s', label: dsO + ' — start of shift', content: { date: dsO, photo: s.startPhoto } });
+        if (s.endPhoto) out.push({ id: 'odo-' + dsO + '-e', label: dsO + ' — end of shift', content: { date: dsO, photo: s.endPhoto } });
+      });
+    } else if (type === 'sticker') {
+      /* v243: the truck's sticker photos — single-value stores
+         on the ACTIVE truck's chain (the Maintenance module's
+         own keyFor door), so they are the active profile's by
+         construction. */
+      var keyFor = function (b) {
+        try { if (App.workProfiles) return App.workProfiles.keyFor(b); } catch (e) {}
+        return b;
+      };
+      var nsPhoto = App._store.get(keyFor('mt_ns_sticker_photo'), '');
+      if (nsPhoto) out.push({ id: 'stk-ns', label: 'Service sticker photo', content: { photo: nsPhoto } });
+      var sfPhoto = App._store.get(keyFor('mt_safety_photo'), '');
+      if (sfPhoto) out.push({ id: 'stk-sf', label: 'Safety sticker photo', content: { photo: sfPhoto } });
+    } else if (type === 'invoice') {
+      /* v243: issued invoices — the document store (inv_list),
+         the ACTIVE profile's book. */
+      var pidI = wpActiveId();
+      App._store.get('inv_list', []).forEach(function (r) {
+        if (!r || wpIdOf(r) !== pidI) return;
+        out.push({
+          id: 'inv-' + (r.id || r.no || ''),
+          label: 'Invoice #' + (r.no || '') + (r.billTo ? ' — ' + r.billTo : ''),
+          content: { invoiceNo: String(r.no || ''), billTo: r.billTo || '', total: (typeof r.total === 'number' ? r.total : (parseFloat(r.total) || 0)), date: r.date || '' }
         });
       });
     } else if (type === 'manifest') {
@@ -339,6 +496,14 @@
   function queueShare(connIdx, type, item) {
     var c = conns()[connIdx];
     if (!c || !item) return false;
+    /* v243: the v242 Connect fence binds manual shares too —
+       while a non-main profile is active, nothing queues for a
+       connection: shares to connections come from the main
+       profile's book, never from a temp truck's day. */
+    if (wpActiveId() !== 'p1') {
+      uiShareBlock = 'That sits under your other work profile — shares to connections come from your main profile. Switch back to send it.';
+      return false;
+    }
     var o = outbox();
     o.push({
       type: type,
@@ -360,6 +525,10 @@
         .filter(Boolean).join(' · ');
     }
     if (o.type === 'damage') return c.title || c.desc || '';
+    if (o.type === 'fuel') return c.station || c.date || '';
+    if (o.type === 'invoice') return 'Invoice #' + (c.invoiceNo || '') + (c.total ? ' · $' + c.total : '');
+    if (o.type === 'pti') return c.note || c.date || '';
+    if (o.type === 'ticket' || o.type === 'odo' || o.type === 'sticker') return c.date || '';
     if (o.type === 'manifest') return c.text || '';
     if (o.type === 'location') return c.base ? 'Base — ' + c.base : (c.current ? 'Current location' : '');
     if (o.type === 'destination') return (c.name || '') + (c.address ? ' · ' + c.address : '');
@@ -651,8 +820,14 @@
             }
             var items = contentItems(uiPicker.type);
             if (!items.length) {
+              /* v243: an empty kind is a door, not a wall — the
+                 note plus one tap straight into the module that
+                 creates it (kinds with no create door of their
+                 own simply carry the note). */
+              var jump = CREATE_JUMP[uiPicker.type];
               h += '<p class="note" style="margin:8px 0">No ' + esc((TYPE_LABEL[uiPicker.type] || 'items').toLowerCase()) +
-                's saved yet — create one in its module first.</p>';
+                's saved yet.</p>' +
+                (jump ? '<button class="btn small navy" data-cn-create="' + jump[0] + '">＋ Create one in ' + jump[1] + '</button>' : '');
             } else {
               h += items.map(function (it, ii) {
                 return '<button class="btn ghost small" data-pick="' + ii + '" style="display:block;width:100%;text-align:left;margin-top:6px">' +
@@ -870,6 +1045,9 @@
           }
           if (item && c && queueShare(uiPicker.conn, uiPicker.type, item)) {
             uiFlash = (TYPE_LABEL[uiPicker.type] || 'Share') + ' queued for ' + c.name + ' — it waits in History below.';
+          } else if (uiShareBlock) {
+            uiFlash = uiShareBlock;
+            uiShareBlock = '';
           }
           uiPicker = null;
           rerender();
@@ -877,6 +1055,15 @@
       });
       var pCancel = body.querySelector('#cn_pcancel');
       if (pCancel) pCancel.onclick = function () { uiPicker = null; rerender(); };
+      /* v243: an empty kind's create door — straight into the
+         owning module's create flow. */
+      body.querySelectorAll('[data-cn-create]').forEach(function (b) {
+        b.onclick = function () {
+          var mod = b.getAttribute('data-cn-create');
+          uiPicker = null;
+          try { App.openModule(mod); } catch (e) {}
+        };
+      });
 
       /* v207: the received destinations — Navigate hands the
          place to the Navigator through the same nav_pending

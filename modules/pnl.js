@@ -1243,7 +1243,14 @@
           }
           try {
             var pw = {};
+            /* v243 (OWN-WAGE-AS-CONNECTED-DRIVER): the cache is
+               for OTHER drivers' wages — a self-pair can make the
+               fetch return the account's OWN records doc, and its
+               own wage must never be cached as a "peer's". */
+            var selfUid = '';
+            try { selfUid = (window.FB && FB.user && FB.user.uid) || (App.user && App.user.uid) || ''; } catch (e) {}
             Object.keys(recs).forEach(function (uid) {
+              if (selfUid && uid === selfUid) return;
               var w = recs[uid] && recs[uid].driverWage;
               if (w && parseFloat(w.rate) > 0) pw[uid] = { payType: w.payType || 'hourly', rate: parseFloat(w.rate) || 0 };
             });

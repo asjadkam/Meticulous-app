@@ -193,21 +193,51 @@
     /* The profiles structure: the persisted key when present,
        else the derived migration (Profile 1 from the current
        settings, active). Always returns fresh copies. */
+    /* v243 (PROFILE1-LABEL-WRONG, owner Oct 23 21:24 MDT —
+       his real account's Profile 1 labelled "Tester"): the
+       persisted state belongs to ONE account, the way the v216
+       gate owns the onboarding slot. The owner is the store's
+       own account stamp (_conOwner); a state stamped by a
+       DIFFERENT account (the tester on the same phone) is not
+       this account's profiles at all. 'local' and unstamped
+       states adopt forward (the first-run claim). */
+    function ownerNow() {
+      try { if (App._store && App._store._conOwner) return App._store._conOwner() || 'local'; } catch (e) {}
+      try { if (App.user && App.user.uid) return App.user.uid; } catch (e) {}
+      return 'local';
+    }
     function load() {
       var raw = null;
       try { raw = App._store.get('work_profiles', null); } catch (e) {}
       if (raw && Array.isArray(raw.list) && raw.list.length) {
-        var list = raw.list.map(norm).filter(function (p) { return !!p.id; });
-        if (list.length) {
-          var act = String(raw.activeId || '');
-          if (!list.some(function (p) { return p.id === act; })) act = list[0].id;
-          return { list: list, activeId: act };
+        var owner = ownerNow();
+        var foreign = !!(raw.owner && raw.owner !== 'local' && raw.owner !== owner);
+        if (!foreign) {
+          var list = raw.list.map(norm).filter(function (p) { return !!p.id; });
+          if (list.length) {
+            var act = String(raw.activeId || '');
+            if (!list.some(function (p) { return p.id === act; })) act = list[0].id;
+            /* A LONE Profile 1 IS the working copy
+               (onboarding), by this seam's own model: where
+               the two disagree on the company charged, the
+               record is a stale/foreign seed and the account's
+               own contracting company wins — that company is
+               the label both the Preferences card and the
+               dashboard chip render. Multi-profile books stand
+               exactly as written. */
+            if (list.length === 1 && list[0].id === P1) {
+              var oc = '';
+              try { oc = String(onb().contractingCo || '').trim(); } catch (e) {}
+              if (oc && list[0].company !== oc) list[0].company = oc;
+            }
+            return { list: list, activeId: act, owner: raw.owner || owner };
+          }
         }
       }
-      return { list: [deriveP1(onb())], activeId: P1 };
+      return { list: [deriveP1(onb())], activeId: P1, owner: ownerNow() };
     }
     function persist(st) {
-      try { App._store.set('work_profiles', { list: st.list.map(norm), activeId: st.activeId }); } catch (e) {}
+      try { App._store.set('work_profiles', { list: st.list.map(norm), activeId: st.activeId, owner: ownerNow() }); } catch (e) {}
     }
     function find(st, id) {
       for (var i = 0; i < st.list.length; i++) if (st.list[i].id === id) return st.list[i];

@@ -51,6 +51,13 @@
         var a = App._store.get('dsp_active', null);
         var r = reports();
         var rec = { tab: t, desc: desc, photo: photoData, at: new Date().toLocaleString(), dispatch: a ? (a.pickup + ' → ' + a.dropoff) : '' };
+        /* v243 (CONNECT-SENDDOC): a report is born with its real
+           date and its v242 profile stamp, so the Connect share
+           picker finds it under the profile it was filed on (the
+           picker reads unstamped records as Profile 1, so old
+           reports keep working untouched). */
+        try { rec.date = App._today(); } catch (e) {}
+        try { if (App.workProfiles) rec.profileId = App.workProfiles.activeId(); } catch (e) {}
         r.push(rec); W('reports', r);
         if (window.FB && FB.saveDoc) { var c = Object.assign({}, rec); delete c.photo; FB.saveDoc('damage', 'd' + Date.now(), c); }
         Meticulous.modules.damage.render(body);
