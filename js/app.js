@@ -793,10 +793,21 @@
     if (key === 'invoice') {
       var o = {};
       try { o = store.get('onboarding', {}) || {}; } catch (e) {}
-      if (o.employment === 'Payroll') return 'Pay Stub';
+      if (o.employment === 'Payroll') {
+        /* v252 (APP-LANGUAGE/I18N): the payroll face's name
+           translates through the same seam. */
+        try { if (window.Meticulous && Meticulous.i18n) return Meticulous.i18n.t('mod.paystub', 'Pay Stub'); } catch (e) {}
+        return 'Pay Stub';
+      }
     }
     var meta = MODULE_META[key];
-    return meta ? meta.title : key;
+    var base = meta ? meta.title : key;
+    /* v252 (APP-LANGUAGE/I18N): the dashboard module names are
+       the framework's first converted surface — the chosen
+       language's pack word wins; English and any gap fall back
+       to the registry title (i18n.t's own fallback chain). */
+    try { if (window.Meticulous && Meticulous.i18n) return Meticulous.i18n.t('mod.' + key, base); } catch (e) {}
+    return base;
   }
   /* MODULE-TITLE-END */
 

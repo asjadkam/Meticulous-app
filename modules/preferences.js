@@ -171,6 +171,28 @@
            select's below). */
         '<p class="note" id="pf_acct_note">Your name, account type, the driving answer and Employment save the moment you change them — your screens and your Connect listing update right away. No need to close the app.</p></div>';
 
+      /* v252 (APP-LANGUAGE-BUTTON + I18N, owner Oct 23, 2026
+         06:31–06:39 MDT): the Language card — his list of 13,
+         Punjabi in BOTH scripts. The choice persists the
+         moment it changes (the live-apply pattern) and the
+         whole app picks it up surface by surface as each
+         screen paints; v252 converts the dashboard module
+         names and this card's own heading. Follow-on versions
+         convert the remaining surfaces module by module —
+         untranslated strings fall back to English, never
+         blank (js/i18n.js). */
+      (function () {
+        var langs = [{ code: 'en', name: 'English', dir: 'ltr' }];
+        var cur = 'en';
+        try { if (window.Meticulous && Meticulous.i18n) { langs = Meticulous.i18n.langs(); cur = Meticulous.i18n.lang(); } } catch (e) {}
+        var word = 'Language';
+        try { if (window.Meticulous && Meticulous.i18n) word = Meticulous.i18n.t('prefs.language', 'Language'); } catch (e) {}
+        h += '<div class="card"><h3>🌐 ' + esc(word) + '</h3>' +
+          '<label class="f">' + esc(word) + '</label><select id="pf_lang">' +
+          langs.map(function (L) { return '<option value="' + esc(L.code) + '"' + (cur === L.code ? ' selected' : '') + '>' + esc(L.name) + '</option>'; }).join('') + '</select>' +
+          '<p class="note">The whole app in your language — screens pick it up as they open. Anything not yet translated shows in English.</p></div>';
+      })();
+
       /* v106 (owner directive, Oct 16, 2026 19:49 MDT): "Give login its
          own page!" The Security card (v34 change-password + the v95
          sign-in door) is GONE from Preferences — it lives on the
@@ -1084,6 +1106,20 @@
         var econSel = body.querySelector('#pf_econ');
         if (econSel) econSel.onchange = function () {
           try { App._store.set('mt_econUnit', econSel.value); } catch (e) {}
+        };
+      } catch (e) {}
+      /* v252 (APP-LANGUAGE/I18N): the language select also
+         persists the moment it changes — setLang stores the
+         choice and applies the direction at once; this screen
+         repaints so its own heading answers in the new
+         language, and every other surface follows as it opens. */
+      try {
+        var langSel = body.querySelector('#pf_lang');
+        if (langSel) langSel.onchange = function () {
+          try {
+            if (window.Meticulous && Meticulous.i18n) Meticulous.i18n.setLang(langSel.value);
+            if (window.Meticulous && Meticulous.modules && Meticulous.modules.preferences) Meticulous.modules.preferences.render(body);
+          } catch (e) {}
         };
       } catch (e) {}
       /* v106: the sign-in door + change-password wiring moved with
