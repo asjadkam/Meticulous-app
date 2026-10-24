@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 250,
-  "notes": "v250 — DSP-CANCELLED-TODAY (owner queue; parked by name Oct 23, built on his Oct 24 \"start them all\"): a dispatch cancelled today stood in the Today's dispatch card as a full row — on Oct 23 the cancelled Aecon job still led his screen as if it were the day's work. CHOSEN MINIMAL PLACEMENT (named, his to overrule): it drops below today's open dispatch as ONE QUIET LINE — its own small \"✖ Cancelled today\" card under Completed today, mirroring the v241 completed-drops pattern (settled things sink: Today → Upcoming → Completed → Cancelled). The line names the job and says cancelled; no row, no action buttons — a cancelled dispatch needs nothing done with it. The record stays on the day (History is past days only, so the line is its one presence) and the dashboard glance already skipped cancelled records. Display placement only — no record, send or close behaviour touched. Harness: tools/dispatch-cancelled-today-v250-test.js drives the real Dispatch render — RED 9 (the cancelled row led the Today card; his Oct 23 screen reproduced), GREEN 10/10 incl. the cancelled-only day (no Today card, the record still on file as the quiet line); dispatch-completed-order-v241 9/9, dsp-today-top-v197 23/23, dsp-history-future-v218 29/29 hold. PIN MOVES (cited): ?v=249 index cohort (26) + standing webVersion/?v= pins in the suites move 249 -> 250. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: the next dispatch he cancels drops to the quiet Cancelled today line instead of leading his screen.",
+  "webVersion": 251,
+  "notes": "v251 — DRIVER-STICKER-SCAN (owner, Oct 22, 2026 18:03–18:04 MDT): drivers have NO Maintenance module (by design), so the service sticker had nowhere to be scanned or saved on a driver account; his placement ruling: the stickers live in PREFERENCES — \"a user takes the picture once for a couple of months.\" The annual safety sticker already lived there (photo + date); the SERVICE sticker (next-service odometer + date) lived only in Maintenance. Fix (modules/preferences.js, driver/both faces — the Truck card is already office-gated): a Service sticker block under the safety sticker — Take photo / Choose file, the kept photo with its download door, and the next-service odometer + date boxes prefilled from the ACTIVE TRUCK's chain. Everything rides the existing chains, nothing forks: the values save on Save to the same per-truck keys Maintenance counts down from (mt_nextServiceOdo / mt_nextServiceDate via App.workProfiles.keyFor — a temp truck gets its own targets, Truck 07's are never inherited or touched), the photo is kept on mt_ns_sticker_photo the moment it is taken, the read is Maintenance's own parser (TicketOCR.parseServiceSticker) with the 'sticker' Power Read racing it (fills an empty box, corrects an untouched local value, never a typed one; an empty local read escalates; Save stays the confirm). An office save never reaches for the fields. NOT ported (named): Maintenance's candidate-hunt chips stay a Maintenance-card feature. Harness: tools/driver-sticker-scan-v251-test.js — RED 12, GREEN 16/16 (driver prefill + save-to-chain, office absence, Profile-2 isolation, parser pins); preferences-live-v149 39/39, service-sticker 33/33, pti-plate-sig 13/13, work-profiles 132/132 hold. PIN MOVES (cited): ?v=250 index cohort (26) + standing webVersion/?v= pins in the suites move 250 -> 251. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: in Preferences, snap the service sticker once and the next-service boxes fill; the targets are the ones his reminders count down to.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "21b0be9cd7376306904c8568f82804186cb938fe1f6c18482dce4833ab209674",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "03988f8f587dd7812eefd6c8704121ddd881046bd41fe125f4e31007f4612555",
+    "index.html": "be70bdf78c78593727e05bac18b8ac2ba3d26f1c0f920b588e845080ed99b706",
     "js/app.js": "11b67594204da937429a548a56e78c67a202b91ff5b3d4983186a21835703b2b",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -49,7 +49,7 @@
     "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
     "modules/navigator.js": "1008e429833cd6516bd2f069c09638a5149b8d4ea942f60d74de504df3ab851a",
     "modules/pnl.js": "ca6b59a7143e2e9e47b46846aa80dfb3d45c33f22282abc500d88daa63882f4b",
-    "modules/preferences.js": "49f0507c02a4cc009ecd80ce05e87a2fe3007e20bf383b4674bd735e3e3ce3da",
+    "modules/preferences.js": "fd59689fa1371b4908eb45377f0cfa9c7aa2bff4e601830032b3dda49d380036",
     "modules/pti.js": "4e9dccd006cec078326f32be49997c1639ac68637148fce84596b33499c357f8",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
     "modules/revenue.js": "124b99cd3f85df89ada48dc3daef8a86a540daa35bb0084091de5ea12d8337bf",

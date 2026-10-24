@@ -454,9 +454,9 @@ console.log('— C: ship pins —');
   ok('no checkbox inputs remain in the module', conSrc.indexOf('type="checkbox"') === -1);
   ok('the row CSS exists (one right-hand tick column)',
     cssSrc.indexOf('.cn-modrow') !== -1 && cssSrc.indexOf('.cn-modbox') !== -1);
-  eq('webVersion is 207', ver.webVersion, 250);
+  eq('webVersion is 207', ver.webVersion, 251);
   ok('manifest notes name the current webVersion', (ver.notes || '').indexOf('v' + ver.webVersion) === 0);
-  ok('index.html pins the v207 build', idxSrc.indexOf('?v=250') >= 0 && idxSrc.indexOf('?v=' + '206') < 0);
+  ok('index.html pins the v207 build', idxSrc.indexOf('?v=251') >= 0 && idxSrc.indexOf('?v=' + '206') < 0);
 }
 
 console.log('\nconnect-pick-v207 test: ' + pass + ' passed, ' + fail + ' failed');

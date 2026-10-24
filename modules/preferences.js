@@ -114,6 +114,14 @@
          Save preferences then wrote the stale number back OVER the
          master — a silent rewind on every save.) */
       var odoMaster = (window.App && App._masterOdometer) ? App._masterOdometer() : null;
+      /* v251 (DRIVER-STICKER-SCAN): the service sticker's facts
+         on the ACTIVE truck's chain (see the Truck card block). */
+      var pfNsOdo = '', pfNsDate = '', pfNsPhoto = '';
+      try {
+        pfNsOdo = App._store.get(pfWpKey('mt_nextServiceOdo'), '') || '';
+        pfNsDate = App._store.get(pfWpKey('mt_nextServiceDate'), '') || '';
+        pfNsPhoto = App._store.get(pfWpKey('mt_ns_sticker_photo'), '') || '';
+      } catch (e) {}
       var econU = (window.App && App._econUnit) ? App._econUnit() : 'kpl'; // v127: the economy-unit preference
       var ROLE_LABEL = { driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' };
       /* v107 (Stage 6, owner Oct 16 19:39-19:43): Advanced is a
@@ -437,6 +445,30 @@
         '<div id="pf_safety_prev"></div><div id="pf_safety_status" class="note"></div>' +
         '<input id="pf_safety" type="date" value="' + esc(o.safetyExpiry || '') + '">' +
         '<p class="note">We remind you 30 days before it expires.</p>' +
+        /* v251 (DRIVER-STICKER-SCAN, owner Oct 22, 2026 18:03–
+           18:04 MDT): the SERVICE sticker joins the safety
+           sticker here. Drivers have no Maintenance module (by
+           design), so the next-service sticker had nowhere to
+           be scanned or saved on a driver account; his
+           placement ruling: Preferences — "a user takes the
+           picture once for a couple of months." The fields are
+           the ACTIVE TRUCK's chain values (pfWpKey — the same
+           mt_nextServiceOdo / mt_nextServiceDate /
+           mt_ns_sticker_photo keys Maintenance counts down
+           from), so what is set here feeds the same reminders
+           there. Set-once setup, per his Preferences law. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:14px;padding-top:10px;">' +
+        '<label class="f">🔧 Service sticker — next service</label>' +
+        '<div style="display:flex;gap:8px;margin:6px 0;">' +
+        '<button type="button" class="btn secondary" id="pf_ns_cam" style="flex:1;">📷 Take photo</button>' +
+        '<button type="button" class="btn secondary" id="pf_ns_pick" style="flex:1;">📁 Choose file</button></div>' +
+        '<input type="file" id="pf_ns_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="pf_ns_in" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="pf_ns_prev">' + (pfNsPhoto ? '<img src="' + esc(pfNsPhoto) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Service sticker photo">' + (App._photoDl ? App._photoDl(pfNsPhoto, 'service-sticker') : '') : '') + '</div>' +
+        '<div id="pf_ns_status" class="note"></div>' +
+        '<label class="f">Next service odometer (km)</label><input id="pf_ns_odo" type="number" inputmode="numeric" value="' + esc(pfNsOdo) + '">' +
+        '<label class="f">Next service date</label><input id="pf_ns_date" type="date" value="' + esc(pfNsDate) + '">' +
+        '<p class="note">Snap the sticker on the windshield — the read lands in the boxes above; check it, then Save. These are the same next-service targets the service reminders count down to.</p></div>' +
         /* v127 (owner, Oct 17 09:33 MDT: "there has to be a way to
            change the unit… some users prefer mpg, not km/L"): the
            economy unit — set once here, read live by Fuel and
@@ -687,6 +719,14 @@
         /* v118: an untouched safety field never stomps a newer
            stored annualDate (see pfSafetyWinner above). */
         if (body.querySelector('#pf_safety')) o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get(pfWpKey('mt_annualDate'), ''));
+        /* v251 (DRIVER-STICKER-SCAN): the service sticker's
+           targets save onto the SAME per-truck chain Maintenance
+           reads — the fields exist only on a driving face's
+           render, so an office save never reaches for them (the
+           v76 guard pattern). Empty boxes clear the targets,
+           exactly as Maintenance's own save does. */
+        if (body.querySelector('#pf_ns_odo')) App._store.set(pfWpKey('mt_nextServiceOdo'), g('pf_ns_odo'));
+        if (body.querySelector('#pf_ns_date')) App._store.set(pfWpKey('mt_nextServiceDate'), g('pf_ns_date'));
         var odoTglSave = body.querySelector('#pf_odo_photos');
         o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
         /* v80: the master odometer moves through the SUPERVISED
@@ -790,6 +830,122 @@
           App._wirePhotoOCR('pf_safety', 'safety', prefsPersistPhoto);
         }
       } catch (e) {}
+      /* v251 (DRIVER-STICKER-SCAN): the service sticker's photo
+         flow — Maintenance's own handler shape (nsHandlePhoto /
+         nsCloudSettled in modules/maintenance.js) on this face,
+         writing the same chain: the photo is KEPT on the active
+         truck's chain the moment it is taken (v182), the local
+         read fills the two boxes, the 'sticker' power read
+         races it and per field only fills an empty box or
+         corrects a box still holding the local read's value —
+         never a value the driver typed. Save stays the
+         confirm. (The candidate hunt stays a Maintenance-card
+         feature; it is not ported.) */
+      (function () {
+        var camBtn = body.querySelector('#pf_ns_cam'), pickBtn = body.querySelector('#pf_ns_pick');
+        var camIn = body.querySelector('#pf_ns_cam_in'), pickIn = body.querySelector('#pf_ns_in');
+        if (!camBtn || !camIn) return;
+        camBtn.onclick = function () { camIn.click(); };
+        if (pickBtn && pickIn) pickBtn.onclick = function () { pickIn.click(); };
+        var nsToken = 0, nsRace = null;
+        function nsSet(html) { var d = body.querySelector('#pf_ns_status'); if (d) d.innerHTML = html; }
+        function nsCloudSettled(token, race, out) {
+          if (token !== nsToken || race !== nsRace) return;
+          if (!out || out.status !== 'done') return;
+          var f = out.fields || {};
+          if (!f.odo && !f.date) return;
+          if (race.delivered) return;
+          race.delivered = true;
+          var notes = [], corrected = false, agreed = false;
+          function apply(sel, cloudVal, localVal, label) {
+            if (!cloudVal) return;
+            var e = body.querySelector(sel);
+            if (!e) return;
+            if (!localVal) { if (!e.value) { e.value = cloudVal; notes.push(label); } return; }
+            if (String(cloudVal) === String(localVal)) { agreed = true; return; }
+            if (String(e.value) === String(localVal)) { e.value = cloudVal; corrected = true; notes.push(label); }
+          }
+          apply('#pf_ns_odo', f.odo, race.odo, 'next service ' + (f.odo ? Number(f.odo).toLocaleString('en-CA') + ' km' : ''));
+          apply('#pf_ns_date', f.date, race.date, 'due date ' + (f.date || ''));
+          if (corrected) nsSet('⚡ <b>Power read corrected:</b> ' + esc(notes.join(' · ')) + ' — check before saving.');
+          else if (notes.length) nsSet('⚡ <b>Power read — check before saving:</b> ' + esc(notes.join(' · ')) + ' filled in above.');
+          else if (agreed) nsSet('✓ Power read agrees with the sticker read — check before saving.');
+        }
+        function nsHandle(ev) {
+          var file = ev.target.files && ev.target.files[0]; if (!file) return;
+          var token = ++nsToken;
+          if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseServiceSticker) {
+            nsSet('<span style="color:#e67e22">Photo reader isn\'t ready — type the sticker values in.</span>');
+            return;
+          }
+          nsSet('📖 Reading sticker…');
+          TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+            if (token !== nsToken) return;
+            if (!ocrUrl) { nsSet('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>'); return; }
+            try { App._store.set(pfWpKey('mt_ns_sticker_photo'), ocrUrl); } catch (e) {}
+            var race = { odo: null, date: null, delivered: false, prImg: null };
+            nsRace = race;
+            var startCloud = function (prImg) {
+              if (token !== nsToken) return;
+              race.prImg = prImg || ocrUrl;
+              if (window.PowerRead && PowerRead.beginEarly) {
+                var hh = PowerRead.beginEarly({ reader: 'sticker', image: race.prImg, origin: { module: 'preferences', label: 'Preferences' } });
+                if (hh) hh.onSettled(function (out) { nsCloudSettled(token, race, out); });
+              }
+            };
+            if (TicketOCR.urlToReadImage) TicketOCR.urlToReadImage(ocrUrl, 'sticker', startCloud);
+            else startCloud(ocrUrl);
+            TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
+              if (token !== nsToken) return;
+              try { nsSet('📖 Reading sticker… ' + Math.round(p * 100) + '%'); } catch (e) {}
+            }).then(function (text) {
+              if (token !== nsToken) return;
+              var parsed = TicketOCR.parseServiceSticker(text);
+              race.odo = parsed.odo || null;
+              race.date = parsed.date || null;
+              var rep = TicketOCR.describeStickerRead(parsed);
+              if (!rep.found.length) {
+                nsSet('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
+                /* v59 pattern: nothing read locally → the power
+                   read gets its turn; its answer only FILLS. */
+                if (window.PowerRead && PowerRead.escalate) {
+                  PowerRead.escalate({
+                    reader: 'sticker', image: race.prImg || ocrUrl, origin: { module: 'preferences', label: 'Preferences' },
+                    onStatus: function (s) {
+                      if (token !== nsToken) return;
+                      if (s.state === 'working') nsSet('⚡ Asking the power read…');
+                      else if (s.state === 'waiting') nsSet('⚡ Power read waiting for signal — the photo is saved and will be read when you\'re back online. You can still type the values in.');
+                      else if (s.state === 'unavailable') nsSet('<span style="color:#e67e22">' + esc(s.message) + ' You can still type the values in.</span>');
+                      else if (s.state === 'error') nsSet('<span style="color:#e67e22">' + esc(s.message) + '</span>');
+                    },
+                    onResult: function (res) {
+                      if (token !== nsToken) return;
+                      var f2 = (res && res.fields) || {};
+                      if (!f2.odo && !f2.date) { nsSet('<span style="color:#e67e22">⚡ Power read couldn\'t read that sticker either — type it in.</span>'); return; }
+                      if (race.delivered) return;
+                      race.delivered = true;
+                      if (f2.odo) body.querySelector('#pf_ns_odo').value = f2.odo;
+                      if (f2.date) body.querySelector('#pf_ns_date').value = f2.date;
+                      var rep2 = TicketOCR.describeStickerRead(f2);
+                      nsSet('⚡ <b>Power read — check before saving:</b> ' + esc(rep2.found.join(' · ')));
+                    }
+                  });
+                }
+              } else {
+                if (parsed.odo) body.querySelector('#pf_ns_odo').value = parsed.odo;
+                if (parsed.date) body.querySelector('#pf_ns_date').value = parsed.date;
+                nsSet('📸 Read from sticker: <b>' + esc(rep.found.join(' · ')) + '</b> — check before saving.' +
+                  (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
+              }
+            }).catch(function () {
+              if (token !== nsToken) return;
+              nsSet('<span style="color:#e67e22">Couldn\'t read that sticker — type it in.</span>');
+            });
+          });
+        }
+        camIn.onchange = nsHandle;
+        if (pickIn) pickIn.onchange = nsHandle;
+      })();
       /* v59: a queued power read of an earlier dash photo may have
          finished — offer it in the odometer status line as a tap-to-use
          button. The button fills the field and persists through the
