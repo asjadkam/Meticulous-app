@@ -653,10 +653,33 @@
     var routeStops = [];
     try {
       var lmDays = (G('livemiles', { days: {} }) || {}).days || {};
+      /* v245 (MANIFEST-GPS-EMPTY-OCT22): the day's crumbs join
+         by their OWN timestamps, not by the record's date
+         stamp. Oct 22's tracking was shattered by two mid-shift
+         installs; a fragment whose record lost its date stamp —
+         or carries the reinstall day's — was invisible here
+         even though every crumb in it is timestamped on the
+         day, and a mis-stamped record leaked its crumbs into
+         the wrong day's route. A crumb files under its own
+         day; identical crumbs folded into two surviving
+         records count once. */
       var allCrumbs = [];
+      var seenCrumb = {};
       Object.keys(lmDays).forEach(function (k) {
         var rec = lmDays[k];
-        if (rec && rec.date === d && rec.crumbs) allCrumbs = allCrumbs.concat(rec.crumbs);
+        if (!rec || !rec.crumbs) return;
+        rec.crumbs.forEach(function (cr) {
+          if (!cr) return;
+          var ct = +cr.t;
+          if (!isFinite(ct) || ct <= 0) return;
+          var cd = new Date(ct);
+          var cs = cd.getFullYear() + '-' + ('0' + (cd.getMonth() + 1)).slice(-2) + '-' + ('0' + cd.getDate()).slice(-2);
+          if (cs !== d) return;
+          var ckey = ct + '|' + cr.a + '|' + cr.o;
+          if (seenCrumb[ckey]) return;
+          seenCrumb[ckey] = 1;
+          allCrumbs.push(cr);
+        });
       });
       routeStops = trailStops(allCrumbs).map(function (s) {
         var label = '';

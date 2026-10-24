@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 244,
-  "notes": "v244 — two owner-named items. (1) NAV-GLANCE-LAST-DEST (owner, Oct 23, 2026 15:10 MDT): the Navigator dashboard card's quick look showed the truck profile; his call: it should show the LAST PLACE NAVIGATED TO, the way Revenue shows the last entry. The v78 glance already preferred the destination routed THIS session, but that fact lived in a page variable — after an app restart the card fell back to \"Truck · 24 t · Calgary truck routes\" even though he navigated somewhere yesterday. Fix (modules/navigator.js, display line only — navigation behaviour untouched): finalizeRoute now persists the destination NAME (search/place name, \"Dropped pin\" for a bare pin) into the navigator settings record as lastDest, and status() reads it back when no route has run yet this session. Places are named, never coordinates: a coordinate string in either slot is skipped, never shown. Harness: tools/nav-glance-last-dest-v244-test.js — RED 3 on v243 code, GREEN 9/9. (2) WIDGET-LOAD-WORDS (owner queue, Oct 24): native v43's home-screen widget carries load +/− buttons whose taps ride the widgetAction channel as loadPlus/loadMinus — but js/app.js applyWidgetAction performed only start/pause/stop, so a widget load tap did nothing. The words now perform in applyWidgetAction exactly as applyPipAction performs them (same two load actions, same repaints — no new behaviour). Harness: tools/widget-load-words-v244-test.js — RED 4, GREEN 8/8. PIN MOVES (cited): ?v=243 index cohort (26) + standing webVersion/?v= pins in the suites move 243 -> 244. Native unchanged by this web ship (v43 shell already carries the widget buttons; iPhone web picks the fix up too). Machine-green is preparation — the verdicts are his: after his next drive the Navigator card must still name the place he went after the app is closed and reopened; and a load +/− tap on the home-screen widget must move the load count.",
+  "webVersion": 245,
+  "notes": "v245 — MANIFEST-GPS-EMPTY-OCT22 (owner, Oct 22, 2026 20:02 MDT): the printed Oct 22 manifest carried NO GPS content — no route, no places — for a 191 km day, because the day's tracking was shattered by two mid-shift installs and the fragments never joined into a route the manifest could print. Root cause (modules/manifest.js collect): the day's breadcrumbs were gathered by the livemiles RECORD's date stamp alone — a fragment whose record lost that stamp in the shatter (records can persist without one; the miles adoption code treats saved.date as optional) was invisible even though every crumb in it is timestamped on the day, and a mis-stamped record leaked its crumbs into the wrong day's route. Fix: crumbs join by their OWN timestamps — a crumb files under its own calendar day, whichever record carries it — with identical crumbs folded into two surviving records counted once. Navigation was never the gate (v184's law stands): the route is the trail itself. Stop names resolve exactly as before (GPS site pair, then saved/built-in/learned places, then the nav log). Harness: tools/manifest-gps-route-v245-test.js on the Oct 22 fixture (Aecon DFTI, odo 169,888 → 170,079, loads 8, no navigation used) — RED 3 (shattered stamps showed only the morning fragment's stops; post-midnight crumbs leaked in), GREEN 8/8; all eight manifest suites hold. PIN MOVES (cited): ?v=244 index cohort (26) + standing webVersion/?v= pins in the suites move 244 -> 245. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: a past day's manifest (Oct 22 itself, or the next install-shattered day) must print the route the truck actually drove.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "21b0be9cd7376306904c8568f82804186cb938fe1f6c18482dce4833ab209674",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "216eceae3145b69cd5ba39589eb3add897be4dd8cb4d4eee0e009c59e79864c5",
+    "index.html": "d3276dcfef764690764e867be83422e392442fa313ab58b07b39c45cf202434f",
     "js/app.js": "b877cde62a74ea12a27ad1bccff64b040e5b0d4c87474d0d5bc646cf7bea99b3",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -45,7 +45,7 @@
     "modules/fuel.js": "58e782d6f7edc6aaca29d4cbde65166bd3c205ce35d084c8e8ba02f17af2e4bc",
     "modules/invoice.js": "189eeb9e96c4f821670b9d53eed9d805cda2f3fd1d18b6f1e0582b4a9fe85981",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
-    "modules/manifest.js": "b2c5d0455308d8a6580f916c546eec2b5fe7bbd6aa2a3e43e4e0fc85fa8a6382",
+    "modules/manifest.js": "1752e756f10114b040d140b0be71c2bdf49abc81d6edb13451ecc83145a2d5e5",
     "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
     "modules/navigator.js": "1008e429833cd6516bd2f069c09638a5149b8d4ea942f60d74de504df3ab851a",
     "modules/pnl.js": "ca6b59a7143e2e9e47b46846aa80dfb3d45c33f22282abc500d88daa63882f4b",
