@@ -21,8 +21,15 @@
      private copy, which only changed when someone typed on this screen
      and silently went stale. The legacy rem_odo value is still honored
      as a floor so no pre-v39 reading is lost. */
+  /* v242 trap 1: PM math runs off the ACTIVE truck's chain —
+     Truck 07 keeps the legacy keys; another profile's master
+     and sticker date live under its own keys. */
+  function wpKey(base) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.keyFor(base); } catch (e) {}
+    return base;
+  }
   function odo() {
-    var m = parseFloat(App._store.get('mt_odo', ''));
+    var m = parseFloat(App._store.get(wpKey('mt_odo'), ''));
     var r = parseFloat(S('odo', ''));
     var v = Math.max(isFinite(m) ? m : 0, isFinite(r) ? r : 0);
     return v > 0 ? String(v) : '';
@@ -34,7 +41,7 @@
      whenever it is set. */
   function effExpiry(r) {
     if (r.type === 'safety') {
-      var m = App._store.get('mt_annualDate', '');
+      var m = App._store.get(wpKey('mt_annualDate'), '');
       if (m) return m;
     }
     return r.expiryDate || '';

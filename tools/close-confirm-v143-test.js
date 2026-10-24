@@ -220,6 +220,10 @@ function makeRegionWorld() {
 function expectedEntry(regionWorld, closedRec) {
   var e = regionWorld.sb.dspCompletionFor(JSON.parse(JSON.stringify(closedRec)), SETT).plan.entry;
   if (e) e.dspId = closedRec.id;
+  /* v242 (WORK-PROFILES): applyCompletion also stamps the entry
+     with the dispatch's profile (this record is unstamped, i.e.
+     Profile 1 — the sandbox fallback). */
+  if (e) e.profileId = 'p1';
   return e;
 }
 

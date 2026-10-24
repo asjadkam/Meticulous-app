@@ -93,13 +93,40 @@
   function profile() {
     var o = {};
     try { o = App._store.get('onboarding', {}) || {}; } catch (e) {}
-    return {
+    var out = {
       carrier: o.contractingCo || o.companyName || '',
       carrierAddr: o.contractingAddr || o.companyAddr || '',
       unit: o.truckNo || '',
       plate: o.plate || o.plateNo || '',
       driverName: ((o.firstName || '') + ' ' + (o.lastName || '')).trim()
     };
+    /* v242 (WORK-PROFILES): carrier / unit / plate pre-fill from
+       the ACTIVE work profile — the truck being inspected is the
+       active profile's truck, and a PTI filed under the other
+       carrier's profile carries that carrier, that unit and
+       that plate. The address stays the account's contracting
+       address (profiles carry no address field). */
+    try {
+      if (window.App && App.workProfiles) {
+        var wp = App.workProfiles.active();
+        if (wp) {
+          out.carrier = wp.company || out.carrier;
+          out.unit = wp.truckNo || '';
+          out.plate = wp.plate || '';
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+  /* v242 (WORK-PROFILES): the active profile's id + label for
+     the form's working-for line and the filed report's stamp. */
+  function wpActiveId() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpActiveLabel() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.label(App.workProfiles.activeId()); } catch (e) {}
+    return '';
   }
   function blankDraft() {
     return { items: {}, odo: '', carrier: null, carrierAddr: null, unit: null, plate: null, loc: '', driver: null, lat: null, lng: null, kind: 'pre', sig: '' };
@@ -554,6 +581,9 @@
     }
 
     h += '<div class="card"><h3 style="margin-top:0">🚛 Inspection — Schedule 1</h3>' +
+      /* v242 (WORK-PROFILES): the inspection names the profile it
+         files under — company + truck, unmissable before filing. */
+      (wpActiveLabel() ? '<div class="kv" style="margin-bottom:8px"><span>Working for</span><b>' + esc(wpActiveLabel()) + '</b></div>' : '') +
       '<div style="display:flex;gap:8px;margin-bottom:10px">' +
       '<button type="button" class="btn ' + (kindOf(d) !== 'post' ? 'primary' : 'ghost') + '" data-pti-kind="pre" style="flex:1">🌅 Pre-trip</button>' +
       '<button type="button" class="btn ' + (kindOf(d) === 'post' ? 'primary' : 'ghost') + '" data-pti-kind="post" style="flex:1">🌇 Post-trip</button></div>' +
@@ -842,6 +872,9 @@
       loc: d.loc || '', lat: d.lat, lng: d.lng,
       driverNameEffective: d.driverNameEffective
     }, Date.now());
+    /* v242 (WORK-PROFILES): the filed report carries the active
+       profile's stamp — it belongs to that profile's books. */
+    rep.profileId = wpActiveId();
 
     var reps = reports();
     reps.push(rep);
@@ -861,11 +894,17 @@
     /* v241 (PTI-PLATE-SAVE): a plate that reaches a filed report
        becomes the truck record's plate (set-once law) — typed
        once on any PTI or in Preferences, it pre-fills every
-       PTI from then on. */
+       PTI from then on. v242 (WORK-PROFILES): the truck record
+       is the ACTIVE PROFILE — the write-back lands on the
+       profile this inspection was filed under (notePlate also
+       keeps the onboarding working copy in step). */
     if (rep.plate) {
       try {
-        var ob241 = App._store.get('onboarding', {}) || {};
-        if (ob241.plate !== rep.plate) { ob241.plate = rep.plate; App._store.set('onboarding', ob241); }
+        if (window.App && App.workProfiles) App.workProfiles.notePlate(rep.plate);
+        else {
+          var ob241 = App._store.get('onboarding', {}) || {};
+          if (ob241.plate !== rep.plate) { ob241.plate = rep.plate; App._store.set('onboarding', ob241); }
+        }
       } catch (e) {}
     }
     /* v187 (PTI-DASH): the standing dashboard banner repaints the

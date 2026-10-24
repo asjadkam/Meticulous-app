@@ -160,7 +160,9 @@
      No usable readings → 0, stated as no figure on the face. */
   function totalMiles(m) {
     var log = [];
-    try { log = App._store.get('odo_readings', []) || []; } catch (e) { log = []; }
+    /* v242 trap 1: lifetime miles are the ACTIVE truck's — its
+       own dated log, never another truck's. */
+    try { log = App._store.get((window.App && App.workProfiles) ? App.workProfiles.keyFor('odo_readings') : 'odo_readings', []) || []; } catch (e) { log = []; }
     var master = null;
     try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
     /* v177 (D3): bounds come from the period key itself — kept

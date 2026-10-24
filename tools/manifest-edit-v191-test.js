@@ -57,8 +57,8 @@ ok('Print stays the primary row (navy) — Edit never joins it',
 ok('the save writes mft_day_edits through the store',
   man.indexOf("App._store.set('mft_day_edits', edits)") !== -1);
 ok('the save appends a dated odo_readings entry sourced manifest-edit at the day\u2019s end',
-  man.indexOf("source: 'manifest-edit'") !== -1 && man.indexOf("App._store.set('odo_readings', rl2)") !== -1 &&
-  man.indexOf('23, 59, 59') !== -1);
+  man.indexOf("source: 'manifest-edit'") !== -1 && man.indexOf("App._store.set(wpOdoLogKey(), rl2)") !== -1 &&
+  man.indexOf('23, 59, 59') !== -1); // v242 trap 1: the entry lands in the active truck's log (wpOdoLogKey — 'odo_readings' under Profile 1)
 ok('re-saving replaces the day\u2019s earlier manifest-edit reading (no duplicates)',
   man.indexOf("r.source === 'manifest-edit' && r.date === d") !== -1);
 ok('clearing both fields removes the day\u2019s edit',

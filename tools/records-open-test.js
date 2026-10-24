@@ -325,8 +325,8 @@ console.log('C. revenue open/edit');
     revSrc.includes('id="rv_ed_save"') && revSrc.includes('💾 Save changes'));
   ok('c: editor cancels quietly', revSrc.includes('id="rv_ed_cancel"'));
   ok('c: day-detail saves go through the verified savers',
-    revSrc.includes('l[dayEdit.index] = applyEntryEdit') &&
-    revSrc.includes('xl[dayEdit.index] = applyExtraEdit'));
+    revSrc.includes('l[efi] = applyEntryEdit') &&
+    revSrc.includes('xl[xfi] = applyExtraEdit')); // v242: the save writes the FULL list at the translated index (dayEdit.index is profile-scoped)
   ok('c: day-detail deletes are verified too',
     revSrc.includes('if (!saveEntriesVerified(l))') && revSrc.includes('if (!saveExtrasVerified(l))'));
   ok('c: a failed save keeps the typed edit (dayEditDraft prefill)',

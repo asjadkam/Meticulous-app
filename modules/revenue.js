@@ -17,8 +17,54 @@
     ['45', '45 days'], ['60', '60 days'], ['custom', 'Custom']
   ];
 
-  function entries() { return S('entries', []); }
-  function extras() { return S('extras', []); }
+  /* v242 (WORK-PROFILES): Revenue's books are PER PROFILE. The
+     read accessors (entries / extras) return ONLY the active
+     profile's records — the day totals, the month, the chart and
+     the dashboard glance all read through them, so one profile's
+     money can never surface in the other's book. Writers work on
+     the FULL lists (entriesAll / extrasAll) and translate a
+     scoped index through fullIdx, so a save can never drop the
+     other profile's records. Legacy records (no stamp) read as
+     Profile 1 — the seam owns that law (App.workProfiles.idOf). */
+  function wpActiveId() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpIdOf(rec) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.idOf(rec); } catch (e) {}
+    return (rec && rec.profileId) ? String(rec.profileId) : 'p1';
+  }
+  function wpRateOf(id) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.rateOf(id); } catch (e) {}
+    return 0;
+  }
+  /* The rate the ACTIVE profile's books price at (the seam falls
+     back to the wage chain when a profile carries no rate). */
+  function profRate(o) {
+    var r = wpRateOf(wpActiveId());
+    return r > 0 ? r : ownRate(o || {});
+  }
+  function entriesAll() { return S('entries', []); }
+  function extrasAll() { return S('extras', []); }
+  function entries() {
+    var a = wpActiveId();
+    return entriesAll().filter(function (e) { return e && wpIdOf(e) === a; });
+  }
+  function extras() {
+    var a = wpActiveId();
+    return extrasAll().filter(function (x) { return x && wpIdOf(x) === a; });
+  }
+  /* The position in the FULL list of the n-th record belonging
+     to the active profile (the scoped lists preserve order, so
+     index translation is exact even for identical twins). */
+  function fullIdx(kind, scopedIdx) {
+    var all = kind === 'extras' ? extrasAll() : entriesAll();
+    var a = wpActiveId(), n = -1;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i] && wpIdOf(all[i]) === a) { n++; if (n === scopedIdx) return i; }
+    }
+    return -1;
+  }
   function saveEntries(e) {
     W('entries', e);
     if (window.FB && FB.saveDoc) e.forEach(function (x, i) {
@@ -87,7 +133,9 @@
     var o = App._store.get('onboarding', {});
     return {
       std: (o.payStandard || 'hourly').toLowerCase(),
-      rate: ownRate(o)
+      /* v242: the ACTIVE profile's rate — the scoped lists above
+         hold only its records, so its rate is the honest price. */
+      rate: profRate(o)
     };
   }
 
@@ -165,7 +213,7 @@
         if (!e.date) return;
         var s = slot(e.date);
         s.hasEntry = true;
-        s.base += payFor(e, ctx.std, ownRate(o));
+        s.base += payFor(e, ctx.std, ctx.rate); /* v242: the active profile's rate (payCtx) */
         s.hours += parseFloat(e.hours) || 0;
       });
       extras().forEach(function (x) {
@@ -190,7 +238,17 @@
       if (!confirmedDay[live.date] && !dupDay[live.date]) {
         s.hasEntry = true;
         s.hours += live.hours;
-        if (ctx.std === 'hourly') s.base += live.hours * ctx.rate;
+        if (ctx.std === 'hourly') {
+          /* v242: a running session prices at ITS OWN profile's
+             rate — it keeps the profile it started with, even if
+             the active profile has since switched. */
+          var lrate = ctx.rate;
+          try {
+            var lt = (window.App && App.tracker) || App._store.get('tracker', null);
+            if (lt && lt.profileId) { var lr = wpRateOf(lt.profileId); if (lr > 0) lrate = lr; }
+          } catch (e) {}
+          s.base += live.hours * lrate;
+        }
       }
     }
     Object.keys(map).forEach(function (ds) {
@@ -248,7 +306,7 @@
         : (parseFloat(e && e.hours) || 0);
       var drip = (src === 'tracker' && q < 0.1);
       var money = !haveBuilt ? true
-        : (!drip && !!winSrc[e.date] && src === winSrc[e.date] && payFor(e, ctx.std, ownRate(o)) > 0);
+        : (!drip && !!winSrc[e.date] && src === winSrc[e.date] && payFor(e, ctx.std, ctx.rate) > 0);
       return { src: src, drip: drip, money: money };
     });
   }
@@ -379,7 +437,7 @@
   function importDays(text) {
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     var added = 0, rejected = [];
-    var list = entries();
+    var list = entriesAll(); /* v242: writers work on the FULL list */
     var ctx = payCtx();
     lines.forEach(function (raw, i) {
       var line = String(raw).trim();
@@ -403,6 +461,7 @@
         return;
       }
       var e = { date: dstr, type: 'hourly', hours: hrs, note: 'Hours sheet import' };
+      e.profileId = wpActiveId(); /* v242: an import lands in the active profile's book */
       if (ctx.std === 'hourly' && ctx.rate > 0) e.amount = (hrs * ctx.rate).toFixed(2);
       list.push(e);
       added++;
@@ -690,7 +749,7 @@
         hours: parseFloat(e.hours) || 0, miles: parseFloat(e.miles) || 0,
         tons: parseFloat(e.tons) || 0, trips: parseFloat(e.trips) || 0,
         loads: parseInt(e.loads, 10) || 0,
-        amount: payFor(e, ctx.std, ownRate(o)),
+        amount: payFor(e, ctx.std, ctx.rate), /* v242: payCtx rate = the active profile's */
         note: e.note || '', auto: !!e.auto, handEdited: !!e.handEdited /* v160: the origin truth rides the projection */
       });
     });
@@ -961,7 +1020,7 @@
            figure. Non-hourly types — and any entry when no wage
            rate is on file — keep the typed field exactly as
            before: the app only prices what it actually knows. */
-        var edRate = ownRate(App._store.get('onboarding', {}));
+        var edRate = profRate(App._store.get('onboarding', {})); /* v242: the active profile's rate */
         var edIsHourly = fv('type', rec.type || 'load') === 'hourly';
         var edAutoAmt = edIsHourly && edRate > 0 && !dayEditAmtCustom;
         var edAutoVal = (Math.max(0, parseFloat(fv('hours', rec.hours)) || 0) * edRate).toFixed(2);
@@ -1106,14 +1165,20 @@
     /* v75: deletes from Day Details are verified too — a failed
        write leaves the record in place and says so on the page. */
     bindTwoTapDelete(body, '[data-rvdel]', function (b) {
-      var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1);
+      /* v242: the rendered index is the ACTIVE profile's scoped
+         index — translate before touching the full list. */
+      var fi = fullIdx('entries', +b.getAttribute('data-rvdel'));
+      if (fi < 0) { api.render(body); return; }
+      var l = entriesAll(); l.splice(fi, 1);
       if (!saveEntriesVerified(l)) {
         dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
       } else { dayErr = ''; }
       api.render(body);
     });
     bindTwoTapDelete(body, '[data-rxdel]', function (b) {
-      var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1);
+      var xi = fullIdx('extras', +b.getAttribute('data-rxdel'));
+      if (xi < 0) { api.render(body); return; }
+      var l = extrasAll(); l.splice(xi, 1);
       if (!saveExtrasVerified(l)) {
         dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
       } else { dayErr = ''; }
@@ -1165,7 +1230,7 @@
            amount stands, exactly as before. */
         var amtAutoPriced = false;
         if (form.type === 'hourly' && !dayEditAmtCustom) {
-          var svRate = ownRate(App._store.get('onboarding', {}));
+          var svRate = profRate(App._store.get('onboarding', {})); /* v242: the active profile's rate */
           if (svRate > 0) {
             amtAutoPriced = true; /* v160: the amount below is the door's own math, not the man's typing */
             var svHrs = parseFloat(form.hours);
@@ -1178,9 +1243,12 @@
           dayEditErr = 'Enter the amount (0 or more) — nothing was saved.';
           api.render(body); return;
         }
-        var l = entries();
-        if (!l[dayEdit.index]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
-        l[dayEdit.index] = applyEntryEdit(l[dayEdit.index], form, amtAutoPriced);
+        /* v242: dayEdit.index is the scoped index — translate
+           to the full list before the verified save. */
+        var efi = fullIdx('entries', dayEdit.index);
+        var l = entriesAll();
+        if (efi < 0 || !l[efi]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
+        l[efi] = applyEntryEdit(l[efi], form, amtAutoPriced);
         if (!saveEntriesVerified(l)) {
           dayEditErr = 'Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the entry is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.';
           api.render(body); return;
@@ -1197,9 +1265,10 @@
           dayEditErr = 'Enter the amount (0 or more) — nothing was saved.';
           api.render(body); return;
         }
-        var xl = extras();
-        if (!xl[dayEdit.index]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
-        xl[dayEdit.index] = applyExtraEdit(xl[dayEdit.index], xform);
+        var xfi = fullIdx('extras', dayEdit.index);
+        var xl = extrasAll();
+        if (xfi < 0 || !xl[xfi]) { dayEdit = null; dayEditDraft = null; api.render(body); return; }
+        xl[xfi] = applyExtraEdit(xl[xfi], xform);
         if (!saveExtrasVerified(xl)) {
           dayEditErr = 'Those changes did NOT go through — the app storage on your phone looks full, or the write failed, so the extra is unchanged. Your edit is still in the form — free up some phone space and tap “Save changes” again.';
           api.render(body); return;
@@ -1316,7 +1385,7 @@
         rvTonsRow.style.display = isW ? '' : 'none';
         if (isW) {
           var o = App._store.get('onboarding', {});
-          var rate = ownRate(o);
+          var rate = profRate(o); /* v242: the active profile's rate */
           var tons = parseFloat(rvTons.value) || 0;
           if (rate > 0 && tons > 0) rvAmt.value = (tons * rate).toFixed(2);
         }
@@ -1348,12 +1417,13 @@
       body.querySelector('#rx_add').onclick = function () {
         var amt = parseFloat(body.querySelector('#rx_amt').value);
         if (!(amt > 0)) { alert('Enter an amount greater than 0.'); return; }
-        var x = extras();
+        var x = extrasAll(); /* v242: writers work on the FULL list */
         x.push({
           type: body.querySelector('#rx_type').value,
           amount: amt.toFixed(2),
           date: body.querySelector('#rx_date').value || App._today(),
-          note: body.querySelector('#rx_note').value.trim()
+          note: body.querySelector('#rx_note').value.trim(),
+          profileId: wpActiveId() /* v242: the extra lands in the active profile's book */
         });
         W('extras', x);
         manifestFeedPush('revenue', 'Extra (' + body.querySelector('#rx_type').value + '): $' + amt.toFixed(2));
@@ -1361,7 +1431,10 @@
         api.render(body);
       };
       bindTwoTapDelete(body, '[data-rxdel]', function (b) {
-        var l = extras(); l.splice(+b.getAttribute('data-rxdel'), 1); W('extras', l); api.render(body);
+        /* v242: data-rxdel is the scoped index — translate first. */
+        var dfi = fullIdx('extras', +b.getAttribute('data-rxdel'));
+        if (dfi < 0) { api.render(body); return; }
+        var l = extrasAll(); l.splice(dfi, 1); W('extras', l); api.render(body);
       });
       body.querySelectorAll('[data-day-link]').forEach(function (el) {
         el.onclick = function (ev) {
@@ -1395,7 +1468,7 @@
       if (!last) return 'No entries yet';
       var o = App._store.get('onboarding', {});
       var std = (o.payStandard || 'hourly').toLowerCase();
-      var amt = payFor(last, std, ownRate(o));
+      var amt = payFor(last, std, profRate(o)); /* v242: the active profile's rate */
       var when = '';
       if (last.date) {
         var today = '';
@@ -1422,7 +1495,12 @@
     onSession: function (session) {
       var o = App._store.get('onboarding', {});
       var std = (o.payStandard || 'hourly').toLowerCase();
-      var rate = ownRate(o);
+      /* v242 (WORK-PROFILES): the entry is priced at — and stamped
+         with — the SESSION's profile: the profile the tracker
+         started under, which a mid-day switch never moves. */
+      var sessPid = (session && session.profileId) ? String(session.profileId) : wpActiveId();
+      var rate = wpRateOf(sessPid);
+      if (!(rate > 0)) rate = ownRate(o);
       var hrs = (session.seconds || 0) / 3600;
       var e = { date: session.date || App._today(), type: 'hourly', hours: hrs.toFixed(2), note: 'Auto from tracker', auto: true };
       var feed = 'Tracked session ' + hrs.toFixed(2) + 'h logged to Revenue.';
@@ -1457,7 +1535,7 @@
       } else if (rate > 0) {
         e.amount = (hrs * rate).toFixed(2);
       }
-      var list = entries();
+      var list = entriesAll(); /* v242: writers work on the FULL list — the scoped read could drop the other profile's records on save */
       /* v241 (SHIFT-CLOSE-DUP-ENTRY, owner Oct 22 close-out +
          Oct 23 15:07): one close, one entry. A completion entry
          (dspId) for this date IS the day's revenue — foreman
@@ -1469,15 +1547,25 @@
          dashboard glance to show (the $270.51 -> $280.92 drift,
          no edit by him). */
       var day = e.date;
-      var spoken = list.some(function (x) { return x && x.dspId && x.date === day; });
+      /* v242: the v241 one-close law is judged inside the
+         SESSION's own book — a completion under the other
+         profile neither silences this stop nor loses its
+         tracker entry to this one. */
+      e.profileId = sessPid;
+      var spoken = list.some(function (x) { return x && x.dspId && x.date === day && wpIdOf(x) === sessPid; });
       if (spoken) return;
-      list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === day); });
+      list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === day && wpIdOf(x) === sessPid); });
       list.push(e); saveEntries(list);
       manifestFeedPush('revenue', feed);
     },
     /* Cross-module: dispatch completion logs earnings here. */
     addEntry: function (e) {
-      var list = entries();
+      var list = entriesAll(); /* v242: writers work on the FULL list */
+      /* v242 (WORK-PROFILES): the entry is stamped with the
+         profile it belongs to — the caller names it (a dispatch
+         completion carries its record's stamp); otherwise the
+         active profile owns what is created under it. */
+      var addPid = (e && e.profileId) ? String(e.profileId) : wpActiveId();
       /* v105: a completion entry keyed by its dispatch REPLACES any
          earlier entry for the same dispatch — re-completing or
          correcting a card updates the day's money, never doubles it
@@ -1491,7 +1579,9 @@
          have landed first; the day still ends with ONE entry,
          the foreman-based one. (Entries without a dspId — manual
          adds — never trigger this.) */
-      if (e.dspId) list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === (e.date || App._today())); });
+      /* v242: the supersede reaches only the SAME profile's
+         tracker entry — the other profile's day is its own. */
+      if (e.dspId) list = list.filter(function (x) { return !(x && x.auto && !x.dspId && x.date === (e.date || App._today()) && wpIdOf(x) === addPid); });
       var entry = {
         date: e.date || App._today(),
         amount: e.amount || 0,
@@ -1501,6 +1591,7 @@
         hours: e.hours || null,
         note: e.note || ''
       };
+      entry.profileId = addPid;
       if (e.dspId) entry.dspId = e.dspId;
       if (e.foremanHours != null) entry.foremanHours = e.foremanHours;
       if (e.travelHours != null) entry.travelHours = e.travelHours;
@@ -1707,7 +1798,7 @@
         (rvRows.length ? rvShown.map(function (r) {
           var e = r.e;
           var std = (App._store.get('onboarding', {}).payStandard || 'hourly').toLowerCase();
-          var amt = payFor(e, std, ownRate(App._store.get('onboarding', {})));
+          var amt = payFor(e, std, profRate(App._store.get('onboarding', {}))); /* v242: the active profile's rate */
           var odoKm = e.auto ? odoKmForDate(e.date) : null; // v46: tracker days with an odo pair show the day's km
           return '<div class="listitem" data-day-link="' + esc(e.date) + '" style="cursor:pointer"><div class="a">$' + amt.toFixed(2) + ' <span class="pill">' + esc(e.type || 'load') + '</span></div>' +
             '<div class="b">' + esc(e.date) + (e.note ? ' · ' + esc(e.note) : '') + (e.auto ? (e.handEdited ? ' · auto · edited by hand' : ' · auto') : '') + (odoKm !== null ? ' · 🛣 ' + (+odoKm.toFixed(1)) + ' km (odo)' : '') + ' · tap to open the day</div>' +
@@ -1839,7 +1930,10 @@
       /* v43: two-tap in-app delete confirm — see bindTwoTapDelete at
          module scope (moved out in v47 so Day Details reuses it). */
       bindTwoTapDelete(body, '[data-rvdel]', function (b) {
-        var l = entries(); l.splice(+b.getAttribute('data-rvdel'), 1); saveEntries(l); api.render(body);
+        /* v242: the row index is the scoped index — translate. */
+        var rfi = fullIdx('entries', +b.getAttribute('data-rvdel'));
+        if (rfi < 0) { api.render(body); return; }
+        var l = entriesAll(); l.splice(rfi, 1); saveEntries(l); api.render(body);
       });
       /* v75: the main Entries/Extras rows open their day's detail
          (owner: "make sure revenue entries are clickable as well").

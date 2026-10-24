@@ -121,6 +121,219 @@
   };
   window.App = App;
 
+  /* ================= WORK-PROFILES-BEGIN =================
+     v242 (WORK-PROFILES, owner, Fri Oct 23, 2026 evening — "Build
+     it tonight"): switchable work profiles. A driver who works
+     for more than one carrier (tomorrow: one day for another
+     carrier while Ai Trucking has no work — different truck,
+     different company charged, different rate, different tax)
+     keeps one profile per job. EVERY record the app creates
+     carries the active profile's id; each profile keeps its own
+     books (Revenue, invoices, numbering) and the other profile's
+     records never leak into them.
+     THE MODEL: the 'onboarding' record stays the ACTIVE
+     profile's working copy — every reader the app already has
+     (PTI pre-fill, invoice defaults, completion pricing, the
+     manifest rate) follows the active profile with no second
+     source of truth. switchTo() folds the working copy back
+     into the profile being left (capture) and mirrors the
+     incoming profile into it. The persisted truth is the
+     'work_profiles' store key: { list: [profile...], activeId }.
+     A profile: { id, company (the company charged), truckNo,
+     plate, rate (entries under it are paid at it),
+     rateIncludesTax, taxRate, nextInvoiceNo }.
+     MIGRATION: while the key is absent, Profile 1 is DERIVED
+     from the account's existing settings on every read (never
+     written speculatively); the first mutation persists it
+     verbatim — so existing October books are byte-identical
+     until the day he actually adds a second profile, and every
+     unstamped legacy record reads as Profile 1.
+     Harness-extractable (tools/work-profiles-v242-test.js runs
+     this region verbatim): may use App._store only. */
+  App.workProfiles = (function () {
+    var P1 = 'p1';
+    var FIELDS = ['company', 'truckNo', 'plate', 'rate', 'rateIncludesTax', 'taxRate', 'nextInvoiceNo'];
+    function onb() { try { return App._store.get('onboarding', {}) || {}; } catch (e) { return {}; } }
+    function blank() {
+      return { id: '', company: '', truckNo: '', plate: '', rate: '', rateIncludesTax: false, taxRate: '5', nextInvoiceNo: '1' };
+    }
+    function deriveP1(o) {
+      var p = blank();
+      p.id = P1;
+      p.company = o.contractingCo || '';
+      p.truckNo = o.truckNo || '';
+      p.plate = o.plate || o.plateNo || '';
+      p.rate = (o.ownWageRate !== undefined && o.ownWageRate !== null && o.ownWageRate !== '') ? String(o.ownWageRate)
+        : ((o.payRate !== undefined && o.payRate !== null) ? String(o.payRate) : '');
+      p.rateIncludesTax = !!o.rateIncludesTax;
+      p.taxRate = (o.invoiceTaxRate === undefined || o.invoiceTaxRate === null || o.invoiceTaxRate === '') ? '5' : String(o.invoiceTaxRate);
+      p.nextInvoiceNo = (o.nextInvoiceNo === undefined || o.nextInvoiceNo === null) ? '' : String(o.nextInvoiceNo);
+      /* v242 trap 1: the safety-sticker expiry is the TRUCK's,
+         not the account's — it is CARRIED with the profile (not
+         one of the editor's seven fields) so a temp truck never
+         inherits Truck 07's sticker, and 07 never loses its own.
+         The odometer baseline draft rides along for the same
+         reason: it is the truck's setup reading. */
+      p.safetyExpiry = o.safetyExpiry || '';
+      p.odometerBaseline = o.odometerBaseline || '';
+      return p;
+    }
+    function norm(p) {
+      var out = blank();
+      if (!p || typeof p !== 'object') return out;
+      out.id = String(p.id || '');
+      FIELDS.forEach(function (f) {
+        if (f === 'rateIncludesTax') out[f] = !!p[f];
+        else out[f] = (p[f] === undefined || p[f] === null) ? out[f] : String(p[f]);
+      });
+      out.safetyExpiry = (p.safetyExpiry === undefined || p.safetyExpiry === null) ? '' : String(p.safetyExpiry);
+      out.odometerBaseline = (p.odometerBaseline === undefined || p.odometerBaseline === null) ? '' : String(p.odometerBaseline);
+      return out;
+    }
+    /* The profiles structure: the persisted key when present,
+       else the derived migration (Profile 1 from the current
+       settings, active). Always returns fresh copies. */
+    function load() {
+      var raw = null;
+      try { raw = App._store.get('work_profiles', null); } catch (e) {}
+      if (raw && Array.isArray(raw.list) && raw.list.length) {
+        var list = raw.list.map(norm).filter(function (p) { return !!p.id; });
+        if (list.length) {
+          var act = String(raw.activeId || '');
+          if (!list.some(function (p) { return p.id === act; })) act = list[0].id;
+          return { list: list, activeId: act };
+        }
+      }
+      return { list: [deriveP1(onb())], activeId: P1 };
+    }
+    function persist(st) {
+      try { App._store.set('work_profiles', { list: st.list.map(norm), activeId: st.activeId }); } catch (e) {}
+    }
+    function find(st, id) {
+      for (var i = 0; i < st.list.length; i++) if (st.list[i].id === id) return st.list[i];
+      return null;
+    }
+    /* Fold the onboarding working copy INTO profile id's record. */
+    function captureInto(st, id, o) {
+      var p = find(st, id); if (!p) return;
+      var d = deriveP1(o || onb());
+      FIELDS.forEach(function (f) { p[f] = d[f]; });
+      p.safetyExpiry = d.safetyExpiry; // carried truck state (trap 1)
+      p.odometerBaseline = d.odometerBaseline;
+    }
+    /* Mirror a profile record INTO the onboarding working copy. */
+    function mirrorInto(p) {
+      var o = onb();
+      o.contractingCo = p.company;
+      o.truckNo = p.truckNo;
+      o.plate = p.plate;
+      o.ownWageRate = p.rate;
+      o.rateIncludesTax = !!p.rateIncludesTax;
+      o.invoiceTaxRate = p.taxRate || '5';
+      o.nextInvoiceNo = p.nextInvoiceNo;
+      o.safetyExpiry = p.safetyExpiry || ''; // the incoming truck's sticker, never the outgoing one's
+      o.odometerBaseline = p.odometerBaseline || '';
+      try { App._store.set('onboarding', o); } catch (e) {}
+    }
+    /* v242 trap 1: the store key a per-TRUCK chain (odometer
+       master/log, annual-sticker date, service targets) lives
+       under for a profile. Profile 1 keeps the legacy key
+       byte-for-byte; any other profile gets its own chain key,
+       so another truck's readings can never touch Truck 07's
+       master, lifetime or PM state. */
+    function keyFor(base, pid) {
+      var id = (pid === undefined || pid === null || pid === '') ? activeId() : String(pid);
+      return id !== P1 ? String(base) + '__' + id : String(base);
+    }
+    function activeId() { return load().activeId; }
+    function of(id) {
+      var st = load();
+      var p = find(st, String(id || '')) || find(st, st.activeId);
+      return p ? norm(p) : null;
+    }
+    function active() { return of(activeId()); }
+    function idOf(rec) { return (rec && rec.profileId) ? String(rec.profileId) : P1; }
+    function label(id) {
+      var p = (id && typeof id === 'object') ? norm(id) : of(id);
+      if (!p) return '';
+      var c = p.company || 'Profile';
+      return p.truckNo ? (c + ' · Truck ' + p.truckNo) : c;
+    }
+    function rateOf(id) {
+      var st = load();
+      var p = find(st, String(id || '')) || find(st, st.activeId);
+      var r = p ? parseFloat(p.rate) : 0;
+      if (r > 0) return r;
+      var o = onb();
+      return parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    }
+    function add(fields) {
+      var st = load();
+      var n = st.list.length + 1, id = 'p' + n;
+      while (find(st, id)) { n++; id = 'p' + n; }
+      var p = blank(); p.id = id;
+      if (fields) FIELDS.forEach(function (f) {
+        if (fields[f] !== undefined && fields[f] !== null) p[f] = (f === 'rateIncludesTax') ? !!fields[f] : String(fields[f]);
+      });
+      st.list.push(p);
+      persist(st);
+      return norm(p);
+    }
+    function switchTo(id) {
+      var st = load();
+      var target = find(st, String(id || ''));
+      if (!target) return false;
+      captureInto(st, st.activeId);       /* the outgoing profile keeps every edit made while it was active */
+      st.activeId = target.id;
+      persist(st);
+      mirrorInto(target);                  /* the working copy becomes the incoming profile */
+      return true;
+    }
+    function captureActive() {
+      var st = load();
+      captureInto(st, st.activeId);
+      persist(st);
+    }
+    function saveProfile(id, fields) {
+      var st = load();
+      var p = find(st, String(id || ''));
+      if (!p || !fields) return null;
+      FIELDS.forEach(function (f) {
+        if (fields[f] !== undefined && fields[f] !== null) p[f] = (f === 'rateIncludesTax') ? !!fields[f] : String(fields[f]);
+      });
+      persist(st);
+      if (st.activeId === p.id) mirrorInto(p);
+      return norm(p);
+    }
+    /* The v241 plate write-back, profile-shaped: a plate on a
+       filed PTI becomes the ACTIVE profile's plate. */
+    function notePlate(plate) {
+      var v = String(plate || '').trim();
+      if (!v) return;
+      var st = load();
+      var p = find(st, st.activeId);
+      if (!p) return;
+      p.plate = v;
+      persist(st);
+      mirrorInto(p);
+    }
+    return {
+      P1: P1, load: load, of: of, active: active, activeId: activeId,
+      idOf: idOf, label: label, rateOf: rateOf, add: add,
+      switchTo: switchTo, captureActive: captureActive,
+      saveProfile: saveProfile, notePlate: notePlate, keyFor: keyFor
+    };
+  })();
+  /* ================= WORK-PROFILES-END ================= */
+
+  /* v242 (trap 1): per-truck chain keys — the odometer core and
+     the tracker/close functions below call the seam's keyFor /
+     activeId through INLINE try/catch guards, never through a
+     shared helper: those functions are harness-extracted on
+     their own (the house pattern for leaf functions), and the
+     guard degrades to the legacy key / Profile 1 when the seam
+     is absent. In the app the seam always exists. */
+
   function el(id) { return document.getElementById(id); }
   function esc(s) {
     return String(s === undefined || s === null ? '' : s)
@@ -1840,6 +2053,16 @@
     }
     // v174: the standing no-PTI flag rides every tracker paint
     try { paintPtiFlag(); } catch (e) {}
+    /* v242 (WORK-PROFILES): the active profile is named on the
+       dashboard — one quiet chip on the tracker card, so the
+       company + truck he is working under is never a guess. */
+    var wpChip = el('trkProfile');
+    if (wpChip) {
+      var wpLbl = '';
+      try { wpLbl = App.workProfiles.label(App.workProfiles.activeId()); } catch (e) {}
+      if (wpLbl) { wpChip.textContent = '🚛 ' + wpLbl; wpChip.classList.remove('hidden'); }
+      else wpChip.classList.add('hidden');
+    }
     // v28: show the effective start time + the Edit control
     var st = el('trkStartLabel');
     if (st) {
@@ -1979,6 +2202,10 @@
       // effective start instant at this moment; it never moves again,
       // even if the driver edits the start clock afterwards.
       t.sessionId = anchorPin || trackerSessionStartMs();
+      /* v242 (WORK-PROFILES): the session belongs to the profile
+         active at its start, for its whole life — a mid-day switch
+         changes only what is created after it. */
+      try { t.profileId = App.workProfiles.activeId(); } catch (e) {}
       trackerSave();
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v50: geofence load counting rides the same session (js/geoloads.js)
@@ -2039,6 +2266,11 @@
     if (sec > 0) {
       var sessions = store.get('sessions', []);
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
+      /* v242 (WORK-PROFILES): the saved session carries the
+         profile the tracker started under (a session restored
+         from before profiles existed takes the active one). */
+      entry.profileId = App.tracker.profileId || 'p1';
+      try { if (!App.tracker.profileId) entry.profileId = App.workProfiles.activeId(); } catch (e) {}
       // v39: carry the by-mile starting-odometer reading (captured at
       // shift start, pending on the tracker) onto the day's session.
       var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
@@ -2068,7 +2300,11 @@
          in with the stop. */
       if (viaDispatch && !entry.endOdo) {
         var stamp = null, stampTs = -1;
-        var rlog = store.get('odo_readings', []);
+        /* v242 trap 1: the closing stamp comes from the SESSION's
+           own truck's log — the day may close after a switch. */
+        var rlogKey = 'odo_readings';
+        try { rlogKey = App.workProfiles.keyFor('odo_readings', entry.profileId); } catch (e) {}
+        var rlog = store.get(rlogKey, []);
         if (Array.isArray(rlog)) {
           for (var ri = 0; ri < rlog.length; ri++) {
             var rv = parseFloat(rlog[ri] && rlog[ri].value);
@@ -2076,7 +2312,7 @@
             if (rv > 0 && rt >= stampTs) { stamp = rv; stampTs = rt; }
           }
         }
-        if (!(stamp > 0)) stamp = masterOdometer();
+        if (!(stamp > 0)) { var mk3 = 'mt_odo'; try { mk3 = App.workProfiles.keyFor('mt_odo', entry.profileId); } catch (e) {} var mv = parseFloat(store.get(mk3, '')); stamp = (isFinite(mv) && mv > 0) ? mv : null; }
         if (stamp > 0) entry.endOdo = stamp;
       }
       // v40: live miles for the day (only when fixes actually flowed —
@@ -2225,7 +2461,13 @@
     var acc = trkAccum();
     var o = store.get('onboarding', {});
     var std = String(o.payStandard || 'hourly').toLowerCase();
-    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
+    /* v242 (WORK-PROFILES): the review prices at the SESSION's
+       profile rate — the same rate onSession will log — so what
+       the review promises is what lands, even after a mid-day
+       switch. rateOf falls back to the wage chain itself. */
+    var rate = 0;
+    try { rate = App.workProfiles.rateOf(App.tracker.profileId || App.workProfiles.activeId()); } catch (e) {}
+    rate = rate || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0;
     var km = liveKmNow();
     var amount = null;
     if (std === 'miles') {
@@ -2265,6 +2507,12 @@
     var p = _endClosePending || {};
     var h = '<p class="note" style="margin:0 0 8px">Check the close — nothing is saved until you confirm.</p>';
     h += '<div class="kv"><span>Date</span><b>' + esc(new Date(startMs).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })) + '</b></div>';
+    /* v242 (WORK-PROFILES): the close names the book this day
+       lands in — a day must never land under the wrong company
+       by accident. */
+    var wpLbl2 = '';
+    try { wpLbl2 = App.workProfiles.label(App.tracker.profileId || App.workProfiles.activeId()); } catch (e) {}
+    h += '<div class="kv"><span>Working for</span><b>' + esc(wpLbl2) + '</b></div>';
     h += '<div class="kv"><span>Shift</span><b>' + esc(fmtTimeAMPM(startMs)) + ' → ' + esc(fmtTimeAMPM(endMs)) + ' · ' + esc(fmtClock(s.secs)) + '</b></div>';
     if (s.loads > 0) h += '<div class="kv"><span>Loads</span><b>' + s.loads + '</b></div>';
     if (s.trips > 0) h += '<div class="kv"><span>Trips</span><b>' + s.trips + '</b></div>';
@@ -2283,11 +2531,31 @@
     h += '<div class="row" style="margin-top:10px">' +
       '<button class="btn ghost" id="trkEndBack">← Back</button>' +
       '<button class="btn primary" id="trkEndConfirm">✅ Confirm — end shift</button></div>';
+    /* v242 trap 5 (switch-back prompt): a day that ran under a
+       non-main profile offers the one-tap way home — quiet and
+       secondary, never a second primary. It runs the SAME
+       Confirm first (the close lands whole in the day's own
+       book, its end-odometer bump in its own truck's chain),
+       and only then switches — so Monday can never be logged
+       under a temp profile by accident. */
+    var sessPid = App.tracker.profileId || 'p1';
+    try { if (!App.tracker.profileId) sessPid = App.workProfiles.activeId(); } catch (e) {}
+    if (sessPid !== 'p1') {
+      var p1Lbl = '';
+      try { p1Lbl = App.workProfiles.label('p1'); } catch (e) {}
+      h += '<button class="btn ghost" id="trkEndSwitchBack" style="width:100%;margin-top:8px">↩ End shift &amp; switch back to ' + esc(p1Lbl) + '</button>';
+    }
     rev.innerHTML = h;
     if (form) form.style.display = 'none';
     rev.style.display = '';
     el('trkEndBack').onclick = function () { App.trackerBackEnd(); };
     el('trkEndConfirm').onclick = function () { App.trackerConfirmEnd(); };
+    var swb = el('trkEndSwitchBack');
+    if (swb) swb.onclick = function () {
+      App.trackerConfirmEnd();
+      try { App.workProfiles.switchTo('p1'); } catch (e) {}
+      try { trackerPaint(); } catch (e) {}
+    };
   }
   /* v143: Back from the close review — the form returns with
      every value as it was; nothing was written. */
@@ -2553,7 +2821,12 @@
      is the fallback evidence (a reading whose master bump was
      refused still stands on the report he signed). */
   function ptiStartOdoFor(dateStr) {
-    var log = store.get('odo_readings', []);
+    /* v242 trap 1: the active truck's log; the filed PTI report
+       below stays the cross-profile fallback evidence. (Inline
+       guard: this leaf is harness-extracted on its own.) */
+    var logKey = 'odo_readings';
+    try { logKey = App.workProfiles.keyFor('odo_readings'); } catch (e) {}
+    var log = store.get(logKey, []);
     var best = null, bestTs = Infinity;
     if (Array.isArray(log)) {
       for (var i = 0; i < log.length; i++) {
@@ -3226,6 +3499,9 @@
       // v69: pin the session's stable record identity before the
       // tracking hooks key anything by it (see trackerSessionKeyMs).
       App.tracker.sessionId = trackerSessionStartMs();
+      /* v242 (WORK-PROFILES): an auto-started session belongs to
+         the profile active at its start, like a manual one. */
+      try { App.tracker.profileId = App.workProfiles.activeId(); } catch (e) {}
       trackerSave();
       autoStartNotify('Tracker auto-started at ' + label +
         (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
@@ -3771,7 +4047,12 @@
      misread or typo must never drag the master down. Everything
      mileage-based reads masterOdometer() live at render/fire time. */
   function masterOdometer() {
-    var v = parseFloat(store.get('mt_odo', ''));
+    /* v242 trap 1: the master is the ACTIVE TRUCK's master —
+       under any other profile this reads that truck's own
+       chain, never Truck 07's. */
+    var mk = 'mt_odo';
+    try { mk = App.workProfiles.keyFor('mt_odo'); } catch (e) {}
+    var v = parseFloat(store.get(mk, ''));
     return (isFinite(v) && v > 0) ? v : null;
   }
   /* v122: THE DATED ODOMETER LOG (store key 'odo_readings').
@@ -3801,13 +4082,15 @@
     var ts = (typeof tsMs === 'number' && isFinite(tsMs) && tsMs > 0) ? Math.round(tsMs) : Date.now();
     var d = new Date(ts);
     var date = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
-    var log = store.get('odo_readings', []);
+    var logKey = 'odo_readings'; // v242 trap 1: the active truck's own log
+    try { logKey = App.workProfiles.keyFor('odo_readings'); } catch (e) {}
+    var log = store.get(logKey, []);
     if (!Array.isArray(log)) log = [];
     var last = log[log.length - 1];
     if (last && parseFloat(last.value) === n && Math.abs(ts - (parseFloat(last.ts) || 0)) < 60000) return false;
     log.push({ ts: ts, date: date, value: n, source: String(source || 'app') });
     if (log.length > 2000) log = log.slice(log.length - 2000);
-    store.set('odo_readings', log);
+    store.set(logKey, log);
     return true;
   }
   /* v127: SEED THE DATED LOG FROM DATED RECORDS THE APP ALREADY
@@ -3836,7 +4119,17 @@
        - the manifest's boundary rules are untouched — the seed
          only supplies evidence, it decides nothing. */
   function seedOdoReadings() {
-    var log = store.get('odo_readings', []);
+    /* v242 trap 1: the seed feeds the ACTIVE truck's log, from
+       that truck's own stamped evidence only — a fill, session
+       or PTI stamped with another profile never seeds this
+       chain, and service events (Truck 07's own book) seed
+       Profile 1's chain only. */
+    var wpPid = 'p1';
+    try { wpPid = App.workProfiles.activeId(); } catch (e) {}
+    var logKey = 'odo_readings';
+    try { logKey = App.workProfiles.keyFor('odo_readings', wpPid); } catch (e) {}
+    function wpStampOf(rec) { return (rec && rec.profileId) ? String(rec.profileId) : 'p1'; }
+    var log = store.get(logKey, []);
     if (!Array.isArray(log)) log = [];
     var have = {};
     log.forEach(function (r) {
@@ -3867,7 +4160,7 @@
     var master = masterOdometer();
     var fills = store.get('fuel_fills', []);
     if (Array.isArray(fills)) {
-      var stamped = fills.filter(function (f) { return f && parseFloat(f.odo) > 0 && dayTs(f.date, f.time) !== null; });
+      var stamped = fills.filter(function (f) { return f && wpStampOf(f) === wpPid && parseFloat(f.odo) > 0 && dayTs(f.date, f.time) !== null; });
       stamped.sort(function (a, b) {
         var dt = dayTs(a.date, a.time) - dayTs(b.date, b.time);
         return dt !== 0 ? dt : parseFloat(a.odo) - parseFloat(b.odo);
@@ -3885,7 +4178,7 @@
     var sessions = store.get('sessions', []);
     if (Array.isArray(sessions)) {
       sessions.forEach(function (s) {
-        if (!s) return;
+        if (!s || wpStampOf(s) !== wpPid) return;
         var endMs = (typeof s.endedAt === 'number') ? s.endedAt : Date.parse(s.endedAt);
         if (!(isFinite(endMs) && endMs > 0)) return;
         var startMs = endMs - (parseFloat(s.seconds) || 0) * 1000;
@@ -3907,7 +4200,7 @@
        older dated evidence sat unseeded in these two stores. */
     var extra = [];
     var mtEvents = store.get('mt_events', []);
-    if (Array.isArray(mtEvents)) {
+    if (wpPid === 'p1' && Array.isArray(mtEvents)) {
       mtEvents.forEach(function (e) {
         if (!e || !(parseFloat(e.odo) > 0)) return;
         var t = dayTs(e.date, '');
@@ -3917,7 +4210,7 @@
     var ptiReports = store.get('pti_reports', []);
     if (Array.isArray(ptiReports)) {
       ptiReports.forEach(function (r) {
-        if (!r || !(parseFloat(r.odometer) > 0)) return;
+        if (!r || wpStampOf(r) !== wpPid || !(parseFloat(r.odometer) > 0)) return;
         var t = (typeof r.filedAt === 'number' && isFinite(r.filedAt) && r.filedAt > 0)
           ? r.filedAt : dayTs(r.date, '');
         if (t !== null && t !== undefined) extra.push({ v: parseFloat(r.odometer), ts: t, source: 'seed-pti' });
@@ -3942,7 +4235,7 @@
       out.push(r);
     });
     if (out.length > 2000) out = out.slice(out.length - 2000);
-    store.set('odo_readings', out);
+    store.set(logKey, out);
     return added.length;
   }
   /* v185 (ODO-BACKFILL, owner Oct 20 21:12 MDT — "I have them
@@ -3964,7 +4257,9 @@
      stays auditable, exactly like the seed sources. */
   function importOdoReadings(list, source) {
     if (!Array.isArray(list)) return { added: 0, skipped: 0 };
-    var log = store.get('odo_readings', []);
+    var logKey = 'odo_readings'; // v242 trap 1: imports land in the active truck's log
+    try { logKey = App.workProfiles.keyFor('odo_readings'); } catch (e) {}
+    var log = store.get(logKey, []);
     if (!Array.isArray(log)) log = [];
     var have = {};
     log.forEach(function (r) {
@@ -4008,7 +4303,7 @@
       if (isCand) added++;
     });
     if (out.length > 2000) out = out.slice(out.length - 2000);
-    if (added > 0) store.set('odo_readings', out);
+    if (added > 0) store.set(logKey, out);
     return { added: added, skipped: skipped };
   }
   function bumpOdometer(v, src) {
@@ -4027,7 +4322,9 @@
       return { value: prev, raised: false, previous: prev, refused: 'jump' };
     }
     if (prev === null || n > prev) {
-      store.set('mt_odo', String(n));
+      var mk2 = 'mt_odo'; // v242 trap 1: the active truck's chain only
+      try { mk2 = App.workProfiles.keyFor('mt_odo'); } catch (e) {}
+      store.set(mk2, String(n));
       /* v122: a master write is a dated reading (see above). */
       try { logOdoReading(n, src || 'app'); } catch (e) {}
       return { value: n, raised: true, previous: prev };
@@ -4161,7 +4458,9 @@
      gate only distrusts the silent auto-fill — the user can always
      still type or tap a value themselves. */
   function odoMasterNow() {
-    var v = parseFloat(store.get('mt_odo', ''));
+    var mk = 'mt_odo'; // v242 trap 1: the active truck's master
+    try { mk = App.workProfiles.keyFor('mt_odo'); } catch (e) {}
+    var v = parseFloat(store.get(mk, ''));
     return (isFinite(v) && v > 0) ? v : null;
   }
   function odoLocalFailed(km) {
@@ -4839,7 +5138,9 @@
       if (o.odometerBaseline && parseFloat(o.odometerBaseline) > 0) {
         var obDec = odoSaveDecision(o.odometerBaseline, odoMasterNow(), false);
         if (obDec.action === 'set' || obDec.action === 'correct') {
-          App._store.set('mt_odo', String(obDec.value));
+          var mk4 = 'mt_odo'; // v242 trap 1: the active truck's chain
+          try { mk4 = App.workProfiles.keyFor('mt_odo'); } catch (e) {}
+          App._store.set(mk4, String(obDec.value));
           /* v122: an applied onboarding odometer write is a dated
              reading like every other master write path. */
           try { logOdoReading(obDec.value, 'onboarding', null, obDec.action === 'correct'); } catch (e) {}
@@ -4849,7 +5150,9 @@
     // v28: safety sticker expiry -> Maintenance annual date + safety reminder
     try {
       if (o.safetyExpiry) {
-        App._store.set('mt_annualDate', o.safetyExpiry);
+        var ak4 = 'mt_annualDate'; // v242 trap 1: the active truck's sticker date
+        try { ak4 = App.workProfiles.keyFor('mt_annualDate'); } catch (e) {}
+        App._store.set(ak4, o.safetyExpiry);
         var rl = App._store.get('rem_list', []) || [];
         var exists = rl.some(function (r) { return r && r.type === 'safety' && /annual safety/i.test(r.title || ''); });
         if (!exists) {

@@ -131,24 +131,31 @@ console.log('\n— B: mt_odo writer census —');
     });
 
   /* app.js: exactly two direct writes — bumpOdometer's body and the
-     onboarding supervised-decision site. */
-  eq('B app.js bump-body mt_odo write', count(appSrc, "store.set('mt_odo', String(n))"), 1);
-  eq('B app.js onboarding mt_odo write', count(appSrc, "_store.set('mt_odo'"), 1);
+     onboarding supervised-decision site.
+     v242 (WORK-PROFILES trap 1): both writes are CHAIN-SCOPED now —
+     the key is resolved through the seam's keyFor (Truck 07 keeps
+     'mt_odo'; another profile writes its own chain key), so the
+     census counts the scoped forms and pins that NO literal
+     'mt_odo' write remains anywhere in app.js. */
+  eq('B app.js bump-body mt_odo write', count(appSrc, "store.set(mk2, String(n))"), 1);
+  eq('B app.js onboarding mt_odo write', count(appSrc, "_store.set(mk4,"), 1);
   ok('B app.js onboarding write is the decision value',
-    appSrc.indexOf("_store.set('mt_odo', String(obDec.value))") >= 0);
+    appSrc.indexOf("_store.set(mk4, String(obDec.value))") >= 0);
+  eq('B app.js has NO literal mt_odo write left', count(appSrc, "store.set('mt_odo'") + count(appSrc, "_store.set('mt_odo'"), 0);
 
   /* fuel.js: exactly two writes, both behind the armed 'correct'
-     mode of the supervised decision. */
+     mode of the supervised decision (chain-scoped since v242). */
   const fuelSrc = read('modules/fuel.js');
-  eq('B fuel.js mt_odo writes', count(fuelSrc, "_store.set('mt_odo'"), 2);
+  eq('B fuel.js mt_odo writes', count(fuelSrc, "_store.set(wpKeyFor('mt_odo'"), 2);
   ok('B fuel.js writes are correct-mode only',
     count(fuelSrc, "odoPlan.mode === 'correct'") >= 2);
 
-  /* preferences.js: one write, the decision value. */
+  /* preferences.js: one write, the decision value (chain-scoped
+     since v242). */
   const pfSrc = read('modules/preferences.js');
-  eq('B preferences.js mt_odo writes', count(pfSrc, "_store.set('mt_odo'"), 1);
+  eq('B preferences.js mt_odo writes', count(pfSrc, "_store.set(pfWpKey('mt_odo'"), 1);
   ok('B preferences.js write is the decision value',
-    pfSrc.indexOf("_store.set('mt_odo', String(dec.value))") >= 0);
+    pfSrc.indexOf("_store.set(pfWpKey('mt_odo'), String(dec.value))") >= 0);
 
   /* maintenance.js: every W('odo', ...) write is a decision value —
      the v86 Save and the v97 correction flow, nothing else. */

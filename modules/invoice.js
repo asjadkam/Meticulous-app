@@ -39,6 +39,41 @@
   function invoices() { return S('list', []); }
   function paystubs() { return S('stubs', []); }
 
+  /* v242 (WORK-PROFILES): the invoice book is PER PROFILE —
+     switching profiles switches the book completely: the issued
+     list shown, the open period, the revenue lines aggregated
+     and the next number all belong to the active profile, and
+     each profile keeps its OWN next-invoice-number (the mirror
+     in onboarding + the capture in setNextInvoiceNo keep the
+     profile record truthful). Legacy records (no stamp) read as
+     Profile 1. Drafts are per profile too: inv_drafts holds one
+     draft per profile; the legacy single inv_draft is Profile
+     1's and is kept in step for it. */
+  function wpActiveId() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpIdOf(rec) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.idOf(rec); } catch (e) {}
+    return (rec && rec.profileId) ? String(rec.profileId) : 'p1';
+  }
+  function invoicesFor(pid) {
+    return invoices().filter(function (r) { return r && wpIdOf(r) === pid; });
+  }
+  function draftFor(pid) {
+    var map = S('drafts', null);
+    if (map && typeof map === 'object' && map[pid]) return map[pid];
+    if (pid === 'p1') return S('draft', null);
+    return null;
+  }
+  function saveDraftFor(pid, d) {
+    var map = S('drafts', null);
+    if (!map || typeof map !== 'object') map = {};
+    map[pid] = d;
+    W('drafts', map);
+    if (pid === 'p1') W('draft', d);
+  }
+
   function defaultTaxRate(o) {
     if (o.country === 'Canada' && o.province && CA_TAX[o.province]) return CA_TAX[o.province];
     return 0;
@@ -46,7 +81,8 @@
 
   function nextInvNo() {
     var o = onb();
-    return String(o.nextInvoiceNo || '').trim() || invCycNextNo(invoices());
+    /* v242: the fallback sequence is the ACTIVE profile's own. */
+    return String(o.nextInvoiceNo || '').trim() || invCycNextNo(invoicesFor(wpActiveId()));
   }
 
   /* ================= INV-CYCLE-BEGIN =================
@@ -592,7 +628,18 @@
           'Fix that day in Revenue, then try again — nothing was saved and your draft is unchanged.'
       };
     }
-    var list = invS('list', []);
+    var listAll = invS('list', []);
+    /* v242 (WORK-PROFILES): when the caller names a profile
+       (x.profileId), the numbering sequence and the collision
+       judgement scope to THAT profile's book — each profile
+       keeps its own sequence, and a number used in the other
+       book is not a collision. The write still lands on the
+       whole stored list. No profile named -> the pre-v242
+       whole-book behaviour, byte for byte. Unstamped records
+       read as Profile 1. */
+    var pid = x.profileId ? String(x.profileId) : null;
+    var inBook = function (r) { return r && ((r.profileId || 'p1') === pid); };
+    var list = pid ? listAll.filter(inBook) : listAll;
     var typed = String(draft.no || '').trim();
     if (typed === '(auto on save)') typed = '';
     var pref = String(x.prefNo || '').trim();
@@ -630,7 +677,8 @@
       notes: draft.notes, company: x.company,
       province: x.province, country: x.country, at: x.today
     };
-    var newList = list.slice(); newList.push(rec);
+    if (pid) rec.profileId = pid; /* v242: the issued record carries its book's stamp */
+    var newList = listAll.slice(); newList.push(rec);
     if (invW('list', newList) === false || !invVerifyIssued(rec.id)) {
       return {
         ok: false, stage: 'write',
@@ -647,8 +695,13 @@
     /* Verified — the invoice is archived. Start the new cycle: clear
        the whole draft and advance the period to the new open period. */
     invW('draft', null);
-    var next = invCycOpenPeriod(newList, x.today);
+    if (pid) {
+      var dm = invS('drafts', null);
+      if (dm && typeof dm === 'object' && dm[pid]) { dm[pid] = null; invW('drafts', dm); }
+    }
+    var next = invCycOpenPeriod(pid ? newList.filter(inBook) : newList, x.today);
     if (next) { invW('pa', next.a); invW('pb', next.b); }
+    if (pid) invW('papid', pid); /* v242: the stamped period belongs to this book */
     invW('cycmsg', 'Invoice #' + no + ' saved for ' + invCycShort({ a: x.pa, b: x.pb }) +
       '. Next period: ' + invCycShort(next) + '.');
     return { ok: true, rec: rec, next: next, nextPrefNo: nextPrefNo };
@@ -692,7 +745,12 @@
     if (!no) {
       return { ok: false, stage: 'number', message: 'Enter the invoice number you used outside the app — nothing was recorded.' };
     }
-    var list = invS('list', []);
+    var listAll = invS('list', []);
+    /* v242: settled-outside records live in their profile's book
+       too — the collision judgement scopes like invIssue's. */
+    var pid = x.profileId ? String(x.profileId) : null;
+    var inBook = function (r) { return r && ((r.profileId || 'p1') === pid); };
+    var list = pid ? listAll.filter(inBook) : listAll;
     if (invCycCollision(list, no)) {
       return { ok: false, stage: 'collision', message: 'Invoice #' + no + ' is already on record — nothing was changed.' };
     }
@@ -705,15 +763,17 @@
       notes: '', company: x.company || null,
       province: x.province, country: x.country, at: x.today
     };
-    var newList = list.slice(); newList.push(rec);
+    if (pid) rec.profileId = pid;
+    var newList = listAll.slice(); newList.push(rec);
     if (invW('list', newList) === false || !invVerifyIssued(rec.id)) {
       return {
         ok: false, stage: 'write',
         message: 'The settled record could not be saved — nothing was changed. Check storage or connection, then try again.'
       };
     }
-    var next = invCycOpenPeriod(newList, x.today);
+    var next = invCycOpenPeriod(pid ? newList.filter(inBook) : newList, x.today);
     if (next) { invW('pa', next.a); invW('pb', next.b); }
+    if (pid) invW('papid', pid); /* v242: the stamped period belongs to this book */
     invW('cycmsg', 'Recorded: ' + invCycLabel({ a: pa, b: pb }) + ' was settled outside the app (invoice #' + no + ').' +
       (next ? ' Open period: ' + invCycShort(next) + '.' : ''));
     return { ok: true, rec: rec, next: next };
@@ -734,8 +794,12 @@
     if (invW('list', newList) === false || invVerifyIssued(id)) {
       return { ok: false, stage: 'write', message: 'The record could not be removed — nothing was changed.' };
     }
-    var next = invCycOpenPeriod(newList, today);
+    /* v242: the period re-opens inside the REMOVED record's own
+       book — the other profile's book never moves. */
+    var rpid = rec.profileId ? String(rec.profileId) : null;
+    var next = invCycOpenPeriod(rpid ? newList.filter(function (r) { return r && ((r.profileId || 'p1') === rpid); }) : newList, today);
     if (next) { invW('pa', next.a); invW('pb', next.b); }
+    if (rpid) invW('papid', rpid); /* v242: the stamped period belongs to this book */
     invW('cycmsg', 'Settled record for invoice #' + rec.no + ' removed — ' +
       invCycLabel({ a: rec.pa, b: rec.pb }) + ' is open again.');
     return { ok: true, rec: rec, next: next };
@@ -1014,17 +1078,33 @@
      that block issuing and the tracker-only days to flag. The
      grouping/source rules live in invCycBuildRevenueLines
      (INV-CYCLE region, suite-tested). */
-  function revenueLinePlan(a, b) {
+  function revenueLinePlan(a, b, pid) {
     var o = onb();
     var entries = App._store.get('rev_entries', []).filter(function (e) { return e.date >= a && e.date <= b; });
     var extras = App._store.get('rev_extras', []).filter(function (x) { return x.date >= a && x.date <= b; });
+    /* v242 (WORK-PROFILES): with a profile named, the plan
+       aggregates ONLY that profile's entries + extras and prices
+       amount-less lines at that profile's rate. No profile named
+       -> the whole book at the wage chain, exactly as before
+       (P&L's door keeps its meaning). */
+    var planRate = null;
+    if (pid) {
+      entries = entries.filter(function (e) { return wpIdOf(e) === pid; });
+      extras = extras.filter(function (x) { return wpIdOf(x) === pid; });
+      try {
+        if (window.App && App.workProfiles) {
+          var pr = App.workProfiles.rateOf(pid);
+          if (pr > 0) planRate = pr;
+        }
+      } catch (e) {}
+    }
     /* v137: priced at the user's OWN wage rate (ownWageRate ||
        payRate — the same chain the pay stub uses), never a
        universal Preferences "Rate": that field is gone, and each
        driver's rates live in their own books / P&L entry. For a
        setup that never split the rates this is the same number
        as before, byte for byte. */
-    return invCycBuildRevenueLines(entries, extras, psWageRate(o), o.payStandard, invCycCardWages());
+    return invCycBuildRevenueLines(entries, extras, planRate !== null ? planRate : psWageRate(o), o.payStandard, invCycCardWages());
   }
 
   /* lines from revenue entries + extras inside a period, using pay standard */
@@ -1120,7 +1200,11 @@
   /* ---------------- contractor invoice ---------------- */
   function renderInvoice(body) {
     var o = onb();
-    var draft = S('draft', null) || {
+    /* v242 (WORK-PROFILES): this render serves the ACTIVE
+       profile's book — its issued list, its open period, its
+       revenue lines, its draft, its next number. */
+    var myPid = wpActiveId();
+    var draft = draftFor(myPid) || {
       items: [], taxRate: defaultTaxRate(o),
       billTo: o.contractingCo ? (o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '')) : '',
       no: null, date: App._today(), notes: ''
@@ -1155,7 +1239,7 @@
        issued list's remove-confirm target. Closure state, like
        bizPromptVisible: it lives for this render of the module. */
     var settleConfirm = false, settleVals = null, unsettleId = null;
-    function saveDraft() { W('draft', draft); }
+    function saveDraft() { saveDraftFor(myPid, draft); }
     /* A stable draft id, so the business-details check (below) nags
        at most once per invoice, never once per render. */
     if (!draft.id) { draft.id = 'draft' + Date.now(); saveDraft(); }
@@ -1168,10 +1252,15 @@
     }
 
     function draw() {
-      var openP = invCycOpenPeriod(invoices(), App._today());
+      var openP = invCycOpenPeriod(invoicesFor(myPid), App._today());
       var pa = S('pa', null), pb = S('pb', null);
+      /* v242: a period stamped while another profile's book was
+         open is not this book's period — use this book's own
+         open period instead. */
+      var papid = S('papid', null);
+      if (papid && papid !== myPid) { pa = null; pb = null; }
       if (!pa || !pb) { pa = openP.a; pb = openP.b; }
-      var revPlan = revenueLinePlan(pa, pb);
+      var revPlan = revenueLinePlan(pa, pb, myPid);
       var revLines = revPlan.lines;
       var t = totals(revLines);
       var h = jurisdictionBanner(true);
@@ -1258,7 +1347,7 @@
        that period as open. Confirm-first (two-step, in-page); the
        amounts are never asked — the door records no money. */
     function settleHtml() {
-      var openP = invCycOpenPeriod(invoices(), App._today());
+      var openP = invCycOpenPeriod(invoicesFor(myPid), App._today());
       var sv = settleVals || { a: openP.a, b: openP.b, no: '' };
       var h = '<div class="card"><h3>Settled outside the app?</h3>' +
         '<p class="note">If you already invoiced a period another way — a sheet you made yourself, for example — ' +
@@ -1279,7 +1368,7 @@
     }
 
     function issuedHtml() {
-      var list = invoices();
+      var list = invoicesFor(myPid);
       var h = '<div class="card"><h3>📁 Issued invoices</h3>';
       if (!list.length) return h + '<div class="empty">No invoices yet.</div></div>';
       list.slice().reverse().slice(0, 10).forEach(function (r) {
@@ -1362,13 +1451,14 @@
           draft: draft, revLines: revLines, sub: t.sub, tax: t.tax, total: t.total,
           pa: paV, pb: pbV,
           today: App._today(),
+          profileId: myPid, /* v242: this issue belongs to the active profile's book */
           prefNo: o.nextInvoiceNo || '', taxIncluded: taxIncluded,
           duplicateDates: (revPlan && revPlan.duplicateDates) || [],
           /* v105: the facts the printed document is built from —
              winning hours per day, the period's haul cards, and
              the rate in force — archived on the record itself. */
           dayHours: (revPlan && revPlan.dayHours) || null,
-          cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
+          cardDays: invCycCardDays((App._store.get('rev_entries', []) || []).filter(function (e) { return e && wpIdOf(e) === myPid; }), App._store.get('dsp_list', []),
             (revPlan && revPlan.dayHours) || {}, paV, pbV),
           rate: psWageRate(o), // v137: the rate in force = the user's own wage chain
           truckNo: o.truckNo || '',
@@ -1377,6 +1467,10 @@
               var oo = App._store.get('onboarding', {});
               oo.nextInvoiceNo = next;
               App._store.set('onboarding', oo);
+              /* v242: the advance also lands on the active
+                 profile's own record at once — the profile's
+                 sequence never waits for a switch to be true. */
+              if (window.App && App.workProfiles) App.workProfiles.captureActive();
             } catch (e) {}
           },
           company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },
@@ -1406,13 +1500,13 @@
         var paV = body.querySelector('#iv_a').value, pbV = body.querySelector('#iv_b').value;
         printInvoice({
           id: null,
-          no: invCycWouldBeNo(invoices(), draft.no, o.nextInvoiceNo || ''),
+          no: invCycWouldBeNo(invoicesFor(myPid), draft.no, o.nextInvoiceNo || ''),
           date: draft.date, billTo: draft.billTo, pa: paV, pb: pbV,
           revLines: revLines, items: (draft.items || []).slice(),
           taxRate: Number(draft.taxRate) || 0, taxIncluded: taxIncluded,
           sub: t.sub, tax: t.tax, total: t.total,
           dayHours: (revPlan && revPlan.dayHours) || null,
-          cardDays: invCycCardDays(App._store.get('rev_entries', []), App._store.get('dsp_list', []),
+          cardDays: invCycCardDays((App._store.get('rev_entries', []) || []).filter(function (e) { return e && wpIdOf(e) === myPid; }), App._store.get('dsp_list', []),
             (revPlan && revPlan.dayHours) || {}, paV, pbV),
           rate: psWageRate(o), // v137: same wage chain as the issued record
           truckNo: o.truckNo || '',
@@ -1438,7 +1532,8 @@
           pa: settleVals.a, pb: settleVals.b, externalNo: settleVals.no,
           today: App._today(),
           company: { name: o.companyName, gst: o.gst, addr: o.companyAddr },
-          province: o.province, country: o.country
+          province: o.province, country: o.country,
+          profileId: myPid /* v242: the settled record lands in the active profile's book */
         });
         settleConfirm = false; settleVals = null;
         if (!res.ok) W('err', res.message);
@@ -1775,14 +1870,16 @@
        if the period cannot be read. */
     status: function () {
       try {
-        var p = invCycOpenPeriod(invoices(), App._today());
+        /* v242: the card preview reads the ACTIVE profile's book. */
+        var spid = wpActiveId();
+        var p = invCycOpenPeriod(invoicesFor(spid), App._today());
         if (p) {
           var tot = 0;
-          revenueLines(p.a, p.b).forEach(function (l) { tot += l.amt || 0; });
+          revenueLinePlan(p.a, p.b, spid).lines.forEach(function (l) { tot += l.amt || 0; });
           return invCycShort(p) + (tot > 0 ? ': $' + tot.toFixed(2) : ' · no entries yet');
         }
       } catch (e) {}
-      return invoices().length + ' issued';
+      return invoicesFor(wpActiveId()).length + ' issued';
     },
     render: function (body) {
       invBody = body;

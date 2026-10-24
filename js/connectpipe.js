@@ -450,6 +450,36 @@
     };
   };
 
+  /* v242 (WORK-PROFILES — the CONNECT FENCE): a day worked
+     under a non-main profile must NEVER publish to his main
+     carrier's connections (Umar / the boss at Ai Trucking see
+     Ai days only). The day's own stamped records say which
+     profile it belongs to; ANY non-Profile-1 stamp on the date
+     fences the whole day — a leak fence errs toward silence.
+     Unstamped legacy records read as Profile 1, as everywhere. */
+  function wpIdOfRec(rec) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.idOf(rec); } catch (e) {}
+    return (rec && rec.profileId) ? String(rec.profileId) : 'p1';
+  }
+  CP._dayFenced = function (dateStr) {
+    var st = store();
+    if (!st || !dateStr) return false;
+    var fenced = false;
+    function scan(list, dateOf) {
+      (list || []).forEach(function (r) {
+        if (!fenced && r && dateOf(r) === dateStr && wpIdOfRec(r) !== 'p1') fenced = true;
+      });
+    }
+    try {
+      scan(st.get('dsp_list', []), function (d) { return CP.recordDate(d); });
+      var act = st.get('dsp_active', null);
+      if (act && CP.recordDate(act) === dateStr && wpIdOfRec(act) !== 'p1') fenced = true;
+      scan(st.get('sessions', []), function (s) { return s && s.date; });
+      scan(st.get('rev_entries', []), function (e) { return e && e.date; });
+    } catch (e) { return false; }
+    return fenced;
+  };
+
   /* Assemble MY shared day record for a date — facts only. Null
      when there is nothing to share (no dispatches, no session). */
   CP.buildDay = function (dateStr) {
@@ -721,6 +751,9 @@
   CP.publishDay = function (dateStr) {
     var f = fb();
     if (!f) return Promise.resolve(false);
+    /* v242 fence: a non-main-profile day never crosses — not
+       today, not in history, not on a records change. */
+    try { if (CP._dayFenced(dateStr)) return Promise.resolve(false); } catch (e) {}
     var built = CP.buildDay(dateStr);
     if (!built) return Promise.resolve(false);
     var id = CP.dayDocId(f.user.uid, dateStr);
@@ -1424,7 +1457,10 @@
   CP.sharedPti = function () {
     var st = store();
     if (!st) return [];
-    return (st.get('pti_reports', []) || []).filter(Boolean).slice()
+    /* v242 fence: a PTI filed under another profile (another
+       truck, another plate) never rides the records doc. */
+    return (st.get('pti_reports', []) || []).filter(Boolean)
+      .filter(function (r) { return wpIdOfRec(r) === 'p1'; }).slice()
       .sort(function (a, b) { return (parseFloat(b.filedAt) || 0) - (parseFloat(a.filedAt) || 0); })
       .slice(0, 14)
       .map(function (r) {
@@ -1528,6 +1564,9 @@
     try { t = M._toggles ? M._toggles() : {}; } catch (e) { t = {}; }
     var days = [], d = pa, guard = 0;
     while (d <= pb && guard++ < 62) {
+      /* v242 fence: a fenced (non-main-profile) date inside the
+         period contributes NO manifest lines to a peer's doc. */
+      if (CP._dayFenced(d)) { d = dateShift(d, 1); continue; }
       var c = null, lines = null;
       try { c = M._collectDay(d); } catch (e) { c = null; }
       if (c && (c.dispatches.length || c.sessions.length || c.fills.length ||
@@ -1553,6 +1592,7 @@
     try { t = M._toggles ? M._toggles() : {}; } catch (e) { t = {}; }
     var days = [];
     (dates || []).forEach(function (d) {
+      if (CP._dayFenced(d)) return; // v242 fence: see sharedManifest
       var c = null, lines = null;
       try { c = M._collectDay(d); } catch (e) { c = null; }
       if (c && (c.dispatches.length || c.sessions.length || c.fills.length ||
@@ -1612,7 +1652,10 @@
        years of fuel; 300 expense lines) while still bounding the
        doc; the old 40/60 slices silently amputated older history
        from a Full peer's view. */
-    var fuel = (st.get('fuel_fills', []) || []).filter(Boolean).slice()
+    /* v242 fence: fills stamped with another profile (another
+       truck's fuel) never ride the records doc. */
+    var fuel = (st.get('fuel_fills', []) || []).filter(Boolean)
+      .filter(function (x) { return wpIdOfRec(x) === 'p1'; }).slice()
       .sort(byDateDesc).slice(0, 600).map(CP.sharedFill);
     var expenses = (st.get('fuel_expenses', []) || []).filter(Boolean).slice()
       .sort(byDateDesc).slice(0, 300).map(function (x) {
@@ -1642,7 +1685,9 @@
     var f = fb(), st = store();
     if (!f || !st || !viewerUid) return null;
     var invs = (st.get('inv_list', []) || []).filter(function (r) {
-      return r && !r.settledOutside && r.total != null &&
+      /* v242 fence: another profile's invoice never crosses to
+         this peer, whatever its bill-to says. */
+      return r && wpIdOfRec(r) === 'p1' && !r.settledOutside && r.total != null &&
         CP.peerMatchesBillTo(viewerUid, r.billTo);
     });
     if (!invs.length) return null;

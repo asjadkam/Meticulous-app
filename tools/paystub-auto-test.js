@@ -246,8 +246,8 @@ console.log('\n— ODO-MASTER: every master write path appends a dated reading �
 console.log('\n— Item 3c: a dispatch-close stop stamps the session end (source pins) —');
 {
   has('the dispatch-close door arms the stamp', appSrc, 'App.stopSessionOnDispatchClose = function () {\n    if (!sessionActive()) return false;\n    _stopViaDispatch = true;');
-  has('the stamp reads the latest dated reading', appSrc, "var rlog = store.get('odo_readings', []);");
-  has('the stamp falls back to the master', appSrc, 'if (!(stamp > 0)) stamp = masterOdometer();');
+  has('the stamp reads the latest dated reading', appSrc, "var rlog = store.get(rlogKey, []);"); // v242 trap 1: the SESSION's own truck's log (rlogKey via keyFor)
+  has('the stamp falls back to the master', appSrc, "App.workProfiles.keyFor('mt_odo', entry.profileId)"); // v242 trap 1: the fallback master is the session truck's own
   has('the stamp lands on the session entry', appSrc, 'if (stamp > 0) entry.endOdo = stamp;');
   has('a plain tracker Stop never arms it', appSrc, 'App.trackerStop = function () { stopSessionAt(Date.now()); };');
 }
@@ -301,7 +301,7 @@ console.log('\n— print structure: #1150\'s structure, the app\'s own words —
 /* ============ (6) Item 3b/3d: manifest wiring (source pins; behaviour in manifest-odo-test) ============ */
 console.log('\n— manifest: readings-log boundaries + the said-so line —');
 {
-  has('collect fills boundaries from odo_readings', manSrc, "var rl = G('odo_readings', []);");
+  has('collect fills boundaries from odo_readings', manSrc, "var rl = G(wpOdoLogKey(dayPid), []);"); // v242 trap 1: the DAY's own truck's log
   has('start = last reading at or before the work start', manSrc, 'if (readings[i].ts <= startAnchor) { odoStart = readings[i].value; break; }');
   has('end = first reading at or after the day\'s end', manSrc, 'if (readings[j].ts >= endAnchor && readings[j].ts < limit) { odoEnd = readings[j].value; break; }');
   has('pdf: no boundary data says so', manSrc, "b: (ol !== null) ? ol : 'no readings captured'");

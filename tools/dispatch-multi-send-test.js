@@ -455,9 +455,9 @@ function sendFormStubs(chks, siteVal) {
     dspSrc.indexOf('dp_send_chk') !== -1 && dspSrc.indexOf('ConnectPipe.sendDispatchToMany') !== -1);
   check('g: the Connect screen per-connection share stays single (untouched call)',
     conSrc.indexOf('ConnectPipe.sendDispatch(c.uid, {') !== -1);
-  eq('g: version ships as 230', ver.webVersion, 241);
+  eq('g: version ships as 230', ver.webVersion, 242);
   check('g: index loads the touched files at the 230 pin',
-    idxSrc.indexOf('js/connectpipe.js?v=241') !== -1 && idxSrc.indexOf('modules/dispatch.js?v=241') !== -1);
+    idxSrc.indexOf('js/connectpipe.js?v=242') !== -1 && idxSrc.indexOf('modules/dispatch.js?v=242') !== -1);
 
   console.log('\ndispatch-multi-send test: ' + pass + '/' + (pass + fail) + ' passed');
   if (fail) process.exitCode = 1;

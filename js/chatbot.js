@@ -812,6 +812,9 @@
         gross = { amt: gSum, from: pFrom, to: pTo, approx: gApprox };
       }
       var odo = get('mt_odo', '');
+      /* v242 trap 1: the assistant quotes the ACTIVE truck's
+         master, not always Truck 07's. */
+      try { if (window.App && App._masterOdometer) { var am = App._masterOdometer(); odo = (am > 0) ? String(am) : ''; } } catch (e) {}
       return {
         dispatch: disp, loads: loads, hours: hours, gross: gross,
         odo: odo ? Number(String(odo).replace(/[^0-9.]/g, '')) : null,

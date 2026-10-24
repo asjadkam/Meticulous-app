@@ -131,7 +131,7 @@ console.log('\n— statics: escalation + steppers wired into the shared pipeline
   eq('v118 sticker: clearing the field in the form is an edit — it wins (no resurrection)',
     pfSafetyWinner('', '2027-05-01', '2027-05-31'), '');
   ok('v118 sticker: the Preferences save decides through pfSafetyWinner',
-    prefSrc118.indexOf("o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));") >= 0);
+    prefSrc118.indexOf("o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get(pfWpKey('mt_annualDate'), ''));") >= 0); // v242 trap 1: the stored date is read from the active truck's chain key
   ok('v118 sticker: render captures what the safety field opened with',
     prefSrc118.indexOf("pfSafetyRendered = o.safetyExpiry || '';") >= 0);
   ok('v118 sticker: the Maintenance save mirrors into onboarding.safetyExpiry',

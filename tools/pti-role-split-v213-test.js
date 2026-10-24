@@ -183,8 +183,8 @@ const FORM_MARKERS = ['data-pti-ok=', 'id="pti_carrier"', 'id="pti_unit"', 'data
   ok('driver/both face lists are untouched',
     appSrc.indexOf("driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']") >= 0 &&
     appSrc.indexOf("both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']") >= 0);
-  eq('webVersion is 213', ver.webVersion, 241);
-  ok('index.html pins the v213 build', idxSrc.indexOf('?v=241') >= 0 && idxSrc.indexOf('?v=' + '212') < 0);
+  eq('webVersion is 213', ver.webVersion, 242);
+  ok('index.html pins the v213 build', idxSrc.indexOf('?v=242') >= 0 && idxSrc.indexOf('?v=' + '212') < 0);
 
   console.log('\npti-role-split-v213 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

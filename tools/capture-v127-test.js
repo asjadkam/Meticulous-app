@@ -665,9 +665,13 @@ function partB() {
     .forEach(function (id) { ok('static: markup has #' + id, mtSrc.indexOf('id="' + id + '"') >= 0); });
   /* v182 (P1): the wire call gained keepKey: 'mt_safety_photo' — the
      sticker photo is kept on its record (downloadable copy); the
-     read itself stays fill-only, exactly as pinned before. */
+     read itself stays fill-only, exactly as pinned before.
+     v242 (WORK-PROFILES trap 1): the keepKey is now the active
+     truck's chain key — mtChainKey('mt_safety_photo'), which IS
+     'mt_safety_photo' under Profile 1 and the temp truck's own
+     key under any other profile. Pin moved to the scoped call. */
   ok('static: wired fill-only through the shared pipeline, maintenance origin',
-    mtSrc.indexOf("App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: 'mt_safety_photo' })") >= 0);
+    mtSrc.indexOf("App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: mtChainKey('mt_safety_photo') })") >= 0);
 
   const w = makeModuleWorld({
     maint: true,

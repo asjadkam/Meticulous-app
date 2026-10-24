@@ -19,6 +19,7 @@
      at the owner's order). */
   var _parkListenerOn = false;
   var pfBackHook = null; // v116: installed by each render's tab wiring; api.back delegates to it
+  var wpEditId = null; // v242 (WORK-PROFILES): the profile whose editor is open on the Work profiles card
   /* v118: the safety-sticker expiry lives in TWO stores —
      onboarding.safetyExpiry (the form's field) and mt_annualDate
      (Maintenance / reminders / the manifest read it there). The
@@ -32,6 +33,14 @@
      into the form's record instead. A value actually edited
      here still wins, always. */
   var pfSafetyRendered = null;
+  /* v242 (WORK-PROFILES trap 1): per-truck chain keys — Truck 07
+     keeps the legacy keys; another profile's odometer master and
+     sticker date live under its own keys, so its readings can
+     never touch Truck 07's chain. */
+  function pfWpKey(base) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.keyFor(base); } catch (e) {}
+    return base;
+  }
   function pfSafetyWinner(formVal, renderedVal, annualNow) {
     formVal = String(formVal || '');
     if (annualNow && formVal === String(renderedVal || '') && String(annualNow) !== formVal) return String(annualNow);
@@ -227,6 +236,52 @@
          data, no longer a field on this card. Each driver's wage
          still shows read-only under Drivers' wages below. */
       h += '</div>';
+
+      /* v242 (WORK-PROFILES, owner, Fri Oct 23, 2026 evening —
+         "Build it tonight"): the profile switcher. One profile
+         per job: its own company charged, truck, plate, rate,
+         tax and next invoice number. Everything recorded lands
+         in the profile he is working under; each profile keeps
+         its own books and its own invoices. The ACTIVE profile's
+         values are the same facts the Company / Truck / Pay
+         cards below edit (onboarding is its working copy — the
+         seam in js/app.js owns the mirroring). Office-only
+         accounts never drive, so — like the Truck card — this
+         card is not rendered for them. */
+      if (effRole !== 'office') {
+        var wpSt = null;
+        try { wpSt = App.workProfiles.load(); } catch (e) {}
+        if (wpSt) {
+          var wpActId = wpSt.activeId;
+          h += '<div class="card"><h3>🔀 Work profiles</h3>' +
+            '<p class="note" style="margin-top:0">One profile per job. Switch before the day starts — everything you record that day (inspection, dispatch, ticket, pay) lands in that profile, and each profile keeps its own invoices. A day already started stays in the profile it started in.</p>';
+          wpSt.list.forEach(function (p) {
+            var isAct = p.id === wpActId;
+            h += '<div class="kv"><span>' + (isAct ? '● ' : '') + '<b>' + esc(App.workProfiles.label(p)) + '</b>' +
+              (p.plate ? ' · plate ' + esc(p.plate) : '') + ' · $' + esc(p.rate || '0') + '</span>' +
+              '<span>' + (isAct ? '<b>Working under this one</b>' : '<button type="button" class="btn small navy" data-wp-use="' + esc(p.id) + '">Use this profile</button>') +
+              ' <button type="button" class="btn small ghost" data-wp-edit="' + esc(p.id) + '">Edit</button></span></div>';
+          });
+          if (wpEditId) {
+            var wpEd = null;
+            wpSt.list.forEach(function (p) { if (p.id === wpEditId) wpEd = p; });
+            if (wpEd) {
+              h += '<div style="border-top:1px solid #e3e3e3;margin-top:12px;padding-top:10px">' +
+                '<p class="note" style="margin-top:0">✏️ Profile details' + (wpEd.id === wpActId ? ' — the one you are working under' : '') + '</p>' +
+                '<label class="f">Company charged</label><input id="pf_wp_company" value="' + esc(wpEd.company) + '" placeholder="e.g. AI Trucking">' +
+                '<div class="row"><div><label class="f">Truck number</label><input id="pf_wp_truck" value="' + esc(wpEd.truckNo) + '"></div>' +
+                '<div><label class="f">Licence plate</label><input id="pf_wp_plate" value="' + esc(wpEd.plate) + '"></div></div>' +
+                '<label class="f">Rate — entries under this profile are paid at</label><input id="pf_wp_rate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(wpEd.rate) + '">' +
+                '<label class="chk" style="display:block;margin-top:10px;"><input type="checkbox" id="pf_wp_taxincl"' + (wpEd.rateIncludesTax ? ' checked' : '') + '> Rate includes tax</label>' +
+                '<div class="row"><div><label class="f">Tax rate %</label><input id="pf_wp_taxrate" type="number" step="0.01" min="0" value="' + esc(wpEd.taxRate || '5') + '"></div>' +
+                '<div><label class="f">Next invoice number</label><input id="pf_wp_nextinv" value="' + esc(wpEd.nextInvoiceNo) + '"></div></div>' +
+                '<div class="row" style="margin-top:10px"><button type="button" class="btn primary" id="pf_wp_save" style="flex:1">Save profile</button>' +
+                '<button type="button" class="btn ghost" id="pf_wp_cancel" style="flex:1">Cancel</button></div></div>';
+            }
+          }
+          h += '<button type="button" class="btn ghost" id="pf_wp_add" style="margin-top:8px">＋ Add profile</button></div>';
+        }
+      }
 
       /* v167 (owner, Oct 18, 2026 21:17 + 21:50 MDT): each
          connected driver's OWN wage, shown WITH that driver in
@@ -487,6 +542,69 @@
       h += '</div>';
 
       body.innerHTML = h;
+      /* v242 (WORK-PROFILES) wiring: switch / add / edit / save.
+         A switch first flushes the profile-owned fields exactly
+         as they stand in the form (they belong to the profile
+         being left), then the seam captures + mirrors and the
+         page repaints under the new profile. */
+      (function () {
+        function wpFlushDom() {
+          try {
+            var oo = App._store.get('onboarding', {});
+            var gv = function (id) { var n = body.querySelector('#' + id); return n ? n.value.trim() : null; };
+            var v;
+            if ((v = gv('pf_cont')) !== null) oo.contractingCo = v;
+            if ((v = gv('pf_tnum')) !== null) oo.truckNo = v;
+            if ((v = gv('pf_plate')) !== null) oo.plate = v;
+            if ((v = gv('pf_wagerate')) !== null) oo.ownWageRate = v;
+            if ((v = gv('pf_nextinv')) !== null) oo.nextInvoiceNo = v;
+            var tc = body.querySelector('#pf_taxincl'); if (tc) oo.rateIncludesTax = tc.checked;
+            if ((v = gv('pf_invtax')) !== null && v !== '') oo.invoiceTaxRate = v;
+            App._store.set('onboarding', oo);
+          } catch (e) {}
+        }
+        body.querySelectorAll('[data-wp-use]').forEach(function (b) {
+          b.onclick = function () {
+            wpFlushDom();
+            try { App.workProfiles.switchTo(b.getAttribute('data-wp-use')); } catch (e) {}
+            wpEditId = null;
+            Meticulous.modules.preferences.render(body);
+          };
+        });
+        body.querySelectorAll('[data-wp-edit]').forEach(function (b) {
+          b.onclick = function () {
+            wpEditId = (wpEditId === b.getAttribute('data-wp-edit')) ? null : b.getAttribute('data-wp-edit');
+            Meticulous.modules.preferences.render(body);
+          };
+        });
+        var wpAddBtn = body.querySelector('#pf_wp_add');
+        if (wpAddBtn) wpAddBtn.onclick = function () {
+          try {
+            var np = App.workProfiles.add({});
+            wpEditId = np ? np.id : null;
+          } catch (e) {}
+          Meticulous.modules.preferences.render(body);
+        };
+        var wpSaveBtn = body.querySelector('#pf_wp_save');
+        if (wpSaveBtn) wpSaveBtn.onclick = function () {
+          var g = function (id) { var n = body.querySelector('#' + id); return n ? n.value.trim() : ''; };
+          try {
+            App.workProfiles.saveProfile(wpEditId, {
+              company: g('pf_wp_company'), truckNo: g('pf_wp_truck'), plate: g('pf_wp_plate'),
+              rate: g('pf_wp_rate'),
+              rateIncludesTax: !!(body.querySelector('#pf_wp_taxincl') && body.querySelector('#pf_wp_taxincl').checked),
+              taxRate: g('pf_wp_taxrate') || '5', nextInvoiceNo: g('pf_wp_nextinv')
+            });
+          } catch (e) {}
+          wpEditId = null;
+          Meticulous.modules.preferences.render(body);
+        };
+        var wpCancelBtn = body.querySelector('#pf_wp_cancel');
+        if (wpCancelBtn) wpCancelBtn.onclick = function () {
+          wpEditId = null;
+          Meticulous.modules.preferences.render(body);
+        };
+      })();
       /* v161 (the v149 named remainder): LIVE REPAINT — the four
          live-apply selects (role, account type, employment,
          payment standard) persist the moment they change, but the
@@ -561,7 +679,7 @@
         if (body.querySelector('#pf_odo')) o.odometerBaseline = g('pf_odo');
         /* v118: an untouched safety field never stomps a newer
            stored annualDate (see pfSafetyWinner above). */
-        if (body.querySelector('#pf_safety')) o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get('mt_annualDate', ''));
+        if (body.querySelector('#pf_safety')) o.safetyExpiry = pfSafetyWinner(g('pf_safety'), pfSafetyRendered, App._store.get(pfWpKey('mt_annualDate'), ''));
         var odoTglSave = body.querySelector('#pf_odo_photos');
         o.odoDailyPhotos = odoTglSave ? odoTglSave.checked : !!o.odoDailyPhotos; // v46
         /* v80: the master odometer moves through the SUPERVISED
@@ -583,7 +701,7 @@
             ? { action: 'ignore', value: masterNow }
             : App._odoSaveDecision(o.odometerBaseline, masterNow, !!(fixEl && fixEl.checked));
           if (dec.action === 'set' || dec.action === 'correct') {
-            App._store.set('mt_odo', String(dec.value));
+            App._store.set(pfWpKey('mt_odo'), String(dec.value));
             /* v122: an applied Preferences odometer write joins
                the dated readings log (odo_readings). */
             try { if (App._logOdoReading) App._logOdoReading(dec.value, 'preferences', null, dec.action === 'correct'); } catch (e) {}
@@ -600,9 +718,14 @@
               ? ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was way past it, and a reading that far ahead is almost certainly another number (a receipt\'s invoice number, say). If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.'
               : ' Odometer kept at ' + Number(dec.value).toLocaleString('en-CA') + ' km — the number in the box was lower, and odometers only move up. If the saved reading itself is wrong, type the true one, tick “This corrects a wrong odometer reading”, and save again.';
           }
-          if (o.safetyExpiry) App._store.set('mt_annualDate', o.safetyExpiry);
+          if (o.safetyExpiry) App._store.set(pfWpKey('mt_annualDate'), o.safetyExpiry);
         } catch (e) {}
         App._store.set('onboarding', o);
+        /* v242 (WORK-PROFILES): a Save also lands the
+           profile-owned facts (company, truck, plate, rate, tax,
+           next invoice number) on the ACTIVE profile's own
+           record, so the record is true even before any switch. */
+        try { if (App.workProfiles) App.workProfiles.captureActive(); } catch (e) {}
         App.onAuth(App.user);
         try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
         alert('Preferences saved.' + odoNote);
@@ -651,7 +774,7 @@
                 ob.odometerBaseline = v;
               } else {
                 ob.safetyExpiry = v;
-                if (v) App._store.set('mt_annualDate', v);
+                if (v) App._store.set(pfWpKey('mt_annualDate'), v);
               }
               App._store.set('onboarding', ob);
             } catch (e) {}

@@ -483,7 +483,7 @@ function emptyDraft(no) {
     pvSlice.indexOf('invW(') === -1 && pvSlice.indexOf('setNextInvoiceNo') === -1,
     pvSlice.slice(0, 120));
   ok('v134 static: the preview prints through the one printInvoice, with the would-be number',
-    pvSlice.indexOf('printInvoice({') !== -1 && pvSlice.indexOf('invCycWouldBeNo(invoices(), draft.no') !== -1);
+    pvSlice.indexOf('printInvoice({') !== -1 && pvSlice.indexOf('invCycWouldBeNo(invoicesFor(myPid), draft.no') !== -1); // v242: the would-be number is read in the ACTIVE profile's book
   ok('v134 static: the settled door renders (quiet card + two-step confirm)',
     invSrc.indexOf('Settled outside the app?') !== -1 && invSrc.indexOf('id="iv_settle_go"') !== -1 &&
     invSrc.indexOf('id="iv_settle_yes"') !== -1 && invSrc.indexOf('invCycMarkSettled({') !== -1);

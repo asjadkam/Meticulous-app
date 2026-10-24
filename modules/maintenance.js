@@ -13,8 +13,22 @@
   window.Meticulous = window.Meticulous || {};
   Meticulous.modules = Meticulous.modules || {};
 
-  var S = function (k, d) { return App._store.get('mt_' + k, d); };
-  var W = function (k, v) { App._store.set('mt_' + k, v); };
+  /* v242 (WORK-PROFILES trap 1): the per-TRUCK state keys route
+     through the ACTIVE profile's chain — Truck 07 keeps the
+     legacy mt_ keys byte-for-byte; another profile's odometer,
+     service book, annual/service sticker dates + targets and
+     sticker photos live under its own keys, so its readings can
+     never move Truck 07's master, PM countdowns or lifetime
+     figures. Account config (intervals, follow, migration
+     flags) is NOT scoped — it is the account's, not a truck's. */
+  var MT_TRUCK_KEYS = { odo: 1, annualDate: 1, nextServiceOdo: 1, nextServiceDate: 1, events: 1, ns_sticker_photo: 1 };
+  function mtChainKey(base) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.keyFor(base); } catch (e) {}
+    return base;
+  }
+  function mtKey(k) { return MT_TRUCK_KEYS[k] ? mtChainKey('mt_' + k) : 'mt_' + k; }
+  var S = function (k, d) { return App._store.get(mtKey(k), d); };
+  var W = function (k, v) { App._store.set(mtKey(k), v); };
   var esc = function (s) { return App._esc(s); };
 
   /* Service types with default km intervals (0 = no km schedule). */
@@ -277,7 +291,7 @@
   function lifetimeStats(ms) {
     ms = ms || mileageStats();
     var log = [];
-    try { log = App._store.get('odo_readings', []) || []; } catch (e) {}
+    try { log = App._store.get(mtChainKey('odo_readings'), []) || []; } catch (e) {}
     var master = null;
     try { if (window.App && App._masterOdometer) master = App._masterOdometer(); } catch (e) {}
     if (!(master > 0)) { var co = currentOdo(); master = co > 0 ? co : null; }
@@ -705,8 +719,8 @@
         '<div class="row"><button type="button" class="btn secondary" id="mt_safety_cam" style="flex:1;">📷 Take photo</button>' +
         '<button type="button" class="btn secondary" id="mt_safety_pick" style="flex:1;">📁 Choose file</button></div>' +
         '<div id="mt_safety_prev"></div><div id="mt_safety_status" class="note"></div>' +
-        (App._store.get('mt_safety_photo', '') ? '<img src="' + esc(App._store.get('mt_safety_photo', '')) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Safety sticker photo">' +
-          (App._photoDl ? App._photoDl(App._store.get('mt_safety_photo', ''), 'safety-sticker') : '') : '') +
+        (App._store.get(mtChainKey('mt_safety_photo'), '') ? '<img src="' + esc(App._store.get(mtChainKey('mt_safety_photo'), '')) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Safety sticker photo">' +
+          (App._photoDl ? App._photoDl(App._store.get(mtChainKey('mt_safety_photo'), ''), 'safety-sticker') : '') : '') +
         '<label class="f">Expiry date</label><input id="mt_safety" type="date" value="' + esc(sfNow) + '">' +
         '<div class="row" style="margin-top:8px"><button class="btn navy" id="mt_safety_save">Save expiry</button></div></div>';
 
@@ -1015,7 +1029,7 @@
          any screen can resurrect a stale date. */
       try {
         if (App._wirePhotoOCR) {
-          App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: 'mt_safety_photo' });
+          App._wirePhotoOCR('mt_safety', 'safety', function () {}, { origin: { module: 'maintenance', label: 'Maintenance' }, keepKey: mtChainKey('mt_safety_photo') });
         }
       } catch (e) {}
       var sfSaveBtn = body.querySelector('#mt_safety_save');
@@ -1174,7 +1188,7 @@
                reading is already recorded for that day. */
             var already = false;
             try {
-              var rl = App._store.get('odo_readings', []) || [];
+              var rl = App._store.get(mtChainKey('odo_readings'), []) || [];
               already = rl.some(function (r) { return r && parseFloat(r.value) === v && r.date === dv; });
             } catch (e) {}
             if (note) note.innerHTML = already

@@ -7,6 +7,20 @@
 
   function fills() { return S('fills', []); }
 
+  /* v242 (WORK-PROFILES): a fill is stamped with the profile
+     active at its creation — the truck that took the fuel. The
+     stamp drives the per-truck odometer seed and keeps a temp
+     truck's fills out of Ai-facing Connect shares. keyFor is
+     the per-truck chain door (Truck 07 keeps the legacy keys). */
+  function wpActiveId() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpKeyFor(base) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.keyFor(base); } catch (e) {}
+    return base;
+  }
+
   /* FUEL-OPEN-BEGIN — v75: records you can open (owner, Oct 14:
      "These entries should be editable... When clicked nothing
      happens"). The guard / edit / verified-save logic lives here so
@@ -1015,7 +1029,7 @@
           if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
           editFillIdx = null; editErr = '';
           var un = '';
-          if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} un = odoOutcomeNote(); }
+          if (odoPlan.mode === 'correct') { try { App._store.set(wpKeyFor('mt_odo'), String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} un = odoOutcomeNote(); }
           else if (odoPlan.mode === 'refuse') { un = odoOutcomeNote(); }
           else if (hasOdo) { un = masterOnSave(odo); }
           /* v122: the fill's own reading joins the dated log at
@@ -1029,6 +1043,7 @@
           return;
         }
         var rec = { date: formVals.date };
+        rec.profileId = wpActiveId(); // v242: the truck that took this fuel
         if (fuReadTime) rec.time = fuReadTime;
         if (hasOdo && odoPlan.mode !== 'refuse') rec.odo = odo;
         /* v156: a fill saved with NO reading of its own is stamped
@@ -1077,7 +1092,7 @@
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
         editErr = '';
-        if (odoPlan.mode === 'correct') { try { App._store.set('mt_odo', String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} saveNote = odoOutcomeNote(); }
+        if (odoPlan.mode === 'correct') { try { App._store.set(wpKeyFor('mt_odo'), String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} saveNote = odoOutcomeNote(); }
         else if (odoPlan.mode === 'refuse') { saveNote = odoOutcomeNote(); }
         else { saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.'; }
         if (photoDropped) saveNote = (saveNote ? saveNote + ' ' : '') + 'The receipt photo didn\'t fit in the app storage, so this entry was saved without it.';

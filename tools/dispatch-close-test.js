@@ -232,6 +232,10 @@ function expectedEntry(regionWorld, closedRec) {
      id before logging it — the never-twice key revenue.addEntry
      replaces on. The stored entry is the plan entry PLUS that key. */
   if (e) e.dspId = closedRec.id;
+  /* v242 (WORK-PROFILES): applyCompletion also stamps the entry
+     with the dispatch's profile (the sandbox has no seam, so the
+     fallback 'p1' — the record here is unstamped, i.e. Profile 1). */
+  if (e) e.profileId = 'p1';
   return e;
 }
 

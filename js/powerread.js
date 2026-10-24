@@ -189,6 +189,14 @@
    * are distrusted.) */
   PowerRead.ODO_MAX_JUMP_KM = 1000;
   PowerRead.masterOdo = function () {
+    /* v242 trap 1: machine reads are judged against the ACTIVE
+       truck's master — a temp truck's lower dash must not read
+       as 'below' against Truck 07's, and its higher one must
+       not read as a jump. App._masterOdometer is that scoped
+       door (its null is authoritative: the active chain is
+       simply empty). The physical key is only the standalone
+       fallback for harnesses without the app. */
+    try { if (window.App && App._masterOdometer) return App._masterOdometer(); } catch (e) {}
     var s = store(); if (!s) return null;
     var v = parseFloat(s.get('mt_odo', ''));
     return (isFinite(v) && v > 0) ? v : null;

@@ -14,6 +14,18 @@
   var esc = function (s) { return App._esc(s); };
 
   function list() { return S('list', []); }       // saved / history
+
+  /* v242 (WORK-PROFILES): the seam's local doors — a dispatch is
+     stamped with the profile active at its creation, and its
+     completion prices at ITS OWN profile's rate. */
+  function wpActiveId() {
+    try { if (window.App && App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
+    return 'p1';
+  }
+  function wpRateOf(id) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.rateOf(id); } catch (e) {}
+    return 0;
+  }
   function active() { return S('active', null); } // current active dispatch
   function uid() { return 'd' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
 
@@ -2872,6 +2884,11 @@
            today saves it as a scheduled record for its own day —
            it never starts, and the active dispatch (usually today's,
            still running) is never touched. */
+        /* v242 (WORK-PROFILES): a dispatch is stamped with the
+           profile active at its creation — its completion money
+           lands in that profile's book, whichever profile is
+           active when the day closes. */
+        if (!d.profileId) d.profileId = wpActiveId();
         var mayStart = start && dspMayStart(d, App._today());
         if (mayStart) {
           if (!lastSaveTry.startedAt) lastSaveTry.startedAt = Date.now();
@@ -2985,6 +3002,13 @@
          the same closed record always logs the same entry. */
       function completionSettings(rec) {
         var o = App._store.get('onboarding', {});
+        /* v242 (WORK-PROFILES): the completion prices at the
+           RECORD's own profile rate — the profile the dispatch
+           was created under. An unstamped record (received via
+           Connect, or pre-v242) prices at the profile active at
+           completion. The wage chain below stays the fallback
+           when no profile rate exists. */
+        var wpRate = wpRateOf((rec && rec.profileId) || wpActiveId());
         var role = (App.userRole ? App.userRole() : 'driver');
         var matchedDriver = null;
         if (role === 'office') {
@@ -3002,14 +3026,17 @@
              "Rate" field is gone. Crew wages never come from here:
              an office completer's drivers are priced from their
              P&L entries (v132). */
-          rate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
+          rate: wpRate > 0 ? wpRate : (parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0),
           travelBonus: parseFloat(o.travelBonus) || 0,
           /* v105: the two-books rates (owner-operator). v137 chain:
              billing falls back to the wage rate, then the setup
              rate; wage falls back to the setup rate. For a setup
-             that never split them, every value is unchanged. */
-          billingRate: parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
-          wageRate: parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0,
+             that never split them, every value is unchanged.
+             v242: the record's profile rate, when it has one,
+             stands in for the chain on all three — entries under
+             a profile are paid at that profile's rate. */
+          billingRate: wpRate > 0 ? wpRate : (parseFloat(o.billingRate) || parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0),
+          wageRate: wpRate > 0 ? wpRate : (parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0),
           /* v153: the completion's day is the RECORD's day — its
              scheduled date — not the day the close happens to be
              tapped on. A day closed late files its money on the
@@ -3040,6 +3067,9 @@
              entry for THIS dispatch, so a re-completion updates the
              day's money instead of doubling it. */
           revEntry.dspId = cur.id;
+          /* v242 (WORK-PROFILES): the completion's money lands in
+             the dispatch's own book. */
+          revEntry.profileId = cur.profileId || wpActiveId();
           Meticulous.modules.revenue.addEntry(revEntry);
         }
         if (plan.claim) {

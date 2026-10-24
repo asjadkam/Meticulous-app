@@ -63,6 +63,6 @@ ok('damage record photo wires the download', read('modules/damage.js').indexOf("
 const mt = read('modules/maintenance.js');
 ok('PM sticker photo is KEPT at read time', mt.indexOf("W('ns_sticker_photo', ocrUrl)") !== -1);
 ok('PM sticker shows on its card with the download', mt.indexOf("App._photoDl(S('ns_sticker_photo', ''), 'service-sticker')") !== -1);
-ok('safety sticker kept via keepKey + shown with download', mt.indexOf("keepKey: 'mt_safety_photo'") !== -1 && mt.indexOf("App._photoDl(App._store.get('mt_safety_photo', ''), 'safety-sticker')") !== -1);
+ok('safety sticker kept via keepKey + shown with download', mt.indexOf("keepKey: mtChainKey('mt_safety_photo')") !== -1 && mt.indexOf("App._photoDl(App._store.get(mtChainKey('mt_safety_photo'), ''), 'safety-sticker')") !== -1); // v242 trap 1: the sticker photo lives in the active truck's chain (the plain key under Profile 1)
 console.log('p1-photos-v182: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

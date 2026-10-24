@@ -3,6 +3,13 @@
   'use strict';
   var esc = function (s) { return App._esc(s); };
   var G = function (k, d) { return App._store.get(k, d); };
+  /* v242 trap 1: the dated odometer log a manifest day reads is
+     THAT DAY's truck's log (its own profile's chain) — never
+     another truck's readings. No pid → the active profile's. */
+  function wpOdoLogKey(pid) {
+    try { if (window.App && App.workProfiles) return App.workProfiles.keyFor('odo_readings', pid || undefined); } catch (e) {}
+    return 'odo_readings';
+  }
 
   var SECTIONS = [
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
@@ -257,7 +264,18 @@
     var revEntries = (G('rev_entries', [])).filter(function (x) { return x.date === d; });
     var extras = (G('rev_extras', [])).filter(function (x) { return x.date === d; });
     var o = G('onboarding', {});
-    var rate = parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0, earned = 0; // v137: the user's own wage chain
+    /* v242 (WORK-PROFILES): the day prices at the rate of the
+       profile the day belongs to — the day's own stamped records
+       (its dispatch first, then its session, then its revenue
+       entry) say which. A day with no stamped record prices at
+       the wage chain, exactly as before. */
+    var dayPid = null;
+    [dispatches, sessions, revEntries].forEach(function (arr) {
+      (arr || []).forEach(function (r) { if (!dayPid && r && r.profileId) dayPid = String(r.profileId); });
+    });
+    var wpDayRate = 0;
+    try { if (dayPid && window.App && App.workProfiles) wpDayRate = App.workProfiles.rateOf(dayPid); } catch (e) {}
+    var rate = wpDayRate > 0 ? wpDayRate : (parseFloat(o.ownWageRate) || parseFloat(o.payRate) || 0), earned = 0; // v137: the user's own wage chain
     /* v107 — ONE MONEY TRUTH: the day's earned is priced by the
        SAME shared per-day builder the invoice and Revenue use
        (Meticulous.shared.buildRevenueLines), computed below once
@@ -457,7 +475,7 @@
        end (the v87 honesty rule stands). */
     (function () {
       if (odoStart !== null && odoEnd !== null) return;
-      var rl = G('odo_readings', []);
+      var rl = G(wpOdoLogKey(dayPid), []);
       if (!Array.isArray(rl) || !rl.length) return;
       var readings = [];
       rl.forEach(function (r) {
@@ -519,7 +537,7 @@
         if (v > 0 && (dayMax === null || v > dayMax)) dayMax = v;
       });
       try {
-        (G('odo_readings', []) || []).forEach(function (r) {
+        (G(wpOdoLogKey(dayPid), []) || []).forEach(function (r) {
           var v = parseFloat(r && r.value);
           var ts = (r && typeof r.ts === 'number') ? r.ts : Date.parse(r && r.ts);
           if (!(v > 0) || !isFinite(ts)) return;
@@ -1276,12 +1294,15 @@
           else edits[d] = { endOdo: endOdo, note: noteRaw, editedAt: Date.now() };
           App._store.set('mft_day_edits', edits);
           if (endOdo !== null) {
-            var rl2 = G('odo_readings', []) || [];
+            /* v242 trap 1: a manifest-edit reading lands in the
+               ACTIVE profile's log (the day is edited while it is
+               on screen, under its own profile). */
+            var rl2 = G(wpOdoLogKey(), []) || [];
             var dp2 = String(d).split('-');
             var ts2 = new Date(+dp2[0], +dp2[1] - 1, +dp2[2], 23, 59, 59).getTime();
             rl2 = rl2.filter(function (r) { return !(r && r.source === 'manifest-edit' && r.date === d); });
             rl2.push({ ts: ts2, date: d, value: endOdo, source: 'manifest-edit' });
-            App._store.set('odo_readings', rl2);
+            App._store.set(wpOdoLogKey(), rl2);
           }
           Meticulous.modules.manifest.render(body);
           var msgEl3 = body.querySelector('#mn_msg');

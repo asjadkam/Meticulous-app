@@ -363,7 +363,7 @@ console.log('\n— v160 entry origin: pure-function + statics —');
   /* (h) statics */
   const sites = (revSrc.match(/edited by hand/g) || []).length;
   ok('(h) the marker renders at exactly the three origin sites', sites === 3, 'found ' + sites);
-  ok('(h) the save door passes the auto-price fact into the edit', /applyEntryEdit\(l\[dayEdit\.index\], form, [A-Za-z_$]/.test(revSrc));
+  ok('(h) the save door passes the auto-price fact into the edit', /applyEntryEdit\(l\[efi\], form, [A-Za-z_$]/.test(revSrc)); // v242: l[efi] — the full-list index translated from the profile-scoped dayEdit.index
   ok('(h) the classifiers keys stand: revenue still reads e.auto / the note', revSrc.indexOf("if (n === 'Auto from tracker') return 'tracker';") !== -1);
 }
 
