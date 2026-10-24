@@ -468,8 +468,10 @@
          start(D) = the LAST reading at or before the day's work
            start (ticket start, else dispatch start, else session
            start, else the day's first moment);
-         end(D) = the FIRST reading at or after the day's end
-           (session end, else the dispatch close).
+         end(D) = a reading inside the day's closing window
+           (v246: the last reading stamped on day D at/after an
+           hour before the day's end — session end, else the
+           dispatch close; never another day's reading).
        A mid-day reading sits strictly between the anchors and
        qualifies for NEITHER — it is never promoted to the day's
        end (the v87 honesty rule stands). */
@@ -509,10 +511,30 @@
       }
       if (odoEnd === null && !live) {
         var endAnchor = (sessEndMs2 !== null) ? sessEndMs2 : dspEndMs;
+        /* v246 (MANIFEST-ODO-END-WRONG): the end fill reads the
+           day's OWN readings only, inside the day's closing
+           window. The old window reached two days forward, so
+           Oct 22 — whose last session fragment ended 17:30 —
+           printed 170,117, the NEXT MORNING's reading, over
+           the day's actual close (170,079, the 17:21 post-trip
+           PTI). The closing captures (the post-trip inspection,
+           the night dash save) land in the day's last hour; the
+           administrative closes that anchor the window (the
+           tracker stop, the dispatch close tap) trail them by
+           minutes, never hours. A reading hours before the
+           end stays what v122/v87 made it: mid-day evidence,
+           never the close (manifest-odo case i). The LAST
+           reading inside the window is the closing master
+           reading — the master chain's end-of-day value. */
         if (endAnchor !== null) {
-          var limit = (dayStartMs !== null) ? dayStartMs + 2 * 86400000 : Infinity;
+          var winStart = endAnchor - 3600000;
           for (var j = 0; j < readings.length; j++) {
-            if (readings[j].ts >= endAnchor && readings[j].ts < limit) { odoEnd = readings[j].value; break; }
+            if (readings[j].ts < winStart) continue;
+            var rdJ = new Date(readings[j].ts);
+            var rsJ = rdJ.getFullYear() + '-' + ('0' + (rdJ.getMonth() + 1)).slice(-2) + '-' + ('0' + rdJ.getDate()).slice(-2);
+            if (rsJ !== d) continue;
+            if (odoStart !== null && readings[j].value < odoStart) continue;
+            odoEnd = readings[j].value;
           }
         }
       }

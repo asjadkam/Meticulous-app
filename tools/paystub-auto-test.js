@@ -303,7 +303,8 @@ console.log('\n— manifest: readings-log boundaries + the said-so line —');
 {
   has('collect fills boundaries from odo_readings', manSrc, "var rl = G(wpOdoLogKey(dayPid), []);"); // v242 trap 1: the DAY's own truck's log
   has('start = last reading at or before the work start', manSrc, 'if (readings[i].ts <= startAnchor) { odoStart = readings[i].value; break; }');
-  has('end = first reading at or after the day\'s end', manSrc, 'if (readings[j].ts >= endAnchor && readings[j].ts < limit) { odoEnd = readings[j].value; break; }');
+  /* v246 (MANIFEST-ODO-END-WRONG): the pinned end rule moved with the fix — the fill no longer reaches two days forward; it takes the day's own last reading inside the closing window (see tools/manifest-odo-end-v246-test.js). */
+  has('end = the day\u2019s last reading inside the closing window', manSrc, 'var winStart = endAnchor - 3600000;');
   has('pdf: no boundary data says so', manSrc, "b: (ol !== null) ? ol : 'no readings captured'");
   has('preview: no boundary data says so', manSrc, "ol2 !== null ? ol2 : 'no readings captured'");
 }
