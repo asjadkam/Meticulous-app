@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 249,
-  "notes": "v249 — END-TIME-EDIT-IGNORED (owner, Oct 23, 2026, his recording): in End shift he set the end time to 11:00 AM — the field showed 11:00 — but the Review-the-close computed 8:00 AM → 10:15 AM / 02:15:51 / $65.66. Root cause (js/app.js trackerSaveEnd): at the tap it was 10:15 AM, so his chosen end was still IN THE FUTURE, and the sheet silently clamped a future end to now (\"can't end in the future\") without a word — the review then honestly showed the substituted time, and his edit looked ignored. (A finish in the past always reached the review; only the future path swapped silently — reproduced exactly in the harness, his figures to the cent.) Fix: the substitution is now HIS call, asked out loud — \"11:00 AM hasn't happened yet — it's 10:15 AM now. End the shift at 10:15 AM instead?\" Confirm and the close runs to now; decline and the sheet stays exactly as he left it — nothing painted, nothing pending, no stop. The overnight roll and the >12 h confirm are untouched, and a blank field still ends now with no prompt, as designed. Harness: tools/end-time-edit-v249-test.js drives the REAL trackerSaveEnd/endCloseSummary/paintEndReview/trackerConfirmEnd (brace-extracted) under a frozen clock — RED 2 (the silent swap), GREEN 14/14; close-confirm-v143 58/58, odo-photos 79/79, dispatch-shiftclose 46/46, work-profiles 132/132 hold. PIN MOVES (cited): ?v=248 index cohort (26) + standing webVersion/?v= pins in the suites move 248 -> 249. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: set an end time ahead of now and the app asks instead of swapping; set the real finish and the review + pay compute to it.",
+  "webVersion": 250,
+  "notes": "v250 — DSP-CANCELLED-TODAY (owner queue; parked by name Oct 23, built on his Oct 24 \"start them all\"): a dispatch cancelled today stood in the Today's dispatch card as a full row — on Oct 23 the cancelled Aecon job still led his screen as if it were the day's work. CHOSEN MINIMAL PLACEMENT (named, his to overrule): it drops below today's open dispatch as ONE QUIET LINE — its own small \"✖ Cancelled today\" card under Completed today, mirroring the v241 completed-drops pattern (settled things sink: Today → Upcoming → Completed → Cancelled). The line names the job and says cancelled; no row, no action buttons — a cancelled dispatch needs nothing done with it. The record stays on the day (History is past days only, so the line is its one presence) and the dashboard glance already skipped cancelled records. Display placement only — no record, send or close behaviour touched. Harness: tools/dispatch-cancelled-today-v250-test.js drives the real Dispatch render — RED 9 (the cancelled row led the Today card; his Oct 23 screen reproduced), GREEN 10/10 incl. the cancelled-only day (no Today card, the record still on file as the quiet line); dispatch-completed-order-v241 9/9, dsp-today-top-v197 23/23, dsp-history-future-v218 29/29 hold. PIN MOVES (cited): ?v=249 index cohort (26) + standing webVersion/?v= pins in the suites move 249 -> 250. Native unchanged (v43 shell + iPhone web pick it up). Machine-green is preparation — the verdict is his: the next dispatch he cancels drops to the quiet Cancelled today line instead of leading his screen.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "21b0be9cd7376306904c8568f82804186cb938fe1f6c18482dce4833ab209674",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "c92fb3aa65d48e6dd7b17acf3e95e02035d4929af4c4cdaa8c46e10ba960547f",
+    "index.html": "03988f8f587dd7812eefd6c8704121ddd881046bd41fe125f4e31007f4612555",
     "js/app.js": "11b67594204da937429a548a56e78c67a202b91ff5b3d4983186a21835703b2b",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -41,7 +41,7 @@
     "modules/billing.js": "62aaa1a24956fbc53cb9a90e09e0186e0b973c214a7640e2bd4eb2f8a266ca62",
     "modules/connect.js": "aae7b417ab45504fbf1bbc21e5835e17793fc7b82b4b26b5129ded2e6d7f3b32",
     "modules/damage.js": "081b9ca74b9ccfeae35aa52573729bfc0b1ee74a7ec423b392094f4ab24fcab7",
-    "modules/dispatch.js": "ba512b7599cc7aa55d900b12b7f55c524baa1e634c11f949657a9247aecd889c",
+    "modules/dispatch.js": "34a66a7ca9609b8fdbffd630683403d76128d67e94454546ebde181973024a6f",
     "modules/fuel.js": "4ca9eed8279cf667bc12aa9d2b964e32391e7a47a19c1be22687246ad9e4ad96",
     "modules/invoice.js": "189eeb9e96c4f821670b9d53eed9d805cda2f3fd1d18b6f1e0582b4a9fe85981",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",

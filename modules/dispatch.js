@@ -1807,7 +1807,7 @@
          settled here in v197 — v218 below moves them to
          their own Upcoming card.) ---- */
       var dspTodayStr = ''; try { dspTodayStr = App._today(); } catch (e) {}
-      var todayItems = [], futureItems = [], doneTodayItems = [];
+      var todayItems = [], futureItems = [], doneTodayItems = [], cancelledTodayItems = [];
       (function () {
         var lst = list();
         for (var ti = lst.length - 1; ti >= 0; ti--) {
@@ -1821,6 +1821,10 @@
                leaves the Today card — it stands in its own card
                BELOW Upcoming (rendered after it, below). */
             if (td.status === 'completed') doneTodayItems.push({ d: td, i: ti });
+            /* v250 (DSP-CANCELLED-TODAY): a CANCELLED today record
+               leaves it too — it drops to one quiet line at the
+               bottom of the day's cards (rendered last, below). */
+            else if (td.status === 'cancelled') cancelledTodayItems.push({ d: td, i: ti });
             else todayItems.push({ d: td, i: ti });
           }
           else if (rd > dspTodayStr) futureItems.push({ d: td, i: ti });
@@ -1876,6 +1880,28 @@
       if (doneTodayItems.length) {
         h += '<div class="card" id="dp_done_today_card"><h3>✅ Completed today</h3>' +
           doneTodayItems.map(dspRowHtml).join('') + '</div>';
+      }
+
+      /* ---- v250 (DSP-CANCELLED-TODAY, owner queue — parked by
+         name Oct 23, built on his Oct 24 "start them all"): a
+         dispatch cancelled today stood in the Today's dispatch
+         card as a full row — on Oct 23 the cancelled Aecon job
+         still led his screen as if it were the day's work.
+         CHOSEN MINIMAL PLACEMENT (named, his to overrule): it
+         drops below today's open dispatch as ONE QUIET LINE —
+         its own small card under Completed today, mirroring
+         the v241 completed-drops pattern (settled things
+         sink). The line names the job and says cancelled; no
+         row, no action buttons — a cancelled dispatch needs
+         nothing done with it. The record stays on the day
+         (History is past days only, so this line is its one
+         presence) and the status() glance already skipped
+         cancelled records. ---- */
+      if (cancelledTodayItems.length) {
+        h += '<div class="card" id="dp_cancelled_today_card"><h3>✖ Cancelled today</h3>' +
+          cancelledTodayItems.map(function (it) {
+            return '<div class="kv"><span>' + esc(dspCardLabel(it.d)) + '</span><b>cancelled</b></div>';
+          }).join('') + '</div>';
       }
 
       h += '<div id="dp_ingest"></div>';
