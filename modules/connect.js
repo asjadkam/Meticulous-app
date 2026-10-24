@@ -1151,6 +1151,34 @@
           var p = uiKindPick.peer, k = uiKindPick.kind;
           var mods = (k === 'limited' || k === 'once') ? (uiModPick || defaultTicks(k, null)) : undefined;
           if ((k === 'limited' || k === 'once') && !mods.length) mods = defaultTicks(k, null);
+          /* v253 (BILLING-INTEGRATION): a share SEND spends from
+             the sender's Connect share allowance first
+             (Billing.consumeShare on the app's billing record).
+             A share to an already-connected peer (own crew,
+             peerState 'connected') never consumes; a Fleet
+             Manager's shares to his own drivers ride the same
+             ownCrew rule inside the core. On share_limit the
+             send does NOT go out — the share-pack offer shows
+             instead (pack purchase rides checkout at launch;
+             nothing is charged from here). Only share_limit
+             blocks: any other non-ok (e.g. no tier on record
+             yet) lets the send proceed uncounted. The counting
+             runs even while BETA-PAYWALL-OFF — the wall is off,
+             the tally is real. */
+          var B253 = (window.Meticulous && Meticulous.billing) || null;
+          if (B253) {
+            var brec253 = App._store.get('billing', null) || B253.newBilling(Date.now());
+            var spend253 = B253.consumeShare(brec253, { ownCrew: peerState(p.uid) === 'connected' }, Date.now());
+            App._store.set('billing', spend253.billing);
+            if (!spend253.ok && spend253.reason === 'share_limit') {
+              uiKindPick = null; uiModPick = null;
+              uiSearchMsg = 'You are out of Connect shares this month. Share packs: ' +
+                B253.CONFIG.sharePacks.map(function (pk) { return pk.shares + ' shares — $' + pk.price; }).join(' · ') +
+                '. Packs open at launch (see Subscription). Shares to your own connections are always free.';
+              paintResults();
+              return;
+            }
+          }
           uiKindPick = null; uiModPick = null;
           kSend.disabled = true;
           CL.sendRequest(p, k, k === 'once' ? kindToday() : undefined, mods).then(function (r) {

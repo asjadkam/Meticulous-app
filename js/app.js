@@ -706,7 +706,26 @@
 
   /* ---------------- trial & tiers ---------------- */
   var BETA_MODE = true; // beta testing: no paywall, full access for everyone
+  /* v253 (BILLING-INTEGRATION): the billing record (store key
+     'billing', modules/billing.js) is created on first run and
+     ticked on every syncTrial — INCLUDING under beta, because
+     BETA-PAYWALL-OFF (his rule, Oct 24 08:43) keeps the wall
+     "ready but not enforced": the record, the 14-day Premium
+     trial clock, tier choices and share counts still run and
+     record silently so the data is real when enforcement
+     flips on. */
+  function billingRecord() {
+    var B = (window.Meticulous && Meticulous.billing) || null;
+    if (!B) return null;
+    var rec = store.get('billing', null);
+    if (!rec) { rec = B.newBilling(Date.now()); store.set('billing', rec); }
+    var ticked = B.tick(rec, Date.now());
+    if (JSON.stringify(ticked) !== JSON.stringify(rec)) store.set('billing', ticked);
+    return ticked;
+  }
+  App.billingRecord = billingRecord;
   function syncTrial() {
+    var brec = billingRecord();
     if (BETA_MODE) {
       App.userTier = 'premium';
       App.trialDaysLeft = 999;
@@ -729,9 +748,19 @@
       bbar.innerHTML = '🧪 <b>Beta testing</b> — full access, no paywall yet.';
       return;
     }
-    var start = store.get('trialStart', 0);
-    if (!start) { start = Date.now(); store.set('trialStart', start); }
-    var days = Math.max(0, 7 - Math.floor((Date.now() - start) / 86400000));
+    /* v253 (BILLING-INTEGRATION): the trial is the billing
+       record's 14-day Premium trial (Billing.trialDaysLeft) —
+       the old local 7-day trialStart math is retired. The
+       legacy fallback below only runs if billing.js is
+       missing from the build. */
+    var B = (window.Meticulous && Meticulous.billing) || null;
+    var days;
+    if (B && brec) days = B.trialDaysLeft(brec, Date.now());
+    else {
+      var start0 = store.get('trialStart', 0);
+      if (!start0) { start0 = Date.now(); store.set('trialStart', start0); }
+      days = Math.max(0, 7 - Math.floor((Date.now() - start0) / 86400000));
+    }
     App.trialDaysLeft = days;
     var sub = store.get('subscription', null);
     if (days > 0) {
@@ -739,6 +768,9 @@
       var bar = el('trialBar');
       bar.classList.remove('hidden');
       bar.innerHTML = '🎉 <b>' + days + ' day' + (days === 1 ? '' : 's') + ' left</b> in your free trial — full access.';
+    } else if (brec && (brec.status === 'active' || brec.status === 'past_due') && brec.tier) {
+      App.userTier = brec.tier === 'standard' ? 'basic' : (brec.tier === 'gold' ? 'pro' : 'premium');
+      el('trialBar').classList.add('hidden');
     } else if (sub && sub.tier) {
       App.userTier = sub.tier;
       el('trialBar').classList.add('hidden');
@@ -752,9 +784,19 @@
     }
   }
 
-  App.tierAllows = function (need) {
+  /* v253 (BILLING-INTEGRATION): the gate is per-MODULE now —
+     Billing.canAccess(key, {billing, accountType, now}) —
+     replacing the tier-ladder comparison. Callers pass the
+     module key. Under BETA-PAYWALL-OFF (billing's own switch,
+     shipped OFF) — and under BETA_MODE here — it allows
+     everything; the matrix applies the day enforcement flips. */
+  App.tierAllows = function (key) {
     if (BETA_MODE) return true;
-    return TIERS[App.userTier] >= TIERS[need];
+    var B = (window.Meticulous && Meticulous.billing) || null;
+    if (!B) return true;
+    var o = {};
+    try { o = store.get('onboarding', {}) || {}; } catch (e) {}
+    return B.canAccess(key, { billing: billingRecord(), accountType: o.accountType || '', now: Date.now() });
   };
 
   /* ---------------- module registry / dashboard ---------------- */
@@ -993,7 +1035,7 @@
       if (key === 'pnl' && !pnlAllowed()) return; // v199: Driver accounts never surface P&L
       if (key === 'maintenance' && !maintAllowed()) return; // v199: Driver accounts never surface Maintenance
       var meta = MODULE_META[key];
-      var ok = App.tierAllows(meta.tier);
+      var ok = App.tierAllows(key);
       html += '<div class="modcard' + (ok ? '' : ' locked') + '" data-mod="' + key + '">' +
         (ok ? '' : '<span class="lock">🔒</span>') +
         '<div class="ic">' + meta.icon + '</div><div class="t">' + moduleTitle(key) + '</div>' +
@@ -1211,7 +1253,7 @@
     var meta = MODULE_META[key];
     var special = { reminders: 1, preferences: 1, subscription: 1, account: 1 };
     /* P&L + Maintenance gates removed Oct 13, 2026 — the owner (Driver) gets full access. */
-    if (meta && !App.tierAllows(meta.tier)) {
+    if (meta && !App.tierAllows(key)) {
       // locked -> go to subscription
       key = 'subscription';
     }
