@@ -1847,11 +1847,17 @@
      start/pause ride the one big toggle (the same button the
      dashboard offers), stop opens the dashboard's own stop flow
      (confirm + ticket photo) with the app already foregrounded
-     by the widget's intent. */
+     by the widget's intent.
+     v244 (WIDGET-LOAD-WORDS): native v43's widget carries the
+     load +/− buttons too; their words (loadPlus / loadMinus)
+     perform here exactly as the PiP handler performs them —
+     the same two load actions, the same repaints. */
   function applyWidgetAction(a) {
     if (!a) return;
     try {
-      if (a === 'start') { if (App.tracker.status !== 'running') App.trackerToggle(); }
+      if (a === 'loadPlus') { trackerAddLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
+      else if (a === 'loadMinus') { trackerCutLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
+      else if (a === 'start') { if (App.tracker.status !== 'running') App.trackerToggle(); }
       else if (a === 'pause') { if (App.tracker.status === 'running') App.trackerToggle(); }
       else if (a === 'stop') {
         if (sessionActive()) { App.showDashboard(); App.trackerStopPrompt(); }

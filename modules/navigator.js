@@ -1402,11 +1402,27 @@
   var api = {
     /* v78: the card preview — where the Navigator last routed this
        session; before any route, the server/profile state. A
-       cleared server always wins over a stale destination. */
+       cleared server always wins over a stale destination.
+       v244 (NAV-GLANCE-LAST-DEST, owner Oct 23 15:10): the last
+       place navigated to must SURVIVE the session — finalizeRoute
+       persists the destination NAME in the navigator settings
+       record (lastDest), and this glance reads it back, the way
+       Revenue's glance reads its last entry from the store. The
+       glance names places, never coordinates: a coordinate string
+       (the label-less legacy fallback) is not a place name and
+       never reaches the card. */
     status: function () {
       var st = loadSettings();
       if (!st.serverUrl) return 'Server not set — routing off';
-      if (lastNavDest) return '→ ' + lastNavDest;
+      var last = lastNavDest;
+      if (last && /^-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/.test(last)) last = '';
+      if (!last) {
+        try {
+          var stored = (App._store.get('navigator', {}) || {}).lastDest || '';
+          if (stored && !/^-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/.test(stored)) last = stored;
+        } catch (e) {}
+      }
+      if (last) return '→ ' + last;
       return (st.mode === 'car' ? 'Car' : 'Truck') + ' · ' + st.profile.weight + ' t · Calgary truck routes';
     },
 
@@ -2419,6 +2435,12 @@
              (search name when there is one, else the pin coords —
              the same words the destination note shows). */
           lastNavDest = S.destLabel || (S.dest ? S.dest[0].toFixed(5) + ', ' + S.dest[1].toFixed(5) : '');
+          /* v244 (NAV-GLANCE-LAST-DEST): persist the destination
+             NAME with the settings record so the card still names
+             the last place after an app restart. Names only — a
+             label-less pin persists nothing (the card falls back
+             rather than ever showing coordinates). */
+          if (S.destLabel) { try { saveSettings({ lastDest: S.destLabel }); } catch (e) {} }
           if (S.map) {
             if (S.routeLine) S.map.removeLayer(S.routeLine);
             S.routeLine = L.polyline(line, { color: S.settings.mode === 'car' ? '#888' : '#e67e00', weight: 8, opacity: 0.9 }).addTo(S.map);
