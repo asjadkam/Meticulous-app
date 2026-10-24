@@ -183,7 +183,7 @@ console.log('— 3. the assets: keyed, exact, and read as a REAR view —');
 
 console.log('— 4. ship pins —');
 check('ships as webVersion 188, and index.html loads the navigator at the 199 pin',
-  ver.webVersion === 247 && idxSrc.indexOf('src="modules/navigator.js?v=247"') >= 0,
+  ver.webVersion === 248 && idxSrc.indexOf('src="modules/navigator.js?v=248"') >= 0,
   'webVersion=' + ver.webVersion);
 check('version.json carries all three chase renders in the OTA manifest',
   ['assets/avatar-dump.png', 'assets/avatar-semi.png', 'assets/avatar-pickup.png'].every(function (k) {

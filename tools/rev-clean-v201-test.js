@@ -213,7 +213,7 @@ check('revenue.js: chart labels stand vertical (rotate) for every bar, no label 
   revSrc.includes('ctx.rotate(-Math.PI / 2)') && revSrc.indexOf('labelSet') === -1);
 check('revenue.js: formView branch + renderFormView exist',
   revSrc.includes('if (formView) { renderFormView(body); return; }') && revSrc.includes('function renderFormView(body)'));
-eq('webVersion', ver.webVersion, 247);
+eq('webVersion', ver.webVersion, 248);
 check('index pin agrees', idxSrc.includes('modules/revenue.js?v=' + ver.webVersion));
 
 console.log('rev-clean-v201: ' + pass + ' passed, ' + fail + ' failed');

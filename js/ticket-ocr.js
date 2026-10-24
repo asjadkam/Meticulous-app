@@ -1421,9 +1421,29 @@
       if (snm) f.station = f.station + ' @ ' + snm[1];
     }
 
+    /* v248 (POWER-READ-FUEL-FIELDS): the station's street
+       address — printed in the header under the brand line
+       ("200-20 Heritage Meadow" / "Calgary AB T2H 3C1"). A
+       street line OPENS with its civic number; the city line
+       that follows carries city + province (+ postal code).
+       Header zone only; a label or amount line never counts,
+       and no street line → no address, never invented. */
+    (function () {
+      var lines = t.split('\n').slice(0, 8);
+      for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li].trim();
+        if (!/^\d{1,6}(?:-\d{1,6})?\s+[A-Za-z]/.test(ln)) continue;
+        if (/GST|HST|TOTAL|AMOUNT|PRICE|INVOICE|VISA|MASTERCARD|PUMP/i.test(ln)) continue;
+        var street = ln.replace(/\s+/g, ' ');
+        var nx = (lines[li + 1] || '').trim().replace(/\s+/g, ' ');
+        f.address = /^[A-Za-z][A-Za-z .]*\s+[A-Z]{2}(\s+[A-Z]\d[A-Z]\s?\d[A-Z]\d)?$/.test(nx)
+          ? street + ', ' + nx : street;
+        break;
+      }
+    })();
+
     /* Date — ISO as printed, else the DATE: label via normDate, else any
-       date normDate can find in the text. */
-    var iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+       date normDate can find in the text. */    var iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
     if (iso) f.date = iso[1];
     else {
       var draw = firstMatch(t, [/DATE[\s:]*([A-Za-z0-9\/\- ]{6,14})/i]);
@@ -1472,6 +1492,9 @@
       found.push(((th2 % 12) || 12) + ':' + tp[1] + ' ' + tap);
     }
     if (parsed.pricePerLitre) found.push('@ ' + parsed.pricePerLitre + '/L');
+    /* v248: the station address rides the read line too — shown
+       for his check before saving, like the time. */
+    if (parsed.address) found.push(parsed.address);
     return { found: found, missing: missing };
   };
 

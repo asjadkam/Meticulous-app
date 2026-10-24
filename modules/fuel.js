@@ -578,6 +578,12 @@
          other fields and shown in the read line; saved on the
          record at Save. Not a form field — nothing extra to type. */
       var fuReadTime = '';
+      /* v248 (POWER-READ-FUEL-FIELDS): the receipt's rate per
+         litre and station address ride exactly the same road as
+         the sale time — held from a read, shown in the read line,
+         saved on the record at Save. Not form fields. */
+      var fuReadPrice = '';
+      var fuReadAddr = '';
       /* v127: the receipt photo itself (the 1600px OCR rendition —
          already downscaled by TicketOCR.fileToOCRImage), held
          until Save. Before v127 the photo was read and THROWN
@@ -635,6 +641,8 @@
             fillField('#fu_stn', parsed.station);
             fillField('#fu_date', parsed.date);
             if (parsed.time) fuReadTime = parsed.time;
+            if (parsed.pricePerLitre) fuReadPrice = parsed.pricePerLitre;
+            if (parsed.address) fuReadAddr = parsed.address;
             if (rep.found.length) {
               fuSetRead('⛽ Read: ' + esc(rep.found.join(' · ')) +
                 (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
@@ -697,6 +705,8 @@
         fillField('#fu_stn', parsed.station);
         fillField('#fu_date', parsed.date);
         if (parsed.time && !fuReadTime) fuReadTime = parsed.time;
+        if (parsed.pricePerLitre && !fuReadPrice) fuReadPrice = parsed.pricePerLitre;
+        if (parsed.address && !fuReadAddr) fuReadAddr = parsed.address;
         if (corrected.length) {
           fuSetRead('⚡ <b>Power read corrected:</b> ' + esc(corrected.join(' + ')) + ' — check before saving.<br>Read: ' + esc(rep.found.join(' · ')));
         } else if (filled.length) {
@@ -717,6 +727,8 @@
         fillField('#fu_stn', parsed.station);
         fillField('#fu_date', parsed.date);
         if (parsed.time) fuReadTime = parsed.time;
+        if (parsed.pricePerLitre) fuReadPrice = parsed.pricePerLitre;
+        if (parsed.address) fuReadAddr = parsed.address;
         fuSetRead(label + ' ' + esc(rep.found.join(' · ')) +
           (rep.missing.length ? '<br><span style="color:#e67e22">Couldn\'t find: ' + esc(rep.missing.join(', ')) + '</span>' : ''));
       }
@@ -1004,6 +1016,8 @@
           var prevPhoto = f[editFillIdx].photo;
           var updated = applyFillEdit(f[editFillIdx], formVals);
           if (fuReadTime) updated.time = fuReadTime;
+          if (fuReadPrice) updated.pricePerLitre = fuReadPrice;
+          if (fuReadAddr) updated.address = fuReadAddr;
           /* v127: a FRESH receipt photo replaces the stored one;
              no new photo → applyFillEdit already kept the old one. */
           var freshPhoto = !!(fuPhoto && fuPhoto !== updated.photo);
@@ -1045,6 +1059,8 @@
         var rec = { date: formVals.date };
         rec.profileId = wpActiveId(); // v242: the truck that took this fuel
         if (fuReadTime) rec.time = fuReadTime;
+        if (fuReadPrice) rec.pricePerLitre = fuReadPrice;
+        if (fuReadAddr) rec.address = fuReadAddr;
         if (hasOdo && odoPlan.mode !== 'refuse') rec.odo = odo;
         /* v156: a fill saved with NO reading of its own is stamped
            with the CURRENT master odometer — the app knows the
