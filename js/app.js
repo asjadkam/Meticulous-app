@@ -2479,7 +2479,19 @@
     var end = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(),
       parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
     if (end.getTime() <= startMs) end = new Date(end.getTime() + 24 * 3600 * 1000); // overnight shift
-    if (end.getTime() > Date.now()) end = new Date(); // can't end in the future
+    /* v249 (END-TIME-EDIT-IGNORED): a chosen end still in the
+       future used to be SILENTLY replaced with now — Oct 23 he
+       set 11:00 AM at 10:15 AM and the review computed
+       8:00 AM → 10:15 AM / $65.66 with no word that his edit
+       had been swapped, so the edit "never reached the review".
+       A shift cannot end in the future — but the substitution
+       is now HIS call, asked out loud: confirm and the close
+       runs to now; decline and the sheet stays exactly as he
+       left it, nothing painted, nothing pending. */
+    if (end.getTime() > Date.now()) {
+      if (!confirm(fmtTimeAMPM(end.getTime()) + " hasn't happened yet — it's " + fmtTimeAMPM(Date.now()) + ' now. End the shift at ' + fmtTimeAMPM(Date.now()) + ' instead?')) return;
+      end = new Date();
+    }
     var secs = trackedSecondsAt(end.getTime());
     if (secs <= 0) { alert('That end time is not after the start. Check the times and try again.'); return; }
     if (secs > 12 * 3600 && !confirm('That makes a ' + fmtClock(secs) + ' shift. Is that right?')) { return; }
