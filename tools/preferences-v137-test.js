@@ -386,8 +386,8 @@ console.log('— 5. Navigator server: a baked-in constant, functional in every l
   w.MeticulousNav.saveSettings({ muted: true });
   eq(w.MeticulousNav.loadSettings().muted, true, 'other settings still persist through saveSettings (machinery intact)');
   eq(w.MeticulousNav.DEFAULT_SERVER_URL, DEF, 'the exposed constant IS the verified production address');
-  eq(w.Meticulous.modules.navigator.status(), 'Truck · 24 t · Calgary truck routes',
-    'the card status line reports the truck profile in a baked world');
+  eq(w.Meticulous.modules.navigator.status(), 'No trips yet',
+    'v254: the card status line reads No trips yet in a baked world (no destination recorded — never the truck profile)');
   hasnt('index.html carries no server-address input either', read('index.html'), 'pf_nav_url');
 }
 

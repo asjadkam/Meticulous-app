@@ -1410,7 +1410,20 @@
        Revenue's glance reads its last entry from the store. The
        glance names places, never coordinates: a coordinate string
        (the label-less legacy fallback) is not a place name and
-       never reaches the card. */
+       never reaches the card.
+       v254 (NAV-GLANCE-WRONG, owner Oct 24 17:56 MDT, his own
+       screenshot): the card still showed "Truck · 24 t · Calgary
+       truck ro…" — the v244 FALLBACK, not a destination. Root
+       cause: lastDest is only ever written by a route finalizing
+       on a v244+ build (v244 shipped the morning of Oct 24), so a
+       store whose navigation history predates the field holds NO
+       lastDest and the glance fell through to the truck profile
+       line — truck specs were standing in for a place. His call:
+       with no destination recorded the line reads "No trips yet";
+       truck/routing data never stands in for a place. A recorded
+       name is also shortened here to fit the card's one nowrap
+       line (28 chars incl. the arrow, cut at a word boundary)
+       instead of being cut mid-word by the card's ellipsis. */
     status: function () {
       var st = loadSettings();
       if (!st.serverUrl) return 'Server not set — routing off';
@@ -1422,8 +1435,16 @@
           if (stored && !/^-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/.test(stored)) last = stored;
         } catch (e) {}
       }
-      if (last) return '→ ' + last;
-      return (st.mode === 'car' ? 'Car' : 'Truck') + ' · ' + st.profile.weight + ' t · Calgary truck routes';
+      if (last) {
+        var line = '→ ' + last;
+        if (line.length > 28) {
+          var cut = last.slice(0, 25), sp = cut.lastIndexOf(' ');
+          if (sp >= 10) cut = cut.slice(0, sp);
+          line = '→ ' + cut.replace(/[\s,·-]+$/, '') + '…';
+        }
+        return line;
+      }
+      return 'No trips yet';
     },
 
     teardown: teardown,

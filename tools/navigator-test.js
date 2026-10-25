@@ -412,7 +412,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   const w = makeWorld({ navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' } });
   const api = w.world.Meticulous.modules.navigator;
   check('module registers as Meticulous.modules.navigator', !!api);
-  check('status reports truck profile when server set', /Truck/.test(api.status()), api.status());
+  check('v254: status reads No trips yet before any destination (never truck specs)', api.status() === 'No trips yet', api.status());
   api.render(w.body);
   check('no unset-server warning when a server is set', w.body.innerHTML.indexOf('routing unavailable') < 0);
   w.firePos(ORIGIN[0], ORIGIN[1]);
@@ -475,7 +475,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('v137: a stored cleared address is ignored — loadSettings returns the baked constant', w2.world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19');
   check('v137: saveSettings refuses to persist a serverUrl patch',
     w2.world.MeticulousNav.saveSettings({ serverUrl: 'http://evil.test' }).serverUrl === 'https://2.31.47.19');
-  check('v137: status reports the truck profile (never "not set")', /Truck/.test(api2.status()) && !/not set/.test(api2.status()), api2.status());
+  check('v137: status never says "not set"; v254: it reads No trips yet', api2.status() === 'No trips yet' && !/not set/.test(api2.status()), api2.status());
   api2.render(w2.body);
   check('v137: no routing-unavailable warning can appear', w2.body.innerHTML.indexOf('routing unavailable') < 0);
   w2.firePos(ORIGIN[0], ORIGIN[1]);
@@ -495,8 +495,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w4.world.MeticulousNav.loadSettings().serverUrl);
   check('v137: a stored custom address is IGNORED — the baked constant wins (v98 saved-wins rule superseded)',
     makeWorld({ navigator: { serverUrl: 'http://nav.test' } }).world.MeticulousNav.loadSettings().serverUrl === 'https://2.31.47.19');
-  check('v98: status reports the truck profile under the default (not "not set")',
-    /Truck/.test(api4.status()) && !/not set/.test(api4.status()), api4.status());
+  check('v98: status under the default is not "not set"; v254: it reads No trips yet',
+    api4.status() === 'No trips yet' && !/not set/.test(api4.status()), api4.status());
   api4.render(w4.body);
   check('v98: no unset-server warning under the default', w4.body.innerHTML.indexOf('routing unavailable') < 0);
   w4.firePos(ORIGIN[0], ORIGIN[1]);

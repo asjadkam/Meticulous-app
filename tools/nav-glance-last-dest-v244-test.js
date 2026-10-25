@@ -16,6 +16,14 @@
  * reverse lookup answers), never a lat,lng string.
  *
  * Run: node tools/nav-glance-last-dest-v244-test.js
+ *
+ * v254 (NAV-GLANCE-WRONG, owner Oct 24 17:56 MDT): in his hands
+ * the card STILL showed the truck profile line — his store holds
+ * no lastDest (the field only exists on v244+ routes; all his
+ * history predates it), and the v244 fallback for that case was
+ * the truck specs themselves. Superseded here: no destination
+ * recorded reads "No trips yet", and a long recorded name is
+ * shortened to fit the card's one line (28 chars, word boundary).
  */
 'use strict';
 const fs = require('fs');
@@ -199,7 +207,7 @@ const COORDS = /-?\d{1,3}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/;
   console.log('— session 1: route somewhere, the card learns the place —');
   const w1 = makeWorld(storeData);
   const api1 = w1.world.Meticulous.modules.navigator;
-  ok('before any route the card keeps the profile line', /Truck · .* · Calgary truck routes/.test(api1.status()), api1.status());
+  ok('v254: before any route the card reads No trips yet (never truck specs)', api1.status() === 'No trips yet', api1.status());
   api1.render(w1.body);
   w1.firePos(ORIGIN[0], ORIGIN[1]);
   await tick(); await tick(); await tick(); await tick();
@@ -218,16 +226,26 @@ const COORDS = /-?\d{1,3}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/;
 
   console.log('— untouched behaviours —');
   const w3 = makeWorld({});
-  ok('a store that never routed anywhere keeps the profile line',
-    /Truck · .* · Calgary truck routes/.test(w3.world.Meticulous.modules.navigator.status()),
+  ok('v254: a store that never routed anywhere reads No trips yet',
+    w3.world.Meticulous.modules.navigator.status() === 'No trips yet',
     w3.world.Meticulous.modules.navigator.status());
   const w4 = makeWorld({ navigator: { lastDest: 'East Ivor Pond' } });
   ok('a stored place name is what the card shows', w4.world.Meticulous.modules.navigator.status() === '→ East Ivor Pond',
     w4.world.Meticulous.modules.navigator.status());
   const w5 = makeWorld({ navigator: { lastDest: '51.10750, -114.08450' } });
-  ok('a stored COORDINATE string is never shown as a place (falls back)',
-    !COORDS.test(w5.world.Meticulous.modules.navigator.status()) && w5.world.Meticulous.modules.navigator.status().indexOf('→') !== 0,
+  ok('v254: a stored COORDINATE string is never shown as a place (reads No trips yet)',
+    w5.world.Meticulous.modules.navigator.status() === 'No trips yet',
     w5.world.Meticulous.modules.navigator.status());
+  const w6 = makeWorld({ navigator: { lastDest: 'Petro-Canada Roadking Barlow Trail Southeast' } });
+  const s6 = w6.world.Meticulous.modules.navigator.status();
+  ok('v254: a long place name is shortened to fit the card on one line',
+    s6.length <= 28 && s6.indexOf('→ ') === 0 && /…$/.test(s6), s6);
+  ok('v254: the shortening cuts at a word boundary, never mid-word',
+    s6 === '→ Petro-Canada Roadking…', s6);
+  const w7 = makeWorld({ navigator: { lastDest: 'Nitestar Truck Wash' } });
+  ok('v254: a name that fits is shown whole',
+    w7.world.Meticulous.modules.navigator.status() === '→ Nitestar Truck Wash',
+    w7.world.Meticulous.modules.navigator.status());
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

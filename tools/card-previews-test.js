@@ -205,8 +205,12 @@ const SESS = [{ date: TODAY, seconds: 7200, endedAt: '2026-10-15T17:00:00.000Z' 
 console.log('— navigator preview —');
 {
   const w = makeWorld('modules/navigator.js', {});
-  eq('never set: the shipped default server routes (v98)', w.Meticulous.modules.navigator.status(),
-    'Truck · 24 t · Calgary truck routes');
+  /* v254 (NAV-GLANCE-WRONG): the no-destination glance reads
+     "No trips yet" — the truck profile line no longer stands in
+     for a place (the v98/v137 pins below predate the change;
+     what they still pin is that a baked-server world routes). */
+  eq('never set: the shipped default server routes (v98); no trips yet (v254)', w.Meticulous.modules.navigator.status(),
+    'No trips yet');
 }
 {
   const w = makeWorld('modules/navigator.js', {
@@ -214,16 +218,17 @@ console.log('— navigator preview —');
   });
   /* v137 deliberate pin move: the v98 "cleared → routing off"
      expectation is superseded — the address is baked in, so a
-     legacy cleared value is ignored and the profile line stands. */
-  eq('a legacy cleared address is ignored: profile line (v137)', w.Meticulous.modules.navigator.status(),
-    'Truck · 24 t · Calgary truck routes');
+     legacy cleared value is ignored. v254: with nothing routed,
+     the glance reads No trips yet. */
+  eq('a legacy cleared address is ignored: No trips yet (v137, v254)', w.Meticulous.modules.navigator.status(),
+    'No trips yet');
 }
 {
   const w = makeWorld('modules/navigator.js', {
     navigator: { serverUrl: 'http://nav.test', profile: {}, muted: false, mode: 'truck' }
   });
-  eq('server set, nothing routed yet: profile line', w.Meticulous.modules.navigator.status(),
-    'Truck · 24 t · Calgary truck routes');
+  eq('server set, nothing routed yet: No trips yet (v254)', w.Meticulous.modules.navigator.status(),
+    'No trips yet');
 }
 
 /* Navigator flow world (stubbed DOM/Leaflet/GPS/fetch, modeled on
