@@ -16,11 +16,11 @@
  *      windows — an 06:45 roll-out for an 08:00 start counts in
  *      full). Other records keep the slack windows: nothing
  *      leaks in from another day or session.
- *   C. A MANUAL Start with a plan for today anchors to the
- *      plan time exactly like auto-start (the steer, 07:26:
- *      never the tap, never movement) — session identity, start
- *      stamp and clock all key to the dispatch time; his own
- *      preset start still wins; no plan → the tap, as before.
+ *   C. A MANUAL Start stamps the TAP (v255 — the v174 plan-anchor
+ *      law was superseded by the owner's Oct 24, 2026 correction:
+ *      the scheduled start belongs to dispatch-driven auto-start
+ *      only; a manual start counts from the tap; his own preset
+ *      start still wins).
  *
  * Run: node tools/queue-v174-test.js
  */
@@ -207,7 +207,7 @@ function milesWorld() {
     eq('B4 with no plan for today the armed day watch stands down', lmState.stops, 1);
   }
 
-  /* ================= C: a manual Start anchors to the plan ================= */
+  /* ================= C: a manual Start stamps the tap (v255) ================= */
   {
     const region = extractRegion(appSrc, 'AUTOSTART-ENGINE-BEGIN', 'AUTOSTART-ENGINE-END');
     const tglStart = appSrc.indexOf('function trackerSessionStartMs()');
@@ -248,17 +248,17 @@ function milesWorld() {
     const w1 = toggleWorld(true, 0);
     w1.sb.App.trackerToggle();
     eq('C1 a manual Start at 07:26 runs the session', w1.sb.App.tracker.status, 'running');
-    eq('C2 its identity is the 8:00 anchor, not the tap', w1.sb.App.tracker.sessionId, anchorMs);
-    eq('C3 its start stamp is the anchor', w1.sb.App.tracker.startTs, anchorMs);
-    eq('C4 the pay clock reads zero until 8:00', w1.sb.App.tracker.elapsed, 0);
-    eq('C5 miles key off the anchored session', w1.lmKeys, ['s' + anchorMs]);
+    eq('C2 v255: its identity is the TAP, not the 8:00 dispatch anchor', w1.sb.App.tracker.sessionId, fixedMs);
+    eq('C3 v255: its start stamp is the tap', w1.sb.App.tracker.startTs, fixedMs);
+    eq('C4 its elapsed starts at zero at the tap', w1.sb.App.tracker.elapsed, 0);
+    eq('C5 miles key off the tapped session', w1.lmKeys, ['s' + fixedMs]);
     const w2 = toggleWorld(false, 0);
     w2.sb.App.trackerToggle();
-    eq('C6 with no dispatch the standing plan (06:00) anchors instead',
-      w2.sb.App.tracker.sessionId, new Date(2026, 9, 19, 6, 0, 0).getTime());
+    eq('C6 v255: with no dispatch a manual Start also stamps the tap (no standing-plan anchor)',
+      w2.sb.App.tracker.sessionId, fixedMs);
     const w3 = toggleWorld(true, fixedMs - 3600000);
     w3.sb.App.trackerToggle();
-    eq('C7 his own preset start still wins over the plan', w3.sb.App.tracker.sessionId, fixedMs - 3600000);
+    eq('C7 his own preset start still wins over everything', w3.sb.App.tracker.sessionId, fixedMs - 3600000);
   }
 
   /* ================= D: the PTI reading is the day's start reading ================= */

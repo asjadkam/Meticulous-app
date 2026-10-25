@@ -201,8 +201,8 @@ const SETTLED_STORE = { // the account's truth his card showed (post-edit)
     eq(info.willStart, false, 'B9 the card agrees: no auto-start scheduled');
     const fired = w.store.get('autostart', {});
     ok(!fired['2026-10-23'], 'B10 the fired flag was never consumed by a phantom start');
-    ok(native.arm && native.arm.date === '2026-10-24', 'B11 the native arm now belongs to Saturday (a selected day), not Friday');
-    eq(native.arm && native.arm.startMs, msOf('2026-10-24', '08:00'), 'B12 Saturday arms at the standing 8:00 setting');
+    ok(!native.arm, 'B11 after the settle the native arm is DOWN — Saturday is selected but has no dispatch, and v255 arms nothing for a setting-only day');
+    eq(native.calls.filter(function (c) { return c[0] === 'disarmDay'; }).length >= 1, true, 'B12 the settled re-check actively disarmed the day');
   }
 
   /* ---- C (control): a real Friday workday still starts, anchored ---- */

@@ -27,7 +27,11 @@
  *    owner's Oct 17, 2026 rule supersedes the v53 prompt: "Has to
  *    start on at 8 AM not earlier"; a start that waits for a tap is
  *    a start that may never happen)
- *  - the standing setting anchors identically (fallback equivalence)
+ *  - v255 (owner, Sat Oct 24, 2026): the standing setting alone is
+ *    NOT a day of work — no dispatch + no override -> no plan, no
+ *    start ('no-work-today'). The scheduled-time start belongs to
+ *    dispatch-driven auto-start on a dispatch day (or a day he
+ *    explicitly set an override for).
  */
 'use strict';
 const fs = require('fs');
@@ -188,6 +192,18 @@ console.log('— effective-time precedence —');
   eq(p.willStart, true, 'enabled + right day -> will start');
   eq(p.time, '06:30', 'plan carries the dispatch time');
 
+  /* v255: the standing time alone makes NO plan — it is a fallback
+     FOR a dispatch day, never a day of work by itself. The resolved
+     time/source are still reported so the card speaks honestly. */
+  p = E.plan(prefs, null, [], null, TODAY, DOW);
+  eq(p.willStart, false, 'v255: no dispatch + no override -> no plan');
+  eq(p.reason, 'no-work-today', 'v255: no-work-today reason reported');
+  eq(p.source, 'setting', 'v255: resolved source still reported as setting');
+  eq(p.time, '08:00', 'v255: resolved fallback time still reported');
+  p = E.plan(prefs, null, [], { date: TODAY, time: '07:15' }, TODAY, DOW);
+  eq(p.willStart, true, 'v255: a per-day override (his explicit command for today) still makes a plan');
+  eq(p.time, '07:15', 'v255: the override plan carries its time');
+
   /* anchor math for backdated starts */
   eq(E.todayMs(TODAY, '06:30'), new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate(), 6, 30, 0, 0).getTime(),
     'todayMs anchors to today at the given local time');
@@ -209,13 +225,14 @@ console.log('— checkAutoStart behavior —');
   ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
     'session anchored to dispatch time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
 
-  /* standing setting 30 min ago, no dispatch: v123 fallback
-     equivalence — the no-dispatch plan anchors to its time exactly
-     like a dispatch plan (before v123 it counted from the wake) */
+  /* standing setting 30 min ago, NO dispatch: v255 — the standing
+     time alone never starts a session. This is the owner's Sat
+     Oct 24, 2026 incident: a Saturday inside his Mon–Sat days, no
+     dispatch, and the tracker ran uncommanded from 8:00 AM. */
   w = makeWorld({ onboarding: { autoStart: true, autoStartTime: hhmm(t30), autoStartDays: [0, 1, 2, 3, 4, 5, 6] } });
-  eq(w.App.checkAutoStart(), 'started', 'standing time reached -> started');
-  ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
-    'standing-setting start anchored to the setting time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
+  eq(w.App.checkAutoStart(), 'no-work-today', 'standing time reached, no dispatch -> no start (v255)');
+  eq(w.App.tracker.status, 'idle', 'no-dispatch day leaves the tracker idle');
+  eq(w.App.tracker.elapsed, 0, 'no phantom elapsed on a no-work day');
 
   /* missed start: dispatch 3h ago, app was asleep -> on open it starts
      by itself, backdated to the dispatch time, and NO prompt is shown
@@ -258,14 +275,15 @@ console.log('— checkAutoStart behavior —');
   w = makeWorld({ active: dsp('a', TODAY, hhmm(minsAheadTime(60))), onboarding: { autoStart: true, autoStartTime: hhmm(minsAheadTime(90)), autoStartDays: [0, 1, 2, 3, 4, 5, 6] } });
   eq(w.App.checkAutoStart(), 'not-yet', 'dispatch later today -> not-yet');
 
-  /* completing today's dispatch restores the standing fallback: the
-     dispatch time (30m ago) no longer claims the start; the standing
-     time (90m ahead) governs -> not-yet, no spurious start */
+  /* completing today's dispatch removes the day's only claim:
+     with no live dispatch and no override there is no plan at
+     all (v255) — the standing time does not take over and start
+     a session nobody dispatched */
   w = makeWorld({
     list: [dsp('a', TODAY, hhmm(t30), 'completed')],
     onboarding: { autoStart: true, autoStartTime: hhmm(minsAheadTime(90)), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
   });
-  eq(w.App.checkAutoStart(), 'not-yet', 'completed dispatch -> standing fallback restored');
+  eq(w.App.checkAutoStart(), 'no-work-today', 'completed dispatch -> no plan remains (v255)');
   eq(w.App.tracker.status, 'idle', 'completed dispatch does not start the tracker');
 }
 

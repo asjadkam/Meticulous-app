@@ -40,7 +40,10 @@
     try { if (App.autostartTodayInfo) info = App.autostartTodayInfo(); } catch (e) {}
     if (!info) return '';
     var line;
-    if (!info.enabled || !info.dayOk) {
+    if (!info.enabled || !info.dayOk || !info.willStart) {
+      /* v255: !willStart covers the no-work-today day (no dispatch,
+         no override): the card must never promise the standing-time
+         start the engine will no longer perform on its own. */
       line = '<b>Today:</b> no auto-start scheduled';
     } else if (info.source === 'dispatch') {
       line = '<b>Today:</b> starts ' + esc(info.label) + ' (from Dispatch)';

@@ -1852,7 +1852,19 @@
   var _bubbleSig = '';
   function pushBubbleFace(sec) {
     try {
-      if (!App._pip) return; // the native face exists only in system PiP
+      /* v255 (BUBBLE-TIMER-MISMATCH): no App._pip gate anymore.
+         The native face PAINTS the statics it was last pushed
+         whenever the float comes up (MainActivity.showPipFace),
+         so a push path that only runs while already in PiP leaves
+         the previous session's clock sitting in the shell —
+         painted stale, then "climbing" from the old record the
+         moment pushes resume. Pushing on every tick and every
+         transition (start paints the new session's ~00:00:00,
+         stop paints "Ready to work" · 00:00:00) keeps the shell's
+         mirror bound to the CURRENT web tracker record — the one
+         session state — and any older pushed start is discarded
+         with the session that owned it. The change-gate below
+         still keeps this to real changes plus the 1 Hz clock. */
       if (!window.ShiftTrack || !ShiftTrack.pushBubbleState) return;
       var status = App.tracker.status === 'running' ? 'Working…' :
         App.tracker.status === 'paused' ? 'Paused' : 'Ready to work';
@@ -2095,9 +2107,7 @@
     /* v216: while locked the hero shows the neutral face — the
        session keeps counting underneath, unpainted. */
     if (App._authLocked ? App._authLocked() : false) { paintLockedHero(); return; }
-    var t = App.tracker, sec = t.elapsed;
-    if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
-    if (sec < 0) sec = 0; // v174: an anchored session (start ahead) reads zero until its time
+    var t = App.tracker, sec = trackerElapsedSec();
     // v41: the hero quantity depends on the pay method (dynamic tracker);
     // for Hourly this renders exactly the same clock as before.
     paintHero(sec);
@@ -2188,6 +2198,23 @@
     var live = t.elapsed + (t.status === 'running' ? Math.floor((now - t.startTs) / 1000) : 0);
     return now - live * 1000;
   }
+  /* v255 (BUBBLE-TIMER-MISMATCH): the ONE elapsed derivation every
+     face reads — the dashboard hero, the web bubble, the native
+     bubble push and the widget all take their clock from here, so
+     one session state can only ever produce one number. The record
+     invariant it relies on: elapsed holds the seconds accumulated
+     BEFORE the current running segment, and startTs is that
+     segment's start — a start path that writes both from the same
+     anchor (the deleted v174 manual-start block) counts the anchor
+     span twice in this sum. (This function was called from the
+     bubble/widget seams since v220 but never defined — those calls
+     threw and were swallowed, leaving the native face to be fed
+     only by the tick path.) */
+  function trackerElapsedSec() {
+    var t = App.tracker, sec = t.elapsed || 0;
+    if (t.status === 'running') sec += Math.floor((Date.now() - t.startTs) / 1000);
+    return Math.max(0, sec);
+  }
   /* v69: the session's STABLE record identity, in ms. trackerSessionStartMs()
      above is a DISPLAY value ("Counting from …"): it is re-derived from
      whole-second elapsed on every call, so it jitters by up to a second
@@ -2262,35 +2289,28 @@
     // starting odometer — by-mile pay, or any pay mode with the v46
     // "Daily odometer photos" preference on; non-blocking either way.
     if (wasIdle) {
-      /* v174: a manual START with a plan for today anchors to the
-         PLAN time, exactly like auto-start (owner's settled law:
-         the session start is the dispatch's scheduled time —
-         never the tap, never movement; Oct 19, 2026 07:26 MDT
-         steer). The anchor pins the session identity too, so the
-         miles/geofence/native records key to the same 's<8:00>'
-         the native arm uses. His own preset ("I actually started
-         at…") still wins when he set one. An early tap leaves
-         startTs at the anchor: the running clock reads zero
-         until the plan time, then counts — the pay clock never
-         starts early. */
-      var anchorPin = 0;
-      if (!presetUsed) {
-        try {
-          var pA = autoStartPrefs();
-          var nowA = new Date(), todayA = todayStr(nowA);
-          var planA = autostartPlan(pA, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), todayA, nowA.getDay());
-          if (planA && planA.willStart) {
-            anchorPin = autostartTodayMs(todayA, planA.time);
-            t.elapsed = Math.max(0, Math.floor((Date.now() - anchorPin) / 1000));
-            t.startTs = anchorPin;
-          }
-        } catch (e) {}
-      }
+      /* v255 (MANUAL-START-BACKDATED, owner, Sat Oct 24, 2026
+         18:33 MDT — correcting the v174 steer): a MANUAL start
+         begins at the tap. Full stop. His pre-start screen promises
+         "Starts from now", and the tap is his command — the
+         scheduled-time start (the dispatch's time, or the 8:00 AM
+         fallback on a dispatch day) belongs ONLY to dispatch-driven
+         AUTO-start, in checkAutoStart. The v174 block that anchored
+         this tap to the plan time is deleted: worse than the
+         backdate itself, it encoded the anchor span TWICE — elapsed
+         = (tap − anchor) while startTs = anchor — so every consumer
+         adding (now − startTs) to elapsed (the tick, the bubble
+         push, the Manifest live line) counted the span twice,
+         which is where the bubble's ~2× clock and the Manifest's
+         inflated "today" total came from. His own preset ("I
+         actually started at…") still wins: that is his explicit
+         word for this session, applied above. */
       // v69: pin the session's stable record identity BEFORE anything
       // keys a record by it (see trackerSessionKeyMs) — pinned to the
-      // effective start instant at this moment; it never moves again,
-      // even if the driver edits the start clock afterwards.
-      t.sessionId = anchorPin || trackerSessionStartMs();
+      // effective start instant at this moment (the tap, or his
+      // preset); it never moves again, even if the driver edits the
+      // start clock afterwards.
+      t.sessionId = trackerSessionStartMs();
       /* v242 (WORK-PROFILES): the session belongs to the profile
          active at its start, for its whole life — a mid-day switch
          changes only what is created after it. */
@@ -3505,6 +3525,18 @@
     if (!prefs.enabled) return { willStart: false, reason: 'off' };
     if (!Array.isArray(prefs.days) || prefs.days.indexOf(dayIdx) === -1) return { willStart: false, reason: 'wrong-day' };
     var eff = autostartEffective(prefs, active, list, override, today);
+    /* v255 (MANUAL-START-BACKDATED / TRACKER-RUNNING-UNCOMMANDED,
+       owner, Sat Oct 24, 2026 18:19–18:33 MDT): the standing setting
+       time is only ever a fallback FOR a dispatch day — it is not a
+       day of work by itself. A day with no eligible dispatch and no
+       per-day override (his own explicit command for today) has NO
+       plan: nothing auto-starts, nothing arms natively, and the
+       tracker stays idle until he starts it himself. Before this,
+       a Saturday inside his Mon–Sat days with the standing 8:00 AM
+       setting started a session by itself on a no-work day. The
+       resolved time/source still ride along so the card can speak
+       honestly about what WOULD have been the fallback. */
+    if (eff.source === 'setting') return { willStart: false, reason: 'no-work-today', time: eff.time, source: eff.source };
     return { willStart: true, reason: 'ok', time: eff.time, source: eff.source };
   }
   function autostartTodayMs(today, timeStr) {

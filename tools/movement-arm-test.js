@@ -18,11 +18,12 @@
  *  B. at 08:00:00 exactly the session starts, stamped 08:00:00.
  *  C. app asleep until 08:37: the session starts backdated to
  *     08:00:00 exactly — never the wake time.
- *  D. fallback equivalence: no dispatch, standing setting 08:00,
- *     app asleep until 09:15 -> session stamped 08:00:00 exactly.
+ *  D. v255 (owner, Sat Oct 24, 2026): no dispatch + no override
+ *     -> NO plan at all. The standing setting alone is not a day
+ *     of work; the tracker stays idle ('no-work-today').
  *  E. the armed-plan label (the dashboard line): dispatch plan
- *     names the dispatch; setting plan is plain; override notes
- *     itself; fired / off plans promise nothing.
+ *     names the dispatch; a setting-only day promises nothing;
+ *     override notes itself; fired / off plans promise nothing.
  *  F. a plain manual Start with no plan still stamps the tap time.
  *  G. a closed session today -> 'done-today', never a phantom
  *     second start; a paused session is never force-resumed.
@@ -173,15 +174,16 @@ console.log('— late wake —');
   eq(w._calls.confirms.length, 0, 'C4 no prompt gates the late start');
 }
 
-/* ================= D: fallback equivalence ================= */
-console.log('— fallback plan (no dispatch) behaves identically —');
+/* ================= D: no dispatch -> no plan (v255) ================= */
+console.log('— no dispatch: the standing time alone starts nothing —');
 {
   setClock(9, 15);
   const w = makeWorld({}); // standing setting 08:00, all days, no dispatch anywhere
   eq(w.App.autostartTodayInfo().source, 'setting', 'D1 no dispatch -> setting source');
-  eq(w.App.checkAutoStart(), 'started', 'D2 fallback plan starts on late open');
-  eq(w.trackerSessionStartMs(), atMs(8, 0), 'D3 fallback session stamped 08:00:00 exactly');
-  eq(w.App.tracker.elapsed, 75 * 60, 'D4 fallback elapsed counts from 08:00 (75m)');
+  eq(w.App.checkAutoStart(), 'no-work-today', 'D2 v255: no plan on a no-work day');
+  eq(w.App.tracker.status, 'idle', 'D3 tracker stays idle — nothing runs uncommanded');
+  eq(w.App.tracker.elapsed, 0, 'D4 no phantom elapsed accrues');
+  ok(!w._mem.autostart, 'D5 the fired flag is not consumed by a non-start');
 }
 
 /* ================= E: the armed-plan label ================= */
@@ -193,8 +195,8 @@ console.log('— armed-plan label —');
     'E1 dispatch plan: time + the dispatch named');
 
   w = makeWorld({});
-  eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), 'Starts 8:00 AM',
-    'E2 setting plan: plain words, no name invented');
+  eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), null,
+    'E2 setting-only day: no plan is promised (v255 — the card falls back to "Starts from now")');
 
   w = makeWorld({ active: dsp0800Active(), override: { date: TODAY, time: '07:30' } });
   eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), 'Starts 7:30 AM (changed for today)',
