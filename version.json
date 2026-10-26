@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 255,
-  "notes": "v255 \u2014 MANUAL-START-BACKDATED + BUBBLE-TIMER-MISMATCH (owner, Sat Oct 24, 2026 18:19-18:34 MDT, his screenshots). A manual START now counts from the tap: the v174 anchor block in trackerToggle is deleted (it backdated any manual start to the plan time and encoded the anchor span twice \u2014 elapsed AND startTs \u2014 so the tick, the native bubble and the Manifest live line counted it twice; the bubble climbed at ~2x from a previous-evening epoch). autostartPlan: a standing-setting-only day is NO plan ('no-work-today') \u2014 the 8:00 AM setting alone never starts or arms a session on a day with no dispatch and no per-day override; dispatch/override auto-start still anchors at its time, single-encoded. trackerElapsedSec() defined once and read by the tick \u2014 hero, bubbles and widget share one derivation from the one session record; pushBubbleFace is no longer gated on App._pip, so the shell mirror repaints on every transition (a stopped session can no longer leave its clock in the float). Revenue card 'Today:' line keys off willStart. Harnesses: new manual-start-law-test 33/33; dispatch-autostart / movement-arm / autostart-pullgate / queue-v174 pins moved to the v255 law (owner's correction supersedes v53/v123/v174); full-sweep failing set identical to baseline (dispatch-autostart's one failure is its pre-existing post-midnight wall-clock flake, identical on HEAD). Native v45 (separate repo) carries PIP-CARD-BACKGROUND + WIDGET-STRETCHED. Machine-green is preparation \u2014 the verdict is his next manual start and his bubble agreeing with his dashboard.",
+  "webVersion": 256,
+  "notes": "v256 — PTI-WARNING-BLOCKS-CONTENT (owner, Sun Oct 25, 2026 19:13 MDT, his screenshot): the standing '⚠ No PTI filed today — tap to file' flag on the tracker card overlapped the '🔒 Screen held' row — the .wake rows carry a -6px snug-up top margin (to sit tight under the miles line), and with the flag in flow between them that pull-up dragged the wake row up under the flag. CSS-only fix in css/style.css: while the flag is visible (.ptiflag:not(.hidden)), the wake rows below it take a plain 6px top margin and shift down; the flag itself (words, colours, tap-to-file) is untouched, and with the flag hidden the layout is exactly as before. Machine-green is preparation — the verdict is his dashboard with the flag showing and nothing hidden behind it.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -14,10 +14,10 @@
     "assets/logo.svg": "ff9022a015da20fe2142d2f70e4c99c3e48f10457adebf681eefb1f840cdec70",
     "assets/manifest.json": "92e467fa45e8df0bb326cfeb23aa83d2fad42876abc58b3935c2ba2bb3ca05bd",
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
-    "css/style.css": "21b0be9cd7376306904c8568f82804186cb938fe1f6c18482dce4833ab209674",
+    "css/style.css": "20dacd4e3cb9bc15f1c20a0979edfcad5512036a5a4b82756bc29f30426132fc",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "f3461d7a3c1c5e9727adf61d8a043200c1009ac55902555f75f4ce4de1dfc1cc",
+    "index.html": "a0e249020454c243c77aa413c3e4924d44c0d49aea3ce9757c6b63907a3b6cfa",
     "js/app.js": "1c32c2d554b04204a530ee30f7169dc3d7901067acdccff0d6226b4d5fd7e6c3",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",

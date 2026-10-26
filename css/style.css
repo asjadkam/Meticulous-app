@@ -330,6 +330,14 @@ canvas.chart{width:100%;height:170px;}
 @media(min-width:520px){ #trkStartSheet,#trkEndSheet,#odoSheet,#loadSheet,#ptiNudgeSheet{right:calc(50% - 224px);left:calc(50% - 224px);} }
 /* v174: the standing no-PTI flag on the tracker card */
 .ptiflag{margin:6px auto 0;max-width:340px;padding:7px 10px;border:2px solid #b45309;background:#fdf6e9;color:#7c4a03;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;}
+/* v256 (PTI-WARNING-BLOCKS-CONTENT): the wake rows (.tracker .wake) carry a
+   -6px top margin so they snug up under the miles line. With the PTI flag
+   visible between them, that same pull-up dragged the "Screen held" row up
+   UNDER the flag, hiding behind it. The flag is in normal flow and owns its
+   space: while it is shown, the wake rows below it take a plain 6px top
+   margin and shift down instead of sliding underneath. Flag hidden = the
+   rule does not match and the layout is exactly as before. */
+.tracker .ptiflag:not(.hidden) ~ .wake{margin-top:6px;}
 
 /* ---------- v27 cloud sync dot (topbar) ---------- */
 /* v34: padding + background-clip gives a ~24px tap target around the 10px
