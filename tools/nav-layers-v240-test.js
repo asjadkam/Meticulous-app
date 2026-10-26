@@ -58,8 +58,9 @@ check('the satellite spec is Esri World Imagery (probed live)',
   /World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}/.test(navSrc));
 check('the elevation overlay is Esri World Hillshade (probed live)',
   /Elevation\/World_Hillshade\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}/.test(navSrc));
-check('the traffic entry is honest: tapping it says traffic is not live yet',
-  /Traffic isn/.test(navSrc) && /traffic feed is wired/.test(navSrc));
+check('the traffic entry is live (v261 re-base): the City of Calgary feed is wired',
+  /data\.calgary\.ca\/resource\/4jah-h97u\.json/.test(navSrc) &&
+  /saveSettings\(\{ trafficOn: on \}\)/.test(navSrc));
 check('the choice is a persisted navigator setting (loadSettings whitelist)',
   /driveLayer: \(s\.driveLayer === 'satellite' \|\| s\.driveLayer === 'elevation'\)/.test(navSrc));
 check('the button/panel CSS exists',
@@ -270,14 +271,22 @@ function tick() { return new Promise(function (r) { setTimeout(r, 15); }); }
     !!hill && typeof hill.opts.opacity === 'number' && hill.opts.opacity < 1,
     hill ? String(hill.opts.opacity) : 'none');
 
+  /* v261 re-base (NAV-LIVE-TRAFFIC-CITYFEED): Traffic is no
+     longer the v240 placeholder — it is the live incident
+     overlay's switch. The base-layer contract is unchanged
+     (it adds NO tile layer and never touches driveLayer);
+     what changed is what the tap does: it flips the persisted
+     trafficOn (default on, so this tap turns it off) and the
+     note states the new state plainly. */
   const beforeTraffic = onMap().length;
   if (w.reg.nvd_layer_traffic.onclick) w.reg.nvd_layer_traffic.onclick();
   await tick();
-  check('W7: Traffic adds NO layer and fakes nothing (layer count unchanged)',
+  check('W7: Traffic adds NO tile layer (the overlay is markers, not a base layer)',
     onMap().length === beforeTraffic, beforeTraffic + ' -> ' + onMap().length);
-  check('W8: Traffic says so plainly in the panel',
-    !!w.reg.nvd_layers_note && /live yet/.test(w.reg.nvd_layers_note.textContent || '') &&
-    !w.reg.nvd_layers_note.classList.contains('hidden'),
+  check('W8: Traffic flips the persisted trafficOn and says so plainly in the panel',
+    !!w.reg.nvd_layers_note && /Traffic off/.test(w.reg.nvd_layers_note.textContent || '') &&
+    !w.reg.nvd_layers_note.classList.contains('hidden') &&
+    w.storeData.navigator && w.storeData.navigator.trafficOn === false,
     w.reg.nvd_layers_note ? w.reg.nvd_layers_note.textContent : 'no note el');
   check('W9: the layer choice after Traffic is still Elevation (nothing switched)',
     w.storeData.navigator && w.storeData.navigator.driveLayer === 'elevation',

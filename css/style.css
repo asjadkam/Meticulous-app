@@ -612,6 +612,13 @@ label.chk input{width:18px;height:18px;}
 .nv-avatar-opt img{width:36px;height:44px;object-fit:contain;display:block;}
 .nv-avatar-opt.on{border-color:#f5a623;background:rgba(255,255,255,.16);}
 .nv-drive-reroute{position:absolute;left:0;right:0;margin-left:auto;margin-right:auto;width:max-content;bottom:calc(96px + env(safe-area-inset-bottom));background:#b3540a;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
+/* v262: the traffic-ahead chip — same pill family as the
+   reroute line, alert red, docked just above it; and the
+   incident marker badge (Leaflet's divIcon shell itself is
+   neutralised by .nv-traffic-pin-wrap). */
+.nv-drive-traffic{position:absolute;left:0;right:0;margin-left:auto;margin-right:auto;width:max-content;max-width:92%;bottom:calc(140px + env(safe-area-inset-bottom));background:#b71c1c;color:#fff;font-weight:700;padding:8px 16px;border-radius:999px;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nv-traffic-pin-wrap{background:transparent;border:none;}
+.nv-traffic-pin{width:30px;height:30px;border-radius:50%;background:#ffb300;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);color:#4e2600;font-size:17px;line-height:26px;text-align:center;font-weight:900;}
 .nv-drive-bar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));background:#1F3764;color:#fff;padding:12px 14px;border-radius:16px;display:flex;align-items:center;gap:8px;z-index:3;box-shadow:0 4px 18px rgba(0,0,0,.45);opacity:1;}
 /* v124 (owner, Oct 17 07:17 — "What's the arrival time?", asked
    over a Drive screen showing NO arrival info at all): the v107
@@ -699,6 +706,7 @@ body.mt-driving #chatSheet{z-index:2120;}
 .nv-drive-road{font-size:12.5px;min-height:0;margin-top:2px;}
 .nv-drive-bar{left:8px;right:8px;bottom:calc(6px + env(safe-area-inset-bottom));padding:8px 12px;}
 .nv-drive-reroute{bottom:calc(78px + env(safe-area-inset-bottom));}
+.nv-drive-traffic{bottom:calc(120px + env(safe-area-inset-bottom));}
 .nv-avatar-picker{bottom:calc(84px + env(safe-area-inset-bottom));}
 /* v237: in landscape the banner is the compact flex row (~64px
    tall) — the inset's top-right dock rides the line under it. */

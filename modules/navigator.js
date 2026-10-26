@@ -1073,6 +1073,61 @@
   function gestureRotOffset(baseOffset, startAngle, curAngle) {
     return baseOffset - gestureAngDelta(startAngle, curAngle);
   }
+  /* v262 (NAV-LIVE-TRAFFIC-CITYFEED, owner Oct 26, 2026 08:14
+     MDT — "Yes build it!"): the City of Calgary's FREE open-data
+     feed of CURRENT traffic incidents (data.calgary.ca, Socrata
+     dataset 4jah-h97u — verified live the morning of the build:
+     rows updated minutes before the check, newest incident
+     ~13 min old, "Continuous" updates / 10-minute resolution,
+     City of Calgary Open Data Terms). parseCityIncidents
+     normalises a SODA answer into {id, lat, lng, info, desc};
+     rows without honest coordinates are dropped — never placed
+     by guess. The id mirrors the feed's own composite (start
+     time + position), so one incident keeps one identity across
+     refreshes and is warned about once per route. */
+  function parseCityIncidents(rows) {
+    var out = [];
+    if (!rows || !rows.length) return out;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var lat = Number(r.latitude), lng = Number(r.longitude);
+      if (!isFinite(lat) || !isFinite(lng)) continue;
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+      out.push({
+        id: String(r.start_dt_utc || '') + '|' + lat.toFixed(5) + '|' + lng.toFixed(5),
+        lat: lat, lng: lng,
+        info: String(r.incident_info || ''),
+        desc: String(r.description || '')
+      });
+    }
+    return out;
+  }
+
+  /* v262: which incidents sit ON the route ahead of the truck.
+     Each incident is projected onto the route line
+     (routeRemainder does the projection); one counts when it
+     lies within offMaxM of the line and its along-route point
+     is ahead of the truck (the truck's own along) by at most
+     aheadMaxM. Returns them in approach order:
+     [{inc, aheadM, offM}]. Incidents behind the truck or off
+     the route are excluded here — they stay map markers only. */
+  function trafficOnRoute(line, truckAlong, incidents, offMaxM, aheadMaxM) {
+    var out = [];
+    if (!line || line.length < 2 || !incidents || !incidents.length) return out;
+    for (var i = 0; i < incidents.length; i++) {
+      var inc = incidents[i];
+      if (!inc) continue;
+      var pr = routeRemainder(line, [inc.lat, inc.lng]);
+      if (!pr) continue;
+      var ahead = pr.along - truckAlong;
+      if (pr.dist <= offMaxM && ahead > 0 && ahead <= aheadMaxM) {
+        out.push({ inc: inc, aheadM: ahead, offM: pr.dist });
+      }
+    }
+    out.sort(function (a, b) { return a.aheadM - b.aheadM; });
+    return out;
+  }
+
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -1199,9 +1254,13 @@
       showSpeedLimit: s.showSpeedLimit === undefined ? true : !!s.showSpeedLimit,
       /* v240 (NAV-LAYERS-BUTTON): the drive map's base layer —
          standard / satellite / elevation. Traffic is NOT a
-         layer value: no data source is wired for it yet, so
-         no stored value can name it. */
-      driveLayer: (s.driveLayer === 'satellite' || s.driveLayer === 'elevation') ? s.driveLayer : 'standard'
+         base-layer value — it is an overlay, so it keeps its
+         own switch beside the base choice. */
+      driveLayer: (s.driveLayer === 'satellite' || s.driveLayer === 'elevation') ? s.driveLayer : 'standard',
+      /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): the live-traffic
+         overlay (City of Calgary current incidents) — on by
+         default, toggled from the layers panel. */
+      trafficOn: s.trafficOn === undefined ? true : !!s.trafficOn
     };
     setNavViewMode(out.viewMode);
     return out;
@@ -1659,6 +1718,11 @@
            arrival timer (kept on S so teardown reaches them). */
         drive: null, driveMap: null, driveLine: null, driveMarker: null,
         driveTimer: null, heading: null,
+        /* v262: live traffic — the fetched incident list, the
+           last fetch attempt (the refresh gate), the ids already
+           warned about on THIS route, and the marker groups for
+           the planning map and the drive map. */
+        trafficList: [], trafficAt: 0, trafficSaid: {}, trafficGroup: null, driveTrafficGroup: null,
         /* v135: the drive wake lock's sentinel + visibility
            handler (see driveWake in the drive section). */
         wakeSentinel: null, wakeVis: null
@@ -1798,6 +1862,10 @@
         }).join('') +
         '</div>' +
         '<div class="nv-drive-reroute hidden" id="nvd_reroute">Rerouting…</div>' +
+        /* v262: the traffic-ahead chip — same state-gated pill
+           pattern as the reroute line above it; the tick shows
+           it while an incident sits on the route ahead. */
+        '<div class="nv-drive-traffic hidden" id="nvd_traffic"></div>' +
         /* v183 (pinch-to-zoom): appears only while the driver is
            in free-look (he pinched or dragged the drive map);
            one tap puts the map back on the truck. */
@@ -1816,19 +1884,18 @@
            control — a corner button docked bottom-right on the
            speedometer's line (the dock v237 vacated), opening
            a small panel: Standard / Satellite / Traffic /
-           Elevation. Traffic's entry exists NOW because the
-           owner ordered the button ahead of the data ("I want
-           the button because in future traffic will be
-           there"); it wears a "soon" tag and its tap explains
-           in the panel that traffic is not live yet — it
-           switches nothing and fakes no layer. */
+           Elevation. Traffic's entry began as the button ahead
+           of the data (v240, owner's order); v262 wires it for
+           real — it is the live-traffic overlay's on/off switch
+           (City of Calgary current incidents), not a base layer,
+           so it toggles independently of the base choice. */
         '<button class="nv-layers-btn" id="nvd_layers" aria-label="Map layers" title="Map layers">' +
         '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 3 L22 8.5 L12 14 L2 8.5 Z" fill="#ffffff"/><path d="M3.5 12.5 L12 17 L20.5 12.5" fill="none" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/><path d="M3.5 16.5 L12 21 L20.5 16.5" fill="none" stroke="#9db8e8" stroke-width="2" stroke-linejoin="round"/></svg></button>' +
         '<div class="nv-layers-panel hidden" id="nvd_layers_panel">' +
         '<div class="nv-layers-title">Map layers</div>' +
         '<button class="nv-layer-opt" id="nvd_layer_standard">🗺️ Standard</button>' +
         '<button class="nv-layer-opt" id="nvd_layer_satellite">🛰️ Satellite</button>' +
-        '<button class="nv-layer-opt" id="nvd_layer_traffic">🚦 Traffic<span class="nv-layer-soon">soon</span></button>' +
+        '<button class="nv-layer-opt" id="nvd_layer_traffic">🚦 Traffic</button>' +
         '<button class="nv-layer-opt" id="nvd_layer_elevation">⛰️ Elevation</button>' +
         '<div class="nv-layers-note hidden" id="nvd_layers_note"></div>' +
         '</div>' +
@@ -2525,6 +2592,11 @@
           S.line = line;
           S.plan = plan;
           fetchGradeEvents(line);
+          /* v262: a new route re-arms the traffic warnings —
+             each incident may be warned about once per route —
+             and refreshes the incident list against the new line. */
+          S.trafficSaid = {};
+          fetchTraffic(true);
           /* v196 (NAV-LANES): lane lookups belong to THIS
              route's maneuvers — a new route starts with an
              empty cache. */
@@ -3388,6 +3460,10 @@
           saveSettings({ muted: false });
         }
         paintMute();
+        /* v262: the drive map exists now — hang the incident
+           markers on it and refresh the list for the drive. */
+        fetchTraffic(false);
+        paintTrafficMarkers();
         var saidNow = driveTick();
         if (!saidNow) {
           var cur = S.plan.maneuvers[S.manIdx] || S.plan.maneuvers[0];
@@ -3429,7 +3505,7 @@
         try { document.body.classList.remove('mt-driving'); } catch (e) {}
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
         try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
-        S.driveMap = null; S.driveLine = null; S.driveMarker = null;
+        S.driveMap = null; S.driveLine = null; S.driveMarker = null; S.driveTrafficGroup = null;
         var scr = body.querySelector('#nv_drive_screen');
         if (scr) scr.classList.add('hidden');
         /* v222: a drive that was restored from the park has no
@@ -3521,8 +3597,8 @@
          aerial tiles, probed live); Elevation = the street
          layer PLUS the World Hillshade at 45% — real shaded
          relief over the streets, roads still readable. Traffic
-         has no layer here by design — no data source is
-         wired; its panel entry says so and switches nothing.
+         is not a base layer — it rides over any base as
+         incident markers (the v262 block below paintDriveLayers).
          A switched-away resilient layer's self-heal watchdog
          keeps its own (now detached) layer — a no-op off-map,
          the shipped v220 posture.
@@ -3542,6 +3618,98 @@
         if (kind === 'elevation') {
           S.driveHillLayer = L.tileLayer(HILLSHADE_TILE_URL, { maxZoom: 18, maxNativeZoom: 15, opacity: 0.45, className: 'nv-tile-hill' }).addTo(S.driveMap);
         }
+      }
+
+      /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): the City of Calgary
+         CURRENT traffic incidents feed, fetched straight from
+         the city's Socrata endpoint (CORS-open, no key) on the
+         v179 lazy-fetch pattern: at render, at route time, at
+         Drive-open, then on a 2-minute cadence gated inside the
+         drive tick — no extra timer to leak. The upstream feed
+         itself republishes continuously (10-minute resolution),
+         so 2 minutes is well inside its freshness. A failed
+         fetch keeps the last good list and says nothing — the
+         layer never fakes freshness it does not have. */
+      var TRAFFIC_FEED_URL = 'https://data.calgary.ca/resource/4jah-h97u.json?$limit=100&$order=start_dt_utc%20DESC';
+      var TRAFFIC_REFRESH_MS = 120000;
+      var TRAFFIC_RADIUS_M = 40000; /* markers: within 40 km of the truck / map centre */
+      var TRAFFIC_OFF_M = 75;       /* an incident counts as ON the route within 75 m of its line */
+      var TRAFFIC_AHEAD_M = 3000;   /* warnings + chip cover the 3 km ahead */
+
+      function trafficIcon() {
+        return L.divIcon({ className: 'nv-traffic-pin-wrap', html: '<div class="nv-traffic-pin">⚠</div>', iconSize: [30, 30], iconAnchor: [15, 15] });
+      }
+
+      /* Rebuild both marker groups from S.trafficList. Runs on
+         the refresh cadence only — never per tick (the v128
+         mutate-don't-rebuild rule governs the tick; a rebuild
+         every 2 minutes of a handful of markers is the lane /
+         grade fetch pattern, off the critical path). */
+      function paintTrafficMarkers() {
+        if (!window.L || !S || typeof L.layerGroup !== 'function' || typeof L.marker !== 'function') return;
+        var centre = S.pos || null;
+        if (!centre && S.map) { try { var c = S.map.getCenter(); if (c) centre = [c.lat, c.lng]; } catch (e) {} }
+        var near = (S.trafficList || []).filter(function (inc) {
+          return !centre || haversineM(centre, [inc.lat, inc.lng]) <= TRAFFIC_RADIUS_M;
+        });
+        function build(interactive) {
+          var kids = near.map(function (inc) {
+            var mk = L.marker([inc.lat, inc.lng], { icon: trafficIcon(), interactive: interactive, keyboard: false });
+            if (interactive && mk.bindPopup) {
+              mk.bindPopup('<b>⚠ ' + esc(inc.info || 'Traffic incident') + '</b>' +
+                (inc.desc ? '<br>' + esc(inc.desc) : '') +
+                '<br><span style="color:#666">City of Calgary — live traffic incidents</span>');
+            }
+            return mk;
+          });
+          return L.layerGroup(kids);
+        }
+        var on = !!(S.settings && S.settings.trafficOn);
+        if (S.map) {
+          if (S.trafficGroup) { try { S.map.removeLayer(S.trafficGroup); } catch (e) {} S.trafficGroup = null; }
+          S.trafficGroup = build(true);
+          if (on) S.trafficGroup.addTo(S.map);
+        }
+        if (S.driveMap) {
+          if (S.driveTrafficGroup) { try { S.driveMap.removeLayer(S.driveTrafficGroup); } catch (e) {} S.driveTrafficGroup = null; }
+          S.driveTrafficGroup = build(false);
+          if (on) S.driveTrafficGroup.addTo(S.driveMap);
+        }
+      }
+
+      function applyTrafficVisibility() {
+        if (!S) return;
+        var on = !!(S.settings && S.settings.trafficOn);
+        if (!on) {
+          try {
+            if (S.trafficGroup && S.map) S.map.removeLayer(S.trafficGroup);
+            if (S.driveTrafficGroup && S.driveMap) S.driveMap.removeLayer(S.driveTrafficGroup);
+          } catch (e) {}
+          return;
+        }
+        paintTrafficMarkers();
+        fetchTraffic(false);
+      }
+
+      function fetchTraffic(force) {
+        if (!S || !S.settings || !S.settings.trafficOn) return;
+        if (typeof fetch !== 'function') return;
+        var now = Date.now();
+        if (!force && S.trafficAt && now - S.trafficAt < TRAFFIC_REFRESH_MS) return;
+        /* the attempt is stamped up front, so a dead feed can
+           never hot-loop the tick — same cooldown spirit as the
+           v238 lane lookup. */
+        S.trafficAt = now;
+        try {
+          fetch(TRAFFIC_FEED_URL)
+            .then(function (r) { return r.json(); })
+            .then(function (rows) {
+              if (!S) return;
+              S.trafficList = parseCityIncidents(rows);
+              paintTrafficMarkers();
+            })
+            .catch(function () {});
+        } catch (e) {}
       }
 
       /* v227 (NAV-LANE-WARMUP-SCOPE — found on the F1 path):
@@ -3742,6 +3910,17 @@
           var dockTxt = dp.next ? (fmtDist(dp.toTurnM) + ' · ' + (dp.next.instruction || '')) : 'Arrived';
           try { if (window.App) App._pipLine = dockTxt; } catch (e) {}
         }
+        /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): keep the incident
+           list fresh on the drive's own cadence — fetchTraffic
+           self-gates to one attempt per 2 minutes, checked
+           here on the fix stream (no extra timer). The
+           on-route set for THIS fix is computed once and
+           shared by the spoken warning and the chip below. */
+        if (S.settings.trafficOn) fetchTraffic(false);
+        if (!S.trafficSaid) S.trafficSaid = {};
+        var trafficHits = (S.settings.trafficOn && S.trafficList && S.trafficList.length)
+          ? trafficOnRoute(S.line, pr.along, S.trafficList, TRAFFIC_OFF_M, TRAFFIC_AHEAD_M) : [];
+
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);
         /* v179 (F5): grade warnings — 500 m before a sustained
@@ -3751,12 +3930,14 @@
            grade"). Only when no turn prompt spoke on this very
            fix — speak() cancels, and a turn always outranks a
            hill. */
+        var gradeSpoke = false;
         if (!say && S.settings.gradeAlerts && S.gradeEvents && S.gradeEvents.length) {
           for (var gi = 0; gi < S.gradeEvents.length; gi++) {
             var ev = S.gradeEvents[gi];
             if (S.gradeSaid['g' + gi]) continue;
             if (pr.along >= ev.atM - 500 && pr.along < ev.atM) {
               S.gradeSaid['g' + gi] = 1;
+              gradeSpoke = true;
               var pct = Math.abs(Math.round(ev.gradePct));
               speak(ev.gradePct > 0
                 ? 'Steep climb ahead — ' + pct + ' percent grade.'
@@ -3765,6 +3946,38 @@
             }
           }
         }
+        /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): traffic ahead —
+           spoken ONCE per incident per route (S.trafficSaid,
+           re-armed by finalizeRoute) when it first comes
+           within 3 km on the route ahead, and only on a fix
+           where nothing higher-priority spoke: a turn outranks
+           a hill, a hill outranks traffic — speak() cancels
+           the channel, so the order IS the guarantee. The chip
+           keeps the warning on screen for the whole approach,
+           said or not. Display + voice only — the route is
+           never altered by traffic in this build. */
+        if (!say && !gradeSpoke && trafficHits.length) {
+          for (var ti = 0; ti < trafficHits.length; ti++) {
+            var hit = trafficHits[ti];
+            if (S.trafficSaid[hit.inc.id]) continue;
+            S.trafficSaid[hit.inc.id] = 1;
+            speak('Traffic ahead — ' + (hit.inc.desc || 'Incident reported.') +
+              (hit.inc.info ? ' ' + hit.inc.info + '.' : '') +
+              ' In ' + fmtDist(hit.aheadM) + '.');
+            break;
+          }
+        }
+        var tEl = body.querySelector('#nvd_traffic');
+        if (tEl) {
+          var tShow = trafficHits.length > 0;
+          if (S.drive.trafficShown !== tShow) {
+            S.drive.trafficShown = tShow;
+            tEl.classList.toggle('hidden', !tShow);
+          }
+          if (tShow) driveText(tEl, 'traffic', '⚠ Traffic ahead · ' + fmtDist(trafficHits[0].aheadM) +
+            (trafficHits[0].inc.desc ? ' — ' + trafficHits[0].inc.desc : ''));
+        }
+
         maybeFetchSpeedLimit();
         if (S.driveMap) {
           try {
@@ -4024,10 +4237,14 @@
       var layersPanel = body.querySelector('#nvd_layers_panel');
       var layersNote = body.querySelector('#nvd_layers_note');
       function paintLayerOpts() {
-        ['standard', 'satellite', 'traffic', 'elevation'].forEach(function (k) {
+        /* v262: the three base choices light by driveLayer;
+           Traffic's lamp is its own overlay switch. */
+        ['standard', 'satellite', 'elevation'].forEach(function (k) {
           var b = body.querySelector('#nvd_layer_' + k);
           if (b) b.classList.toggle('on', S.settings.driveLayer === k);
         });
+        var tb = body.querySelector('#nvd_layer_traffic');
+        if (tb) tb.classList.toggle('on', !!S.settings.trafficOn);
       }
       if (layersBtn) layersBtn.onclick = function () {
         if (layersPanel) { layersPanel.classList.toggle('hidden'); paintLayerOpts(); }
@@ -4045,13 +4262,29 @@
           if (layersPanel) layersPanel.classList.add('hidden');
         };
       });
+      /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): the Traffic entry is
+         now the live overlay's switch — it flips the persisted
+         trafficOn setting, repaints the lamps, and shows or
+         clears the incident markers on both maps. It never
+         touches the base-layer choice, and the panel stays
+         open (it is a toggle, not a layer pick). */
       var trafficOpt = body.querySelector('#nvd_layer_traffic');
       if (trafficOpt) trafficOpt.onclick = function () {
+        var on = !(S.settings && S.settings.trafficOn);
+        saveSettings({ trafficOn: on });
+        paintLayerOpts();
         if (layersNote) {
-          layersNote.textContent = 'Traffic isn\u2019t live yet \u2014 this button is ready for the day the traffic feed is wired.';
+          layersNote.textContent = on
+            ? 'Traffic on \u2014 live incidents from the City of Calgary, marked on the map.'
+            : 'Traffic off.';
           layersNote.classList.remove('hidden');
         }
+        applyTrafficVisibility();
       };
+
+      /* v262: the module's first pull of the incident list —
+         markers land on the planning map as soon as it answers. */
+      fetchTraffic(true);
 
       /* v135: the avatar tap — opens/closes the chooser; a choice
          applies AT THE TAP (glyph swapped, 'on' marker moved) and
