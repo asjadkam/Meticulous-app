@@ -783,6 +783,31 @@
           } catch (e) { ShiftTrack._pipActionWired = false; }
         }
       }
+    },
+    /* v53 (WIDGET-TAPS-DEAD, web 258): live delivery of
+       home-screen widget taps while the app process is alive —
+       the mirror of addPipActionListener for the widget channel
+       (native v53 hands the stashed word over the moment the
+       tap's intent lands). The takeWidgetAction collect stays
+       as the cold-start / bridge-down twin. Inert on shells
+       whose plugin never fires the event (pre-v53): the
+       collects carry those, exactly as before. */
+    _widgetActionFns: [],
+    _widgetActionWired: false,
+    addWidgetActionListener: function (fn) {
+      if (typeof fn === 'function') ShiftTrack._widgetActionFns.push(fn);
+      if (!ShiftTrack._widgetActionWired) {
+        ShiftTrack._widgetActionWired = true;
+        var p = plugin();
+        if (p && typeof p.addListener === 'function') {
+          try {
+            p.addListener('widgetAction', function (ev) {
+              var a = (ev && ev.action) || '';
+              ShiftTrack._widgetActionFns.slice().forEach(function (f) { try { f(a); } catch (e) {} });
+            });
+          } catch (e) { ShiftTrack._widgetActionWired = false; }
+        }
+      }
     }
   };
 

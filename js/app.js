@@ -5863,7 +5863,21 @@
        a widget tap may already be waiting from a cold start. */
     try {
       if (window.ShiftTrack && ShiftTrack.addPipListener) {
-        ShiftTrack.addPipListener(function (inPip) { App._pip = !!inPip; refreshBubbleFace(); });
+        ShiftTrack.addPipListener(function (inPip) {
+          App._pip = !!inPip; refreshBubbleFace();
+          /* v53 (WIDGET-TAPS-DEAD, web 258): leaving the float
+             is an arrival posture of its own — a widget or face
+             tap that expanded the app out of PiP lands here, and
+             the page may never have reported 'hidden' while its
+             activity floated, so the visibilitychange collect
+             cannot be its only drain. Drain every stash + the
+             session record on the way out. */
+          if (!inPip) {
+            try { App.collectWidgetAction(); } catch (e9) {}
+            try { App.collectPipAction(); } catch (e10) {}
+            try { App.collectSessionRecord(); } catch (e11) {}
+          }
+        });
       }
       /* v224 (BUBBLE-FACE-WRONG-OCT22): the pre-entry swap — the
          shell announces the leave BEFORE the window shrinks, so
@@ -5880,6 +5894,16 @@
          lives; a cold start collects the stash instead. */
       if (window.ShiftTrack && ShiftTrack.addPipActionListener) {
         ShiftTrack.addPipActionListener(applyPipAction);
+      }
+      /* v53 (WIDGET-TAPS-DEAD, web 258): widget taps stream in
+         live too — native v53 hands the stashed word over the
+         moment the tap's intent lands (deliverStashedWidgetAction),
+         so a tap is performed on arrival in every posture,
+         including the expand-out-of-PiP arrival whose page never
+         reported 'hidden'. The init/foreground collects below
+         remain the cold-start and bridge-down backstop. */
+      if (window.ShiftTrack && ShiftTrack.addWidgetActionListener) {
+        ShiftTrack.addWidgetActionListener(applyWidgetAction);
       }
     } catch (e) {}
     App.collectPipAction();
