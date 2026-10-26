@@ -9,7 +9,7 @@
  *     into the plane's one transform, against the twist so the
  *     map follows the fingers);
  *   - two-finger vertical SLIDE tilts it (S.viewPitch overrides
- *     the composed 45° pitch; fingers up = pitch up toward the
+ *     the composed 50° pitch; fingers up = pitch up toward the
  *     horizon, down = flatten toward top-down).
  * The channel is decided by the NAVPURE gestureClass with PINCH
  * judged first and on its own threshold — a pinch never reads
@@ -267,7 +267,7 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
   const plane = w.reg.nvd_plane;
   const map = w.reg.nv_drive_map;
   eq('at rest the plane is the pure v139 chase composition',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-40deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-40deg)');
   eq('the gesture observers are attached (one per pointer event)',
     (map._listeners['pointerdown'] || []).length, 1);
   eq('the recenter pill is hidden while following',
@@ -282,17 +282,17 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
     map.firePtr('pointermove', 2, 100 + 100 * Math.cos(r), 100 + 100 * Math.sin(r));
   });
   eq('a 30° clockwise twist turns the view 30° clockwise (rotate(-40+30))',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-10deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-10deg)');
   eq('the twist entered free-look (recenter pill showing)',
     w.reg.nvd_recenter.classList.contains('hidden'), false);
   map.firePtr('pointerup', 1); map.firePtr('pointerup', 2);
   eq('lifting the fingers keeps the manual view (free-look holds)',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-10deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-10deg)');
 
   /* SNAP-BACK: the pill restores the pure chase view. */
   w.reg.nvd_recenter.onclick();
   eq('recenter zeroes the rotation — pure chase composition back',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-40deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-40deg)');
 
   /* TILT: both fingers slide UP 40px in four 10px steps. */
   map.firePtr('pointerdown', 1, 100, 200);
@@ -301,26 +301,26 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
     map.firePtr('pointermove', 1, 100, 200 - dy);
     map.firePtr('pointermove', 2, 200, 200 - dy);
   });
-  eq('sliding both fingers up 40px pitches the view up (45 + 10)',
-    plane.style.transform, 'perspective(1100px) rotateX(55deg) rotate(-40deg)');
+  eq('sliding both fingers up 40px pitches the view up (50 + 10)',
+    plane.style.transform, 'perspective(1100px) rotateX(60deg) rotate(-40deg)');
   map.firePtr('pointerup', 1); map.firePtr('pointerup', 2);
   w.reg.nvd_recenter.onclick();
   eq('recenter flattens the tilt back to the posture default',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-40deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-40deg)');
 
   /* PINCH: a big spread changes nothing of ours (Leaflet zooms). */
   map.firePtr('pointerdown', 1, 100, 100);
   map.firePtr('pointerdown', 2, 200, 100);
   map.firePtr('pointermove', 2, 260, 100);
   eq('a pinch leaves the plane composition untouched',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-40deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-40deg)');
   map.firePtr('pointerup', 1); map.firePtr('pointerup', 2);
 
   /* ONE FINGER: never a gesture. */
   map.firePtr('pointerdown', 1, 100, 100);
   map.firePtr('pointermove', 1, 300, 300);
   eq('one-finger movement does nothing to the view',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(-40deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(-40deg)');
   map.firePtr('pointerup', 1);
 
   console.log('— pins —');

@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 258,
-  "notes": "v258 — WIDGET-TAPS-DEAD, the web half of native v53 (owner, Sun Oct 25, 2026 20:53 MDT: v52 widget and PiP face taps 'don't do anything... Nada'). Two tap-path repairs, nothing else: (1) js/shifttrack.js gains addWidgetActionListener — native v53 hands a widget tap's word over live the moment its intent lands (deliverStashedWidgetAction), and applyWidgetAction is registered for it in js/app.js, so a tap performs on arrival in every posture, including a tap that expands the app out of the PiP float (whose page never reported 'hidden', so the visibilitychange collect never fired and the stashed word waited forever). (2) The pipChanged handler now drains the widget/PiP stashes and the session record on PiP exit, the backstop for arrivals while the bridge was down. The init/foreground collects are unchanged. Inert off-shell and on pre-v53 shells (no live event ever fires; the collects carry those exactly as before). Native v53 also fixes the PendingIntent identity collision that re-worded the widget's buttons (see the v53 native notes) and the PiP face's colour-by-state (the bubble's colour now follows the action its glyph offers, the dashboard hero's law). Dashboard behaviour otherwise unchanged.",
+  "webVersion": 259,
+  "notes": "v259 — NAV-CHASE-ANGLE-STEEPER (owner, Mon Oct 26, 2026 07:29 MDT, driving: \"Chase angle has to be a little bit more steep — I want to be able to see the road ahead a little bit more\"). One parameter only: the Navigator 3D chase posture pitch in modules/navigator.js planeTransform rises 45° → 50° (the composed perspective(1100px) rotateX term; higher pitches the view up toward the horizon, so more of the road ahead shows — the same direction the two-finger tilt gesture uses). The tilt gesture base default follows to 50° so a tilt still starts at the posture with no snap. 2D view, turn guidance, lane inset, layers, routing and the 3D/2D toggle are untouched. Harnesses: nav-gestures-v210 and nav-gesture-plane-v215 rest/tilt pins moved with the parameter (45→50, tilt-up expectation 55→60), navigator-screen tilt pin moved. His next real drive is the verdict.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "20dacd4e3cb9bc15f1c20a0979edfcad5512036a5a4b82756bc29f30426132fc",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "69abf4f5ccfa4cdede196a908c7e181fb03e56a6962a815cd7a625e3d686b664",
+    "index.html": "0cbf8fb07b2520ba063f8f3b69871997db2a324eada747911995cf7e3a87bcf5",
     "js/app.js": "4e5c2c8ed1dbf804b63ad6e7f43d81df13658ab252b91ee02a628dfbf599a489",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -48,7 +48,7 @@
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "f9e78ceecbd464e7175d726ce9cdfebee612d5858d6823daf5dbae6da8523031",
     "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
-    "modules/navigator.js": "3a37ef0a6cb0c16dfe1024c649431d2eccb9a2dcc6b570a186213e7618e79a41",
+    "modules/navigator.js": "83b78aa2cf1575c78d2fac615748d472b7c75343287906785382b6b3e75a4d0f",
     "modules/pnl.js": "ca6b59a7143e2e9e47b46846aa80dfb3d45c33f22282abc500d88daa63882f4b",
     "modules/preferences.js": "bfe562c57a6538f8cd9191a8c51abe74096aaba4eba024dd8ef7f9dddd5bd042",
     "modules/pti.js": "4e9dccd006cec078326f32be49997c1639ac68637148fce84596b33499c357f8",

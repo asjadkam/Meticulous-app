@@ -2683,6 +2683,16 @@
          element, one raster, one writer (the drive tick, ≥2°
          deadband). */
       function planeTransform(headingDeg) {
+        /* v259 (NAV-CHASE-ANGLE-STEEPER — owner, Oct 26, 2026,
+           driving: "chase angle has to be a little bit more
+           steep, I want to be able to see the road ahead a
+           little bit more"): the posture pitch rises 45° → 50°
+           (the higher rotateX pitches the view up toward the
+           horizon, so more of the road ahead shows; lower
+           flattens toward top-down). The gesture base default
+           follows (50°), so a two-finger tilt still starts
+           from the posture with no snap. Nothing else about
+           the composition changes. */
         /* v177 (A4): 2D is a flat heading-up view — same spin,
            no pitch, no perspective. 3D (default) is the v139
            composed chase transform, byte-identical to before. */
@@ -2698,10 +2708,10 @@
         var hasPitch = !!(S && S.viewPitch !== null && S.viewPitch !== undefined);
         if (!off && !hasPitch) {
           if (getNavViewMode() === '2d') return 'rotate(' + (-headingDeg) + 'deg)';
-          return 'perspective(1100px) rotateX(45deg) rotate(' + (-headingDeg) + 'deg)';
+          return 'perspective(1100px) rotateX(50deg) rotate(' + (-headingDeg) + 'deg)';
         }
         if (getNavViewMode() === '2d') return 'rotate(' + (-(headingDeg + off)) + 'deg)';
-        var pitch = hasPitch ? S.viewPitch : 45;
+        var pitch = hasPitch ? S.viewPitch : 50;
         return 'perspective(1100px) rotateX(' + pitch + 'deg) rotate(' + (-(headingDeg + off)) + 'deg)';
       }
 
@@ -2897,7 +2907,7 @@
         S._gestEl = mapEl;
         S._pointers = {};
         S._gestStart = null; S._gestLock = null;
-        S._gestBaseRot = 0; S._gestBasePitch = 45;
+        S._gestBaseRot = 0; S._gestBasePitch = 50;
         S._gestBaseZoom = null; S._gestAnchored = false;
         var ptrs = function () {
           return Object.keys(S._pointers).map(function (k) { return S._pointers[k]; });
@@ -2911,7 +2921,7 @@
             S._gestLock = null;
             S._gestAnchored = false;
             S._gestBaseRot = S.viewRot || 0;
-            S._gestBasePitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 45;
+            S._gestBasePitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 50;
             S._gestBaseZoom = null;
             if (S.driveMap) { try { S._gestBaseZoom = S.driveMap.getZoom(); } catch (e) {} }
           }

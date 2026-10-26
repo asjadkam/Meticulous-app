@@ -85,11 +85,11 @@ ok('v139+v178+v220: the map rides ONE bounded plane — 230% × 300% (v178 A1 re
   !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
 ok('v139: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform',
   !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&
-  nav.indexOf('perspective(1100px) rotateX(45deg) rotate(') >= 0);
+  nav.indexOf('perspective(1100px) rotateX(50deg) rotate(') >= 0);
 ok('the viewport backstop is a sky gradient, not flat gray',
   /\.nv-drive-viewport\{[^}]*linear-gradient\(180deg,#0b1424/.test(css));
-ok('v139: the tilt is 45° in the composed plane transform (was 52° in a CSS layer — stability won the last 7°, BUGS.md v139)',
-  nav.indexOf('rotateX(45deg)') >= 0 && css.indexOf('rotateX(52deg)') < 0);
+ok('v139: the tilt is 50° in the composed plane transform (45° from v139 to v258; v259 NAV-CHASE-ANGLE-STEEPER raised it so more road ahead shows; was 52° in a CSS layer before v139, BUGS.md v139)',
+  nav.indexOf('rotateX(50deg)') >= 0 && css.indexOf('rotateX(52deg)') < 0);
 ok('a second settle invalidateSize pass exists (+650ms)',
   nav.indexOf('}, 650);') >= 0 && (nav.match(/invalidateSize\(\)/g) || []).length >= 3);
 

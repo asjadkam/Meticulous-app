@@ -399,7 +399,7 @@ function assertLevelTrue(label, transformStr, headingDeg) {
   const plane = w.reg.nvd_plane;
   const map = w.reg.nv_drive_map;
   const drive = w.mapsById.nv_drive_map;
-  const REST = 'perspective(1100px) rotateX(45deg) rotate(-40deg)';
+  const REST = 'perspective(1100px) rotateX(50deg) rotate(-40deg)';
   function truckErr() {
     const p = drive.latLngToContainerPoint(ORIGIN);
     return Math.max(Math.abs(p.x - MAP_W / 2), Math.abs(p.y - MAP_H / 2));
@@ -456,7 +456,7 @@ function assertLevelTrue(label, transformStr, headingDeg) {
     map.firePtr('pointermove', 2, 300 + 100 * Math.cos(r), 400 + 100 * Math.sin(r));
   });
   eq('a 45° clockwise twist turns the bearing term by exactly 45°',
-    plane.style.transform, 'perspective(1100px) rotateX(45deg) rotate(5deg)');
+    plane.style.transform, 'perspective(1100px) rotateX(50deg) rotate(5deg)');
   near('the twist never moved the truck off its anchor', truckErr(), 0, 3);
   near('the twist never touched the zoom', drive.getZoom(), zTwist, 0.02);
   map.firePtr('pointerup', 1); map.firePtr('pointerup', 2);
@@ -473,8 +473,8 @@ function assertLevelTrue(label, transformStr, headingDeg) {
     map.firePtr('pointermove', 1, 300, 500 - dy);
     map.firePtr('pointermove', 2, 400, 500 - dy);
   });
-  eq('sliding both fingers up 40px pitches to 55° — the bearing term untouched (pitch only, no yaw)',
-    plane.style.transform, 'perspective(1100px) rotateX(55deg) rotate(-40deg)');
+  eq('sliding both fingers up 40px pitches to 60° — the bearing term untouched (pitch only, no yaw)',
+    plane.style.transform, 'perspective(1100px) rotateX(60deg) rotate(-40deg)');
   near('the tilt never moved the truck off its anchor', truckErr(), 0, 3);
   assertLevelTrue('after the tilt', plane.style.transform, HEAD);
   map.firePtr('pointerup', 1); map.firePtr('pointerup', 2);
