@@ -1535,6 +1535,32 @@
       } else if (rate > 0) {
         e.amount = (hrs * rate).toFixed(2);
       }
+      /* v270 (TRAVEL-MISSING-ON-TRACKER-CLOSE, owner, Oct 26,
+         2026): a session stamped with the day's travel bonus
+         (app.js stopSessionAt — a dispatch day closed through
+         the tracker) composes the way a dispatch close composes
+         for the driver who drove: foreman (session) hours +
+         travel = paid hours, with the split stored on the entry
+         and the total in `hours`, so payFor re-derives the same
+         figure if the rate is edited later. Hourly only — travel
+         is an hours concept; the quantity-priced standards never
+         carried it. The v38 no-travel rule stands for UNSTAMPED
+         sessions: a bare tracker's span already includes his
+         travel time. The stamp exists only where the day's pay
+         is ticket-shaped — there the session is the foreman base
+         and the bonus is owed on top, exactly as the dispatch
+         completion books it. */
+      var travelH = (std === 'hourly') ? (parseFloat(session.travelHours) || 0) : 0;
+      if (travelH > 0) {
+        var fhH = Math.round(hrs * 100) / 100;
+        var totH = Math.round((hrs + travelH) * 100) / 100;
+        e.hours = totH.toFixed(2);
+        e.foremanHours = fhH;
+        e.travelHours = travelH;
+        e.travelInIncome = true;
+        if (rate > 0) e.amount = (totH * rate).toFixed(2);
+        feed = 'Tracked session ' + fhH + 'h + travel ' + travelH + 'h logged to Revenue.';
+      }
       var list = entriesAll(); /* v242: writers work on the FULL list — the scoped read could drop the other profile's records on save */
       /* v241 (SHIFT-CLOSE-DUP-ENTRY, owner Oct 22 close-out +
          Oct 23 15:07): one close, one entry. A completion entry

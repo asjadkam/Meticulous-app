@@ -240,6 +240,7 @@ function makeChainWorld() {
     'function noteDispatchCompleted', 'function takeSessionAccum',
     'function trackedSecondsAt', 'function trackerSessionStartMs',
     'function ptiStartOdoFor', 'function takePendingStartOdo', 'function takePendingStartOdoPhoto', 'function applyOdoReading', 'function applyEndOdoToEntry',
+    'function autostartParseSched', 'function autostartRecordDate', 'function autostartDispatchFor', 'function closeTravelFor',
     'function stopSessionAt'
   ];
   let code = fns.map(m => extractFn(appSrc, m)).join('\n');

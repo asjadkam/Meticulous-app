@@ -1,5 +1,19 @@
 'use strict';
-/* END-TIME-EDIT-IGNORED (queue; Oct 23, 2026, his recording):
+/* v270 SUPERSESSION (Oct 26, 2026): the v249 ruling below — a
+ * future end is the driver's call, asked out loud via the
+ * confirm-to-now dialog — was itself superseded the same week
+ * by the owner's direct order ("That shouldn't be a limitation...
+ * I wanna stop it 6 pm as per the ticket!"): a same-day future
+ * end now books EXACTLY as entered, no dialog at all (pay follows
+ * the foreman ticket, whose finish is routinely ahead of the
+ * close tap). The v249 law's core survives intact: NEVER a silent
+ * swap — the end he sets is the end that books, which is now the
+ * only outcome. The future-end worlds below pin the v270 law;
+ * the past-end and blank-default worlds are unchanged from v249.
+ * The full close (review -> Confirm -> books, travel composition,
+ * stays-closed) is proven in tools/close-end-future-v270-test.js.
+ *
+ * END-TIME-EDIT-IGNORED (queue; Oct 23, 2026, his recording):
  * in End shift he set the end time to 11:00 AM — the field
  * showed 11:00 — but the Review-the-close computed
  * 8:00 AM → 10:15 AM / 02:15:51 / $65.66. His edit never
@@ -80,7 +94,12 @@ function makeWorld(fieldVal, confirmAnswer) {
   const code = prelude + [
     extractFn(appSrc, 'function fmtClock(sec)'),
     extractFn(appSrc, 'function fmtTimeAMPM(ms)'),
+    extractFn(appSrc, 'function todayStr'),
     extractFn(appSrc, 'function trackedSecondsAt(endMs)'),
+    extractFn(appSrc, 'function autostartParseSched'),
+    extractFn(appSrc, 'function autostartRecordDate'),
+    extractFn(appSrc, 'function autostartDispatchFor'),
+    extractFn(appSrc, 'function closeTravelFor'),
     extractFn(appSrc, 'App.trackerSaveEnd = function'),
     extractFn(appSrc, 'function endCloseSummary(endMs)'),
     extractFn(appSrc, 'function paintEndReview(endMs)'),
@@ -93,27 +112,24 @@ function makeWorld(fieldVal, confirmAnswer) {
 
 console.log('— his Oct 23 sequence: 11:00 AM set at 10:15 AM — never a silent swap —');
 {
-  /* he declines the substitution: nothing is painted, nothing pends */
-  const w = makeWorld('11:00', false);
-  w.App.trackerSaveEnd();
-  ok('the future end is raised out loud (a confirm naming the times)',
-    w.calls.confirms.length === 1 && /11:00 AM/.test(w.calls.confirms[0]) && /10:15 AM/.test(w.calls.confirms[0]),
-    JSON.stringify(w.calls.confirms));
-  ok('declined → no review painted with substituted figures', w.el('trkEndReview').innerHTML === '');
-  ok('declined → no stop ran', w.calls.stops.length === 0);
-}
-{
-  /* he accepts ending now: the review shows NOW because he said so */
-  const w = makeWorld('11:00', true);
-  w.App.trackerSaveEnd();
-  const html = w.el('trkEndReview').innerHTML;
-  ok('accepted → the review paints', html.indexOf('Check the close') >= 0, html.slice(0, 80));
-  ok('accepted → the review shows the now he agreed to (10:15 AM)', /→ 10:15 AM/.test(html), html.match(/Shift<\/span><b>[^<]*/)?.[0]);
-  ok('accepted → figures are the running count at now (02:15:51 · $65.66)',
-    html.indexOf('02:15:51') >= 0 && html.indexOf('$65.66') >= 0, html.match(/Shift<\/span><b>[^<]*/)?.[0]);
-  w.App.trackerConfirmEnd();
-  ok('accepted → Confirm stops the shift at now', w.calls.stops.length === 1 && w.calls.stops[0].endMs === NOW,
-    JSON.stringify(w.calls.stops));
+  /* v270: the future end books AS SET — no dialog is asked at all,
+     so the confirm answer (either way) changes nothing */
+  for (const ans of [false, true]) {
+    const w = makeWorld('11:00', ans);
+    w.App.trackerSaveEnd();
+    ok('future end (confirm=' + ans + ') → NO dialog is raised', w.calls.confirms.length === 0,
+      JSON.stringify(w.calls.confirms));
+    const html = w.el('trkEndReview').innerHTML;
+    ok('future end (confirm=' + ans + ') → the review paints', html.indexOf('Check the close') >= 0, html.slice(0, 80));
+    ok('future end (confirm=' + ans + ') → the review shows HIS end (8:00 AM → 11:00 AM)',
+      /8:00 AM → 11:00 AM/.test(html), html.match(/Shift<\/span><b>[^<]*/)?.[0]);
+    ok('future end (confirm=' + ans + ') → figures computed to HIS end (03:00:00 · $87.00)',
+      html.indexOf('03:00:00') >= 0 && html.indexOf('$87.00') >= 0, html.match(/Shift<\/span><b>[^<]*/)?.[0]);
+    w.App.trackerConfirmEnd();
+    ok('future end (confirm=' + ans + ') → Confirm stops the shift at HIS end, sharp',
+      w.calls.stops.length === 1 && w.calls.stops[0].endMs === L(11, 0, 0),
+      JSON.stringify(w.calls.stops));
+  }
 }
 console.log('— a real finish in the past reaches the review + the pay, exactly as set —');
 {

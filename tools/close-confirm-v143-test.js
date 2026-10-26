@@ -348,6 +348,7 @@ function expectedEntry(regionWorld, closedRec) {
       appSrc.indexOf('function stopSessionAt'));
     const fns = ['function todayStr', 'function trackedSecondsAt', 'function trackerSessionStartMs', 'function trkAccum',
       'function takeSessionAccum', 'function ptiStartOdoFor', 'function takePendingStartOdo', 'function takePendingStartOdoPhoto', 'function applyEndOdoToEntry',
+      'function autostartParseSched', 'function autostartRecordDate', 'function autostartDispatchFor', 'function closeTravelFor',
       'function liveKmNow', 'function endCloseSummary', 'function stopSessionAt'];
     /* v206: the photo stash var from the ODO-PROMPT region rides
        with its functions, like the declBlock above does for v143. */

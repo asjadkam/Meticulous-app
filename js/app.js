@@ -2600,6 +2600,29 @@
     // releases the hold, a resume takes it back (js/miles.js owns it).
     try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
   };
+  /* v270 (TRAVEL-MISSING-ON-TRACKER-CLOSE, owner, Oct 26, 2026):
+     the travel bonus a TRACKER close composes with, in hours.
+     Pay follows the foreman ticket: a dispatch-shaped close books
+     foreman hours + the fixed travel bonus from Preferences (the
+     ticket-ocr / connectpipe law), but a day closed from the
+     tracker used to book the bare span and the travel silently
+     vanished (Oct 26: $264.69 = 9.13h x $29 — no travel anywhere).
+     The bonus belongs to a day that HAS a dispatch: the test is
+     the app's own day resolution (autostartDispatchFor — the
+     same one the v263 miles gate trusts), read against the day
+     the session STARTED (the dispatch's day). No dispatch that
+     day, or no bonus set: 0 — travel is never invented.
+     stopSessionAt stamps the result on the session; Revenue's
+     onSession composes the money from the stamp; endCloseSummary
+     prices the close review from this same helper — so what the
+     review promises is what Confirm logs. */
+  function closeTravelFor(dayStr) {
+    try {
+      var tb = parseFloat(store.get('onboarding', {}).travelBonus) || 0;
+      if (!(tb > 0) || !dayStr) return 0;
+      return autostartDispatchFor(store.get('dsp_active', null), store.get('dsp_list', []), dayStr) ? tb : 0;
+    } catch (e) { return 0; }
+  }
   /* v34: stop with an explicit end time. The owner often forgets to press STOP
      when the shift actually ends, so the recorded end overshot. The STOP
      button now opens an end-time sheet (defaults to now — same result as
@@ -2722,6 +2745,14 @@
       // v41: the dynamic tracker's accumulated quantities for the day
       // (Weight: totalWeightKg + loadCount; Trip: tripCount).
       takeSessionAccum(entry);
+      /* v270 (TRAVEL-MISSING-ON-TRACKER-CLOSE): on a dispatch day
+         the session carries the day's travel bonus, so Revenue's
+         onSession composes this close the dispatch way (foreman
+         hours + travel) instead of booking the bare span. Stamped
+         here — before the entry is saved and handed to Revenue —
+         from the same helper the close review prices with. */
+      var closeTravel = closeTravelFor(todayStr(new Date(trackerSessionStartMs())));
+      if (closeTravel > 0) entry.travelHours = closeTravel;
       sessions.push(entry); store.set('sessions', sessions);
       // v40: both odometer readings already on the entry -> reconcile
       // now (the usual path reconciles when the end reading lands via
@@ -2822,19 +2853,20 @@
     var end = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(),
       parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
     if (end.getTime() <= startMs) end = new Date(end.getTime() + 24 * 3600 * 1000); // overnight shift
-    /* v249 (END-TIME-EDIT-IGNORED): a chosen end still in the
-       future used to be SILENTLY replaced with now — Oct 23 he
-       set 11:00 AM at 10:15 AM and the review computed
-       8:00 AM → 10:15 AM / $65.66 with no word that his edit
-       had been swapped, so the edit "never reached the review".
-       A shift cannot end in the future — but the substitution
-       is now HIS call, asked out loud: confirm and the close
-       runs to now; decline and the sheet stays exactly as he
-       left it, nothing painted, nothing pending. */
-    if (end.getTime() > Date.now()) {
-      if (!confirm(fmtTimeAMPM(end.getTime()) + " hasn't happened yet — it's " + fmtTimeAMPM(Date.now()) + ' now. End the shift at ' + fmtTimeAMPM(Date.now()) + ' instead?')) return;
-      end = new Date();
-    }
+    /* v270 (CLOSE-END-FUTURE-GUARD, owner, Oct 26, 2026 — "That
+       shouldn't be a limitation... Because I wanna stop it 6 pm
+       as per the ticket!"): a chosen end LATER than now is
+       accepted exactly as entered. Pay follows the foreman
+       ticket, whose finish is the truth and is routinely ahead
+       of the moment he performs the close — closing at 5:06 PM
+       to the ticket's 6:00 PM finish books the session to
+       6:00 PM, full stop. The v249 confirm-to-now substitution
+       (and the silent clamp before it) is superseded by his
+       direct order: no dialog, no swap — the end he set is the
+       end that books. What stays: the overnight roll above, the
+       zero-second refusal and the >12 h sanity confirm below.
+       The end remains a time-of-day on the session's start date
+       (+ the roll) — a future calendar day cannot be entered. */
     var secs = trackedSecondsAt(end.getTime());
     if (secs <= 0) { alert('That end time is not after the start. Check the times and try again.'); return; }
     if (secs > 12 * 3600 && !confirm('That makes a ' + fmtClock(secs) + ' shift. Is that right?')) { return; }
@@ -2870,7 +2902,15 @@
       var trips = parseInt(acc.tripCount, 10) || 0;
       if (trips > 0 && rate > 0) amount = trips * rate;
     } else if (rate > 0) {
-      amount = (secs / 3600) * rate;
+      /* v270 (TRAVEL-MISSING-ON-TRACKER-CLOSE): on a dispatch day
+         the review prices the composition Confirm will log —
+         session hours + the travel bonus (closeTravelFor, the
+         same helper stopSessionAt stamps from) — so the promise
+         and the booking can never disagree. Hourly books only,
+         exactly as onSession composes. */
+      var travelH = (std === 'hourly')
+        ? closeTravelFor(todayStr(new Date(trackerSessionStartMs()))) : 0;
+      amount = (secs / 3600 + travelH) * rate;
     }
     return {
       secs: secs, std: std, km: (typeof km === 'number' ? km : null), amount: amount,
