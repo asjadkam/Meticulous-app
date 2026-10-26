@@ -34,6 +34,19 @@
  * the browser probe in the run report; this suite keeps the
  * contract from regressing.
  *
+ * v260 SUPERSEDE (NAV-PIXELATED-ROADS, owner, Mon Oct 26, 2026
+ * 07:41 MDT: "The images of the road are extremely pixelated"):
+ * the z15 cap WAS the pixelation — Leaflet upscaled z15 tiles
+ * 8x into the z18 view. Re-probed live (Oct 26): Esri z18 is
+ * still blank over his home block (0/9 detailed tiles, z17
+ * 3/9), but OpenStreetMap standard serves REAL detail at
+ * native z18 (9/9 home, 8/9 Peigan Trail). The contract below
+ * is re-pinned: the drive street layer is the OSM source at
+ * native z18 — no upscale, no blank Esri fringe tiles. The
+ * blank-map protection now comes from the source's own
+ * coverage, verified tile by tile, plus the resilient layer's
+ * error fallback to Esri streets.
+ *
  * Run: node tools/nav-tile-coverage-v232-test.js
  */
 const fs = require('fs');
@@ -230,13 +243,13 @@ function tick() { return new Promise(function (r) { setTimeout(r, 15); }); }
   const driveLayers = w.calls.tileLayers.filter(function (r) { return r.addedTo === driveMap; });
   check('A1: exactly one tile layer rides the drive map', driveLayers.length === 1, 'layers=' + driveLayers.length);
   const rec = driveLayers[0] || { url: '', opts: {} };
-  check('A2: the drive layer is the Esri street source (source swaps belong to the colours batch)',
-    /server\.arcgisonline\.com.*World_Street_Map/.test(rec.url), rec.url);
+  check('A2: the drive layer is the OpenStreetMap street source (v260 re-pin: Esri z17/18 verified blank over his areas Oct 26; OSM serves real detail at native z18)',
+    /tile\.openstreetmap\.org/.test(rec.url), rec.url);
   check('A3: the view framing stays at zoom 18 (his v178 readability choice)',
     driveMap._views.some(function (v) { return v[1] === 18; }) && rec.opts.maxZoom === 18,
     'views=' + JSON.stringify(driveMap._views) + ' maxZoom=' + rec.opts.maxZoom);
-  check('A4: THE FIX — tiles are fetched at native zoom 15, the deepest level where Esri actually has his road network, and scaled up to the z18 view',
-    rec.opts.maxNativeZoom === 15, 'maxNativeZoom=' + rec.opts.maxNativeZoom);
+  check('A4: THE FIX (v260) — tiles are fetched at NATIVE zoom 18, the level the view runs at: no upscaling (the v232/v235 z15 cap was the pixelation the owner reported Oct 26)',
+    rec.opts.maxNativeZoom === 18, 'maxNativeZoom=' + rec.opts.maxNativeZoom);
   try { api.teardown(); } catch (e) {}
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

@@ -49,15 +49,15 @@ const cssSrc = read('css/style.css');
 const ver = JSON.parse(read('version.json'));
 
 console.log('— A1: the plane covers the corners —');
-check('the plane is 230% wide x 300% tall, anchor-centred (left:-65%, top:-86%) — v220 re-pin: A1 grew the SQUARE plane for the corners; the top still fell short on diagonal headings, so v220 grows the HEIGHT only (far-field), centre unmoved',
-  /\.nv-drive-plane\{[^}]*width:230%;height:300%;left:-65%;top:-86%/.test(cssSrc));
-check('the raster budget holds: (230/340)^2 < 0.5 of the v135 plane',
-  Math.pow(230 / 340, 2) < 0.5);
+check('the plane is 260% wide x 300% tall, anchor-centred (left:-80%, top:-86%) — v220 re-pin: A1 grew the SQUARE plane for the corners; the top still fell short on diagonal headings, so v220 grows the HEIGHT only (far-field), centre unmoved. v260 re-pin (NAV-TOP-CUTOFF): width 230% -> 260% (left -80% = 50 - 260/2) for the translate-compensated reach on the owner\'s 768x1024 screen; height/top unchanged',
+  /\.nv-drive-plane\{[^}]*width:260%;height:300%;left:-80%;top:-86%/.test(cssSrc));
+check('the raster budget holds: (260x300)/(340x340) = 0.67 of the v135 plane (v260 re-pin; was (230x300)/(340x340) = 0.60 at v220)',
+  (260 * 300) / (340 * 340) < 0.7);
 
 console.log('— A2: movement is interpolated —');
-check('exactly ONE .style.transform writer remains, inside paintPlane, with the pinned composed call (v222 pin move: the plane lookup gained the docEl fallback — a PARKED drive screen lives in the shell dock, outside this render body, and its plane must still paint; the writer count and the composed call are unchanged)',
+check('exactly ONE .style.transform writer remains, inside paintPlane, with the pinned composed call (v222 pin move: the plane lookup gained the docEl fallback — a PARKED drive screen lives in the shell dock, outside this render body, and its plane must still paint; the writer count and the composed call are unchanged. v260 pin move: paintPlane first derives the cutoff lift (S.driveLiftPx) from the live viewport, so the writer now sits in an if(plane) block a few lines below the lookup; the writer count and the composed call are unchanged)',
   (navSrc.match(/\.style\.transform\s*=/g) || []).length === 1 &&
-  /function paintPlane\(hdg\) \{[\s\S]{0,320}?var plane = body\.querySelector\('#nvd_plane'\) \|\| docEl\('nvd_plane'\);\s*if \(plane\) plane\.style\.transform = planeTransform\(hdg\);/.test(navSrc));
+  /function paintPlane\(hdg\) \{[\s\S]{0,1500}?var plane = body\.querySelector\('#nvd_plane'\) \|\| docEl\('nvd_plane'\);[\s\S]{0,1600}?plane\.style\.transform = planeTransform\(hdg\);/.test(navSrc));
 check('the tick keeps its v128 >=2° gate and writes through paintPlane',
   navSrc.indexOf('angDeltaDeg(S.heading, S.drive.headingApplied) >= 2') >= 0 &&
   navSrc.indexOf('paintPlane(hdg);') >= 0 && navSrc.indexOf('driveAnimKick();') >= 0);

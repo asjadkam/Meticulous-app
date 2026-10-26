@@ -464,8 +464,22 @@ label.chk input{width:18px;height:18px;}
    the map is cut off". The extra height is all far-field: the map
    now reaches the top of the glass at every heading. Width is
    unchanged (side coverage was never the complaint) and the
-   raster grows ~1.3x, bounded and deliberate. */
-.nv-drive-plane{position:absolute;width:230%;height:300%;left:-65%;top:-86%;transform-origin:50% 50%;}
+   raster grows ~1.3x, bounded and deliberate.
+   v260 (NAV-TOP-CUTOFF, owner, Oct 26, 2026 07:41 MDT):
+   the v220 coverage math was done for a 360x640 screen at
+   45°. On the owner's real drive screen (768x1024) at the
+   v259 50° posture, a homography of the exact composition
+   shows the far edge projecting only ~477px above the
+   anchor against ~655px needed — the top ~15% uncovered at
+   EVERY heading (his "wide dark band" under the banner).
+   Two moves fix it: the transform gains a translateY
+   compensation (planeTransform in navigator.js — lift =
+   0.49 x viewport height, follow camera compensated to
+   match), and the plane widens 230% -> 260% (left -80% =
+   50 - 260/2, still centred on the anchor) for the raster
+   the wider reach samples. Height/top are unchanged —
+   300%/-86% already centre the tall axis on the anchor. */
+.nv-drive-plane{position:absolute;width:260%;height:300%;left:-80%;top:-86%;transform-origin:50% 50%;}
 /* v220 (PIP-REDESIGN): the drive screen's picture-in-picture
    posture — NOT a miniature of the big map: the top directions
    bar, the turn inset, the ETA bar and every control go away;
@@ -552,7 +566,7 @@ label.chk input{width:18px;height:18px;}
   width:min(47vw,340px);height:auto;aspect-ratio:4/3;border-radius:16px;overflow:hidden;
   box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);
   pointer-events:auto;cursor:pointer;}
-.nv-drive-map{width:100%;height:100%;background:#e8edf5;}
+.nv-drive-map{width:100%;height:100%;background:#e9e2d0;} /* v260: warm sand under the vibrant palette while tiles load (was pale blue-grey #e8edf5) */
 /* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
    30px ▲ "arrow as you" was "something puny" — "the moving
    avatar should be something bigger, a truck which you should
@@ -713,9 +727,27 @@ body.mt-driving #chatSheet{z-index:2120;}
    3.3% -> 9.0%. The v125 hot-pink failure was OSM's salmon
    motorways under a lift; Esri's palette has no such band.
    Satellite/hillshade layers (v240 classes) get NO lift —
-   aerial photos are already true colour. */
+   aerial photos are already true colour.
+   v260 (NAV-VIBRANT-COLORS, owner, Oct 26, 2026 07:41 MDT:
+   "You have to change the colors. Something more vibrant"):
+   the drive street source is OSM standard again (see
+   driveTileSpec — it is the only keyless source with real
+   z18 detail over his areas), and OSM raw measures paler
+   than Esri did (suburb mean saturation 0.052), so the lift
+   is re-tuned for THIS palette, simulated in PIL on the
+   live tiles before shipping: saturate(2.3)
+   hue-rotate(11deg) contrast(1.16) — suburb mean
+   saturation 0.052 -> 0.110, Deerfoot/Bow 0.111 -> 0.206;
+   water #a7c6e4 -> #98d1ff (rich blue), park #c8facc ->
+   #8fffbc (vivid green), trunk #f5ba97 -> #ffbe40 (bold
+   orange), primary #fcd6a4 -> #ffe749 (bold yellow),
+   motorway #e88ea0 -> #ff767e (bold coral-red — the
+   +11deg rotation is what holds it out of the v124
+   hot-pink band; larger rotations were simulated and
+   rejected: +22deg washed the water to periwinkle and the
+   parks to teal). Satellite/hillshade keep NO lift. */
 .nv-mapzone .leaflet-tile{filter:contrast(1.08) saturate(1.18);}
-.nv-tile-street{filter:contrast(1.06) saturate(1.38);}
+.nv-tile-street{filter:saturate(2.3) hue-rotate(11deg) contrast(1.16);}
 /* v240 (NAV-LAYERS-BUTTON): the layers control — the button
    docked bottom-right on the speedometer's own 96px line
    (the dock the inset vacated in v237), its panel floating

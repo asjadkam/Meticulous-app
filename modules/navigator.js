@@ -118,7 +118,43 @@
       if (!req.costing_options[req.costing]) req.costing_options[req.costing] = {};
       req.costing_options[req.costing].shortest = true;
     }
+    /* v260 (NAV-NO-UTURN): two opt-in request shapes for the
+       forward re-route in doRoute — absent by default, so the
+       proven request above stays byte-identical unless the
+       caller asks. opts.heading (degrees, finite) rides the
+       ORIGIN location: Valhalla's own location heading biases
+       the origin snap toward the edge direction the truck is
+       already travelling, so a route can begin by continuing
+       forward. opts.via ([lat,lon]) inserts a 'through'
+       location between origin and destination: the trip then
+       starts at the truck, passes the via point, and only
+       then heads for the destination — one continuous line
+       whose first leg runs forward along the current road. */
+    if (opts && isFinite(opts.heading)) {
+      req.locations[0].heading = Math.round(((Number(opts.heading) % 360) + 360) % 360);
+    }
+    if (opts && opts.via && isFinite(opts.via[0]) && isFinite(opts.via[1])) {
+      req.locations.splice(1, 0, { lon: opts.via[1], lat: opts.via[0], type: 'through' });
+    }
     return req;
+  }
+
+  /* v260 (NAV-NO-UTURN): the point `distM` metres from `pos`
+     along bearing `headingDeg` — spherical destination point
+     on the same earth radius haversineM uses. doRoute uses
+     it to place the forward via point on the road ahead of
+     the truck when the engine answers a truck route with a
+     turn-around at the start. */
+  function forwardOrigin(pos, headingDeg, distM) {
+    if (!pos || !isFinite(pos[0]) || !isFinite(pos[1]) || !isFinite(headingDeg) || !(distM > 0)) return null;
+    var R = 6371000, rad = Math.PI / 180;
+    var d = distM / R, brg = headingDeg * rad;
+    var lat1 = pos[0] * rad, lon1 = pos[1] * rad;
+    var sinLat2 = Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brg);
+    var lat2 = Math.asin(Math.max(-1, Math.min(1, sinLat2)));
+    var lon2 = lon1 + Math.atan2(Math.sin(brg) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+    return [lat2 / rad, lon2 / rad];
   }
 
   /* v177 (A4/F4): the drive view mode — '3d' (the v175 chase
@@ -210,13 +246,48 @@
      get a measured colour lift via the nv-tile-street class
      (see the layer creation in startDrive + style.css):
      home tile mean saturation 0.150 -> 0.202 simulated, the
-     blank-map coverage contract untouched. */
+     blank-map coverage contract untouched.
+     v260 (NAV-PIXELATED-ROADS + NAV-VIBRANT-COLORS, owner,
+     Oct 26, 2026 07:41 MDT, driving Peigan Trail SE: "The
+     images of the road are extremely pixelated and not even
+     clear" + "You have to change the colors. Something more
+     vibrant"): BOTH complaints traced to this spec on live
+     tile probes (Oct 26, fetched from the CDNs themselves).
+     PIXELATION: the drive view runs at zoom 18 (v178) but the
+     street layer was capped maxNativeZoom 15, so Leaflet
+     upscaled z15 tiles 8x — the blur WAS the upscale. The z15
+     cap existed (v232/v235) because Esri serves BLANK tiles
+     at z17-18 over fringe areas; re-probed tile by tile:
+     Esri z18 over the owner's home block = 0/9 detailed tiles,
+     z17 = 3/9 — still blank-prone. OpenStreetMap standard at
+     the same blocks: z18 = 9/9 detailed at home, 8/9 on
+     Peigan Trail; z17 = 9/9 both. So the street source goes
+     BACK to OSM standard (the v124 source) — but this time at
+     NATIVE z18 (spec.maxNative below; paintDriveLayers reads
+     it), so nothing is upscaled on the street layer at all.
+     VIBRANCY: OSM raw measures pale (mean saturation 0.052 on
+     his suburb tiles, 0.111 over Deerfoot/Bow), so the street
+     layer's CSS lift is re-tuned for THIS source in style.css
+     (.nv-tile-street): saturate(2.3) hue-rotate(11deg)
+     contrast(1.16), simulated in PIL on the live tiles —
+     suburb mean saturation 0.052 -> 0.110, Deerfoot 0.111 ->
+     0.206; water #a7c6e4 -> #98d1ff (rich blue), trunk ->
+     #ffbe40 (bold orange), primary -> #ffe749 (bold yellow),
+     motorway #e88ea0 -> #ff767e (bold coral-red; the +11deg
+     rotation is what keeps it out of the v124 hot-pink band
+     without washing the water violet the way +22deg did).
+     Hillshade keeps native 15 (soft relief under the same
+     upscale as before — outside both complaints). The
+     resilient layer's error fallback still swaps to Esri
+     streets (driveTileUrl) when OSM itself fails — an
+     offline-grade degradation, never the normal path. */
   function driveTileSpec() {
     return {
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       subdomains: '',
       cls: 'nv-tile-street',
-      attribution: 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN, Esri Japan, METI, TomTom'
+      maxNative: 18,
+      attribution: '© OpenStreetMap contributors'
     };
   }
 
@@ -229,7 +300,14 @@
   function satelliteTileSpec() {
     return {
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      cls: 'nv-tile-sat'
+      cls: 'nv-tile-sat',
+      /* v260: Esri World Imagery re-probed at z17/z18 over
+         Peigan Trail (Oct 26): 20,695 / 18,767 unique colours
+         per tile — real aerial detail, NOT the blank tiles
+         the street service serves at those zooms — so the
+         satellite layer also renders native at the z18 view
+         instead of upscaling z15. */
+      maxNative: 18
     };
   }
   /* v240: the elevation overlay — Esri's World Hillshade
@@ -2498,8 +2576,34 @@
           note('');
         }
 
-        function requestRoute(excludePts) {
-          var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode, { routePref: S.settings.routePref });
+        /* v260 (NAV-NO-UTURN): the truck's live heading, when
+           one is honestly known — the applied drive heading
+           mid-drive, else the last GPS heading. null when
+           parked with no heading yet: the forward re-request
+           below needs a direction of travel to project along,
+           and never invents one. */
+        function truckHeading() {
+          var h = (S.drive && S.drive.headingApplied !== null && S.drive.headingApplied !== undefined)
+            ? S.drive.headingApplied : S.heading;
+          return (h !== null && h !== undefined && isFinite(h)) ? h : null;
+        }
+        var fwdAttempt = 0, viaInFlight = false, plainRetried = false;
+        function requestRoute(excludePts, viaPt) {
+          viaInFlight = !!viaPt;
+          var reqOpts = { routePref: S.settings.routePref };
+          if (viaPt) {
+            /* v260: the forward re-request — the origin stays
+               the truck, a 'through' point 500 m (then 1200 m)
+               ahead along its heading joins the request, and
+               the origin carries the heading itself, so the
+               engine's answer begins by continuing forward
+               along the current road instead of turning the
+               truck around (see the truck block in the .then). */
+            reqOpts.via = viaPt;
+            var th = truckHeading();
+            if (th !== null) reqOpts.heading = th;
+          }
+          var reqBody = buildRouteRequest(S.pos, S.dest, S.settings.profile, S.settings.mode, reqOpts);
           if (excludePts && excludePts.length) {
             reqBody.exclude_locations = excludePts.map(function (p) { return { lat: p[0], lon: p[1] }; });
           }
@@ -2536,11 +2640,70 @@
                     return;
                   }
                 }
+                /* v260 (NAV-NO-UTURN — owner, Oct 26, 2026
+                   07:43 MDT, driving: "Why on earth is it so
+                   difficult for you to tell this GPS never to
+                   tell me to U-turn"): the v135/v192 layers had
+                   a structural hole at the START of a route.
+                   When the turn-around sits in the first
+                   maneuvers (the truck pulled out pointing away
+                   from the destination, or a missed turn left
+                   it heading off), excluding its point just
+                   moves the turn-around to the next intersection
+                   — or excludes the origin itself — and once
+                   the two rounds above are spent the app adopts
+                   the sanitized plan: the WORDS are gone but the
+                   line still doubles back and the guidance still
+                   walks the truck around. So when the exclusion
+                   rounds are spent (or produced no points) and
+                   an offending maneuver STILL begins within the
+                   first 1 km, one more layer fires before
+                   sanitize: a FORWARD re-request — the route
+                   re-asked with a 'through' point projected
+                   ahead of the truck along its own heading
+                   (500 m, then 1200 m) plus the heading on the
+                   origin — whose answer starts by continuing
+                   forward along the current road to proper
+                   streets. Mid-route reversals (the v192
+                   divided-highway crossover) are the exclusion
+                   rounds' job and never reach here cured or
+                   not; sanitizeTruckPlan remains the last line,
+                   so no U-turn is ever spoken or shown as an
+                   instruction whatever the engine returns. */
+                if (uts.length && fwdAttempt < 2) {
+                  var early = false;
+                  for (var ui = 0; ui < uts.length; ui++) {
+                    if (plan.maneuvers[uts[ui]] && plan.maneuvers[uts[ui]].cumStartKm < 1.0) { early = true; break; }
+                  }
+                  var fwdHdg = truckHeading();
+                  if (early && fwdHdg !== null) {
+                    var via = forwardOrigin(S.pos, fwdHdg, fwdAttempt === 0 ? 500 : 1200);
+                    if (via) {
+                      fwdAttempt++;
+                      lastGood = { line: line, plan: plan };
+                      requestRoute(null, via);
+                      return;
+                    }
+                  }
+                }
                 plan = sanitizeTruckPlan(plan);
               }
               finalizeRoute(line, plan);
             })
             .catch(function (err) {
+              /* v260 (NAV-NO-UTURN): a failed FORWARD (via)
+                 request — the engine could not use the through
+                 point — retries ONCE as a plain request before
+                 any fallback: the fresh answer re-enters the
+                 U-turn layers above, so one unsnappable point
+                 never costs the driver the forward route.
+                 Bounded by plainRetried; the lastGood fallback
+                 below still bounds the whole chain. */
+              if (viaInFlight && !plainRetried) {
+                plainRetried = true;
+                requestRoute(null);
+                return;
+              }
               /* v135: an exclusion round failed AFTER a route was
                  already in hand — the driver keeps guidance: the
                  in-hand route, sanitized, is worth more than an
@@ -2706,13 +2869,40 @@
            parts. */
         var off = (S && S.viewRot) || 0;
         var hasPitch = !!(S && S.viewPitch !== null && S.viewPitch !== undefined);
+        /* v260 (NAV-TOP-CUTOFF — owner, Oct 26, 2026 07:41 MDT,
+           driving: "It's still cutting off"): the plane's far
+           edge never reached the top of his 768x1024 drive
+           screen — homography of THIS composition (plane
+           230%x300% at left -65%/top -86%, origin 50% 50%,
+           anchor at 50%/64%): at the 50° posture the far edge
+           projects only ~477px above the anchor against the
+           ~655px the screen needs, so the top ~15% showed the
+           viewport's sky gradient at EVERY heading (the wide
+           dark band under the banner in his recording). The
+           v139/v220 coverage math was done on a 360x640
+           reference screen. Growing the plane alone cannot fix
+           side headings (reach is bounded by halfW*cos(pitch)
+           even at infinite perspective), so the posture keeps
+           its exact 50° and gains a translate compensation:
+           translateY(-lift) between perspective and rotateX
+           slides the whole projection up until the far edge
+           covers the top — lift = 0.49 x viewport height, set
+           by paintPlane from the live viewport (S.driveLiftPx;
+           0/absent = the pre-v260 strings byte-identical). The
+           plane also widens 230% -> 260% (style.css) for the
+           raster the wider reach samples. The follow camera
+           compensates the same shift (see followTarget), so
+           the truck stays glued to its anchor. 2D is flat —
+           no translate, exactly as before. */
+        var lift = (S && S.driveLiftPx > 0) ? Math.round(S.driveLiftPx) : 0;
+        var liftStr = lift ? ' translateY(' + (-lift) + 'px)' : '';
         if (!off && !hasPitch) {
           if (getNavViewMode() === '2d') return 'rotate(' + (-headingDeg) + 'deg)';
-          return 'perspective(1100px) rotateX(50deg) rotate(' + (-headingDeg) + 'deg)';
+          return 'perspective(1100px)' + liftStr + ' rotateX(50deg) rotate(' + (-headingDeg) + 'deg)';
         }
         if (getNavViewMode() === '2d') return 'rotate(' + (-(headingDeg + off)) + 'deg)';
         var pitch = hasPitch ? S.viewPitch : 50;
-        return 'perspective(1100px) rotateX(' + pitch + 'deg) rotate(' + (-(headingDeg + off)) + 'deg)';
+        return 'perspective(1100px)' + liftStr + ' rotateX(' + pitch + 'deg) rotate(' + (-(headingDeg + off)) + 'deg)';
       }
 
       /* v178 (F2): how sharply the route bends at maneuver
@@ -2825,7 +3015,14 @@
             if (S.drive) paintPlane((S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) ? S.drive.headingApplied : (S.heading || 0));
           }
           if (S.driveMap && S.pos) {
-            try { S.driveMap.panTo(S.pos, { animate: false }); } catch (e) {}
+            /* v260: snap-back aims at the follow target — with
+               the adjustments zeroed just above, a repaint has
+               restored the lift, so the target is the ahead
+               point that keeps the truck on its anchor (and
+               followTarget falls back to the truck itself when
+               no lift applies). */
+            try { if (S.drive) driveGesturePaint(); } catch (e) {}
+            try { S.driveMap.panTo(followTarget() || S.pos, { animate: false }); } catch (e) {}
           }
         }
       }
@@ -2937,9 +3134,20 @@
           if (S._gestLock && !S._gestAnchored) {
             /* v215: the gesture acts about the truck — put
                the camera on the truck once, at lock-in,
-               before the channel's first write. */
+               before the channel's first write.
+               v260: pinch is excused from the anchor pan —
+               its zoom-around-the-truck (gesturePinchZoom)
+               preserves the truck's screen point by Leaflet's
+               own arithmetic, and the follow camera now sits
+               AHEAD of the truck (followTarget, the cutoff
+               compensation): panning it back onto the truck
+               for a pinch would fight the follow the moment
+               the fingers lift. Rotate/tilt keep the anchor —
+               their pivot contract needs the camera on the
+               truck, and the lift suspends while they own the
+               view (see paintPlane). */
             S._gestAnchored = true;
-            gestureAnchor();
+            if (S._gestLock !== 'pinch') gestureAnchor();
           }
           if (S._gestLock === 'rotate') {
             S.viewRot = gestureRotOffset(S._gestBaseRot, S._gestStart.angle, cur.angle);
@@ -3084,6 +3292,18 @@
                view: the coverage contract holds on all of
                them. */
             paintDriveLayers();
+            /* v260 (NAV-TOP-CUTOFF): open already compensated —
+               size the lift from the viewport and centre the
+               camera on the follow target, so the first frame
+               the driver sees has the truck on its anchor with
+               the road ahead filling the screen, not a
+               truck-centred frame the first tick has to fix. */
+            try {
+              var vpl = body.querySelector('.nv-drive-viewport');
+              if (vpl && vpl.clientHeight) S.driveLiftPx = Math.round(vpl.clientHeight * 0.49);
+              var ftI = followTarget();
+              if (ftI && S.pos) S.driveMap.panTo(ftI, { animate: false });
+            } catch (e) {}
             /* v183: a user drag enters free-look. Leaflet fires
                dragstart only for real gestures (programmatic
                panTo does not), so the follow camera never
@@ -3194,6 +3414,7 @@
            the next drive opens on the pure chase view. */
         try { detachDriveGestures(); } catch (e) {}
         S.viewRot = 0; S.viewPitch = null;
+        S.driveLiftPx = 0; /* v260: the cutoff lift dies with the drive */
         /* v104: leaving Drive — by the driver's tap or by the
            arrival hand-back — spends the arm: no re-route for
            this destination will auto-enter again. */
@@ -3294,26 +3515,30 @@
          double-announcing. */
       /* v240 (NAV-LAYERS-BUTTON): the drive map's base stack —
          painted at Drive-open and re-painted by the layers
-         button on a switch. Standard = the Esri street layer
-         (with its v239 lift class); Satellite = Esri World
-         Imagery (real aerial tiles, probed live); Elevation =
-         the street layer PLUS the World Hillshade at 45% —
-         real shaded relief over the streets, roads still
-         readable. Every layer fetches at native z15 under
-         the z18 view (the v232/v235 coverage contract), so a
-         switch can never reintroduce a blank map. Traffic
+         button on a switch. Standard = the street layer (v260:
+         OSM standard with its retuned lift class — see
+         driveTileSpec); Satellite = Esri World Imagery (real
+         aerial tiles, probed live); Elevation = the street
+         layer PLUS the World Hillshade at 45% — real shaded
+         relief over the streets, roads still readable. Traffic
          has no layer here by design — no data source is
          wired; its panel entry says so and switches nothing.
          A switched-away resilient layer's self-heal watchdog
          keeps its own (now detached) layer — a no-op off-map,
-         the shipped v220 posture. */
+         the shipped v220 posture.
+         v260: the native zoom now rides the SPEC
+         (spec.maxNative): street and satellite render at
+         native z18 under the z18 view — no upscaling, which
+         was the pixelation the owner reported. The hillshade
+         overlay keeps native 15: relief is soft by nature and
+         sits under the same upscale it always had. */
       function paintDriveLayers() {
         if (!S || !S.driveMap) return;
         var kind = (S.settings && S.settings.driveLayer) || 'standard';
         if (S.driveBaseLayer) { try { S.driveMap.removeLayer(S.driveBaseLayer); } catch (e) {} S.driveBaseLayer = null; }
         if (S.driveHillLayer) { try { S.driveMap.removeLayer(S.driveHillLayer); } catch (e) {} S.driveHillLayer = null; }
         var spec = kind === 'satellite' ? satelliteTileSpec() : driveTileSpec();
-        S.driveBaseLayer = resilientTileLayer(spec.url, { maxZoom: 18, maxNativeZoom: 15, keepBuffer: 4, className: spec.cls }).addTo(S.driveMap);
+        S.driveBaseLayer = resilientTileLayer(spec.url, { maxZoom: 18, maxNativeZoom: spec.maxNative || 15, keepBuffer: 4, className: spec.cls }).addTo(S.driveMap);
         if (kind === 'elevation') {
           S.driveHillLayer = L.tileLayer(HILLSHADE_TILE_URL, { maxZoom: 18, maxNativeZoom: 15, opacity: 0.45, className: 'nv-tile-hill' }).addTo(S.driveMap);
         }
@@ -3561,9 +3786,16 @@
             var ctr = S.driveMap.getCenter ? S.driveMap.getCenter() : null;
             /* v183: free-look stands the follow camera down —
                the marker still tracks the truck, the view stays
-               where the driver put it. */
-            if (!S.driveFree && (!ctr || haversineM(S.pos, [ctr.lat, ctr.lng]) > 3)) {
-              S.driveMap.panTo(S.pos, { animate: false });
+               where the driver put it.
+               v260: the deadband and the pan both aim at the
+               follow TARGET (followTarget) — the ahead point
+               the cutoff compensation centres on. Comparing
+               against the raw truck point here would re-fire
+               the pan on every tick and park the camera on the
+               truck, undoing the compensation. */
+            var ft = followTarget() || S.pos;
+            if (!S.driveFree && (!ctr || haversineM(ft, [ctr.lat, ctr.lng]) > 3)) {
+              S.driveMap.panTo(ft, { animate: false });
             }
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
           } catch (e) {}
@@ -3654,7 +3886,52 @@
            screen is outside this body — fall back to the document
            lookup so the mini map keeps rotating with the truck. */
         var plane = body.querySelector('#nvd_plane') || docEl('nvd_plane');
-        if (plane) plane.style.transform = planeTransform(hdg);
+        if (plane) {
+          /* v260 (NAV-TOP-CUTOFF): the transform's translate
+             compensation is sized from the LIVE viewport (the
+             plane's parent) every paint — 0.49 of its height —
+             so rotation/resizing re-derives it and no stale
+             lift can outlive the drive screen that set it. */
+          var vpEl = plane.parentElement;
+          /* The lift belongs to the pure follow posture only:
+             while a two-finger rotate/tilt owns the view (or
+             its adjustment is still in play) the gesture pivot
+             contract (v215 — gestures act about the truck,
+             camera on the truck) rules, and the translate
+             suspends; snap-back zeroes the adjustments and
+             the lift returns with the chase view. */
+          var gestPivot = S._gestLock === 'rotate' || S._gestLock === 'tilt' ||
+            !!(S.viewRot || (S.viewPitch !== null && S.viewPitch !== undefined));
+          S.driveLiftPx = (vpEl && vpEl.clientHeight && !gestPivot) ? Math.round(vpEl.clientHeight * 0.49) : 0;
+          plane.style.transform = planeTransform(hdg);
+        }
+      }
+      /* v260 (NAV-TOP-CUTOFF): the follow camera's target. The
+         planeTransform translate slides the whole projection
+         up by the lift, which would carry the truck marker the
+         same distance up off its anchor — so the camera centres
+         not on the truck but on the point AHEAD of it whose
+         ground, after the lift, lands the truck exactly on the
+         anchor: ahead by lift/cos(pitch) projected pixels along
+         the applied heading (the rotateX foreshortening undone).
+         Flat 2D (no translate) and no-lift cases centre on the
+         truck exactly as before. Every follow writer — the tick
+         pan, the animator, the gesture snap-back — aims here,
+         so the deadbands compare against the same point the
+         camera is steered to. */
+      function followTarget() {
+        if (!S || !S.pos) return null;
+        if (!S.driveMap || !S.driveLiftPx || getNavViewMode() === '2d') return S.pos;
+        var pitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 50;
+        var s = S.driveLiftPx / Math.max(0.2, Math.cos(pitch * Math.PI / 180));
+        var hdg = (S.drive && S.drive.headingApplied !== null && S.drive.headingApplied !== undefined)
+          ? S.drive.headingApplied : (S.heading || 0);
+        var rad = hdg * Math.PI / 180;
+        var z = S.driveMap.getZoom ? S.driveMap.getZoom() : 18;
+        var p = S.driveMap.project(S.pos, z);
+        p.x += Math.sin(rad) * s; p.y -= Math.cos(rad) * s;
+        var ll = S.driveMap.unproject(p, z);
+        return [ll.lat, ll.lng];
       }
       function driveAnim() {
         if (!S || !S.drive) return;
@@ -3673,12 +3950,18 @@
           }
           if (S.driveMap && S.pos && S.driveMap.getCenter && !S.driveFree) {
             var ctr = S.driveMap.getCenter();
+            /* v260: the animator eases toward the follow
+               TARGET (followTarget), not the raw truck point —
+               with the cutoff compensation in the transform,
+               centring on the truck itself would walk the
+               marker up off its anchor between ticks. */
+            var tgt = followTarget() || S.pos;
             if (ctr) {
-              var gap = haversineM([ctr.lat, ctr.lng], S.pos);
+              var gap = haversineM([ctr.lat, ctr.lng], tgt);
               if (gap > 0.5) {
                 var f = gap > 8 ? 0.5 : 0.3;
-                S.driveMap.panTo([ctr.lat + (S.pos[0] - ctr.lat) * f,
-                                  ctr.lng + (S.pos[1] - ctr.lng) * f], { animate: false });
+                S.driveMap.panTo([ctr.lat + (tgt[0] - ctr.lat) * f,
+                                  ctr.lng + (tgt[1] - ctr.lng) * f], { animate: false });
                 moving = true;
               }
             }

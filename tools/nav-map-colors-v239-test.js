@@ -29,6 +29,21 @@
  * own classes and NO lift (aerial photos are already true
  * colour).
  *
+ * v260 SUPERSEDE (NAV-VIBRANT-COLORS + NAV-PIXELATED-ROADS,
+ * owner, Mon Oct 26, 2026 07:41 MDT): the source conclusion
+ * above held only while the layer was capped at z15 (where
+ * OSM is both pale AND no sharper). At native z18 the
+ * picture flips: Esri is blank over his areas while OSM
+ * serves real detail, so v260 swaps the drive street source
+ * to OSM standard at native z18 and re-tunes the lift for
+ * OSM's palette, simulated in PIL on the live tiles:
+ * saturate(2.3) hue-rotate(11deg) contrast(1.16) — suburb
+ * mean saturation 0.052 -> 0.110, Deerfoot/Bow 0.111 ->
+ * 0.206; water -> #98d1ff, trunk -> #ffbe40, primary ->
+ * #ffe749, motorway -> #ff767e (the +11deg rotation holds
+ * it out of the v124 hot-pink band). The pins below are
+ * re-based to the v260 contract.
+ *
  * RED before the fix: the drive layer is created with no
  * className and the sheet carries no drive-tile lift.
  *
@@ -53,8 +68,8 @@ const fixture = JSON.parse(read('tools/navigator-fixture-tripb.json'));
 const ORIGIN = [51.0955, -114.099], DEST = [51.1075, -114.0845];
 
 console.log('— v239: wiring pins —');
-check('the drive tile spec is STILL the Esri street source (no source swap)',
-  /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Street_Map/.test(navSrc));
+check('the drive tile spec is the OpenStreetMap standard source (v260 re-pin: the only keyless source with real z18 detail over his areas — Esri z17/18 verified blank Oct 26; the v239 no-swap conclusion held only at the z15 cap)',
+  /tile\.openstreetmap\.org/.test(navSrc));
 /* v240 supersede note: the layer creation moved into
    paintDriveLayers (the layers switch re-runs it); the class
    now rides the spec (driveTileSpec().cls) into that call. */
@@ -67,10 +82,10 @@ check('the drive layer is created with the street class (the lift scope)',
   const sat = /saturate\(([\d.]+)\)/.exec(r);
   const con = /contrast\(([\d.]+)\)/.exec(r);
   check('the street-tile lift rule exists', i !== -1, r);
-  check('the lift saturates hard enough to close the measured gap (>= 1.3)',
+  check('the lift saturates hard enough to close the measured gap (>= 1.3; v260: 2.3, tuned for OSM\'s paler raw palette)',
     !!sat && parseFloat(sat[1]) >= 1.3, r);
-  check('the lift adds a measured contrast step (1.03..1.10)',
-    !!con && parseFloat(con[1]) >= 1.03 && parseFloat(con[1]) <= 1.10, r);
+  check('the lift adds a measured contrast step (v260 re-pin: 1.16 — the v239 band 1.03..1.10 was tuned for Esri; OSM raw needs the deeper step, simulated on the live tiles)',
+    !!con && parseFloat(con[1]) >= 1.10 && parseFloat(con[1]) <= 1.20, r);
 }
 check('the lift is scoped to the street class only (no blanket drive-tile filter)',
   css.indexOf('.nv-drive-map .leaflet-tile{filter') === -1 &&
@@ -253,8 +268,8 @@ function tick() { return new Promise(function (r) { setTimeout(r, 15); }); }
   const rec = driveLayers[0] || { url: '', opts: {} };
   check('W2: the layer wears the street class (the lift applies to it)',
     rec.opts.className === 'nv-tile-street', 'className=' + rec.opts.className);
-  check('W3: the coverage contract is untouched (native z15 under a z18 view)',
-    rec.opts.maxNativeZoom === 15 && rec.opts.maxZoom === 18,
+  check('W3: the coverage contract (v260 re-pin: native z18 under the z18 view — no upscaling; the z15 cap was the pixelation)',
+    rec.opts.maxNativeZoom === 18 && rec.opts.maxZoom === 18,
     'maxNativeZoom=' + rec.opts.maxNativeZoom + ' maxZoom=' + rec.opts.maxZoom);
   try { api.teardown(); } catch (e) {}
 

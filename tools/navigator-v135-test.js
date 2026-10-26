@@ -495,8 +495,8 @@ function encodeShape(points) {
     const w = makeNavWorld({ storeData: JSON.parse(JSON.stringify(TRUCK_STORE)),
       fetchHandler: queueHandler([uturnFixture()]) });
     await routeWorld(w);
-    check('C1 re-requests are BOUNDED: exactly 3 fetches (1 + 2 exclusion rounds)',
-      w.calls.fetch.length === 3, 'fetches=' + w.calls.fetch.length);
+    check('C1 re-requests are BOUNDED: exactly 5 fetches (1 + 2 exclusion rounds + 2 v260 forward rounds — NAV-NO-UTURN, Oct 26, 2026: this fixture\'s U-turn begins ~696 m in, inside the first 1 km, so once the exclusion rounds are spent the forward layer fires its two via pushes before the sanitize net; the bound moved 3 -> 5 by design, the net below is unchanged)',
+      w.calls.fetch.length === 5, 'fetches=' + w.calls.fetch.length);
     check('C2 both re-requests carried exclusions',
       (w.calls.fetch[1].body.exclude_locations || []).length === 1 &&
       (w.calls.fetch[2].body.exclude_locations || []).length === 1);
@@ -860,6 +860,80 @@ function encodeShape(points) {
     check('K12 the navigator raises + drops mt-driving at the drive boundary',
       navSrc.indexOf("classList.add('mt-driving')") >= 0 &&
       navSrc.indexOf("classList.remove('mt-driving')") >= 0);
+  }
+
+  /* ============ F. v260: the FORWARD layer (NAV-NO-UTURN) ============
+     Owner, Mon Oct 26, 2026 07:43 MDT, driving: "Why on earth is it
+     so difficult for you to tell this GPS never to tell me to U-turn."
+     The v135/v192 exclusion rounds have a structural hole at the
+     START of a route: excluding the turn-around point just moves it
+     to the next intersection (or excludes the origin itself), so a
+     truck that pulled out pointing AWAY from its destination still
+     got a line that doubled back — words sanitized, geometry not.
+     v260 adds the layer the exclusions cannot be: once they are
+     spent and an offending maneuver still begins within the first
+     1 km, the route is re-asked FORWARD — a 'through' point
+     projected ahead of the truck along its own heading (500 m,
+     then 1200 m) plus the heading on the origin — so the answer
+     begins by continuing along the current road. The harness
+     world routes from ORIGIN with GPS heading 40 (routeWorld). */
+  console.log('— F. v260 forward layer: exclusions spent, U-turn at the start —');
+  {
+    const w = makeNavWorld({ storeData: JSON.parse(JSON.stringify(TRUCK_STORE)),
+      fetchHandler: queueHandler([uturnFixture(), uturnFixture(), uturnFixture(), cleanFixture()]) });
+    await routeWorld(w);
+    check('F1 the route took FOUR requests (plain + 2 exclusion rounds + 1 forward round)',
+      w.calls.fetch.length === 4, 'fetches=' + w.calls.fetch.length);
+    check('F2 the exclusion rounds still go first (v135 order preserved)',
+      (w.calls.fetch[1].body.exclude_locations || []).length === 1 &&
+      (w.calls.fetch[2].body.exclude_locations || []).length === 1);
+    const viaBody = w.calls.fetch[3].body;
+    check('F3 the fourth request is the FORWARD one: three locations, the middle a THROUGH point, no exclusions',
+      (viaBody.locations || []).length === 3 && viaBody.locations[1].type === 'through' &&
+      !viaBody.exclude_locations, JSON.stringify(viaBody.locations));
+    check('F4 the origin carries the truck\'s live heading (40, from the harness GPS)',
+      viaBody.locations[0].heading === 40, 'heading=' + viaBody.locations[0].heading);
+    const wantVia = sb.forwardOrigin(ORIGIN, 40, 500);
+    const gotVia = [viaBody.locations[1].lat, viaBody.locations[1].lon];
+    check('F5 the through point sits ~500 m ahead of the truck along its heading (±25 m)',
+      sb.haversineM(gotVia, wantVia) < 25 && Math.abs(sb.haversineM(gotVia, ORIGIN) - 500) < 25,
+      'off=' + sb.haversineM(gotVia, wantVia) + ' dist=' + sb.haversineM(gotVia, ORIGIN));
+    const stepsF = w.reg.nv_steps._html;
+    const cleanWords = sb.maneuverPlan(cleanFixture().trip).maneuvers[4].instruction;
+    check('F6 the adopted plan is the FORWARD route itself, not the sanitize rewrite (clean words, no U-turn, no "Continue on 48 Avenue NW" patch)',
+      !UTURN.test(stepsF) && stepsF.indexOf(cleanWords) >= 0 &&
+      stepsF.indexOf('Continue on 48 Avenue NW') < 0, stepsF.slice(0, 300));
+    w.api.teardown();
+  }
+  {
+    const w = makeNavWorld({ storeData: JSON.parse(JSON.stringify(TRUCK_STORE)),
+      fetchHandler: queueHandler([uturnFixture()]) });
+    await routeWorld(w);
+    check('F7 when NOTHING cures it the chain stays bounded: 5 fetches (1 + 2 exclusions + 2 forward pushes)',
+      w.calls.fetch.length === 5, 'fetches=' + w.calls.fetch.length);
+    const wantVia2 = sb.forwardOrigin(ORIGIN, 40, 1200);
+    const gotVia2 = [w.calls.fetch[4].body.locations[1].lat, w.calls.fetch[4].body.locations[1].lon];
+    check('F8 the second forward push reaches ~1200 m ahead (±25 m)',
+      Math.abs(sb.haversineM(gotVia2, ORIGIN) - 1200) < 25 && sb.haversineM(gotVia2, wantVia2) < 25,
+      'dist=' + sb.haversineM(gotVia2, ORIGIN));
+    const stepsF2 = w.reg.nv_steps._html;
+    check('F9 and the sanitize net STILL presents no U-turn after the forward layer is spent',
+      !UTURN.test(stepsF2) && stepsF2.indexOf('Continue on 48 Avenue NW') >= 0, stepsF2.slice(0, 200));
+    w.api.teardown();
+  }
+  {
+    const w = makeNavWorld({ storeData: JSON.parse(JSON.stringify(TRUCK_STORE)),
+      fetchHandler: queueHandler([uturnFixture(), uturnFixture(), uturnFixture(), 'REJECT', cleanFixture()]) });
+    await routeWorld(w);
+    check('F10 a FAILED forward request retries once as a plain request, then adopts its answer (5 fetches)',
+      w.calls.fetch.length === 5 &&
+      (w.calls.fetch[4].body.locations || []).length === 2 && !w.calls.fetch[4].body.exclude_locations,
+      'fetches=' + w.calls.fetch.length);
+    const stepsF3 = w.reg.nv_steps._html;
+    check('F11 the retried route presents clean words, no U-turn',
+      !UTURN.test(stepsF3) && stepsF3.indexOf(sb.maneuverPlan(cleanFixture().trip).maneuvers[4].instruction) >= 0,
+      stepsF3.slice(0, 200));
+    w.api.teardown();
   }
 
   console.log('\nnavigator-v135: ' + pass + ' passed, ' + fail + ' failed');

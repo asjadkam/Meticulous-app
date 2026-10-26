@@ -80,12 +80,12 @@ console.log('\n— (a) the map fills its area —');
    viewport's perspective property and the CSS 52° tilt layer
    are GONE — replaced by ONE bounded plane carrying a composed
    transform. The sky-gradient backstop keeps its job. */
-ok('v139+v178+v220: the map rides ONE bounded plane — 230% × 300% (v178 A1 re-pin: 190% left the top corners short at diagonal headings; v220: height grew to 300% so the pitched far field reaches the top of the glass), centred on the anchor by its offsets',
-  /\.nv-drive-plane\{[^}]*width:230%;height:300%;left:-65%;top:-86%/.test(css) &&
+ok('v139+v178+v220+v260: the map rides ONE bounded plane — 260% × 300% (v178 A1 re-pin: 190% left the top corners short at diagonal headings; v220: height grew to 300% so the pitched far field reaches the top of the glass; v260 NAV-TOP-CUTOFF: width 230% -> 260% for the translate-compensated reach on the owner\'s 768x1024 screen), centred on the anchor by its offsets',
+  /\.nv-drive-plane\{[^}]*width:260%;height:300%;left:-80%;top:-86%/.test(css) &&
   !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
-ok('v139: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform',
+ok('v139+v260: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform (v260: the composed string gains a translateY lift segment between perspective and rotateX — empty when no lift applies, so the rest string is byte-identical to the v259 form)',
   !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&
-  nav.indexOf('perspective(1100px) rotateX(50deg) rotate(') >= 0);
+  nav.indexOf("'perspective(1100px)' + liftStr + ' rotateX(50deg) rotate('") >= 0);
 ok('the viewport backstop is a sky gradient, not flat gray',
   /\.nv-drive-viewport\{[^}]*linear-gradient\(180deg,#0b1424/.test(css));
 ok('v139: the tilt is 50° in the composed plane transform (45° from v139 to v258; v259 NAV-CHASE-ANGLE-STEEPER raised it so more road ahead shows; was 52° in a CSS layer before v139, BUGS.md v139)',
@@ -170,9 +170,9 @@ console.log('\n— (d) the tap rule, both pickers —');
 }
 
 console.log('\n— (e) v128: the drive tick mutates, never rebuilds —');
-ok('v128: driveTick recenters with a deadbanded instant panTo — the per-tick setView is GONE',
-  nav.indexOf('S.driveMap.panTo(S.pos, { animate: false })') >= 0 &&
-  nav.indexOf('haversineM(S.pos, [ctr.lat, ctr.lng]) > 3') >= 0 &&
+ok('v128+v260: driveTick recenters with a deadbanded instant panTo — the per-tick setView is GONE (v260 re-pin: the pan and its 3 m deadband aim at the follow TARGET — followTarget() — the ahead point the cutoff compensation centres on; comparing against the raw truck point would re-fire the pan every tick and undo the compensation)',
+  nav.indexOf('S.driveMap.panTo(ft, { animate: false })') >= 0 &&
+  nav.indexOf('haversineM(ft, [ctr.lat, ctr.lng]) > 3') >= 0 &&
   nav.indexOf('S.driveMap.setView(S.pos, 17)') === -1);
 ok('v128: the spin write is gated by the ≥2° deadband (angDeltaDeg), so heading jitter never repaints the tilted plane',
   nav.indexOf('angDeltaDeg(S.heading, S.drive.headingApplied) >= 2') >= 0 &&
