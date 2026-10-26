@@ -20,9 +20,40 @@
   };
   window.FB = FB;
 
+  /* v269 (AUTH-LOGOUT-ON-UPDATE): the first-auth-verdict channel.
+     onAuthStateChanged's FIRST callback is the only moment the app
+     learns whether a persisted session exists. js/app.js's boot
+     gate waits on whenAuthKnown() instead of guessing "signed out"
+     while the restore is still in flight — the guess is what
+     stranded signed-in users on the sign-in landing after every
+     OTA restart (the restore lands during the OTA gate; init then
+     slammed App.onAuth(null) over it and nothing ever re-checked).
+     The flag flips exactly once, carrying the user (or null) that
+     first callback delivered. The SDK-missing / init-failure paths
+     mark it known-with-null AND set authUnavailable: there the
+     absence is permanent for this page, not a restore still in
+     flight, so the boot may proceed exactly as it always has.
+     Persistence itself is untouched — the SDK's default (local)
+     persistence at the app origin is what carries the session
+     across bundle swaps; see the v269 entry in BUGS.md. */
+  FB.authStateKnown = false;
+  FB.authUnavailable = false;
+  var _authKnownWaiters = [];
+  function noteAuthKnown(user) {
+    if (FB.authStateKnown) return;
+    FB.authStateKnown = true;
+    var w = _authKnownWaiters; _authKnownWaiters = [];
+    for (var i = 0; i < w.length; i++) { try { w[i](user || null); } catch (e) {} }
+  }
+  FB.whenAuthKnown = function () {
+    if (FB.authStateKnown) return Promise.resolve(FB.user || null);
+    return new Promise(function (res) { _authKnownWaiters.push(res); });
+  };
+
   function init() {
     if (typeof firebase === 'undefined' || !firebase.apps) {
       console.warn('Firebase SDK not loaded; running in local mode.');
+      FB.authUnavailable = true; noteAuthKnown(null);
       if (window.App && App.onAuth) App.onAuth(null);
       return;
     }
@@ -34,10 +65,12 @@
       FB.ready = true;
       FB.auth.onAuthStateChanged(function (user) {
         FB.user = user;
+        noteAuthKnown(user);
         if (window.App && App.onAuth) App.onAuth(user);
       });
     } catch (e) {
       console.error('Firebase init failed:', e);
+      FB.authUnavailable = true; noteAuthKnown(null);
       if (window.App && App.onAuth) App.onAuth(null);
     }
   }

@@ -704,6 +704,50 @@
     } catch (e) {}
   };
 
+  /* AUTH-GATE-BEGIN — harness-pinned (tools/auth-gate-v269-test.js).
+     v269 (AUTH-LOGOUT-ON-UPDATE, owner, Oct 26, 2026 13:22 MDT:
+     "Everytime... The application cold starts why does it log me
+     out! Users don't want to login again and again"). The proven
+     mechanism is a BOOT-ORDER inversion, not a lost session:
+       - js/ota.js gates App.init on OTA.ready(). In the bundled
+         copy that waits on a hosted version.json fetch; in the
+         downloaded OTA copy it waits on a serial Filesystem
+         re-verification of every bundle file. Either way it is
+         the slowest thing at boot.
+       - js/firebase.js starts at DOMContentLoaded, NOT gated on
+         OTA. Its first onAuthStateChanged callback restores the
+         persisted user (the SDK's default local persistence at
+         origin https://localhost — the OTA restart changes only
+         the URL path, /_capacitor_file_/…, never the origin, so
+         the session store is shared by both copies) and delivers
+         App.onAuth(user) — typically BEFORE init ever runs.
+       - init's onboarded branch then called App.onAuth(null)
+         UNCONDITIONALLY, slamming the v216 lock over the restored
+         session, and that branch has no re-check (the watcher
+         exists only in the not-onboarded branch). The landing
+         stuck until a manual form sign-in produced a fresh
+         App.onAuth(user) through afterAuth().
+     The rule from here on: the boot NEVER guesses. bootAuthMode
+     is the boot's only auth question —
+       'user'   Firebase has already delivered a signed-in user.
+       'null'   Firebase has already delivered a true signed-out.
+       'wait'   Firebase is present but its first verdict is still
+                in flight: hold the splash, route on the verdict.
+       'legacy' No auth-state machinery (pre-v269 firebase.js or a
+                harness stub): the exact pre-v269 behaviour. */
+  App.bootAuthMode = function (fb) {
+    if (!fb) return 'legacy';
+    if (fb.authStateKnown) return fb.user ? 'user' : 'null';
+    if (typeof fb.whenAuthKnown === 'function' || 'authStateKnown' in fb) return 'wait';
+    return 'legacy';
+  };
+  /* The wedged-restore ceiling: if Firebase's first verdict never
+     arrives at all, the boot falls back to the pre-v269 behaviour
+     at this many ms (the same patience routeReturningUser has
+     always given a slow restore, v14). Harness-shrinkable. */
+  App._bootAuthTimeoutMs = 15000;
+  /* AUTH-GATE-END */
+
   /* ---------------- trial & tiers ---------------- */
   var BETA_MODE = true; // beta testing: no paywall, full access for everyone
   /* v253 (BILLING-INTEGRATION): the billing record (store key
@@ -5746,12 +5790,28 @@
      restores it from the cloud; routing immediately would show the onboarding
      questions even though the answers are already saved. Falls back to local
      state on timeout so a slow network never strands the user. */
+  /* v269: the splash stays up until the boot routing has actually
+     decided (hideSplash is called by every routing exit in init
+     and by routeAfterFirstSync's proceed) — a returning user must
+     never watch the sign-in landing flash, or stick, while their
+     session is still restoring. Idempotent: later calls (form
+     sign-ins route through proceed too) are no-ops. init arms a
+     16 s failsafe so the splash can never trap the user. */
+  var _splashHidden = false;
+  function hideSplash() {
+    if (_splashHidden) return;
+    _splashHidden = true;
+    var s = document.getElementById('splash');
+    if (s) { s.classList.add('hide'); setTimeout(function () { try { s.style.display = 'none'; } catch (e) {} }, 650); }
+  }
+
   function routeAfterFirstSync() {
     var proceed = function () {
       try {
         if (store.get('onboarded', false)) App.showView('main');
         else { App.onbStep = 0; renderOnbStep(); App.showView('onboarding'); }
       } catch (e) { try { App.showView('main'); } catch (e2) {} }
+      hideSplash();
     };
     try {
       if (window.CloudSync && CloudSync.whenFirstPullDone) {
@@ -6228,12 +6288,57 @@
     renderOnbStep();
     // v21: if already onboarded, go straight to main — don't show login at all.
     // Firebase session restores in background via onAuthStateChanged.
+    /* v269 (AUTH-LOGOUT-ON-UPDATE): the boot routes on Firebase's
+       FIRST VERDICT, never on a guess — see AUTH-GATE-BEGIN above.
+       The pre-v269 onboarded branch called App.onAuth(null)
+       unconditionally here; because OTA.ready() (the boot gate)
+       resolves after firebase.js's DOMContentLoaded restore in
+       every native boot, that null landed AFTER the restored user
+       and the sign-in landing stuck over a live session. */
+    var _bootMode = App.bootAuthMode(window.FB);
     if (store.get('onboarded', false)) {
-      try { App.onAuth(null); } catch (e) {}
-      try { App.showView('main'); } catch (e2) {}
+      if (_bootMode === 'user') {
+        // The verdict is already in (App.onAuth(user) was delivered
+        // by firebase.js before init ran): route, never re-lock.
+        try { if (App.user !== FB.user) App.onAuth(FB.user); } catch (e) {}
+        try { App.showView('main'); } catch (e2) {}
+        hideSplash();
+      } else if (_bootMode === 'wait') {
+        // Hold the splash; route when the verdict lands. The
+        // timeout is the wedged-restore fallback (a restore that
+        // never answers must not trap the user on the splash).
+        var _gateRouted = false;
+        var _routeGate = function (u) {
+          if (_gateRouted) return; _gateRouted = true;
+          try {
+            if (u) {
+              if (App.user !== u) App.onAuth(u);
+              App.showView('main');
+            } else {
+              // A true signed-out verdict (or the fallback): the
+              // lock + landing are correct HERE, and only here.
+              App.onAuth(null);
+              App.showView('main'); // v216 guard forces 'auth' while locked
+            }
+          } catch (e) {}
+          hideSplash();
+        };
+        try { FB.whenAuthKnown().then(_routeGate); } catch (e) {}
+        setTimeout(function () { _routeGate((window.FB && FB.user) || null); }, App._bootAuthTimeoutMs);
+      } else {
+        // 'null' (Firebase's verdict is signed-out) or 'legacy'
+        // (no auth-state machinery): the exact pre-v269 behaviour.
+        try { App.onAuth(null); } catch (e) {}
+        try { App.showView('main'); } catch (e2) {}
+        if (_bootMode === 'legacy') setTimeout(hideSplash, 400); else hideSplash();
+      }
     } else {
     // auth comes first; after sign-in, afterAuth() routes to onboarding or main
-    App.showView('auth');
+    /* v269: the landing is painted only on a real signed-out
+       verdict (verdict routing at the bottom of this branch) or on
+       the legacy path — while a restore is pending the splash
+       holds, so a returning user never sees the landing. */
+    if (_bootMode === 'legacy') App.showView('auth');
     // if already signed in (returning user), firebase onAuthStateChanged fires -> route there
     // v14: keep polling for the restored session instead of giving up after 2.5s
     // (slow networks need longer; giving up strands signed-in users on the login screen)
@@ -6241,6 +6346,16 @@
     function routeReturningUser() {
       if (_authRouted) return;
       if (window.FB && FB.user) { _authRouted = true; afterAuth(); return; }
+      /* v269: Firebase has delivered a real signed-out verdict —
+         the landing is the right destination NOW, not after the
+         full poll (and never before the verdict). */
+      if (window.FB && FB.authStateKnown) {
+        _authRouted = true;
+        try { App.onAuth(null); } catch (e) {}
+        try { App.showView('auth'); } catch (e2) {}
+        hideSplash();
+        return;
+      }
       _authWaitMs += 500;
       if (_authWaitMs < 15000) setTimeout(routeReturningUser, 500);
       else {
@@ -6251,6 +6366,7 @@
           try { App.onAuth(null); } catch (e) {}
           try { App.showView('main'); } catch (e2) {}
         }
+        hideSplash();
       }
     }
     function watchAuthState() {
@@ -6260,16 +6376,46 @@
         setTimeout(watchAuthState, 500); // Firebase not ready yet; retry
       }
     }
-    watchAuthState();
-    setTimeout(routeReturningUser, 500);
+    /* v269: verdict routing for the not-onboarded branch. */
+    if (_bootMode === 'user') {
+      _authRouted = true;
+      try { afterAuth(); } catch (e) {}
+    } else if (_bootMode === 'null') {
+      _authRouted = true;
+      try { App.onAuth(null); } catch (e) {}
+      try { App.showView('auth'); } catch (e2) {}
+      hideSplash();
+    } else if (_bootMode === 'wait') {
+      try {
+        FB.whenAuthKnown().then(function (u) {
+          if (_authRouted) return;
+          _authRouted = true;
+          if (u) { try { afterAuth(); } catch (e) {} }
+          else {
+            try { App.onAuth(null); } catch (e) {}
+            try { App.showView('auth'); } catch (e2) {}
+            hideSplash();
+          }
+        });
+      } catch (e) {}
+      // the poll stays as the wedged-restore fallback
+      watchAuthState();
+      setTimeout(routeReturningUser, 500);
+    } else { // 'legacy' — pre-v269 behaviour verbatim
+      watchAuthState();
+      setTimeout(routeReturningUser, 500);
+      setTimeout(hideSplash, 400);
+    }
     } // end v21 else (not onboarded)
 
-    /* splash: fade out once the first view is up */
+    /* splash: fades when the boot routing decides (hideSplash is
+       called by every routing exit above and by
+       routeAfterFirstSync's proceed). This 16 s failsafe only
+       guarantees the splash itself can never trap the user if a
+       path wedges — the index.html watchdog (6 s) stays disarmed
+       because __appReady is set. */
     window.__appReady = true;
-    setTimeout(function () {
-      var s = document.getElementById('splash');
-      if (s) { s.classList.add('hide'); setTimeout(function () { s.style.display = 'none'; }, 650); }
-    }, 400);
+    setTimeout(hideSplash, 16000);
 
     // foreground FCM messages
     if (window.FB && FB.messaging) {
