@@ -1129,6 +1129,44 @@
           }
         }
 
+        /* v265 (EDIT-START-NOT-PERSISTED): the tracker is a LIVE
+           SESSION, not a document — whole-key stamp arbitration
+           fails it. Once a stale native-record adoption rewrites
+           the phone's local tracker (see adoptSessionRecord in
+           js/app.js), every echo re-stamps km.t to NOW, so the
+           generic "latest timestamp wins" below made the phone's
+           stale session unbeatable: on Oct 26 the account had
+           closed the Oct 25 session (ended 07:17) and started a
+           newer one at 8:00 AM — the cloud copy showed it — while
+           the phone's hero kept following the Oct 25 11:32 start
+           and its flush kept queueing the stale copy to push UP
+           over the account's. The tracker and sessions keys merge
+           independently, so nothing ever cross-checked that the
+           local running session was already closed in the
+           account. Session START order is the truth for which
+           session is current: both copies carry the identity
+           pinned at session start (sessionId = the start
+           instant, js/app.js v69). When the identities differ,
+           the LATER session wins — the cloud's installs locally
+           with clean stamps, whatever the km game said; the
+           local's falls through to the generic rules, whose
+           dirty push converges the cloud upward. Same-session
+           copies never reach here (their edits arbitrate by
+           stamp exactly as before), and a copy without a
+           sessionId (an idle tracker, or a pre-v69 one) falls
+           through untouched. */
+        if (key === 'tracker' && raw !== null && d.v && typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var trkCloudSid = Number(d.v.sessionId) || 0;
+          var trkLocalSid = (localVal && typeof localVal === 'object' && !Array.isArray(localVal))
+            ? (Number(localVal.sessionId) || 0) : 0;
+          if (trkLocalSid > 0 && trkCloudSid > trkLocalSid) {
+            lsSetRaw(key, JSON.stringify(d.v));
+            meta.keys[key] = { t: cloudTs, s: cloudTs };
+            applied++;
+            return;
+          }
+        }
+
         if (raw === null) {
           // Not on this device.
           if (km.d && km.d > cloudTs) {

@@ -1726,6 +1726,64 @@
        revision settles — the identical-facts sync is a native
        no-op when nothing actually differs. */
     if (changed || loadsChanged) { try { syncSessionRecord(); } catch (e) {} }
+    /* v265 (EDIT-START-NOT-PERSISTED) — the convergence step for
+       the blind spot the arbitration above cannot see. Adoption
+       arbitrates STATUS and LOADS only; when both already agree
+       with the record, nothing ever compared the CLOCK or the
+       SESSION, so a record that missed this layer's latest clock
+       change (its sync refused on a stale baseRev — every page
+       reload restarts App._sessRev at -1, and a face tap can
+       stale it again) kept the old session's start forever. The
+       divergence stayed invisible (the refusal path refreshes
+       App._sessRev, so later syncs "succeed" against a record
+       whose clock was never healed) until a status flip folded
+       or installed the stale clock over the edited tracker —
+       Oct 26: the 8:00 AM edit held in the store and reached the
+       cloud, yet the phone's hero reverted to the Oct 25 11:32
+       start when his bubble pause tap folded the record's stale
+       segment and the next adoption installed the fold.
+       The invariant that heals it: a native tap can never
+       rewrite the clock of a record whose status it did not
+       change (taps flip status, or move loads). So for a
+       same-status pair, any clock divergence is a web clock
+       change the record missed, and this layer's clock is
+       authoritative; for a same-status pair describing
+       DIFFERENT sessions, the record is an older session's
+       shell and this layer's live session outranks it (the
+       ghost-branch principle above, extended). Both heals fire
+       ONLY when the branches changed nothing — a genuine tap
+       adoption is never second-guessed. */
+    if (!changed && !loadsChanged && t.status && t.status !== 'idle' &&
+        rec.status === t.status && rec.sessionKey && typeof rec.elapsedSec === 'number' &&
+        window.ShiftTrack && ShiftTrack.sessionSync) {
+      var localKey = '';
+      try { localKey = 's' + trackerSessionKeyMs(); } catch (e) {}
+      if (localKey && rec.sessionKey !== localKey) {
+        try {
+          ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) {
+            if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev;
+          });
+        } catch (e) {}
+      } else if (localKey) {
+        var recStart = Date.now() - (rec.elapsedSec || 0) * 1000;
+        var locStart = trackerSessionStartMs();
+        /* Heal when the record counts from a DIFFERENT start
+           than this layer. Paused pairs converge exactly on a
+           re-sync (facts carry the whole total, no segment);
+           running pairs converge because every web clock change
+           (start, toggle, edit, the init fold) collapses the
+           segment at the moment of change, so the facts the
+           heal sends are always near-collapsed — EXCEPT the one
+           running shape that is divergent by construction and
+           must not be chased: a record written by an
+           uncollapsed mid-segment sync (a dashboard load tap)
+           counts AHEAD of this layer by that segment's age.
+           That shape is left alone here. */
+        if (Math.abs(recStart - locStart) > 3000 && (t.status === 'paused' || recStart < locStart)) {
+          try { syncSessionRecord(); } catch (e) {}
+        }
+      }
+    }
   }
   function collectSessionRecord() {
     try {
@@ -2414,8 +2472,26 @@
       // startTs resets to now so the running segment contributes ~0. Paused works the same.
       t.elapsed = secs; t.startTs = Date.now();
       if (t.presetStart) delete t.presetStart;
+      /* v265 (EDIT-START-NOT-PERSISTED): the edit is a STATE-GROUP
+         change — stamp it like trackerToggle does (v52 discipline).
+         Unstamped, the edit was invisible to the session-record
+         protocol: its sync could be refused on a stale baseRev and
+         nothing registered that this layer's clock had moved, so
+         the record's stale clock later outranked the edit at
+         adoption and the phone reverted to the old start. */
+      App._lastStateAt = Date.now();
     }
     trackerSave(); trackerPaint(); closeTrackerStartSheet();
+    /* v265: one verify collect a beat later — if the edit's own
+       sync was refused (a face tap, or a page reload that reset
+       App._sessRev, staled the baseRev), adoption now runs with
+       the edit stamped, and its convergence step (see
+       adoptSessionRecord) heals the record to the edited clock
+       inside this same run, before any later face tap can fold
+       against the record's stale segment. */
+    if (t.status !== 'idle') {
+      setTimeout(function () { try { collectSessionRecord(); } catch (e) {} }, 600);
+    }
   };
   App.trackerToggle = function () {
     var t = App.tracker;
