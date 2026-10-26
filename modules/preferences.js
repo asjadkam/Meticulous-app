@@ -586,6 +586,19 @@
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote"></p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
+        /* v268 (owner, Oct 26 — LOAD-COUNT-ONEPIN-AUDIT): the load
+           counter's learner state used to be invisible — a blind
+           day could not be told apart from a learning day from the
+           phone. This readout (GeoLoads.status(), the engine's own
+           live state) lives here in Advanced like every other
+           troubleshooting tool: armed or not, the mode, the
+           anchor/candidate and cycles closed, any blocked reason
+           or contest, the stop currently building, and the last
+           GPS fix's accuracy. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">🚚 Load counter — status</p>' +
+        '<p class="note" id="pf_geostatus" style="white-space:pre-line;"></p>' +
+        '<button class="btn ghost" id="pf_georefresh">Refresh status</button></div>' +
         /* v137 (owner, Oct 17 12:25 MDT: "Power read and navigator
            Server are plumbing! Don't need to be there!"): the Power
            Read switch row and the Navigator server row that stood
@@ -1232,6 +1245,53 @@
           setTimeout(paint, 1500);
           setTimeout(paint, 4500);
         };
+      })();
+      /* v268 (LOAD-COUNT-ONEPIN-AUDIT): the Load counter readout.
+         GeoLoads.status() returns the counting engine's own live
+         state; this block only words it. It repaints every few
+         seconds while the Advanced view is on screen (the dwell
+         and cycle numbers move), and stops itself when the view
+         is gone. Plain lines a screenshot can carry: state, mode,
+         sites, proof progress, any block or contest, the stop
+         currently building, the last fix's accuracy. */
+      (function () {
+        var note = body.querySelector('#pf_geostatus');
+        var btn = body.querySelector('#pf_georefresh');
+        if (!note) return;
+        function fmtSite(s) {
+          return s ? (s.lat.toFixed(5) + ', ' + s.lng.toFixed(5)) : '—';
+        }
+        function paint() {
+          try { if (document && document.contains && !document.contains(note)) { clearInterval(timer); return; } } catch (e) {}
+          try {
+            var GL = window.GeoLoads || (window.App && App.geoLoads);
+            if (!GL || typeof GL.status !== 'function') { note.textContent = 'Load counter not loaded.'; return; }
+            var st = GL.status();
+            var L = [];
+            if (!st.watching) L.push('State: not running — no shift is being tracked right now.');
+            else if (st.armed) L.push('State: counting.');
+            else if (st.blocked === 'ambiguous-dump') L.push('State: blocked — two places both looked like the dump site before the first cycle finished, so today is not counted (contested).');
+            else if (st.blocked === 'one-site') L.push('State: learning — the dispatch names one site; the other is being learned from driving.');
+            else if (st.blocked === 'no-dispatch') L.push('State: waiting — no active dispatch today.');
+            else if (st.blocked) L.push('State: blocked — ' + st.blocked + '.');
+            else L.push('State: learning from driving.');
+            if (st.mode) L.push('Mode: ' + (st.mode === 'armed' ? 'site pins on the dispatch' : st.mode === 'teach' ? 'teaching (one pin on the dispatch)' : st.mode === 'observe' ? 'watching (pair already known)' : st.mode === 'pattern' ? 'pattern (no pins — learned from driving)' : st.mode) + (st.seedWasDump ? ' — seeded on the dump pin' : '') + '.');
+            if (st.watching) L.push('Loads counted today: ' + st.count + (st.corr ? ' (correction ' + (st.corr > 0 ? '+' : '') + st.corr + ')' : '') + '.');
+            if (st.sites && (st.sites.load || st.sites.dump)) L.push('Sites: load ' + fmtSite(st.sites.load) + ' · dump ' + fmtSite(st.sites.dump) + '.');
+            if (st.anchor) L.push('Anchor (load end): ' + fmtSite(st.anchor) + '.');
+            if (st.cand) L.push('Other end seen: ' + fmtSite(st.cand) + ' · visits ' + (st.visits || 0) + ' · full cycles closed: ' + (st.cycles || 0) + ' of 2 needed.');
+            if (st.learn && st.learn.intraA) L.push('Same-place spots: A ' + fmtSite(st.learn.intraA) + (st.learn.intraB ? ' · B ' + fmtSite(st.learn.intraB) + ' · spot cycles closed: ' + (st.learn.intraCycles || 0) + ' of 2 needed' : ' · second spot not seen yet') + '.');
+            if (st.learn && typeof st.learn.legArmed === 'boolean') L.push('Truck: ' + (st.learn.legArmed ? 'away on a loaded leg.' : (st.learn.atLoad ? 'at the load site.' : 'not at the load site.')) + (st.learn.learned ? ' Taught dump: ' + fmtSite(st.learn.learned) + '.' : ''));
+            if (st.counter) L.push('Counter: ' + st.counter.phase + (st.counter.armed ? ' · carrying a load' : '') + ' · counted ' + st.counter.count + '.');
+            if (st.contested) L.push('Contested today: a second place (' + fmtSite(st.contested.rival) + ') rivalled the taught place (' + fmtSite(st.contested.taught) + ').');
+            if (st.dwellMs !== null && st.dwellMs !== undefined) L.push('Current stop: building for ' + Math.round(st.dwellMs / 1000) + ' s (' + (st.dwellKind || 'stop') + ' — a place needs about 120 s).');
+            if (st.lastFixAccuracy !== null && st.lastFixAccuracy !== undefined) L.push('Last GPS fix accuracy: ' + Math.round(st.lastFixAccuracy) + ' m.');
+            note.textContent = L.join('\n');
+          } catch (e) { note.textContent = 'Could not read the load counter state.'; }
+        }
+        var timer = setInterval(paint, 4000);
+        paint();
+        if (btn) btn.onclick = paint;
       })();
       /* v137: the power-read switch wiring that stood here is
          GONE with its card (see the Advanced build above).

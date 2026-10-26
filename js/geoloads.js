@@ -157,6 +157,45 @@
  *       a LEARNED anchor is reassigned to it (a seeded anchor —
  *       the dispatch's own pin — never is), the two-cycle proof
  *       itself unchanged.
+ *
+ * v268 (Oct 26, 2026 — LOAD-COUNT-ONEPIN-AUDIT): round 3. He was
+ * ON v267 with a RUNNING session and still got zero automatic
+ * reads on 4 dumped loads. The audit (real glue, HIS geometry —
+ * two ends ~1.5 km apart, tools/load-count-onepin-audit-v268-
+ * test.js) walked every dispatch shape:
+ *   - COUNTS FINE: no-pin two-site clean; load-pin-only clean
+ *     (teach); pin at the far end (labels swapped, count true);
+ *     too-close pins with two-site driving (seeded pattern);
+ *     load-pin same-place (teach + shadow); no-pin same-place
+ *     (pattern intra).
+ *   - PROVABLY DEAD, FIXED HERE: the DUMP-PIN-ONLY dispatch —
+ *     a record carrying only dumpLat/dumpLng (a Connect sender
+ *     pinning the drop; an OCR ticket with the dump's coords).
+ *     sitesFromDispatch gives load=null, blockedWhy says
+ *     'one-site', and the teach branch requires the LOAD pin —
+ *     so no learner of any kind ever ran and the day sat blind
+ *     at 'one-site' forever. It now joins the pattern path
+ *     seeded on the known place (like 'sites-too-close' seeds
+ *     on its pin); the proven pair's labels may sit swapped and
+ *     it is kept OUT of the cross-day pair memory (keyed by
+ *     load site — a dump site must not be filed as one).
+ *   - WALLS, NOT BUGS (the owner's own bars — reported, not
+ *     moved): quick tips (~75 s) never confirm a place anywhere
+ *     in the no-pin/teach chains because a place is a 2-minute
+ *     dwell (LEARN_DWELL_MS; v220 chose the completed-cycle
+ *     proof precisely because dwell length cannot tell a tip
+ *     from a washroom stop); and ONE mid-leg stop of 2+ minutes
+ *     before the two-cycle proof completes contests the day —
+ *     pattern and teach alike — and a contested day stays
+ *     unteachable ('ambiguous-dump', pinned spec since v68:
+ *     geoloads-learning (c)). Both are his decisions to move.
+ *   - Also shipped: the LEARNER READOUT — GeoLoads.status()
+ *     exposes the live engine state (mode, anchor, candidate,
+ *     cycles closed, contested, the stop currently building,
+ *     last fix accuracy) and Preferences -> Advanced shows it
+ *     as "Load counter — status". The learner's state was
+ *     previously invisible in the UI, which is why three
+ *     rounds of this defect were diagnosed blind.
  */
 (function () {
   'use strict';
@@ -350,6 +389,19 @@
         };
       },
       stop: function () { if (S) S.active = false; },
+      /* v268: read-only live state for the Advanced readout
+         (GeoLoads.status) — the same S the engine counts from,
+         no parallel bookkeeping. candSince is when the current
+         zone candidate started building toward its dwell bar. */
+      debug: function () {
+        if (!S) return null;
+        return {
+          zone: S.zone, phase: S.phase, armed: S.armed, count: S.count,
+          candZone: S.cand ? S.cand.zone : null,
+          candSince: S.cand ? S.cand.since : null,
+          lastT: S.lastT
+        };
+      },
       snapshot: function () {
         if (!S) return null;
         return {
@@ -550,6 +602,22 @@
          later odd dwells become alternates, never contests. */
       lock: function () { if (S && S.learned && !S.ambiguous) S.locked = true; },
       stop: function () { if (S) S.active = false; },
+      /* v268: read-only live state for the Advanced readout —
+         the snapshot fields plus the half-built dwell cluster a
+         snapshot deliberately drops (the readout's "current stop
+         building" line needs its start time). */
+      debug: function () {
+        if (!S) return null;
+        return {
+          zone: S.zone, atLoad: S.atLoad, legArmed: S.legArmed,
+          learned: S.learned ? { lat: S.learned.lat, lng: S.learned.lng, t: S.learned.t } : null,
+          locked: S.locked, ambiguous: S.ambiguous, altDone: S.altDone, lastT: S.lastT,
+          clusterSince: S.cluster ? S.cluster.since : null,
+          clusterLat: S.cluster ? S.cluster.sumLat / S.cluster.n : null,
+          clusterLng: S.cluster ? S.cluster.sumLng / S.cluster.n : null,
+          zoneCandZone: S.zoneCand ? S.zoneCand.zone : null
+        };
+      },
       snapshot: function () {
         if (!S) return null;
         return {
@@ -888,6 +956,30 @@
          takes — later odd dwells can no longer contest. */
       lock: function () { if (S && S.pair && !S.ambiguous) S.locked = true; },
       stop: function () { if (S) S.active = false; },
+      /* v268: read-only live state for the Advanced readout —
+         the snapshot fields plus the half-built clusters a
+         snapshot deliberately drops (outer dwell + intra
+         sub-spot), whose start times are the readout's "current
+         stop building" progress. */
+      debug: function () {
+        if (!S) return null;
+        return {
+          anchor: S.anchor ? placeOf(S.anchor) : null,
+          cand: S.cand ? placeOf(S.cand) : null,
+          visits: S.visits, cycles: S.cycles, lastPlace: S.lastPlace,
+          candVisits: S.candVisits, anchorSeeded: S.anchorSeeded,
+          intraA: S.intra.a ? placeOf(S.intra.a) : null,
+          intraB: S.intra.b ? placeOf(S.intra.b) : null,
+          intraVisits: S.intra.visits, intraCycles: S.intra.cycles,
+          intraDead: S.intra.dead,
+          pair: S.pair ? { load: placeOf(S.pair.load), dump: placeOf(S.pair.dump), intra: !!S.pair.intra } : null,
+          locked: S.locked, ambiguous: S.ambiguous, lastT: S.lastT,
+          clusterSince: S.cluster ? S.cluster.since : null,
+          clusterConfirmed: !!(S.cluster && S.cluster.confirmed),
+          intraSubSince: (S.intra && S.intra.sub) ? S.intra.sub.since : null,
+          intraSubConfirmed: !!(S.intra && S.intra.sub && S.intra.sub.confirmed)
+        };
+      },
       snapshot: function () {
         if (!S) return null;
         return {
@@ -989,6 +1081,16 @@
   /* v68 learning state */
   var learner = null;            // ENGINE.createDumpLearner instance
   var learnMode = null;          // 'teach' | 'observe' | null
+  /* v268: the pattern learner was seeded on a DUMP pin (the
+     dump-pin-only dispatch — see configure). The pair it proves
+     carries the seed as its "load" end (labels swapped, count
+     true), so it must never be written to the cross-day pair
+     memory, which is keyed by load site. */
+  var patternSeedWasDump = false;
+  /* v268: the last fix the glue fed (any path) — the Advanced
+     readout's "last GPS accuracy" line reads this, nothing else
+     keeps it. */
+  var lastFixSeen = null;
   /* v267 (LOAD-COUNT-DEAD): teach mode's shadow — a pattern
      learner seeded on the load pin, watching ONLY for an
      intra-site pair (the one-pin same-place day the dump
@@ -1414,6 +1516,7 @@
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
     learner = null; learnMode = null; curLoad = null;
+    patternSeedWasDump = false;
     shadowLearner = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
     if (!d) { counter = null; curSites = null; return false; }
@@ -1482,12 +1585,33 @@
          INSIDE the one place (tight sub-spots, two proven cycles)
          or an outer candidate if the truck really runs to a
          second site. */
-      if ((why === 'no-site-coords' || why === 'sites-too-close') && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
+      if ((why === 'no-site-coords' || why === 'sites-too-close' || (why === 'one-site' && !sites.load && sites.dump)) && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
+        /* v268 (LOAD-COUNT-ONEPIN-AUDIT): the one-site case above
+           is the DUMP-PIN-ONLY dispatch — a record carrying only
+           dumpLat/dumpLng (a Connect dispatch whose sender pinned
+           the drop, an OCR'd ticket with the dump's coordinates).
+           Until now it fell past every branch: no load pin means
+           no teach mode, so NO learner ever ran and the day sat
+           at blocked 'one-site' forever (proven zero in
+           tools/load-count-onepin-audit-v268-test.js A6/A10).
+           It joins the pattern path SEEDED on the one known
+           place, exactly as 'sites-too-close' seeds on its pin:
+           the learner reads the cycle off the driving, cycles
+           close at the seed, and the pair's load/dump labels may
+           sit swapped — the count is true either way (the
+           engine's direction honesty). The seed's provenance is
+           flagged so armPatternPair never writes the swapped
+           pair into the cross-day pair MEMORY (the memory is
+           keyed by load site; a dump site must not be filed as
+           one). The day still restores same-day from its own
+           patternPair, like every pattern day. */
         learnMode = 'pattern';
         curSites = null;
+        patternSeedWasDump = (why === 'one-site' && !sites.load && !!sites.dump);
         learner = ENGINE.createPatternLearner({
           home: homePlace(),
-          anchor: (why === 'sites-too-close' && sites.load) ? { lat: sites.load.lat, lng: sites.load.lng } : null
+          anchor: (why === 'sites-too-close' && sites.load) ? { lat: sites.load.lat, lng: sites.load.lng }
+            : (patternSeedWasDump ? { lat: sites.dump.lat, lng: sites.dump.lng } : null)
         });
         var prevN = recordFor(curDate);
         var sameN = !!(prevN && prevN.sessionKey === sessionKey);
@@ -1680,7 +1804,7 @@
        credited — the truck is standing at the load spot as the
        second cycle closes. Nothing is "outstanding": the pair
        was locked by the learner at emission. */
-    if (credit && !pair.intra) {
+    if (credit && !pair.intra && !patternSeedWasDump) {
       rememberPair(load, { lat: dump.lat, lng: dump.lng, label: '', learnedAt: Date.now() });
     }
     var key = sitesKeyFor(curDispatchId, load, dump);
@@ -1907,6 +2031,14 @@
 
   function onFix(fix) {
     if (!watching) return null;
+    /* v268: the readout's last-fix line (accuracy + time). */
+    if (fix && isFinite(fix.latitude) && isFinite(fix.longitude)) {
+      lastFixSeen = {
+        lat: +fix.latitude, lng: +fix.longitude,
+        accuracy: (fix.accuracy === null || fix.accuracy === undefined) ? null : +fix.accuracy,
+        t: (typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now()
+      };
+    }
     var ft0 = (fix && typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now();
     /* v267: the day roll and the world check run BEFORE the
        armed guard. A dump event belongs to the date it happened
@@ -2016,6 +2148,7 @@
       learner = null;
       shadowLearner = null;
       learnMode = null;
+      patternSeedWasDump = false;
       curSites = null;
       curLoad = null;
       taughtOutstanding = false;
@@ -2112,6 +2245,70 @@
           out.sites = curSites || out.sites;
           out.blocked = null;
         }
+      }
+      return out;
+    },
+
+    /* v268 (LOAD-COUNT-ONEPIN-AUDIT): the live learner readout
+       behind Preferences -> Advanced, "Load counter — status".
+       It reads the SAME objects the engine counts from — the
+       counter, the learner, the teach-mode shadow, the day
+       record — no parallel bookkeeping. Until now the learner's
+       state (anchor, candidate, cycles closed, a contest, the
+       stop currently building) existed only inside the engine
+       and the persisted snapshots; the UI showed none of it, so
+       a blind day was undiagnosable from the phone. One
+       screenshot of this block names the state. */
+    status: function () {
+      var rec = curDate ? recordFor(curDate) : null;
+      var out = {
+        watching: watching,
+        date: curDate,
+        dispatchId: curDispatchId,
+        mode: learnMode || (counter ? 'armed' : null),
+        armed: !!counter,
+        blocked: rec ? (rec.blocked || null) : null,
+        seedWasDump: patternSeedWasDump,
+        sites: curSites ? {
+          load: curSites.load ? { lat: curSites.load.lat, lng: curSites.load.lng, src: curSites.load.src || '' } : null,
+          dump: curSites.dump ? { lat: curSites.dump.lat, lng: curSites.dump.lng, src: curSites.dump.src || '' } : null
+        } : null,
+        count: baseCount + (counter ? counter.count() : 0),
+        corr: corrNow,
+        counter: (counter && counter.debug) ? counter.debug() : null,
+        learn: (learner && learner.debug) ? learner.debug() : null,
+        shadow: (shadowLearner && shadowLearner.debug) ? shadowLearner.debug() : null,
+        contested: (rec && rec.dumpContested) ? rec.dumpContested : null,
+        anchor: null, cand: null, cycles: null, visits: null,
+        dwellMs: null, dwellKind: null,
+        lastFixAccuracy: lastFixSeen ? lastFixSeen.accuracy : null,
+        lastFixT: lastFixSeen ? lastFixSeen.t : null
+      };
+      /* Pattern state (the live learner in pattern mode, else
+         teach mode's shadow) promoted to the top level — the
+         readout's anchor / candidate / proof lines. */
+      var P = null;
+      if (out.learn && typeof out.learn.cycles === 'number') P = out.learn;
+      else if (out.shadow && typeof out.shadow.cycles === 'number') P = out.shadow;
+      if (P) {
+        out.anchor = P.anchor || null;
+        out.cand = P.cand || null;
+        out.cycles = P.cycles;
+        out.visits = P.visits;
+      }
+      /* Dwell progress: the longest-running unconfirmed build —
+         a counter zone candidate (45 s bar), a learner place
+         cluster (2 min bar), an intra sub-spot (2 min bar). */
+      if (lastFixSeen) {
+        var dw = [];
+        if (out.counter && out.counter.candSince) dw.push({ kind: 'zone', ms: lastFixSeen.t - out.counter.candSince });
+        [out.learn, out.shadow].forEach(function (L) {
+          if (!L) return;
+          if (L.clusterSince && !L.clusterConfirmed) dw.push({ kind: 'place', ms: lastFixSeen.t - L.clusterSince });
+          if (L.intraSubSince && !L.intraSubConfirmed) dw.push({ kind: 'sub-spot', ms: lastFixSeen.t - L.intraSubSince });
+        });
+        dw.sort(function (a, b) { return b.ms - a.ms; });
+        if (dw.length && dw[0].ms >= 0) { out.dwellMs = dw[0].ms; out.dwellKind = dw[0].kind; }
       }
       return out;
     },
