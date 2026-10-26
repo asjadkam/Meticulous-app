@@ -1720,6 +1720,46 @@
       try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
       return;
     }
+    /* v271 (PHANTOM-RESURRECTION): session-identity arbitration
+       for the record — the half of v265 that never reached this
+       function. The cloud pull arbitrates the tracker by session
+       identity (later session wins, js/cloudsync.js), but this
+       adoption arbitrated STATUS and LOADS by stamp alone. A
+       record still holding an OLDER session — the Oct 25 11:32
+       shell the v265 incident proved sits in the record
+       (elapsedBase 76239) — could therefore flip a NEWER live
+       session over to itself: status, clock and sessionId, in
+       whichever page lifetime a native widget tap re-stamped it
+       past App._lastStateAt (a stamp page lifetimes keep
+       resetting to 0 and most actions never set). That is how
+       the Oct 26 17:24 widget came to paint the phantom
+       (29:52:31, 0 loads) minutes after the v57 install
+       relaunched the app, over the day's real 8:00 AM session.
+       The guard: when both sides name a session and the
+       record's session is OLDER than this layer's live session,
+       the record is a stale shell — it is never adopted (no
+       status flip, no loads, no clock); it is healed with this
+       layer's facts instead, the ghost-branch principle
+       extended to live sessions, and the discard books nothing
+       because no stop ever runs on the phantom. Same-session
+       pairs fall through to the arbitration below untouched,
+       and a NEWER record session (the v52 restore case) keeps
+       its existing behaviour. */
+    if (rec.status !== 'idle' && rec.sessionKey &&
+        t.status && t.status !== 'idle') {
+      var recKey271 = /^s(\d+)$/.exec(rec.sessionKey);
+      var recMs271 = recKey271 ? (Number(recKey271[1]) || 0) : 0;
+      var webMs271 = 0;
+      try { webMs271 = Number(trackerSessionKeyMs()) || 0; } catch (e) {}
+      if (recMs271 > 0 && webMs271 > 0 && recMs271 < webMs271) {
+        try {
+          ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) {
+            if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev;
+          });
+        } catch (e) {}
+        return;
+      }
+    }
     if (stateNewer && rec.status !== t.status) {
       if (rec.status === 'paused' && t.status === 'running') {
         t.elapsed = Math.max(0, (rec.elapsedBase || 0));

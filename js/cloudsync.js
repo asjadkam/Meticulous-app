@@ -1167,6 +1167,49 @@
           }
         }
 
+        /* v271 (PHANTOM-RESURRECTION): a close is a tombstone.
+           The identity rule above cannot fire once this layer's
+           tracker is CLOSED: stopSessionAt resets it to a fresh
+           idle object with no sessionId, so a cloud copy of the
+           same session still marked RUNNING (the close never
+           flushed up, or another client re-pushed the running
+           copy — Oct 26: the phone's close sat local-only while
+           the account copy kept running) met a sid-less local
+           and the stamp game below could install the running
+           copy back over the deliberate close. Sessions never
+           reopen, so a locally CLOSED session is the truth: if
+           the local sessions list holds a finished entry whose
+           own start (endedAt − seconds) names the cloud copy's
+           session (within whole-second jitter, the v69 pin
+           tolerance), the cloud copy is that session's stale
+           echo — keep the local idle and mark the key dirty so
+           the flush pushes the close UP and the account
+           converges on closed. Fires only with a local idle
+           tracker value actually present. */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var tb271Sid = Number(d.v.sessionId) || 0;
+          var tb271Live = d.v.status === 'running' || d.v.status === 'paused';
+          var tb271Local = parseJson(raw, null);
+          var tb271Idle = !tb271Local || typeof tb271Local !== 'object' ||
+            Array.isArray(tb271Local) || !tb271Local.status ||
+            tb271Local.status === 'idle';
+          if (tb271Sid > 0 && tb271Live && tb271Idle) {
+            var tb271Sessions = parseJson(lsGetRaw('sessions'), null);
+            if (Array.isArray(tb271Sessions)) {
+              for (var tb271i = 0; tb271i < tb271Sessions.length; tb271i++) {
+                var tb271e = tb271Sessions[tb271i];
+                if (!tb271e || !tb271e.endedAt || !(Number(tb271e.seconds) > 0)) continue;
+                var tb271Start = Date.parse(tb271e.endedAt) - Number(tb271e.seconds) * 1000;
+                if (isFinite(tb271Start) && Math.abs(tb271Start - tb271Sid) <= 5000) {
+                  meta.keys[key] = { t: now, s: cloudTs };
+                  return;
+                }
+              }
+            }
+          }
+        }
+
         if (raw === null) {
           // Not on this device.
           if (km.d && km.d > cloudTs) {
