@@ -241,6 +241,38 @@ console.log('— once a day, and his pause is his —');
   eq(w.App.tracker.elapsed, 600, 'G6 paused elapsed untouched');
 }
 
+/* ================= I: stale sessions never eat the plan (v261) ================= */
+console.log('— yesterday\'s session cannot consume today (v261) —');
+{
+  /* DSP-AUTOSTART-MISS-OCT26: a session that STARTED yesterday
+     and was only closed this morning (its entry carries today's
+     CLOSE date — stopSessionAt stamps the end day) is not
+     today's work done: the 08:00 dispatch still starts. */
+  setClock(9, 0);
+  let w = makeWorld({
+    active: dsp0800Active(),
+    sessions: [{ date: TODAY, seconds: 20 * 3600, endedAt: new RealDate(atMs(7, 10)).toISOString() }]
+  });
+  eq(w.App.checkAutoStart(), 'started', 'I1 a session closed today but started yesterday does not consume the plan');
+  eq(w.trackerSessionStartMs(), atMs(8, 0), 'I2 the dispatch start still stamps 08:00');
+
+  /* a session still RUNNING from yesterday does not consume the
+     plan either (the Oct 25 runaway test session, live at the
+     morning's first check); once it ends, the plan fires on the
+     next check, stamped at the dispatch time. */
+  setClock(7, 30);
+  w = makeWorld({
+    active: dsp0800Active(),
+    tracker: { status: 'running', startTs: atMs(7, 30) - 25 * 3600 * 1000, elapsed: 0 }
+  });
+  eq(w.App.checkAutoStart(), 'running-stale', 'I3 a running session from yesterday leaves the plan armed');
+  ok(!w._mem.autostart, 'I4 the stale session did not consume the fired flag');
+  w.App.tracker.status = 'idle'; w.App.tracker.startTs = 0; w.App.tracker.elapsed = 0;
+  setClock(8, 5);
+  eq(w.App.checkAutoStart(), 'started', 'I5 after the stale session ends, the plan fires');
+  eq(w.trackerSessionStartMs(), atMs(8, 0), 'I6 and stamps the 08:00 dispatch time, not the stale session\'s end');
+}
+
 /* ================= H: statics ================= */
 console.log('— statics —');
 {

@@ -3640,24 +3640,58 @@
     var m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/.exec(s);
     return m ? { date: m[1], time: m[2] + ':' + m[3] } : null;
   }
+  /* v261 (DSP-AUTOSTART-MISS-OCT26): the day a dispatch record
+     belongs to — the SAME rule the Dispatch module itself reads
+     (dspRecordDate there): the scheduledAt date prefix wins, and
+     a record whose scheduledAt is empty or dateless falls back
+     to its `date` field. The engine used to read scheduledAt's
+     datetime alone, so whole record shapes the app itself writes
+     were invisible to it: a form save whose time field was left
+     empty stores the DATE ALONE (see dspComposeSched — the same
+     hole that bit on Oct 15), and Connect-shared records carry
+     their day in `date` with scheduledAt ''. Either shape made
+     today read as dispatch-less, the v255 gate then called it
+     'no-work-today', and the 8:00 start silently never fired —
+     while the Dispatch card, reading the record the app-wide
+     way, showed the dispatch Active all along. */
+  function autostartRecordDate(d) {
+    var s = d && d.scheduledAt;
+    if (typeof s === 'string') {
+      var m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+      if (m) return m[1];
+    }
+    return (d && typeof d.date === 'string') ? d.date : '';
+  }
   /* The dispatch that supplies today's start: the earliest eligible
      scheduled time (active considered first, dedup by id, completed /
      cancelled have no claim). Returns { time, name } or null — the
      name (jobSite, else pickup) is what the armed dashboard plan
-     shows, so the card can say WHICH dispatch starts the day. */
+     shows, so the card can say WHICH dispatch starts the day.
+     v261: a record can claim today without carrying a time (a
+     date-only scheduledAt, a `date`-field record) — it still makes
+     today a dispatch day; time is then null here and the caller
+     falls back to the standing setting time, the owner's fallback
+     law for dispatch days. A record with NO day evidence at all
+     (no scheduledAt date, no date field) claims nothing, as
+     before. */
   function autostartDispatchFor(active, list, today) {
-    var best = null, bestName = '', seen = {};
+    var best = null, bestName = '', anyName = '', present = false, seen = {};
     function consider(d) {
       if (!d || typeof d !== 'object') return;
       if (d.status === 'completed' || d.status === 'cancelled') return;
       if (d.id) { if (seen[d.id]) return; seen[d.id] = 1; }
+      if (autostartRecordDate(d) !== today) return;
+      present = true;
+      var nm = d.jobSite || d.pickup || '';
+      if (!anyName) anyName = nm;
       var p = autostartParseSched(d.scheduledAt);
-      if (!p || p.date !== today) return;
-      if (best === null || p.time < best) { best = p.time; bestName = d.jobSite || d.pickup || ''; }
+      if (!p) return; // this record claims the day but carries no time
+      if (best === null || p.time < best) { best = p.time; bestName = nm; }
     }
     consider(active);
     if (Array.isArray(list)) for (var i = 0; i < list.length; i++) consider(list[i]);
-    return best === null ? null : { time: best, name: bestName };
+    if (!present) return null;
+    return { time: best, name: best !== null ? bestName : anyName };
   }
   function autostartDispatchTimeFor(active, list, today) {
     var w = autostartDispatchFor(active, list, today);
@@ -3669,6 +3703,14 @@
     }
     var dt = autostartDispatchTimeFor(active, list, today);
     if (dt) return { time: dt, source: 'dispatch' };
+    /* v261 (DSP-AUTOSTART-MISS-OCT26): a dispatch claims today
+       but carries no time of its own — the day is still a
+       dispatch day, started at the standing setting time (the
+       owner's fallback: dispatch time drives auto-start, the
+       standing 8:00 AM is the fallback ON a dispatch day). Only
+       a day with no dispatch at all falls through to 'setting',
+       where the v255 gate applies. */
+    if (autostartDispatchFor(active, list, today)) return { time: prefs.time, source: 'dispatch' };
     return { time: prefs.time, source: 'setting' };
   }
   function autostartPlan(prefs, active, list, override, today, dayIdx) {
@@ -3711,24 +3753,60 @@
          standing on/off + days: 'off' / 'wrong-day' return as before. */
       var plan = autostartPlan(p, store.get('dsp_active', null), store.get('dsp_list', []), store.get('autostart_override', null), today, now.getDay());
       if (!plan.willStart) {
-        /* v174: no plan for today — a day watch armed earlier
-           (before today's dispatch was cancelled) stands down. */
-        try {
-          if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() === 'd' + today && LiveMiles.stopDay) LiveMiles.stopDay();
-        } catch (e) {}
+        /* v261 (MILES-FROM-DEPARTURE): the v174 stand-down that
+           stopped the date-keyed day watch here is gone. The day
+           watch is no longer the plan's artifact — it is the
+           DAY's miles record, armed by App.armDayMiles whenever
+           the app is alive and no session owns the miles (owner's
+           Oct 22 law: kilometres read from the first driving, not
+           from shift start). A cancelled dispatch cancels the
+           START, never the day's kilometres. */
         return plan.reason;
       }
       if (autoStartFired(today)) return 'fired';
       var t = App.tracker || { status: 'idle' };
-      if (t.status === 'running') { markAutoStartFired(today); return 'running'; }
+      if (t.status === 'running') {
+        /* v261 (DSP-AUTOSTART-MISS-OCT26): only a session that
+           belongs to TODAY consumes today's plan. A session still
+           running from a previous day — a test session left open,
+           a shift restored across an app update — is not today's
+           work, but the old code marked the day fired for it at
+           the morning's first check; when that session later
+           ended, every check read 'fired' and the dispatch start
+           silently never came (Oct 26, 2026: a runaway test
+           session from Oct 25 was live at the first check, the
+           tracker sat idle by 08:09, and the 8:00 Aecon dispatch
+           never started). A stale session leaves the plan armed;
+           it fires, stamped at the plan time, on the first check
+           after the stale session ends. */
+        var runStartDay = '';
+        try { runStartDay = todayStr(new Date(trackerSessionStartMs())); } catch (e) {}
+        if (runStartDay === today) { markAutoStartFired(today); return 'running'; }
+        return 'running-stale';
+      }
       /* v123: a day that already has a closed session never gets a
          second, phantom auto-start. The once-a-day fired flag is the
          primary guard; this catches the flows that ran entirely
-         between checks (start + stop inside one backgrounding). */
+         between checks (start + stop inside one backgrounding).
+         v261: the entry's `date` is its CLOSE date — stopSessionAt
+         stamps the day the session ENDED — so date alone cannot
+         judge whose day the work was. A session that started on a
+         previous day and was merely closed today (yesterday's
+         session stopped this morning) must not consume today's
+         plan: only a session that STARTED today is today's work
+         done. The start is recovered from endedAt − seconds; a
+         record too old to carry those falls back to its date, as
+         before. */
       var sessions = store.get('sessions', []);
       if (Array.isArray(sessions)) {
         for (var si = 0; si < sessions.length; si++) {
-          if (sessions[si] && sessions[si].date === today) { markAutoStartFired(today); return 'done-today'; }
+          var se = sessions[si];
+          if (!se || se.date !== today) continue;
+          var seEndMs = se.endedAt ? new Date(se.endedAt).getTime() : NaN;
+          if (!isNaN(seEndMs) && typeof se.seconds === 'number' && se.seconds >= 0) {
+            if (todayStr(new Date(seEndMs - se.seconds * 1000)) !== today) continue;
+          }
+          markAutoStartFired(today); return 'done-today';
         }
       }
       var tp = String(plan.time).split(':');
@@ -3928,6 +4006,41 @@
         startMs: plan.startMs,
         date: plan.date
       });
+    } catch (e) {}
+  };
+
+  /* v261 (DSP-AUTOSTART-MISS-OCT26, item 2 — MILES-FROM-DEPARTURE):
+     the date-keyed live-miles day watch is the DAY's record, not
+     the session's. The owner's law (Oct 22, 2026, after a 45.3 km
+     morning drive was wiped to zero): kilometres and the live
+     mile tracker read from the moment he starts DRIVING, not from
+     shift start, and live miles survive reinstall (the record
+     lives in the shared store, never in session state). Until
+     now the day watch was armed only as a side effect of the
+     auto-start plan — checkAutoStart's not-yet branch — so on a
+     day whose plan failed (or had not been evaluated on the
+     screen he was actually looking at), nothing recorded the
+     drive at all: Oct 26 the plan missed, he started manually at
+     the site, and the whole home -> site drive read 0.0 km.
+     The watch now arms whenever the app is alive and no session
+     owns the miles (boot, resume, the watchdog in init): the
+     navigator's own movement then feeds yardstart, and when a
+     session starts it adopts the day record whole (js/miles.js),
+     so the pre-shift kilometres land on the day he drove them —
+     the manifest counts the day's full movement. A session's own
+     watch owns the miles while one runs or is paused. Office
+     users never drive — no watch. Movement access itself is
+     unchanged: this asks LiveMiles for the same watch the plan
+     used to ask for, just not gated on the plan. */
+  App.armDayMiles = function () {
+    try {
+      if (App.userRole && App.userRole() === 'office') return;
+      var t = App.tracker || { status: 'idle' };
+      if (t.status === 'running' || t.status === 'paused') return;
+      if (!window.LiveMiles || !LiveMiles.startDay) return;
+      var key = 'd' + todayStr(new Date());
+      if (LiveMiles.dayKey && LiveMiles.dayKey() === key) return;
+      LiveMiles.startDay(key);
     } catch (e) {}
   };
 
@@ -5710,6 +5823,30 @@
     // v92: hand the NEXT planned start to the native shell, so
     // tomorrow's counting can begin with this app completely dead.
     try { App.armNativeDay(); } catch (e) {}
+    // v261 (MILES-FROM-DEPARTURE): the day's miles watch arms at
+    // boot too — the drive to the yard is the day's first miles,
+    // whether or not a session ever starts.
+    try { App.armDayMiles(); } catch (e) {}
+    /* v261 (DSP-AUTOSTART-MISS-OCT26): a dedicated auto-start
+       watchdog. Until now the only recurring evaluation lived
+       inside trackerTick — the dashboard hero's paint loop, which
+       early-returns while the auth lock is up and only runs while
+       that machinery is alive; a driver sitting in the Navigator
+       from before the start time (Oct 26: routing from 07:29 for
+       an 8:00 start) depended on boot-time luck. The decision
+       itself is screen-free (the AUTOSTART-ENGINE is DOM-free by
+       design), so it gets its own timer: every 30 s while the
+       page lives, on whatever screen is showing, an idle tracker
+       with a plan whose time has arrived starts, stamped at the
+       plan time; the same tick keeps the day-miles watch armed
+       and rolls it over at midnight. checkAutoStart is
+       idempotent — the once-a-day fired flag makes repeats
+       no-ops, and a deliberate same-day stop stays respected
+       through the done-today / fired guards. */
+    setInterval(function () {
+      try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+      try { if (App.armDayMiles) App.armDayMiles(); } catch (e) {}
+    }, 30000);
 
     // v127: seed the dated odometer log from the app's own dated
     // records (fuel fills + session readings) — idempotent, runs
@@ -5971,6 +6108,9 @@
         // v92: a dispatch saved or changed while we were away may
         // have moved the next day's plan — re-arm the native side.
         try { App.armNativeDay(); } catch (e5) {}
+        // v261: resume also re-arms the day's miles watch (it may
+        // have been stood down, or the day may have rolled over).
+        try { App.armDayMiles(); } catch (e9) {}
         // v59: resume is also a power-read retry point
         try { if (window.PowerRead) PowerRead.processQueue(); } catch (e3) {}
         // v62: foreground return — re-hold the screen for a running

@@ -287,6 +287,49 @@ console.log('— checkAutoStart behavior —');
   eq(w.App.tracker.status, 'idle', 'completed dispatch does not start the tracker');
 }
 
+/* ================= v261: DSP-AUTOSTART-MISS-OCT26 ================= */
+console.log('— untimed dispatch shapes still claim the day (v261) —');
+{
+  /* a form save with the time left empty stores the DATE ALONE
+     (dspComposeSched) — the day is still a dispatch day, started
+     at the standing setting time. Pre-v261 the engine read
+     scheduledAt's datetime alone, called this 'no-work-today',
+     and the start silently never fired while the Dispatch card
+     showed the dispatch Active. */
+  const t30b = minsAgoTime(30);
+  let w = makeWorld({
+    active: { id: 'u1', jobSite: 'Date Only Job', scheduledAt: TODAY, status: 'active' },
+    onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
+  });
+  eq(w.App.autostartTodayInfo().source, 'dispatch', 'date-only dispatch -> dispatch source');
+  eq(w.App.checkAutoStart(), 'started', 'date-only dispatch starts at the standing time');
+  ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
+    'date-only start anchored to the standing time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
+
+  /* a Connect-shared record carries its day in `date` with
+     scheduledAt '' — the same claim, the same fallback start */
+  w = makeWorld({
+    list: [{ id: 'c1', jobSite: 'Connect Job', scheduledAt: '', date: TODAY, status: 'Scheduled' }],
+    onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
+  });
+  eq(w.App.autostartTodayInfo().source, 'dispatch', 'date-field record -> dispatch source');
+  eq(w.App.checkAutoStart(), 'started', 'date-field record starts the day');
+
+  /* a date-field record for TOMORROW claims nothing today */
+  w = makeWorld({
+    list: [{ id: 'c2', jobSite: 'Tomorrow Job', scheduledAt: '', date: TOMORROW, status: 'Scheduled' }],
+    onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
+  });
+  eq(w.App.checkAutoStart(), 'no-work-today', 'tomorrow date-field record -> no plan today');
+
+  /* a completed untimed dispatch claims nothing either */
+  w = makeWorld({
+    active: { id: 'u2', jobSite: 'Done Job', scheduledAt: TODAY, status: 'completed' },
+    onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
+  });
+  eq(w.App.checkAutoStart(), 'no-work-today', 'completed date-only dispatch -> no plan');
+}
+
 /* ================= Revenue card wiring (static) ================= */
 console.log('— Revenue card wiring —');
 {
