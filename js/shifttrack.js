@@ -744,6 +744,27 @@
       }
       return Promise.resolve('');
     },
+    /* v52: the native session record — the PiP face's source of
+       truth (native v52). sessionSync writes this layer's
+       tracker facts into it (fired from the tracker's save
+       choke point in js/app.js, carrying the record revision
+       this layer last saw); sessionRecord reads the snapshot
+       back so this layer can adopt what a face tap changed
+       natively. Both resolve null off-shell / on an old shell. */
+    sessionRecord: function () {
+      var p = plugin();
+      if (p && typeof p.sessionRecord === 'function') {
+        try { return p.sessionRecord().then(function (r) { return r || null; }).catch(function () { return null; }); } catch (e) {}
+      }
+      return Promise.resolve(null);
+    },
+    sessionSync: function (facts) {
+      var p = plugin();
+      if (p && typeof p.sessionSync === 'function' && facts) {
+        try { return p.sessionSync(facts).then(function (r) { return r || null; }).catch(function () { return null; }); } catch (e) {}
+      }
+      return Promise.resolve(null);
+    },
     /* v227: live delivery of PiP face taps while the app process
        is alive (the collect path above is the cold-start twin). */
     _pipActionFns: [],

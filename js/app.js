@@ -1600,7 +1600,141 @@
   }
 
   /* ---------------- tracker ---------------- */
-  function trackerSave() { store.set('tracker', App.tracker); }
+  function trackerSave() { store.set('tracker', App.tracker); try { syncSessionRecord(); } catch (e) {} }
+
+  /* v52 (PIP-FACE-THIRD-STRIKE): the native session record is
+     the PiP face's source of truth — status, elapsed, loads and
+     the session key, persisted natively (SessionRecord). This
+     layer SYNCs its facts into the record at every save (the
+     choke point above) and ADOPTs the record when a face tap
+     changed it natively (the live 'pipAction' signal, app init,
+     foreground return). Guards keep the two writers from
+     fighting: the sync carries the revision this layer last
+     saw (a mismatch means a native tap landed first — the sync
+     is refused and this layer adopts instead), and adoption is
+     per-field-group, each group taken only when the record's
+     stamp is at least as new as this layer's last own change
+     of that group (App._lastStateAt / App._lastLoadsAt, stamped
+     at every own transition / load tap). Inert off-shell and on
+     pre-v52 shells: the bridge calls resolve null. */
+  function loadsNumber() {
+    try {
+      if (window.GeoLoads && GeoLoads.today) {
+        var gt = GeoLoads.today();
+        if (gt && gt.armed) return gt.count || 0;
+      }
+    } catch (e) {}
+    try { return trkAccum().manualLoads || 0; } catch (e) { return 0; }
+  }
+  function loadsArmedNow() {
+    try {
+      if (window.GeoLoads && GeoLoads.today) { var gt = GeoLoads.today(); return !!(gt && gt.armed); }
+    } catch (e) {}
+    return false;
+  }
+  function sessionFacts(force) {
+    var t = App.tracker || {};
+    var idle = !t.status || t.status === 'idle';
+    return {
+      status: idle ? 'idle' : t.status,
+      elapsed: trackerElapsedSec(),
+      startTs: (!idle && t.status === 'running') ? (t.startTs || 0) : 0,
+      loads: loadsNumber(),
+      loadsManual: (t.accum && t.accum.manualLoads) || 0,
+      loadsArmed: loadsArmedNow(),
+      sessionKey: idle ? '' : ('s' + trackerSessionKeyMs()),
+      baseRev: (typeof App._sessRev === 'number') ? App._sessRev : -1,
+      force: !!force
+    };
+  }
+  function syncSessionRecord() {
+    try {
+      if (App._sessSyncing) return;
+      if (!(window.ShiftTrack && ShiftTrack.sessionSync)) return;
+      App._sessSyncing = true;
+      ShiftTrack.sessionSync(sessionFacts(false)).then(function (r) {
+        App._sessSyncing = false;
+        if (!r) return;
+        if (typeof r.rev === 'number') App._sessRev = r.rev;
+        if (r.applied === false) { try { adoptSessionRecord(r); } catch (e) {} }
+      }).catch(function () { App._sessSyncing = false; });
+    } catch (e) { App._sessSyncing = false; }
+  }
+  function adoptSessionRecord(rec) {
+    if (!rec || typeof rec.rev !== 'number' || rec.rev < 0) return;
+    var t = App.tracker; if (!t) return;
+    var now = Date.now();
+    var stateNewer = (rec.updatedAt || 0) >= (App._lastStateAt || 0);
+    var loadsNewer = (rec.updatedAt || 0) >= (App._lastLoadsAt || 0);
+    var changed = false, loadsChanged = false;
+    /* A record for a session this layer doesn't know, while
+       this layer sits idle: a face tap started nothing (a start
+       is this layer's own flow) — the record is stale; overwrite
+       it with this layer's idle truth instead of adopting a
+       ghost session. */
+    if (rec.status !== 'idle' && (!t.status || t.status === 'idle') && stateNewer) {
+      try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
+      return;
+    }
+    if (stateNewer && rec.status !== t.status) {
+      if (rec.status === 'paused' && t.status === 'running') {
+        t.elapsed = Math.max(0, (rec.elapsedBase || 0));
+        t.startTs = 0; t.status = 'paused'; changed = true;
+      } else if (rec.status === 'running' && t.status === 'paused') {
+        t.startTs = rec.segStartMs || now; t.status = 'running'; changed = true;
+      } else if (rec.status === 'idle' && t.status !== 'idle') {
+        /* Defensive: the record goes idle only through this
+           layer's own stop paths, which clear it — treat a stray
+           idle as "not ours" and leave the session alone. */
+      } else if (rec.status === 'running' && (!t.status || t.status === 'idle')) {
+        t.status = 'running'; t.elapsed = rec.elapsedBase || 0; t.startTs = rec.segStartMs || now; changed = true;
+      } else if (rec.status === 'paused' && (!t.status || t.status === 'idle')) {
+        t.status = 'paused'; t.elapsed = rec.elapsedBase || 0; t.startTs = 0; changed = true;
+      }
+      if (changed && rec.sessionKey) {
+        var m = /^s(\d+)$/.exec(rec.sessionKey);
+        if (m) { try { t.sessionId = m[1]; } catch (e) {} }
+      }
+    }
+    if (loadsNewer) {
+      if (rec.loadsArmed) {
+        var corr = rec.loadsCorr || 0;
+        if (corr !== 0 && window.GeoLoads && GeoLoads.nudge) {
+          try { if (GeoLoads.nudge(corr) !== null) loadsChanged = true; } catch (e) {}
+        }
+      } else if ((rec.loadsManual || 0) !== ((t.accum && t.accum.manualLoads) || 0)) {
+        trkAccum().manualLoads = Math.max(0, rec.loadsManual || 0);
+        loadsChanged = true;
+      }
+    }
+    if (typeof rec.rev === 'number') App._sessRev = rec.rev;
+    if (changed) {
+      /* Persist + repaint WITHOUT re-syncing: trackerSave's
+         hook would echo the record straight back. The record
+         already holds these facts (they came from it). */
+      store.set('tracker', App.tracker);
+      try { trackerPaint(); } catch (e) {}
+      try { paintBubble(trackerElapsedSec()); } catch (e) {}
+      try { pushWidgetState(lastBubbleFacts()); } catch (e) {}
+    } else if (loadsChanged) {
+      store.set('tracker', App.tracker);
+      try { trackerPaint(); } catch (e) {}
+      try { paintBubble(trackerElapsedSec()); } catch (e) {}
+    }
+    /* Consume: re-sync this layer's (possibly just-adopted)
+       facts so the record's pending correction zeroes and the
+       revision settles — the identical-facts sync is a native
+       no-op when nothing actually differs. */
+    if (changed || loadsChanged) { try { syncSessionRecord(); } catch (e) {} }
+  }
+  function collectSessionRecord() {
+    try {
+      if (window.ShiftTrack && ShiftTrack.sessionRecord) {
+        ShiftTrack.sessionRecord().then(function (r) { try { adoptSessionRecord(r); } catch (e) {} });
+      }
+    } catch (e) {}
+  }
+  App.collectSessionRecord = collectSessionRecord;
 
   /* DYN-TRACKER-BEGIN — the dynamic tracker (v41, owner: "a very key
      feature"). The big home-screen tracker tracks a different quantity
@@ -1679,12 +1813,13 @@
      bookkeeping itself is unchanged. */
   function trackerAddLoadTap() {
     if (!sessionActive()) return null;
+    App._lastLoadsAt = Date.now(); // v52: own-change stamp for session-record adoption
     /* v220: while GPS counting is armed, +1 corrects the machine
        count (the day record's signed correction) — the tap count
        stays the pre-arming fallback only. */
     try {
       if (window.GeoLoads && GeoLoads.today && GeoLoads.today().armed && GeoLoads.nudge) {
-        if (GeoLoads.nudge(1) !== null) return trkAccum();
+        if (GeoLoads.nudge(1) !== null) { try { syncSessionRecord(); } catch (e) {} return trkAccum(); }
       }
     } catch (e) {}
     var a = trkAccum();
@@ -1697,9 +1832,10 @@
      unarmed → the tap count steps down, never below zero. */
   function trackerCutLoadTap() {
     if (!sessionActive()) return null;
+    App._lastLoadsAt = Date.now(); // v52: own-change stamp for session-record adoption
     try {
       if (window.GeoLoads && GeoLoads.today && GeoLoads.today().armed && GeoLoads.nudge) {
-        if (GeoLoads.nudge(-1) !== null) return trkAccum();
+        if (GeoLoads.nudge(-1) !== null) { try { syncSessionRecord(); } catch (e) {} return trkAccum(); }
       }
     } catch (e) {}
     var a = trkAccum();
@@ -1944,9 +2080,22 @@
   function applyPipAction(a) {
     if (!a) return;
     try {
-      if (a === 'loadPlus') { trackerAddLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
-      else if (a === 'loadMinus') { trackerCutLoadTap(); trackerPaint(); paintBubble(trackerElapsedSec()); }
-      else applyWidgetAction(a);
+      /* v52: toggle / loadPlus / loadMinus were already
+         PERFORMED natively against the session record before
+         this word arrived — in v52 the record is the performer
+         and this handler never performs those taps a second
+         time; its whole job is to adopt the record. ('pause' is
+         the pre-v52 resolved word for the same signal.) */
+      if (a === 'toggle' || a === 'loadPlus' || a === 'loadMinus' || a === 'pause') { collectSessionRecord(); return; }
+      /* 'start' reaches here from the face's activity action at
+         idle — nothing was performed natively (a real start is
+         this layer's own flow) — and 'stop' rides the same
+         intent channel into the foregrounded app. Both perform
+         here, exactly as the widget's words always have. A
+         'start' that finds a session already live is stale:
+         adopt instead. */
+      if (a === 'start') { if (App.tracker.status === 'idle') applyWidgetAction('start'); else collectSessionRecord(); return; }
+      applyWidgetAction(a);
     } catch (e) {}
   }
   App.collectPipAction = function () {
@@ -2282,6 +2431,7 @@
     }
     else if (t.status === 'running') { t.elapsed = Math.max(0, t.elapsed + Math.floor((Date.now() - t.startTs) / 1000)); t.status = 'paused'; } // v174: never negative (an anchored start lies ahead)
     else { t.status = 'running'; t.startTs = Date.now(); }
+    App._lastStateAt = Date.now(); // v52: own-change stamp for session-record adoption
     trackerSave(); trackerPaint();
     // v40: a fresh shift start also starts live-miles tracking (inert
     // when the build has no live location — js/miles.js).
@@ -5733,6 +5883,9 @@
       }
     } catch (e) {}
     App.collectPipAction();
+    /* v52: adopt whatever the native session record already
+       holds (a face tap from before this page loaded). */
+    try { App.collectSessionRecord(); } catch (e) {}
     /* v227: docked, a tap on the tracker face (outside its
        buttons) reopens the Navigator full-screen — the same
        tap-back the v222 mini carried, moved to the face the
@@ -5782,6 +5935,14 @@
       if (document.visibilityState === 'visible') {
         /* v220: a widget button may have brought us here. */
         try { App.collectWidgetAction(); } catch (e6) {}
+        /* v52: a PiP word stashed by an intent (stop / start),
+           and any session-record change a face tap made while
+           we were away, are both collected on the way back in —
+           pre-v52 this handler collected widget words only, so
+           a PiP stash written while the page lived waited for a
+           full reload that might never come. */
+        try { App.collectPipAction(); } catch (e7) {}
+        try { App.collectSessionRecord(); } catch (e8) {}
         try { App.checkAutoStart(); } catch (e2) {}
         // v92: a dispatch saved or changed while we were away may
         // have moved the next day's plan — re-arm the native side.
