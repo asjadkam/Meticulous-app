@@ -3645,7 +3645,15 @@
            markers on it and refresh the list for the drive. */
         fetchTraffic(false);
         paintTrafficMarkers();
-        var saidNow = driveTick();
+        /* v266 (NAV-MAP-BLANK): the opening tick is guarded —
+           a fault anywhere in the paint path must not abort
+           drive-open itself (pre-v266 an unguarded lane-query
+           throw escaped here and the drive opened with the
+           plane never painted). saidNow semantics unchanged:
+           null when the tick said nothing (or could not run),
+           and the fallback announcement below still fires. */
+        var saidNow = null;
+        try { saidNow = driveTick(); } catch (e) {}
         if (!saidNow) {
           var cur = S.plan.maneuvers[S.manIdx] || S.plan.maneuvers[0];
           if (cur) speak(cur.verbalPre || cur.instruction);
@@ -3721,7 +3729,10 @@
             S.driveLine = makeDriveLine().addTo(S.driveMap);
           } catch (e) {}
         }
-        driveTick();
+        /* v266 (NAV-MAP-BLANK): guarded like startDrive's
+           opening tick — a re-route's first paint must not
+           throw back into the routing chain. */
+        try { driveTick(); } catch (e) {}
       }
 
       /* v133: THE BLANKING FIX — one cached writer for ALL of the
@@ -3916,6 +3927,17 @@
          reads OSM turn:lanes (see pickTurnLanes) — the answer
          cached per maneuver is the pair {count, turn}. */
       function fetchLaneCount(idx) {
+        /* v266 (NAV-MAP-BLANK): self-guarded wrapper. This
+           warm-up rides the drive tick's paint path under a
+           silent-on-any-failure contract — but pre-v266 its
+           query build threw (see fetchLaneCountRun) and the
+           throw escaped the tick before the plane paint, at
+           drive-open even escaping startDrive. Nothing this
+           lookup does may ever throw back into the tick; the
+           real work runs in fetchLaneCountRun below. */
+        try { fetchLaneCountRun(idx); } catch (e) {}
+      }
+      function fetchLaneCountRun(idx) {
         S.laneByTurn = S.laneByTurn || {}; S.laneFetch = S.laneFetch || {};
         if (S.laneByTurn[idx] !== undefined || !S.plan || !S.line) return;
         var m = S.plan.maneuvers[idx]; if (!m) return;
@@ -3944,9 +3966,24 @@
         var street = (m.streets && m.streets[0]) || '';
         /* v238 (NAV-LANE-INFO-REAL): the query also asks for
            ways carrying turn:lanes tagging — the REAL per-lane
-           movements — alongside the v196 count ways. */
-        var q = '[out:json][timeout:8];(way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"]["lanes"];' +
-          'way(around:25,' + tp.lat.toFixed(6) + ',' + tp.lng.toFixed(6) + ')["highway"][~"^turn:lanes"~"."];);out tags 24;';
+           movements — alongside the v196 count ways.
+           v266 (NAV-MAP-BLANK): pointAlongLine returns a
+           [lat, lng] ARRAY — every other caller indexes it —
+           but this query read tp.lat / tp.lng off it, so
+           building the query threw a TypeError on the FIRST
+           tick within 3 km of any turn (and again at every
+           maneuver boundary and 20 s cooldown lapse). The
+           throw escaped driveTick BEFORE the inset paint,
+           the traffic chip, the follow pan, the PLANE PAINT
+           and the animator kick — and at drive-open inside
+           3 km it escaped startDrive itself, so the chase
+           transform was never painted (owner's Oct 26
+           recordings: guidance alive on a flat, unpitched
+           map for the whole approach). The lookup has in
+           fact never completed since v196; the suites only
+           ever tested the pure pickers. Index the array. */
+        var q = '[out:json][timeout:8];(way(around:25,' + tp[0].toFixed(6) + ',' + tp[1].toFixed(6) + ')["highway"]["lanes"];' +
+          'way(around:25,' + tp[0].toFixed(6) + ',' + tp[1].toFixed(6) + ')["highway"][~"^turn:lanes"~"."];);out tags 24;';
         var endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
         var attempt = function (k) {
           return fetch(endpoints[k], { method: 'POST', body: 'data=' + encodeURIComponent(q) })
@@ -4050,7 +4087,12 @@
              the upcoming turn while it is still 3 km out, so
              the strip is ready when the pop-up shows. Lazy,
              once per maneuver per route, off the critical
-             path (the v179 pattern); silent on any failure. */
+             path (the v179 pattern); silent on any failure.
+             v266 (NAV-MAP-BLANK): the fetcher is SELF-GUARDED
+             for the same reason (see fetchLaneCount) — an
+             unguarded throw here aborted the whole tick
+             before the plane paint (the v227 blast radius,
+             proven again on the render harness). */
           if (dp.next && dp.toTurnM <= 3000) fetchLaneCount(dp.idx);
           var showInset = !!dp.next && dp.toTurnM <= 800;
           /* v192 (NAV-UTURN): a turn-around arrow IS a U-turn
@@ -4119,8 +4161,15 @@
            shared by the spoken warning and the chip below. */
         if (S.settings.trafficOn) fetchTraffic(false);
         if (!S.trafficSaid) S.trafficSaid = {};
-        var trafficHits = (S.settings.trafficOn && S.trafficList && S.trafficList.length)
-          ? trafficOnRoute(S.line, pr.along, S.trafficList, TRAFFIC_OFF_M, TRAFFIC_AHEAD_M) : [];
+        /* v266 (NAV-MAP-BLANK): guarded like the lane warm-up
+           above — the traffic overlay is a display aid riding
+           the paint path, never a reason for the tick (and
+           with it the plane paint) to die. A bad incident row
+           costs the chip for one tick, never the map. */
+        var trafficHits = [];
+        if (S.settings.trafficOn && S.trafficList && S.trafficList.length) {
+          try { trafficHits = trafficOnRoute(S.line, pr.along, S.trafficList, TRAFFIC_OFF_M, TRAFFIC_AHEAD_M); } catch (e) { trafficHits = []; }
+        }
 
         var say = drivePrompt(S.plan, dp.idx, dp.toTurnM, S.drive.said);
         if (say) speak(say);
