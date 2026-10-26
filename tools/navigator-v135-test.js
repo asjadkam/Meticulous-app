@@ -398,6 +398,16 @@ function encodeShape(points) {
         }
         let bodyObj = null;
         try { bodyObj = JSON.parse((fetchOpts && fetchOpts.body) || '{}'); } catch (e) {}
+        /* v264 (NAV-LANE-INSET-EMPTY): the module replays each
+           adopted route once with format:'osrm' to read the
+           server's lane data. That is not a routing request —
+           the real server answers it from the same graph
+           without disturbing routing — so, like the Nominatim
+           bystander above, it is answered benignly here and
+           never enters the routing ledger or the answer queue. */
+        if (bodyObj && bodyObj.format === 'osrm') {
+          return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ routes: [] }); } });
+        }
         calls.fetch.push({ url: url, body: bodyObj });
         return opts.fetchHandler(bodyObj, calls.fetch.length);
       }

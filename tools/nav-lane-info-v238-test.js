@@ -70,8 +70,9 @@ ok('the fetcher asks Overpass for turn:lanes ways too',
   navSrc.indexOf('"^turn:lanes"') !== -1 && navSrc.indexOf('["highway"]["lanes"]') !== -1);
 ok('the fetcher stores the picked turn lanes with the count',
   navSrc.indexOf('pickTurnLanes(els, street)') !== -1 && navSrc.indexOf('pickLaneCount(els, street)') !== -1);
-ok('the pop-up paints through laneGuidanceHtml',
-  navSrc.indexOf('laneGuidanceHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : null, dDeg)') !== -1);
+ok('the pop-up paints through laneGuidanceHtml (v264: laneData — server lanes first, this cache the fallback)',
+  navSrc.indexOf('laneGuidanceHtml(laneData, dDeg)') !== -1 &&
+  navSrc.indexOf('(S.laneByTurn ? S.laneByTurn[dp.idx] : null)') !== -1);
 ok('the arrows-strip CSS exists (auto-width cells + wrap variant)',
   css.indexOf('.nv-lane.nv-lane-arrows{') !== -1 && css.indexOf('.nv-inset-lanes.wrap{') !== -1);
 
@@ -91,10 +92,22 @@ eq('ambiguous values answer nothing',
     el({ oneway: 'yes', 'turn:lanes:forward': 'left|through' }),
     el({ oneway: 'yes', 'turn:lanes:forward': 'through|right' })
   ], 'Nowhere St'), null);
-eq('a two-way way (no oneway) is NOT read — orientation unknowable',
-  sb.pickTurnLanes([el({ 'turn:lanes:forward': 'left|through' })], ''), null);
-eq('combined turn:lanes without :forward is NOT read',
-  sb.pickTurnLanes([el({ oneway: 'yes', 'turn:lanes': 'left|through' })], ''), null);
+/* v264 RE-BASE (NAV-LANE-INSET-EMPTY, evidence Oct 26, 2026):
+ * the two pins below asserted the v238 orientation gate. Direct
+ * OSM reads of the owner's corridors (Deerfoot Tr / 16 Ave and
+ * Peigan Tr / Barlow bboxes via the OSM API) show Calgary tags
+ * plain `turn:lanes` on one-way carriageways and essentially
+ * never `turn:lanes:forward` — the gate read a key his roads
+ * don't carry. v264 widens honestly: the :forward suffix names
+ * the forward lanes BY DEFINITION wherever it stands, and
+ * plain turn:lanes on a one-way way names exactly the driver's
+ * lanes. Plain turn:lanes on a TWO-WAY way stays unread. */
+eq('v264: turn:lanes:forward is read wherever it stands (suffix = the forward lanes)',
+  sb.pickTurnLanes([el({ 'turn:lanes:forward': 'left|through' })], ''), [['left'], ['through']]);
+eq('v264: plain turn:lanes on a one-way way is read (Calgary carriageway tagging)',
+  sb.pickTurnLanes([el({ oneway: 'yes', 'turn:lanes': 'left|through' })], ''), [['left'], ['through']]);
+eq('v264: plain turn:lanes on a TWO-WAY way is still NOT read (spans both directions)',
+  sb.pickTurnLanes([el({ oneway: 'no', 'turn:lanes': 'left|through' })], ''), null);
 eq('a motorway approach is one-way by construction',
   sb.pickTurnLanes([el({ highway: 'motorway', 'turn:lanes:forward': 'through|right' })], ''),
   [['through'], ['right']]);

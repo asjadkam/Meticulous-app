@@ -70,8 +70,8 @@ ok('the fetcher chooses via pickLaneCount (v238: over the shared els)',
   navSrc.indexOf('pickLaneCount(els, street)') !== -1);
 ok('a new route resets the lane cache',
   navSrc.indexOf('S.laneByTurn = {}; S.laneFetch = {};') !== -1);
-ok('the pop-up paints the strip between junction and header (v238: via laneGuidanceHtml)',
-  navSrc.indexOf("laneGuidanceHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : null, dDeg) +") !== -1);
+ok('the pop-up paints the strip between junction and header (v238: via laneGuidanceHtml; v264: laneData, server lanes first)',
+  navSrc.indexOf("laneGuidanceHtml(laneData, dDeg) +") !== -1);
 ok('the strip CSS exists', css.indexOf('.nv-inset-lanes{') !== -1 && css.indexOf('.nv-lane.on{') !== -1);
 ok('no version-196 claim leaks into the module header pins of older suites',
   navSrc.indexOf('webVersion, 198') === -1);

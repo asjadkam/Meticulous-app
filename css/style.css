@@ -829,4 +829,14 @@ body.mt-driving #chatSheet{z-index:2120;}
 .nv-inset-text{display:flex;flex-direction:column;min-width:0;}
 .nv-inset-text b{font-size:17px;line-height:1.1;}
 .nv-inset-text span{font-size:12.5px;color:#D9E1F3;line-height:1.25;}
+/* v264 (NAV-LANE-INSET-EMPTY): the sign block under the inset's
+   header — the exit number as a road-sign-green chip, the road
+   the maneuver takes, and the destinations it points toward,
+   all from the route response's own sign data. Present only
+   when the response carries a sign for the maneuver. */
+.nv-inset-sign{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.08);border-radius:9px;padding:5px 7px;}
+.nv-inset-exit{flex:none;background:#1e7d32;color:#fff;font-weight:700;font-size:11.5px;border-radius:5px;padding:2px 6px;letter-spacing:.02em;}
+.nv-inset-sign-text{display:flex;flex-direction:column;min-width:0;}
+.nv-inset-sign-text b{font-size:12.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.nv-inset-sign-text span{font-size:11.5px;color:#D9E1F3;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nv-route-arrow{background:transparent;border:none;}

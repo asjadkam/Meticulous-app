@@ -406,6 +406,17 @@ function makeWorld(storeData, withNavModule, fetchMode) {
   return { world: world, reg: reg, body: body, calls: calls, mapHandlers: mapHandlers, firePos: function (la, lo, hd, sp) { geoCb({ coords: { latitude: la, longitude: lo, heading: hd, speed: sp } }); } };
 }
 function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
+/* v264 (NAV-LANE-INSET-EMPTY): /route fetches come in two
+   species — ROUTING requests, and the lanes replay the module
+   fires once per adopted route (same URL, body format:'osrm',
+   answered by the server's OSRM serializer for its lane data).
+   The routing ledgers below count routing requests only;
+   isRoutingFetch is that split. The replay itself is pinned
+   positively in the server-set flow below. */
+function isRoutingFetch(c) {
+  if (!c || !c.url || c.url.indexOf('/route') < 0) return false;
+  try { return JSON.parse((c.opts && c.opts.body) || '{}').format !== 'osrm'; } catch (e) { return true; }
+}
 
 (async function () {
   console.log('— flow: server set —');
@@ -429,7 +440,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     !/tap/.test(w.reg.nv_destnote.textContent), w.reg.nv_destnote.textContent);
   check('v103: the manual Route affordance remains for re-planning', w.body.innerHTML.indexOf('id="nv_route"') >= 0);
   await tick(); await tick();
-  const routeCalls = w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
+  const routeCalls = w.calls.fetch.filter(isRoutingFetch);
   check('v137: AUTO-ROUTE — the tap alone requested the route (no Route press), at the BAKED server (the stored nav.test address no longer steers routing)',
     routeCalls.length === 1 && routeCalls[0].url === 'https://2.31.47.19/route',
     routeCalls.length ? routeCalls[0].url : 'no fetch');
@@ -440,6 +451,10 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     check('POSTed OD = the GPS origin and tapped destination',
       sent.locations[0].lat === ORIGIN[0] && sent.locations[1].lon === DEST[1]);
   }
+  check('v264: the adopted route fired exactly ONE lanes replay (OSRM format) after it',
+    w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 2 &&
+    JSON.parse(w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; })[1].opts.body).format === 'osrm',
+    JSON.stringify(w.calls.fetch.map(function (c) { return c.url; })));
   check('polyline drawn from the real response shape', w.calls.polylines.length === 1 && w.calls.polylines[0].length > 100,
     w.calls.polylines.length ? String(w.calls.polylines[0].length) : 'none');
   check('steps list shows the real maneuvers', w.reg.nv_steps.innerHTML.indexOf('Norquay Drive NW') >= 0 &&
@@ -455,11 +470,11 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w.world.Date = (function () { var RD = Date; function FD() { return new RD(fakeNow); } FD.now = function () { return fakeNow; }; return FD; })();
   w.firePos(51.1155, -114.0915); // ~700 m off the line
   await tick();
-  check('first off-route fix does NOT re-route yet (hysteresis)', w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
+  check('first off-route fix does NOT re-route yet (hysteresis)', w.calls.fetch.filter(isRoutingFetch).length === 1);
   fakeNow += 5000;
   w.firePos(51.1155, -114.0915);
   await tick(); await tick();
-  check('held off-route past 4 s re-routes from the new position', w.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 2);
+  check('held off-route past 4 s re-routes from the new position', w.calls.fetch.filter(isRoutingFetch).length === 2);
   w.world.Date = Date;
   api.teardown();
 
@@ -482,7 +497,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   w2.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
   await tick(); await tick();
   check('v137: routing still functions on the baked address after a legacy clear',
-    w2.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route'; }).length === 1,
+    w2.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route' && isRoutingFetch(c); }).length === 1,
     JSON.stringify(w2.calls.fetch.map(function (c) { return c.url; })));
   api2.teardown();
 
@@ -505,7 +520,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w4.reg.nv_destnote.textContent.indexOf('Turn-by-turn') < 0 && /Destination:/.test(w4.reg.nv_destnote.textContent),
     w4.reg.nv_destnote.textContent);
   await tick(); await tick();
-  const dCalls = w4.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
+  const dCalls = w4.calls.fetch.filter(isRoutingFetch);
   check('v103: AUTO-ROUTE under the default — the tap alone POSTs to the shipped default <server>/route',
     dCalls.length === 1 && dCalls[0].url === 'https://2.31.47.19/route',
     dCalls.length ? dCalls[0].url : 'no fetch');
@@ -546,7 +561,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w3.reg.nv_banner.children['.nv-banner-sub'].textContent);
   await tick(); await tick();
   check('v137: the route IS fetched — to the baked server, from a world whose store says routing was cleared',
-    w3.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route'; }).length === 1,
+    w3.calls.fetch.filter(function (c) { return c.url === 'https://2.31.47.19/route' && isRoutingFetch(c); }).length === 1,
     JSON.stringify(w3.calls.fetch.map(function (c) { return c.url; })));
   check('v103: nothing external was opened or anchored, ever',
     w3.calls.anchors.length === 0 && w3.calls.opened.length === 0);
@@ -691,12 +706,12 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   wD.firePos(51.1155, -114.0915, 90);
   await tick();
   check('driving: first off-route fix does NOT re-route yet',
-    wD.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
+    wD.calls.fetch.filter(isRoutingFetch).length === 1);
   fakeNowD += 5000;
   wD.firePos(51.1155, -114.0915, 90);
   await tick(); await tick();
   check('driving: held off-route re-routes from the new position',
-    wD.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 2);
+    wD.calls.fetch.filter(isRoutingFetch).length === 2);
   check('driving: the drive screen shows its off-route/rerouting pill',
     !wD.reg.nvd_reroute.classList.contains('hidden'));
   wD.world.Date = Date;
@@ -752,7 +767,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   await tick(); await tick();
   check('picker door: one tap set the destination on the place pin',
     wPk.reg.nv_destnote.textContent.indexOf('Destination: Stoney Trail Aggregate Resource') >= 0, wPk.reg.nv_destnote.textContent);
-  const pkRoutes = wPk.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; });
+  const pkRoutes = wPk.calls.fetch.filter(isRoutingFetch);
   /* v119: the seeded hand-off may route to Bradi once position
      lands; the PICK's own auto-route is the one targeting the
      STAR pit. */
@@ -807,7 +822,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   check('v104: hand-off armed: no route before the first fix', wG.calls.fetch.length === 0);
   wG.firePos(ORIGIN[0], ORIGIN[1]); // stationary — no speed on the fix
   await tick(); await tick();
-  const gRoutes = function () { return wG.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length; };
+  const gRoutes = function () { return wG.calls.fetch.filter(isRoutingFetch).length; };
   check('v104: hand-off arm auto-routed on the first fix', gRoutes() === 1, gRoutes() + ' route fetches');
   check('v104: GO-NOW — Drive opened BY ITSELF on route-ready (no Drive tap, truck stationary)',
     !wG.reg.nv_drive_screen.classList.contains('hidden'));
@@ -847,7 +862,7 @@ function tick() { return new Promise(function (r) { setTimeout(r, 10); }); }
   wS.firePos(ORIGIN[0], ORIGIN[1]);
   wS.mapHandlers.click({ latlng: { lat: DEST[0], lng: DEST[1] } });
   await tick(); await tick();
-  check('v104: parked manual pick routed (auto-route stands)', wS.calls.fetch.filter(function (c) { return c.url.indexOf('/route') >= 0; }).length === 1);
+  check('v104: parked manual pick routed (auto-route stands)', wS.calls.fetch.filter(isRoutingFetch).length === 1);
   check('v104: parked manual pick REVEALS Drive (the primary is in hand)', !wS.reg.nv_drive.classList.contains('hidden'));
   check('v104: parked manual pick does NOT auto-enter — planning stays in the plan view',
     wS.reg.nv_drive_screen.classList.contains('hidden'));

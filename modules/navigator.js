@@ -387,6 +387,43 @@
     return { points: pts, seg: best.seg, along: best.along, dist: best.dist };
   }
 
+  /* v264 (NAV-LANE-INSET-EMPTY): the sign block of a maneuver —
+     Valhalla's `sign` object (exit number / the road the exit
+     leads to / the destinations it points toward), reduced to
+     plain texts. Probed live against the owner's server
+     (Oct 26, 2026): 17 of 58 maneuvers across his SE-Calgary
+     corridors carry one (exits 258, 68, 88, 246-245, 234B…),
+     and pre-v264 maneuverPlan dropped the whole object, so the
+     turn card could never show any of it. Adjacent duplicate
+     texts collapse (Valhalla repeats a branch text when its
+     consecutive_count spans signs). */
+  function signPartTexts(elements) {
+    var out = [];
+    (elements || []).forEach(function (e) {
+      var t = (e && e.text !== undefined && e.text !== null) ? String(e.text).trim() : '';
+      if (t && out[out.length - 1] !== t) out.push(t);
+    });
+    return out;
+  }
+  function maneuverSign(sign) {
+    if (!sign) return null;
+    var exit = signPartTexts(sign.exit_number_elements).join(' ');
+    var branch = signPartTexts(sign.exit_branch_elements);
+    var toward = signPartTexts(sign.exit_toward_elements);
+    if (!exit && !branch.length && !toward.length) return null;
+    return { exit: exit, branch: branch, toward: toward };
+  }
+  /* The inset's sign lines, as data (the paint escapes):
+     the road the maneuver takes, and where it points. */
+  function insetSignOf(m) {
+    if (!m || !m.sign) return null;
+    return {
+      exit: m.sign.exit || '',
+      branchText: (m.sign.branch || []).join(' · '),
+      towardText: (m.sign.toward || []).join(' · ')
+    };
+  }
+
   /* Flatten a Valhalla trip into a banner-ready plan: every maneuver
      with cumulative start/end distances (km) and its spoken lines. */
   function maneuverPlan(trip) {
@@ -399,6 +436,7 @@
           verbalPre: m.verbal_pre_transition_instruction || '',
           verbalPost: m.verbal_post_transition_instruction || '',
           streets: (m.street_names || []).slice(),
+          sign: maneuverSign(m.sign),
           lengthKm: len, cumStartKm: cum, cumEndKm: cum + len, type: m.type
         });
         cum += len;
@@ -631,11 +669,13 @@
          from an Overpass answer with pickLaneCount's honesty
          discipline (name match wins; a single distinct value
          wins; ambiguity answers nothing), PLUS the orientation
-         rule: only `turn:lanes:forward` on a ONE-WAY way (or a
-         motorway, one-way by construction) is read — there
-         the forward lanes are exactly the driver's lanes in
-         travel order. A lanes:forward count that contradicts
-         the strip distrusts it.
+         rule: `turn:lanes:forward` is read wherever it stands
+         (the suffix names the forward lanes by definition),
+         and plain `turn:lanes` is read on a ONE-WAY way (or a
+         motorway, one-way by construction), where every lane
+         is a forward lane in travel order — the v264 widening,
+         see pickTurnLanes itself. A matching lane count that
+         contradicts the strip distrusts it.
        laneArrowsHtml(turnLanes, deltaDeg) — one cell per REAL
          lane, each showing the arrow(s) that lane actually
          allows; the lanes whose movements serve the maneuver
@@ -673,12 +713,29 @@
       var t = (el && el.tags) || {};
       var oneway = String(t.oneway || '').trim().toLowerCase();
       var hw = String(t.highway || '').trim().toLowerCase();
-      if (!(oneway === 'yes' || oneway === 'true' || oneway === '1' ||
-          hw === 'motorway' || hw === 'motorway_link')) return;
-      var parsed = parseTurnLanes(t['turn:lanes:forward']);
+      var oneWayWay = (oneway === 'yes' || oneway === 'true' || oneway === '1' ||
+          hw === 'motorway' || hw === 'motorway_link');
+      /* v264 (NAV-LANE-INSET-EMPTY): the v238 gate read ONLY
+         turn:lanes:forward and ONLY on one-way ways. Two honest
+         readings were thrown away with it. (1) The :forward
+         suffix is direction-specific BY DEFINITION — on any
+         way it names the forward lanes in travel order, so it
+         is read wherever it stands. (2) Plain turn:lanes on a
+         ONE-WAY way (a freeway carriageway, a ramp) names every
+         lane of that way, and every lane there is a forward
+         lane in travel order — the form Calgary's divided
+         highways are actually tagged in. Plain turn:lanes on a
+         two-way way stays unread: it spans both directions and
+         cannot be split without inventing. */
+      var raw = t['turn:lanes:forward'];
+      var cnt = parseInt(t['lanes:forward'], 10);
+      if (raw === undefined && oneWayWay) {
+        raw = t['turn:lanes'];
+        cnt = parseInt(t['lanes'], 10);
+      }
+      var parsed = parseTurnLanes(raw);
       if (!parsed) return;
-      var lf = parseInt(t['lanes:forward'], 10);
-      if (lf >= 1 && lf !== parsed.length) return;
+      if (cnt >= 1 && cnt !== parsed.length) return;
       var key = JSON.stringify(parsed);
       if (!values[key]) { values[key] = parsed; order.push(key); }
       if (want && String(t.name || '').trim().toLowerCase() === want) named = parsed;
@@ -692,12 +749,15 @@
     if (d >= 8) return has('right', 'slight_right');
     return has('through', 'none');
   }
-  function laneArrowsHtml(turnLanes, deltaDeg) {
+  function laneArrowsHtml(turnLanes, deltaDeg, valid) {
     if (!turnLanes || !turnLanes.length || turnLanes.length > 6) return '';
     var d = Number(deltaDeg) || 0;
     var cells = '';
-    turnLanes.forEach(function (tokens) {
-      var on = laneServes(tokens, d);
+    turnLanes.forEach(function (tokens, li) {
+      /* v264: when the data source says outright which lanes
+         serve the maneuver (the server's own valid flags),
+         that word wins over the geometry guess. */
+      var on = valid ? !!valid[li] : laneServes(tokens, d);
       var size = tokens.length > 1 ? 14 : 21;
       var arrows = '';
       tokens.slice(0, 3).forEach(function (tk) {
@@ -713,8 +773,80 @@
   function laneGuidanceHtml(data, deltaDeg) {
     if (data === null || data === undefined) return '';
     if (typeof data === 'number') return laneStripHtml(data, deltaDeg);
-    if (data.turn && data.turn.length) return laneArrowsHtml(data.turn, deltaDeg);
+    if (data.turn && data.turn.length) return laneArrowsHtml(data.turn, deltaDeg, data.valid);
     return laneStripHtml(data.count || 0, deltaDeg);
+  }
+
+  /* v264 (NAV-LANE-INSET-EMPTY): lanes from the owner's OWN
+     route server. Diagnosis (Oct 26, 2026, live probes of the
+     deployed Valhalla 3.9.1): the native response carries NO
+     lane data at any level and no config turns it on — but the
+     SAME server, asked for the SAME route with "format":"osrm",
+     answers with intersections whose `lanes` carry each lane's
+     real indications and which lanes are VALID for the route's
+     maneuver (the graph's OSM turn:lanes, read by the engine
+     itself — 79 such intersections across the four corridors
+     probed: Deerfoot, Stoney, 16 Ave, Glenmore, Peigan).
+       osrmLaneData(osrmJson) — every laned intersection in the
+         answer, as {lat, lng, turn, valid}: per-lane movement
+         tokens in THIS app's vocabulary, and the server's own
+         valid flag per lane. A lane whose indications map to
+         nothing known is dropped whole; an intersection left
+         with no usable lane is dropped too.
+       matchServerLanes(laned, line, plan) — pins each laned
+         intersection to the maneuver it belongs to: the one
+         whose END (the turn point the pop-up serves) lies
+         within 75 m. Returns {maneuverIndex: {turn, valid}} —
+         the same pair shape the Overpass cache stores, plus
+         the valid flags. No match, no entry: absence stays
+         honest, the Overpass fallback still gets its say. */
+  var OSRM_LANE_TOKEN = {
+    'straight': 'through', 'through': 'through', 'none': 'none',
+    'left': 'left', 'right': 'right',
+    'slight left': 'slight_left', 'slight right': 'slight_right',
+    'sharp left': 'left', 'sharp right': 'right',
+    'uturn': 'reverse', 'merge': 'through'
+  };
+  function osrmLaneData(osrmJson) {
+    var out = [];
+    var routes = (osrmJson && osrmJson.routes) || [];
+    if (!routes.length || !routes[0].legs) return out;
+    routes[0].legs.forEach(function (leg) {
+      (leg.steps || []).forEach(function (step) {
+        (step.intersections || []).forEach(function (inter) {
+          if (!inter || !inter.lanes || !inter.lanes.length || !inter.location) return;
+          var turn = [], valid = [];
+          inter.lanes.forEach(function (ln) {
+            var toks = [];
+            ((ln && ln.indications) || []).forEach(function (ind) {
+              var tk = OSRM_LANE_TOKEN[String(ind || '').trim().toLowerCase()];
+              if (tk && toks.indexOf(tk) === -1) toks.push(tk);
+            });
+            if (!toks.length) return;
+            turn.push(toks);
+            valid.push(!!(ln && ln.valid));
+          });
+          if (!turn.length || turn.length > 6) return;
+          out.push({ lat: Number(inter.location[1]), lng: Number(inter.location[0]), turn: turn, valid: valid });
+        });
+      });
+    });
+    return out;
+  }
+  function matchServerLanes(laned, line, plan) {
+    var out = {};
+    if (!laned || !laned.length || !line || !plan || !plan.maneuvers) return out;
+    for (var idx = 0; idx + 1 < plan.maneuvers.length; idx++) {
+      var tp = pointAlongLine(line, plan.maneuvers[idx].cumEndKm * 1000);
+      if (!tp) continue;
+      var best = null, bestD = 75;
+      laned.forEach(function (L) {
+        var d = haversineM(tp, [L.lat, L.lng]);
+        if (d <= bestD) { bestD = d; best = L; }
+      });
+      if (best) out[idx] = { turn: best.turn, valid: best.valid };
+    }
+    return out;
   }
 
   /* v135 layer 2 — the presentation guarantee. If every
@@ -734,7 +866,7 @@
     var mans = plan.maneuvers.map(function (m) {
       var c = {
         instruction: m.instruction, verbalPre: m.verbalPre, verbalPost: m.verbalPost,
-        streets: (m.streets || []).slice(), lengthKm: m.lengthKm,
+        streets: (m.streets || []).slice(), sign: m.sign || null, lengthKm: m.lengthKm,
         cumStartKm: m.cumStartKm, cumEndKm: m.cumEndKm, type: m.type
       };
       if (isUturnManeuver(m)) {
@@ -2587,11 +2719,57 @@
           } catch (e) {}
         }
 
-        function finalizeRoute(line, plan) {
+        /* v264 (NAV-LANE-INSET-EMPTY): lane data from the
+           owner's OWN route server. The native response the
+           app routes on carries no lanes (probed Oct 26: every
+           maneuver key enumerated, none) — but the same server
+           returns real per-lane indications in its OSRM format,
+           so the ADOPTED request is replayed once with
+           format:'osrm' and the answer's laned intersections
+           are pinned to this route's maneuvers (matchServerLanes).
+           Fully guarded like the grade fetch: any failure
+           leaves S.serverLanes empty and the Overpass lookup
+           remains the fallback — silence, never invented lanes.
+           The replay carries the adopted body whole (exclusion
+           points / forward via included), so the lane answer
+           describes the route actually being driven; where it
+           still diverges, the 75 m pinning fails safe. */
+        function fetchServerLanes(reqBody, line, plan) {
+          S.serverLanes = {};
+          if (!reqBody || typeof fetch !== 'function') return;
+          try {
+            var body2 = {};
+            for (var k in reqBody) body2[k] = reqBody[k];
+            body2.format = 'osrm';
+            fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body2) })
+              .then(function (r) { if (!r.ok) throw new Error('osrm ' + r.status); return r.json(); })
+              .then(function (j) {
+                if (!S || S.line !== line || S.plan !== plan) return;
+                var laned = osrmLaneData(j);
+                if (!laned.length) return;
+                S.serverLanes = matchServerLanes(laned, line, plan);
+                /* if the pop-up is already showing a turn this
+                   answer covers, clear its key so the strip
+                   paints on the next fix (the v196 nudge). */
+                if (S.drive && S.drive.insetKey &&
+                    S.serverLanes[S.drive.insetKey.split(':')[0]]) S.drive.insetKey = '';
+              })
+              .catch(function () {});
+          } catch (e) {}
+        }
+
+        function finalizeRoute(line, plan, reqBody) {
           S.rerouting = false;
           S.line = line;
           S.plan = plan;
           fetchGradeEvents(line);
+          /* v264 (NAV-LANE-INSET-EMPTY): the same adopted
+             request, replayed once against the owner's own
+             server in OSRM format for its lane data (see
+             fetchServerLanes). Off the critical path like the
+             grade fetch — the route is usable the moment it
+             lands; lanes fill in when the answer arrives. */
+          fetchServerLanes(reqBody, line, plan);
           /* v262: a new route re-arms the traffic warnings —
              each incident may be warned about once per route —
              and refreshes the incident list against the new line. */
@@ -2601,6 +2779,9 @@
              route's maneuvers — a new route starts with an
              empty cache. */
           S.laneByTurn = {}; S.laneFetch = {};
+          /* v264: the server-lane set belongs to this route
+             too (fetchServerLanes repopulates it). */
+          S.serverLanes = {};
           S.manIdx = 0; S.offSince = 0; S.arrived = false;
           /* v78: remember the destination for the dashboard card
              (search name when there is one, else the pin coords —
@@ -2760,7 +2941,7 @@
                 }
                 plan = sanitizeTruckPlan(plan);
               }
-              finalizeRoute(line, plan);
+              finalizeRoute(line, plan, reqBody);
             })
             .catch(function (err) {
               /* v260 (NAV-NO-UTURN): a failed FORWARD (via)
@@ -2784,7 +2965,7 @@
               if (lastGood) {
                 var lg = lastGood;
                 lastGood = null;
-                finalizeRoute(lg.line, sanitizeTruckPlan(lg.plan));
+                finalizeRoute(lg.line, sanitizeTruckPlan(lg.plan), null);
                 return;
               }
               S.rerouting = false;
@@ -3886,11 +4067,31 @@
             S.drive.insetKey = insetKey;
             insetEl.classList.toggle('hidden', !showInset);
             if (showInset) {
+              /* v264 (NAV-LANE-INSET-EMPTY): the lane strip's
+                 first source is now the route server's own lane
+                 answer for this route (S.serverLanes, with its
+                 valid flags); the Overpass cache stays the
+                 fallback for turns the server answer didn't
+                 cover. And under the header, the maneuver's
+                 SIGN block (exit number / road taken / where it
+                 points — maneuverSign rode the plan since this
+                 version) so the card carries usable information
+                 even where no lane data exists anywhere. */
+              var laneData = (S.serverLanes && S.serverLanes[dp.idx]) ||
+                (S.laneByTurn ? S.laneByTurn[dp.idx] : null);
+              var sgn = insetSignOf(dp.next);
+              var signHtml = sgn ? '<div class="nv-inset-sign">' +
+                (sgn.exit ? '<span class="nv-inset-exit">EXIT ' + esc(sgn.exit) + '</span>' : '') +
+                '<div class="nv-inset-sign-text">' +
+                (sgn.branchText ? '<b>' + esc(sgn.branchText) + '</b>' : '') +
+                (sgn.towardText ? '<span>toward ' + esc(sgn.towardText) + '</span>' : '') +
+                '</div></div>' : '';
               insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
-                laneGuidanceHtml(S.laneByTurn ? S.laneByTurn[dp.idx] : null, dDeg) +
+                laneGuidanceHtml(laneData, dDeg) +
                 '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
-                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>';
+                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>' +
+                signHtml;
             }
           }
         }
