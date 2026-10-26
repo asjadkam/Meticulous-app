@@ -109,6 +109,54 @@
  * when the machine has nothing), and the dispatch close
  * pre-fills from it first. Tickets and deliberately recorded
  * counts still outrank it — paperwork is paperwork.
+ *
+ * v267 (Oct 26, 2026 — LOAD-COUNT-DEAD): the owner, mid-shift on
+ * an ACTIVE dispatch at a same-place site: "That gps load
+ * tracking is not working at all now!" — zero automatic counts
+ * all morning. The whole pipeline was audited as shipped and
+ * four distinct zero-forever states were PROVEN in the harness
+ * (tools/load-count-dead-v267-test.js, which drives this file's
+ * real glue), and fixed:
+ *   (A) STALE CONFIGURATION: counting was configured once, at
+ *       session start, and nothing re-ran configure() when the
+ *       world changed under the session — the dispatch landing
+ *       mid-shift (Connect / message / his tap / yard flip)
+ *       armed nothing, and onFix's armed guard returned before
+ *       the day roll, so even the roll could not heal it. Now:
+ *       the roll runs before the feed, and a throttled world
+ *       check (the store's dsp_active vs the configured
+ *       dispatch — the same record the dashboard shows) re-runs
+ *       configure() whenever the configuration is disarmed or
+ *       the active dispatch changed; startDay's same-key
+ *       reattach runs the same check.
+ *   (C) INTRA ACCURACY STARVATION: the pattern learner's
+ *       intra-site machine RESET its sub-cluster on any fix
+ *       rougher than 30 m (or with no accuracy at all). Every
+ *       other machine in this engine ignores bad fixes
+ *       entirely; intra let one spike zero a 2-minute dwell
+ *       build, so under any realistic fix wobble a same-place
+ *       sub-spot could never confirm — zero all day while
+ *       'learning'. Rough fixes are now ignored for intra,
+ *       never fatal; the distance rule still restarts a cluster
+ *       when a good fix lands away from its centroid.
+ *   (B) ONE-PIN SAME-PLACE BLINDNESS: a dispatch with a load
+ *       pin only enters teach mode, whose dump candidate must
+ *       sit >= 300 m from the pin — a same-place tip never
+ *       qualifies, so the day could never count. Teach mode now
+ *       also runs a shadow pattern learner seeded on the pin
+ *       that may arm the counter with an INTRA-site pair only
+ *       (never an outer pair, never a contest), and only while
+ *       the dump learner has no loaded leg outstanding.
+ *   (H) MIS-ANCHORED PATTERN DAY: the pattern learner anchored
+ *       on the day's first dwell — an en-route fuel/coffee stop
+ *       became the "load site", the pit became the candidate,
+ *       cycles could never close (they close only at the
+ *       anchor) and intra stayed suppressed while a candidate
+ *       existed: zero forever. A candidate confirmed three
+ *       times with no cycle ever closed is the day's real hub:
+ *       a LEARNED anchor is reassigned to it (a seeded anchor —
+ *       the dispatch's own pin — never is), the two-cycle proof
+ *       itself unchanged.
  */
 (function () {
   'use strict';
@@ -594,6 +642,9 @@
       return !!HOME && haversineM(lat, lng, HOME.lat, HOME.lng) <= 250;
     }
     function placeOf(p) { return p ? { lat: +p.lat, lng: +p.lng, t: +p.t || 0 } : null; }
+    function freshIntra() {
+      return { a: null, b: null, visits: 0, cycles: 0, lastSub: null, visitTs: [], dead: false, sub: null };
+    }
 
     /* The outer machine: anchor / candidate / proof. */
     function confirmPlace(place, res) {
@@ -611,6 +662,7 @@
         // back at the anchor: a return closes a cycle — if the
         // last confirmed place was the candidate, a full loaded
         // cycle (pit -> place -> pit) has completed.
+        S.candVisits = 0; // v267: an anchor return breaks any hub signature
         if (S.cand && S.lastPlace === 'cand') {
           S.cycles++;
           if (S.cycles >= 2) {
@@ -629,8 +681,39 @@
       }
       if (S.cand && haversineM(place.lat, place.lng, S.cand.lat, S.cand.lng) <= CONTEST_SEP_M) {
         // another visit to the candidate place
+        S.candVisits++;
         if (S.lastPlace !== 'cand') { S.visits++; S.visitTs.push(place.t); }
         S.lastPlace = 'cand';
+        /* v267 (LOAD-COUNT-DEAD): the candidate has become the
+           day's HUB — it has now been confirmed three times while
+           NO cycle has ever closed back at the anchor. That is
+           the signature of a mis-anchored day: the "anchor" was
+           an en-route stop (fuel, coffee — a real 2-minute dwell
+           before the pit), the candidate is the pit itself, and
+           the truck's whole cycle plays out inside the
+           candidate's own area. With the anchor left where it
+           was, cycles could never close (they close only AT the
+           anchor), intra stayed suppressed (it never runs while
+           a candidate exists), and the day counted ZERO forever.
+           A LEARNED anchor that the driving itself refutes is
+           reassigned to the hub; the day then proceeds exactly
+           like a day anchored at the pit — the two-cycle proof
+           itself is untouched, and a SEEDED anchor (the
+           dispatch's own pin: the app's knowledge, not a guess)
+           is never reassigned. A normal two-site day can never
+           reach this: its candidate is confirmed at most once
+           per cycle and every return to the pit resets the
+           signature. */
+        if (!S.anchorSeeded && S.cycles === 0 && S.candVisits >= 3) {
+          S.anchor = S.cand;
+          S.cand = null;
+          S.visits = 0;
+          S.visitTs = [];
+          S.candVisits = 0;
+          S.lastPlace = 'anchor';
+          S.intra = freshIntra();
+          res.reassigned = S.anchor;
+        }
         return;
       }
       if (dA < LEARN_MIN_SEP_M) return; // too close to call a second site — no-man's land
@@ -638,6 +721,7 @@
         S.cand = place;
         S.visits = 1;
         S.visitTs = [place.t];
+        S.candVisits = 1; // v267: the setting confirmation is the hub signature's first count
         S.lastPlace = 'cand';
         res.candidate = place;
         return;
@@ -686,7 +770,18 @@
       var I = S.intra;
       if (!I || I.dead || !S.anchor || S.cand || S.pair || S.ambiguous) return;
       var lat = +fix.latitude, lng = +fix.longitude;
-      if (fix.accuracy === null || fix.accuracy === undefined || fix.accuracy > INTRA_ACC_MAX_M) { I.sub = null; return; }
+      /* v267 (LOAD-COUNT-DEAD): a fix too rough for intra work is
+         IGNORED — it neither builds nor breaks the sub-cluster.
+         The old code RESET the cluster on any such fix, so one
+         accuracy spike (45 m in the cab, a null-accuracy fix)
+         zeroed a 2-minute dwell build; under any realistic fix
+         wobble a sub-spot could never confirm and same-place days
+         counted ZERO all day while 'learning' (Oct 26, 2026).
+         This is the discipline the rest of the engine already
+         states for bad fixes (the counter: ignored ENTIRELY).
+         Movement is still caught: the next GOOD fix landing away
+         from the centroid restarts the cluster by distance. */
+      if (fix.accuracy === null || fix.accuracy === undefined || fix.accuracy > INTRA_ACC_MAX_M) { return; }
       if (haversineM(lat, lng, S.anchor.lat, S.anchor.lng) > CONTEST_SEP_M) { I.sub = null; return; }
       var t = fix.time, sub = I.sub;
       if (!sub) {
@@ -716,7 +811,8 @@
           active: true, anchor: SEED, pair: null, locked: false,
           ambiguous: false, cluster: null, lastT: 0, lastLat: null, lastLng: null,
           cand: null, visits: 0, cycles: 0, lastPlace: SEED ? 'anchor' : null, visitTs: [],
-          intra: { a: null, b: null, visits: 0, cycles: 0, lastSub: null, visitTs: [], dead: false, sub: null }
+          candVisits: 0, anchorSeeded: !!SEED,
+          intra: freshIntra()
         };
         if (saved && typeof saved === 'object') {
           if (saved.anchor && isCoord(saved.anchor)) {
@@ -726,6 +822,8 @@
           if (saved.cand && isCoord(saved.cand)) S.cand = placeOf(saved.cand);
           if (typeof saved.visits === 'number') S.visits = saved.visits;
           if (typeof saved.cycles === 'number') S.cycles = saved.cycles;
+          if (typeof saved.candVisits === 'number') S.candVisits = saved.candVisits;
+          if (typeof saved.anchorSeeded === 'boolean') S.anchorSeeded = saved.anchorSeeded;
           if (saved.lastPlace === 'anchor' || saved.lastPlace === 'cand') S.lastPlace = saved.lastPlace;
           if (Array.isArray(saved.visitTs)) S.visitTs = saved.visitTs.slice();
           if (saved.intra && typeof saved.intra === 'object') {
@@ -796,6 +894,7 @@
           anchor: S.anchor ? placeOf(S.anchor) : null,
           cand: S.cand ? placeOf(S.cand) : null,
           visits: S.visits, cycles: S.cycles, lastPlace: S.lastPlace,
+          candVisits: S.candVisits, anchorSeeded: S.anchorSeeded,
           visitTs: S.visitTs.slice(),
           intra: {
             a: S.intra.a ? placeOf(S.intra.a) : null,
@@ -890,6 +989,15 @@
   /* v68 learning state */
   var learner = null;            // ENGINE.createDumpLearner instance
   var learnMode = null;          // 'teach' | 'observe' | null
+  /* v267 (LOAD-COUNT-DEAD): teach mode's shadow — a pattern
+     learner seeded on the load pin, watching ONLY for an
+     intra-site pair (the one-pin same-place day the dump
+     learner can never teach: its candidate must sit >= 300 m
+     away, and a same-place tip never does — proven zero all
+     day, Oct 26, 2026). The shadow never contests the day and
+     its outer pairs are ignored: two-site days belong to the
+     dump learner's teaching. */
+  var shadowLearner = null;
   var curLoad = null;            // today's load site (survives curSites resets)
   var taughtOutstanding = false; // taught today; first cycle not closed yet
   var navArmDone = false; // v140: the navigated counter's lazy arm (see onFix)
@@ -1116,6 +1224,9 @@
        forget the very leg the counter was just seeded from. */
     learner = ENGINE.createDumpLearner({ load: curLoad, dump: dump });
     learner.begin(prevLearnSnap);
+    /* v267: a navigated adoption ends teach mode — the shadow
+       goes with it. */
+    if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
     taughtOutstanding = false; wasDumpSinceTeach = false;
     var rec = recordFor(curDate) || blankDay(curDate);
     rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
@@ -1291,6 +1402,9 @@
       if (learnMode === 'pattern') rec.pattern = learner.snapshot();
       else rec.learn = learner.snapshot();
     }
+    /* v267: teach mode's shadow keeps its proof progress across
+       relaunches and reconfigures, like every other learner. */
+    if (shadowLearner) rec.patternShadow = shadowLearner.snapshot();
     writeDay(rec);
   }
 
@@ -1300,6 +1414,7 @@
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
     learner = null; learnMode = null; curLoad = null;
+    shadowLearner = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
     if (!d) { counter = null; curSites = null; return false; }
     var sites = sitesFromDispatch(d);
@@ -1392,7 +1507,15 @@
         }
         if (restoredPair) {
           learner.begin({ anchor: restoredPair.load, pair: restoredPair });
-          armPatternPair(restoredPair, false);
+          /* v267: same-session restore hands the counter its own
+             snapshot and carries the base as record − snapshot —
+             the armed branch's formula — so a relaunch (his phone
+             crossed five this morning) can no longer zero a
+             counted day. A different session's snapshot is never
+             adopted: its count rides the base whole. */
+          var savedP = (sameN && prevN.state && prevN.state.sitesKey === sitesKeyFor(curDispatchId, restoredPair.load, restoredPair.dump)) ? prevN.state : null;
+          if (savedP) baseCount = Math.max(0, (prevN.count || 0) - ((typeof savedP.count === 'number') ? savedP.count : 0));
+          armPatternPair(restoredPair, false, savedP);
           return true;
         }
         learner.begin(sameN ? prevN.pattern : null);
@@ -1413,9 +1536,40 @@
         var prevT = recordFor(curDate);
         var sameT = !!(prevT && prevT.sessionKey === sessionKey);
         learner.begin(sameT ? prevT.learn : null);
+        /* v267 (LOAD-COUNT-DEAD): the shadow pattern learner,
+           seeded on the pin, watches for the intra-site pair —
+           the same-place shape teach mode otherwise cannot see
+           (see the state note at shadowLearner's declaration).
+           It resumes from its own persisted snapshot exactly as
+           the dump learner does. */
+        shadowLearner = ENGINE.createPatternLearner({ home: homePlace(), anchor: { lat: sites.load.lat, lng: sites.load.lng } });
+        shadowLearner.begin(sameT ? prevT.patternShadow : null);
         baseCount = (!sameT && prevT) ? (prevT.count || 0) : 0;
         baseEvents = (!sameT && prevT && prevT.events) ? prevT.events.slice() : [];
         corrNow = prevT ? (prevT.corr || 0) : 0; // v220
+        /* v267: a shadow-proven intra pair from earlier TODAY
+           (the day record carries it) restores as the day's pair
+           right here — the day never re-enters teach mode, the
+           counter re-arms from its own snapshot, and the base
+           carries record − snapshot, exactly as the pattern
+           branch's restore does. Without this, a relaunch after
+           a shadow arm re-taught the day from a stale shadow
+           snapshot and stranded the count behind 'learning'. */
+        if (prevT && prevT.patternPair && prevT.patternPair.intra &&
+            prevT.patternPair.load && prevT.patternPair.dump &&
+            ENGINE.isCoord(prevT.patternPair.load) && ENGINE.isCoord(prevT.patternPair.dump) &&
+            ENGINE.haversineM(prevT.patternPair.load.lat, prevT.patternPair.load.lng, sites.load.lat, sites.load.lng) <= 250) {
+          var rpS = { load: prevT.patternPair.load, dump: prevT.patternPair.dump, t: prevT.patternPair.t || 0, intra: true };
+          if (learner) { try { learner.stop(); } catch (e) {} }
+          if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
+          learner = ENGINE.createPatternLearner({ home: homePlace(), anchor: { lat: rpS.load.lat, lng: rpS.load.lng } });
+          learnMode = 'pattern';
+          learner.begin({ anchor: rpS.load, pair: rpS });
+          var savedT = (sameT && prevT.state && prevT.state.sitesKey === sitesKeyFor(curDispatchId, rpS.load, rpS.dump)) ? prevT.state : null;
+          if (savedT) baseCount = Math.max(0, (prevT.count || 0) - ((typeof savedT.count === 'number') ? savedT.count : 0));
+          armPatternPair(rpS, false, savedT);
+          return true;
+        }
         /* v140: he may ALREADY have navigated to today's dump
            (the tap is recorded before the drive) — adopt it now
            and the day counts from the first load, no teaching. */
@@ -1424,6 +1578,7 @@
         recT.dispatchId = d.id; recT.sessionKey = sessionKey;
         recT.sites = null; recT.blocked = 'learning'; recT.updatedAt = Date.now();
         recT.learn = learner.snapshot();
+        if (shadowLearner) recT.patternShadow = shadowLearner.snapshot();
         // an earlier session's count for the day stays untouched —
         // counted loads are never erased by a reconfigure
         writeDay(recT);
@@ -1473,6 +1628,9 @@
      to memory now (and retracted again if the day contests it). */
   function onLearned(cand) {
     if (!curLoad || !cand) return;
+    /* v267: the dump learner taught — teach mode's shadow has
+       no more say in the day. */
+    if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
     var dump = { lat: cand.lat, lng: cand.lng, label: 'Dump site', src: 'learned' };
     curSites = { load: curLoad, dump: dump };
     var taught = { lat: cand.lat, lng: cand.lng, learnedAt: cand.t, source: 'learned' };
@@ -1508,7 +1666,7 @@
      count rides baseCount. The pattern learner stays alive
      after arming: until the cycle closes back at the anchor,
      a third place can still contest the teaching. */
-  function armPatternPair(pair, credit) {
+  function armPatternPair(pair, credit, savedState) {
     var load = { lat: +pair.load.lat, lng: +pair.load.lng, label: 'Load site', src: 'pattern' };
     var dump = { lat: +pair.dump.lat, lng: +pair.dump.lng, label: 'Dump site', src: 'pattern' };
     curLoad = load;
@@ -1541,7 +1699,16 @@
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
     } else {
-      counter.begin(key, null);
+      /* v267 (LOAD-COUNT-DEAD): a RESTORED pair re-arms the
+         counter from the day record's own counter snapshot when
+         the caller hands one over — the armed branch's long-
+         standing restore discipline (base = record − snapshot).
+         Beginning fresh here read the day as ZERO on every
+         same-session relaunch and the next persist overwrote
+         the record's real count: loads the driver watched the
+         app count in the morning were gone by the afternoon
+         (proven in tools/load-count-dead-v267-test.js S10). */
+      counter.begin(key, savedState || null);
     }
     var rec = recordFor(curDate) || blankDay(curDate);
     rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
@@ -1564,6 +1731,7 @@
     counter = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
     learnMode = null;
+    if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
     curSites = null;
     curLoad = null;
     if (learner) learner.stop();
@@ -1594,6 +1762,7 @@
     counter = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
     learnMode = null;
+    if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
     curSites = null;
     var rec = recordFor(curDate) || blankDay(curDate);
     rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
@@ -1663,11 +1832,99 @@
       else if (lr && lr.altCandidate) onAltCandidate(lr.altCandidate);
       if (!r) r = lr;
     }
+    /* v267 (LOAD-COUNT-DEAD): teach mode's shadow (see configure).
+       It is fed the same fix and may arm the counter ONLY with an
+       INTRA-site pair, only while no counter exists, and only
+       while the dump learner has no loaded leg outstanding — a
+       truck away on a loaded leg is a two-site day until its own
+       teaching says otherwise, and the shadow's proof (which by
+       then predates the leg) can be picked up on a later fix via
+       pair() once the leg resolves. Its outer pairs are ignored
+       by design, and its contests merely silence it — the day is
+       the dump learner's to judge. */
+    if (shadowLearner) {
+      if (counter) {
+        try { shadowLearner.stop(); } catch (e) {}
+        shadowLearner = null;
+      } else {
+        var sr = null;
+        try { sr = shadowLearner.ingest(fix); } catch (e) {}
+        var sp = (sr && sr.pair) || (shadowLearner.pair ? shadowLearner.pair() : null);
+        if (sp && sp.intra) {
+          var lSnap = null;
+          try { lSnap = learner ? learner.snapshot() : null; } catch (e) {}
+          if (!lSnap || !lSnap.legArmed) {
+            var sh = shadowLearner;
+            shadowLearner = null;
+            if (learner) { try { learner.stop(); } catch (e) {} }
+            learner = sh;
+            learnMode = 'pattern';
+            /* v267: if this pair was already credited today (the
+               day record carries it — a relaunch re-entered teach
+               mode and the shadow resumed with its pair), this is
+               a RE-arm: restore the counter from its own snapshot
+               with the base carried as record − snapshot, never
+               a second credit. */
+            var recNow = recordFor(curDate);
+            var keyNow = sitesKeyFor(curDispatchId, sp.load, sp.dump);
+            var savedSh = (recNow && recNow.patternPair && recNow.state && recNow.state.sitesKey === keyNow) ? recNow.state : null;
+            if (savedSh) {
+              baseCount = Math.max(0, (recNow.count || 0) - ((typeof savedSh.count === 'number') ? savedSh.count : 0));
+              armPatternPair(sp, false, savedSh);
+            } else {
+              onPatternPair(sp);
+            }
+          }
+        } else if ((sr && sr.contested) || shadowLearner.isAmbiguous()) {
+          try { shadowLearner.stop(); } catch (e) {}
+          shadowLearner = null;
+        }
+      }
+    }
     return r;
   }
 
+  /* v267 (LOAD-COUNT-DEAD): is the live configuration stale
+     against the world as the store now shows it? Counting was
+     configured once, at session start — but the world moves
+     under a running session: the dispatch lands mid-shift
+     (Connect, a message, his own tap — yard movement flips it
+     active), is replaced, or completes. Until v267 NOTHING
+     re-ran configure() on any of that, and onFix's armed guard
+     returned before the day roll could run, so a session that
+     started before today's dispatch existed sat disarmed for
+     the whole day — fixes flowing, an active dispatch on the
+     dashboard, ZERO loads, no recovery short of restarting the
+     session (Oct 26, 2026). The stale check is the app's own
+     source of truth: the ACTIVE dispatch (dsp_active), the same
+     record configure() itself resolves and the dashboard shows. */
+  var lastWorldCheckT = 0;
+  function worldStale() {
+    if (!counter && !learner) return true;
+    var d = activeDispatch();
+    return (d ? d.id : null) !== curDispatchId;
+  }
+
   function onFix(fix) {
-    if (!watching || (!counter && !learner)) return null;
+    if (!watching) return null;
+    var ft0 = (fix && typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now();
+    /* v267: the day roll and the world check run BEFORE the
+       armed guard. A dump event belongs to the date it happened
+       on, so a fix is fed to ITS day's machines: the roll comes
+       first, then the feed. A disarmed watcher still rolls (a
+       session that crossed midnight — or a stale session whose
+       key names yesterday — re-arms on the new day's dispatch
+       instead of guarding itself out forever). */
+    var fd = dateStrOf(ft0);
+    if (fd !== curDate) {
+      persist(true);
+      curDate = fd;
+      configure();
+    } else if (worldStale() && ft0 - lastWorldCheckT > 15000) {
+      lastWorldCheckT = ft0;
+      configure();
+    }
+    if (!counter && !learner) return null;
     /* v140: while the day is still in teach mode, watch for the
        navigated hand-off (throttled — the recents log changes
        rarely): he taps Navigate at the pit, loaded, and the
@@ -1701,15 +1958,9 @@
         }
       }
     }
-    // A dump event belongs to the date it happened on (overnight
-    // shifts): if midnight passed, roll the day record forward.
-    var fd = dateStrOf(fix.time || Date.now());
-    if (fd !== curDate) {
-      persist(true);
-      curDate = fd;
-      configure();
-      if (counter || learner) r = feedFix(fix);
-    }
+    /* v267: the midnight roll used to live here, after the feed —
+       it now runs at the top of onFix, before the feed, so the
+       fix is counted by its own day's machines (see above). */
     if (r && r.counted) persist(true); else persist(false);
     return r;
   }
@@ -1736,7 +1987,18 @@
       var lm = null;
       try { lm = window.LiveMiles || null; } catch (e) {}
       if (!lm || !lm.available || !lm.available()) return false; // inert — no watcher, no data
-      if (watching && sessionKey === key) { return !!counter; }
+      if (watching && sessionKey === key) {
+        /* v267 (LOAD-COUNT-DEAD): a same-key reattach (sign-in,
+           first-pull settle) is also a world check — if the
+           dispatch landed while this session was already running
+           (or the boot configure read a store the pull had not
+           settled yet), re-resolve NOW instead of leaving the
+           day disarmed until a fix happens to drive the onFix
+           check. worldStale reads the same dsp_active the
+           dashboard shows. */
+        if (worldStale()) configure();
+        return !!counter;
+      }
       sessionKey = key;
       curDate = dateStrOf(parseInt(String(key).slice(1), 10) || Date.now());
       watching = true;
@@ -1747,10 +2009,12 @@
       if (sessionKey) persist(true);
       if (counter) counter.stop();
       if (learner) learner.stop();
+      if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} }
       watching = false;
       sessionKey = null;
       counter = null;
       learner = null;
+      shadowLearner = null;
       learnMode = null;
       curSites = null;
       curLoad = null;
@@ -1772,7 +2036,22 @@
        it saw, so crumbs that overlap the live stream can never
        double-count a cycle. Returns how many fixes were accepted. */
     ingestNativeCrumbs: function (crumbs) {
-      if (!watching || (!counter && !learner) || !crumbs || !crumbs.length) return 0;
+      if (!watching || !crumbs || !crumbs.length) return 0;
+      /* v267 (LOAD-COUNT-DEAD): crumbs must never be acked away
+         unfolded just because counting is momentarily disarmed —
+         the drain (js/shifttrack.js) deletes them from the
+         native file either way. Run the same roll/world check
+         onFix runs, once, up front: a dispatch that landed
+         while the app was dead arms counting BEFORE the replay,
+         so the cycles the native service watched in the dark
+         still count. (When disarmed there is no old-day machine
+         state to flush, so configure() can run directly.) */
+      if (!counter && !learner) {
+        var t0c = +crumbs[0].t || Date.now();
+        if (dateStrOf(t0c) !== curDate) { curDate = dateStrOf(t0c); configure(); }
+        else if (worldStale()) configure();
+        if (!counter && !learner) return 0;
+      }
       var list = crumbs.slice().sort(function (x, y) { return (+x.t || 0) - (+y.t || 0); });
       var n = 0;
       for (var i = 0; i < list.length; i++) {
