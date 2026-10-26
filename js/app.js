@@ -3535,7 +3535,12 @@
      trackerPaint, maybePromptOdo, trackerSessionStartMs.
      v123: tools/movement-arm-test.js slices the same region and pins
      the armed-plan label + the start-stamped-at-the-planned-time
-     rule over a fake clock. */
+     rule over a fake clock.
+     v263: App.armDayMiles lives in this region too — its dispatch
+     gate IS the engine's own dispatch-day resolution
+     (autostartDispatchFor), pinned by the same harness; it may
+     also use window.LiveMiles, guarded as checkAutoStart's own
+     LiveMiles calls are. */
   /* v123: no grace window and no prompt anymore. The owner's rule
      (Oct 17, 2026, correcting his own looser phrasing the same
      morning): the session start time is ALWAYS the planned time —
@@ -3756,11 +3761,11 @@
         /* v261 (MILES-FROM-DEPARTURE): the v174 stand-down that
            stopped the date-keyed day watch here is gone. The day
            watch is no longer the plan's artifact — it is the
-           DAY's miles record, armed by App.armDayMiles whenever
-           the app is alive and no session owns the miles (owner's
-           Oct 22 law: kilometres read from the first driving, not
-           from shift start). A cancelled dispatch cancels the
-           START, never the day's kilometres. */
+           DAY's miles record, armed and gated by App.armDayMiles
+           on its own calls (v263 MILES-DISPATCH-GATE: a dispatch
+           must claim today, or there is no passive capture; the
+           kilometres already captured stay on the day). The plan
+           itself neither arms nor stands the watch down here. */
         return plan.reason;
       }
       if (autoStartFired(today)) return 'fired';
@@ -3936,6 +3941,62 @@
     if (store.del) return store.del('autostart_override');
     return store.set('autostart_override', null);
   };
+
+  /* v261 (DSP-AUTOSTART-MISS-OCT26, item 2 — MILES-FROM-DEPARTURE):
+     the date-keyed live-miles day watch is the DAY's record, not
+     the session's (owner's law, Oct 22, 2026, after a 45.3 km
+     morning drive was wiped to zero: kilometres read from the
+     moment he starts DRIVING, not from shift start). Armed apart
+     from the start plan, so a plan failure can never again leave
+     the drive unrecorded; when a session starts it adopts the
+     day record whole (js/miles.js), so the pre-shift kilometres
+     land on the day he drove them.
+     v263 (MILES-DISPATCH-GATE, owner, Mon Oct 26, 2026 08:25 MDT):
+     "If the Dispatch is active only then is it suppose to catch
+     my inactive miles... Not if I am personally moving about."
+     v261 armed the watch whenever the app was alive — that also
+     caught his PERSONAL movement on days with no work in them.
+     The watch is now gated on the engine's own dispatch-day
+     resolution (autostartDispatchFor: a record claims today by
+     its scheduledAt date prefix or its `date` field; completed /
+     cancelled claim nothing; an untimed record still claims the
+     day). No dispatch for today: the passive watch is never
+     armed, and one already armed stands down — LiveMiles
+     .stopDay FLUSHES AND PERSISTS what was captured while a
+     dispatch WAS active (those kilometres stay on the day) and
+     stops the recording there. A running or paused session owns
+     its miles exactly as before: a manual start is his explicit
+     act and counts, dispatch or not. Office users never drive.
+     Called at boot, on resume and on the 30 s watchdog, so the
+     gate re-evaluates all day: a dispatch that lands mid-day
+     (a message, a Connect share) arms capture from that point
+     on — movement before it is not captured; that is the rule
+     working as he stated it. Returns a word for the harnesses;
+     the callers ignore it. */
+  App.armDayMiles = function () {
+    try {
+      if (App.userRole && App.userRole() === 'office') return 'office';
+      var t = App.tracker || { status: 'idle' };
+      if (t.status === 'running' || t.status === 'paused') return 'session';
+      if (!window.LiveMiles || !LiveMiles.startDay) return 'no-miles';
+      var today = todayStr(new Date());
+      var key = 'd' + today;
+      var cur = (typeof LiveMiles.dayKey === 'function') ? LiveMiles.dayKey() : null;
+      if (!autostartDispatchFor(store.get('dsp_active', null), store.get('dsp_list', []), today)) {
+        /* No dispatch claims today: no passive capture. Stand
+           down only a DATE-keyed passive watch — a session key
+           is the session's own business, never this gate's. */
+        if (cur && cur.charAt(0) === 'd' && typeof LiveMiles.stopDay === 'function') {
+          LiveMiles.stopDay();
+          return 'stood-down';
+        }
+        return 'no-dispatch';
+      }
+      if (cur === key) return 'armed';
+      LiveMiles.startDay(key);
+      return 'armed';
+    } catch (e) { return 'error'; }
+  };
   /* AUTOSTART-ENGINE-END */
 
   /* v92: ARM THE NEXT WORKDAY NATIVELY (native v35 shell).
@@ -4009,40 +4070,9 @@
     } catch (e) {}
   };
 
-  /* v261 (DSP-AUTOSTART-MISS-OCT26, item 2 — MILES-FROM-DEPARTURE):
-     the date-keyed live-miles day watch is the DAY's record, not
-     the session's. The owner's law (Oct 22, 2026, after a 45.3 km
-     morning drive was wiped to zero): kilometres and the live
-     mile tracker read from the moment he starts DRIVING, not from
-     shift start, and live miles survive reinstall (the record
-     lives in the shared store, never in session state). Until
-     now the day watch was armed only as a side effect of the
-     auto-start plan — checkAutoStart's not-yet branch — so on a
-     day whose plan failed (or had not been evaluated on the
-     screen he was actually looking at), nothing recorded the
-     drive at all: Oct 26 the plan missed, he started manually at
-     the site, and the whole home -> site drive read 0.0 km.
-     The watch now arms whenever the app is alive and no session
-     owns the miles (boot, resume, the watchdog in init): the
-     navigator's own movement then feeds yardstart, and when a
-     session starts it adopts the day record whole (js/miles.js),
-     so the pre-shift kilometres land on the day he drove them —
-     the manifest counts the day's full movement. A session's own
-     watch owns the miles while one runs or is paused. Office
-     users never drive — no watch. Movement access itself is
-     unchanged: this asks LiveMiles for the same watch the plan
-     used to ask for, just not gated on the plan. */
-  App.armDayMiles = function () {
-    try {
-      if (App.userRole && App.userRole() === 'office') return;
-      var t = App.tracker || { status: 'idle' };
-      if (t.status === 'running' || t.status === 'paused') return;
-      if (!window.LiveMiles || !LiveMiles.startDay) return;
-      var key = 'd' + todayStr(new Date());
-      if (LiveMiles.dayKey && LiveMiles.dayKey() === key) return;
-      LiveMiles.startDay(key);
-    } catch (e) {}
-  };
+  /* App.armDayMiles lives in the AUTOSTART-ENGINE region above:
+     its gate is the engine's own dispatch-day resolution
+     (v263 MILES-DISPATCH-GATE — see the function's own note). */
 
   /* ---------------- v34: sync status popup (tap the top-bar dot) ----------------
      The dot's state used to live only in its `title` tooltip — invisible on

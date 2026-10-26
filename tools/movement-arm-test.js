@@ -30,6 +30,17 @@
  *  H. statics: trackerPaint consults the armed label; the engine
  *     region holds no confirm(); yardstart stamps no session
  *     timestamps (it only arms).
+ *  J. MILES-DISPATCH-GATE (v263, owner, Mon Oct 26, 2026 08:25
+ *     MDT — "If the Dispatch is active only then is it suppose
+ *     to catch my inactive miles... Not if I am personally
+ *     moving about"): App.armDayMiles (same region slice) arms
+ *     the passive day watch ONLY while a dispatch claims today
+ *     (the engine's own resolution: scheduledAt date or `date`
+ *     field; completed/cancelled claim nothing; untimed still
+ *     claims). No dispatch -> never armed; a mid-day cancel
+ *     stands capture down but the captured day record stays;
+ *     a dispatch landing mid-day arms from that point; a
+ *     session's own miles are never gated.
  * Run: node tools/movement-arm-test.js
  */
 'use strict';
@@ -133,6 +144,21 @@ function makeWorld(opts) {
     } else if (t.status === 'running') { t.status = 'paused'; }
     else { t.status = 'running'; t.startTs = FakeDate.now(); }
   };
+  /* v263: a fake LiveMiles with the real one's contract —
+     startDay begins (or reattaches) the watch under a key;
+     stopDay stops the watch and PERSISTS the record (the record
+     stays in `records` — standing down never erases). */
+  if (opts.liveMiles) {
+    const lm = {
+      starts: [], stops: 0, records: {}, _key: opts.liveKey || null,
+      startDay: function (k) { lm.starts.push(k); lm._key = k; if (!lm.records[k]) lm.records[k] = { key: k }; return true; },
+      stopDay: function () { lm.stops++; const k = lm._key; lm._key = null; return { liveKm: null, key: k }; },
+      dayKey: function () { return lm._key; }
+    };
+    if (lm._key && !lm.records[lm._key]) lm.records[lm._key] = { key: lm._key };
+    sandbox.LiveMiles = lm;
+    sandbox._lm = lm;
+  }
   vm.createContext(sandbox);
   vm.runInContext(region, sandbox);
   sandbox._mem = mem; sandbox._calls = calls;
@@ -271,6 +297,87 @@ console.log('— yesterday\'s session cannot consume today (v261) —');
   setClock(8, 5);
   eq(w.App.checkAutoStart(), 'started', 'I5 after the stale session ends, the plan fires');
   eq(w.trackerSessionStartMs(), atMs(8, 0), 'I6 and stamps the 08:00 dispatch time, not the stale session\'s end');
+}
+
+/* ================= J: miles catch only on a dispatch day (v263) ================= */
+console.log('— MILES-DISPATCH-GATE: passive miles need an active dispatch —');
+{
+  const YDAY = todayStrOf(new RealDate(Y, MO, DA - 1));
+  const TMRO = todayStrOf(new RealDate(Y, MO, DA + 1));
+
+  /* no dispatch anywhere: boot + resume + watchdog never arm */
+  setClock(9, 0);
+  let w = makeWorld({ liveMiles: true });
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J1a no dispatch today -> the day watch never arms');
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J1b a later re-check (watchdog/resume) changes nothing');
+  eq(w._lm.starts.length, 0, 'J1c LiveMiles.startDay was never called');
+  eq(w._lm.dayKey(), null, 'J1d no watch is live — personal movement records nothing');
+  eq(w.App.checkAutoStart(), 'no-work-today', 'J1e the start plan is untouched by the gate (v255 holds)');
+
+  /* a dispatch for TOMORROW does not arm today */
+  w = makeWorld({ liveMiles: true, list: [{ id: 'dT', jobSite: 'Future', scheduledAt: TMRO + 'T08:00', status: 'active' }] });
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J2 tomorrow\'s dispatch does not arm today');
+
+  /* a dispatch day arms — once */
+  w = makeWorld({ liveMiles: true, active: dsp0800Active() });
+  eq(w.App.armDayMiles(), 'armed', 'J3a an active dispatch for today arms the day watch');
+  eq(w._lm.starts.join(','), 'd' + TODAY, 'J3b armed under today\'s date key');
+  eq(w.App.armDayMiles(), 'armed', 'J3c a repeat call is a no-op (already armed)');
+  eq(w._lm.starts.length, 1, 'J3d startDay ran exactly once');
+
+  /* untimed shapes claim the day too (the v261 resolution):
+     a `date`-field record, and a date-only scheduledAt */
+  w = makeWorld({ liveMiles: true, list: [{ id: 'dC', jobSite: 'Connect', scheduledAt: '', date: TODAY, status: 'active' }] });
+  eq(w.App.armDayMiles(), 'armed', 'J4a a Connect-shaped record (date field, no time) arms the watch');
+  w = makeWorld({ liveMiles: true, list: [{ id: 'dD', jobSite: 'DateOnly', scheduledAt: TODAY, status: 'active' }] });
+  eq(w.App.armDayMiles(), 'armed', 'J4b a date-only scheduledAt arms the watch');
+
+  /* completed / cancelled claim nothing */
+  w = makeWorld({ liveMiles: true, active: Object.assign(dsp0800Active(), { status: 'completed' }) });
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J5a a completed dispatch does not arm');
+  w = makeWorld({ liveMiles: true, active: Object.assign(dsp0800Active(), { status: 'cancelled' }) });
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J5b a cancelled dispatch does not arm');
+
+  /* cancelled mid-day: capture stands down, the morning's
+     kilometres stay on the day, and a fresh dispatch re-arms
+     the SAME day record */
+  w = makeWorld({ liveMiles: true, active: dsp0800Active() });
+  eq(w.App.armDayMiles(), 'armed', 'J6a armed under the morning dispatch');
+  w._mem.dsp_active = Object.assign(dsp0800Active(), { status: 'cancelled' });
+  eq(w.App.armDayMiles(), 'stood-down', 'J6b cancelling the dispatch stands the watch down');
+  eq(w._lm.stops, 1, 'J6c stopDay ran once (it persists — it does not erase)');
+  ok(w._lm.records['d' + TODAY], 'J6d the day record captured under the dispatch is retained');
+  eq(w._lm.dayKey(), null, 'J6e no watch is live after the stand-down');
+  w._mem.dsp_active = { id: 'd2', jobSite: 'Afternoon', scheduledAt: TODAY + 'T13:00', status: 'active' };
+  eq(w.App.armDayMiles(), 'armed', 'J6f a dispatch landing mid-day arms capture from that point');
+  eq(w._lm.starts.length, 2, 'J6g re-armed under the same day key');
+  ok(w._lm.records['d' + TODAY], 'J6h still the one day record');
+
+  /* a session owns its miles — the gate never touches it,
+     dispatch or not (a manual start is his explicit act) */
+  w = makeWorld({ liveMiles: true, tracker: { status: 'running', startTs: atMs(9, 0), elapsed: 120 } });
+  eq(w.App.armDayMiles(), 'session', 'J7a a running session owns the miles (no dispatch needed)');
+  eq(w._lm.starts.length + w._lm.stops, 0, 'J7b the gate made no LiveMiles calls');
+  w = makeWorld({ liveMiles: true, tracker: { status: 'paused', startTs: atMs(9, 0), elapsed: 120 } });
+  eq(w.App.armDayMiles(), 'session', 'J7c a paused session owns the miles too');
+
+  /* office never drives */
+  w = makeWorld({ liveMiles: true, active: dsp0800Active() });
+  w.App.userRole = function () { return 'office'; };
+  eq(w.App.armDayMiles(), 'office', 'J8a office role: no watch, dispatch or not');
+  eq(w._lm.starts.length, 0, 'J8b nothing armed for office');
+
+  /* midnight rollover: yesterday's watch stands down when
+     today has no dispatch — and yesterday's record stays */
+  w = makeWorld({ liveMiles: true, liveKey: 'd' + YDAY });
+  eq(w.App.armDayMiles(), 'stood-down', 'J9a yesterday\'s passive watch stands down on a dispatch-less today');
+  ok(w._lm.records['d' + YDAY], 'J9b yesterday\'s record is retained');
+
+  /* a SESSION-keyed watch is never the gate's to stand down */
+  w = makeWorld({ liveMiles: true, liveKey: 's' + atMs(8, 0) });
+  eq(w.App.armDayMiles(), 'no-dispatch', 'J10a no dispatch: the gate still does not arm');
+  eq(w._lm.stops, 0, 'J10b a session-keyed watch is left alone');
+  eq(w._lm.dayKey(), 's' + atMs(8, 0), 'J10c the session watch is untouched');
 }
 
 /* ================= H: statics ================= */

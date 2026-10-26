@@ -1,8 +1,8 @@
 {
   "version": 42,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v42.apk",
-  "webVersion": 262,
-  "notes": "v262 \u2014 NAV-LIVE-TRAFFIC-CITYFEED (owner approved Oct 26, 2026 08:14 MDT): live traffic incidents from the City of Calgary's free open-data feed (data.calgary.ca 4jah-h97u, verified live) \u2014 amber markers on both maps within 40 km, layers-panel Traffic switch (default on), spoken + on-screen warning once per incident per route when it lies within 75 m of the route line and 3 km ahead; warnings never alter the route.",
+  "webVersion": 263,
+  "notes": "v263 \u2014 MILES-DISPATCH-GATE (owner, Mon Oct 26, 2026 08:25 MDT: 'If the Dispatch is active only then is it suppose to catch my inactive miles... Not if I am personally moving about'). v261 armed the date-keyed live-miles day watch whenever the app was alive, so personal movement on a no-work day was captured as day miles. App.armDayMiles (moved into the AUTOSTART-ENGINE region, beside the plan it now answers to) gates every passive arming on the engine's own dispatch-day resolution (autostartDispatchFor \u2014 autostartRecordDate semantics: scheduledAt date prefix or the record's `date` field; completed/cancelled claim nothing; an untimed record claiming today still counts). No dispatch for today: the watch is never armed, and one already armed stands down via LiveMiles.stopDay \u2014 which flushes and persists, so kilometres captured while a dispatch WAS active stay on the day; the stand-down stops future capture only, it erases nothing. Preserved exactly: the v261 auto-start plan behaviour (this gate touches miles capture, never the start); a running/paused session owns its miles \u2014 a manual start counts, dispatch or not; session start still adopts the day record whole (js/miles.js adoptableFragments); GeoLoads keeps its own arming (it rides LiveMiles, so the gate flows through); office role excluded. The boot/resume/30 s-watchdog calls re-evaluate the gate all day: a dispatch that lands mid-day (a message, a Connect share) arms capture from that point on \u2014 movement before it is not captured; that is the owner's rule working as intended. Harnesses: movement-arm 44 -> 76 (new section J: no-dispatch day never arms, tomorrow's dispatch does not arm today, timed + untimed + Connect-shaped records arm, completed/cancelled do not, a mid-day cancel stands down with the day record retained and a fresh dispatch re-arms the same record, session-owned miles untouched, office excluded, midnight-rollover stand-down, a session-keyed watch is never stood down); dispatch-autostart 73, pullgate 31, dispatch-ingest 217, dispatch-edit 82, manual-start-law 33, dispatch-cancelled-today 10 \u2014 all at baseline; background-day 35/4 and queue-v174 32/33 at their identical pre-existing baselines. js/app.js + tools/movement-arm-test.js + version.json only; modules/navigator.js untouched (the v262 traffic build is not in this ship). His next drives are the verdict.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -15,10 +15,9 @@
     "assets/manifest.json": "92e467fa45e8df0bb326cfeb23aa83d2fad42876abc58b3935c2ba2bb3ca05bd",
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "33cf984dd7fc17d395c848392b5ed2420ec5b1109bbc6c58f0ed5c448166b11e",
-    "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
     "index.html": "9e04bbd5327520fc85150128d52c2396c7be16a6aa885b76f9c919d47e0e25cb",
-    "js/app.js": "02a4aeefc42b2858325e6fe5f3d809bd1300055893aa9d4a7452bc999a8cf122",
+    "js/app.js": "69a781bf091ccbe9f87df4342b97e09b6af0a3b39309cf96a890bb138c7d39c3",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "e82de0fead8ae7963b62ab71adce084a349d5985ad278cb0af59b335804c4ff7",
