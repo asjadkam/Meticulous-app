@@ -759,6 +759,47 @@
       return Promise.resolve(false);
     }
     if (!fbReady()) return Promise.resolve(false);
+    /* v272 (FUEL-HISTORY-LOST-RECURRENCE): a record-list key is
+       never blind-overwritten. The push reads the cloud doc
+       first and writes the UNION (mergeRecordLists3 — the same
+       shadow rule as the pull), so a store instance holding an
+       older array can no longer roll the cloud back over
+       records it never saw; cloud-only records are learned
+       into the local store at the same moment. If the read
+       fails, the push fails honestly — the key stays dirty and
+       is retried — rather than overwriting append-only data
+       blind. The shadow (km.sh) advances only on a landed
+       write: it then names exactly what the cloud holds. */
+    if (RECORD_LIST_KEYS[key] && Array.isArray(val)) {
+      var rlPushFail = function (e) {
+        var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+        try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
+        try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
+        return done(false);
+      };
+      var rlSave = function (arr) {
+        return FB.saveDoc(KV_COLLECTION, docId, { v: arr }).then(function (res) {
+          if (res === null) {
+            try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
+            return done(false);
+          }
+          km.sh = recordIdList(key, arr);
+          return done(true);
+        }).catch(rlPushFail);
+      };
+      try {
+        return FB.loadDocs(KV_COLLECTION).then(function (docs) {
+          var cloudArr = null;
+          (docs || []).forEach(function (d) {
+            if ((d.mt || d.id) === key && Array.isArray(d.v)) cloudArr = d.v;
+          });
+          if (!cloudArr) return rlSave(val);
+          var mg = mergeRecordLists3(key, val, cloudArr, km.sh);
+          if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
+          return rlSave(mg);
+        }).catch(rlPushFail);
+      } catch (e) { return Promise.resolve(rlPushFail(e)); }
+    }
     try {
       return FB.saveDoc(KV_COLLECTION, docId, { v: val }).then(function (res) {
         if (res === null) {
@@ -898,7 +939,21 @@
      never unions one account's records into another's tree).
      When the union holds anything the cloud lacks, the key
      stays dirty so the flush pushes the union UP — the cloud
-     copy heals instead of the phone losing records. */
+     copy heals instead of the phone losing records.
+     v272 SUPERSESSION (FUEL-HISTORY-LOST-RECURRENCE): the
+     settled-only guard above is RETIRED. It protected one
+     shape (a pending delete) by surrendering the other (every
+     pending append): a key is dirty from each save until its
+     push confirms, and in that window the generic stamp war
+     deleted records wholesale whenever the cloud stamp was
+     newer — the Oct 20 + Oct 22 fills were lost this way a
+     second time, phone and cloud alike. The union now runs in
+     every cycle, and the delete protection the guard existed
+     for is carried by the per-key shadow instead (km.sh —
+     see mergeRecordLists3 below): an absence is honored as a
+     deliberate deletion only when the record was part of the
+     last cloud state this device verified. The different-
+     account guard stands unchanged. */
   var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1 };
   function recordIdentity(key, rec) {
     if (!rec || typeof rec !== 'object') return null;
@@ -952,6 +1007,74 @@
     (cloudArr || []).forEach(function (r) { offer(r, false); });
     (localArr || []).forEach(function (r) { offer(r, true); });
     return out;
+  }
+
+  /* v272 (FUEL-HISTORY-LOST-RECURRENCE — the v241 fix did not
+     hold in the field; owner, Oct 26, 2026: the Fill-ups list
+     stops at Oct 19 AGAIN, the Oct 20 + Oct 22 fills gone from
+     the phone AND the cloud): the v241 union ran only while the
+     local key was SETTLED. A record-list key is dirty from the
+     moment a record is saved until its push is confirmed —
+     seconds on a good connection, indefinitely when flushes
+     fail on fringe signal — and in every dirty cycle the key
+     fell through to the generic stamp war, which REPLACED the
+     local list wholesale whenever the cloud stamp was newer
+     and sealed the meta clean. The fresher cloud copy could
+     itself be a rolled-back one, because pushOne overwrote the
+     doc blind. The two halves met in the field exactly as they
+     had before v241; the v241 suite never saw it because every
+     case preset a settled meta.
+     The law now: a record-list key merges on BOTH sides of the
+     sync, dirty or settled.
+       - The pull union runs in dirty cycles too.
+       - pushOne for these keys is READ-MERGE-WRITE (below):
+         it unions the cloud doc into the write and learns
+         cloud-only records into the local store; if the read
+         fails, the push fails honestly (the key stays dirty
+         and is retried) — never a blind overwrite.
+       - Deliberate deletions stay deleted via a per-key
+         SHADOW (km.sh): the record identities of the last
+         cloud state this device verified. An identity that is
+         in the shadow, absent from the local list, and still
+         present in the cloud is a record this device deleted
+         on purpose — pendingRecordDeletes names it, and the
+         merge filters it out (so its push carries the delete
+         up instead of resurrecting it). An identity absent
+         from the shadow was never agreed with the cloud, so
+         its absence locally proves nothing and the union
+         keeps the cloud's copy.
+       - With no shadow on record (the first cycle after this
+         build, or a key this device never synced), the merge
+         is the plain union: appends can never be lost; a
+         delete made in that one cycle may need one repeat —
+         visible and recoverable, never silent loss. */
+  function recordIdList(key, arr) {
+    var out = [], seen = {};
+    (arr || []).forEach(function (r) {
+      var id = recordIdentity(key, r);
+      if (id !== null && !seen[id]) { seen[id] = 1; out.push(id); }
+    });
+    return out;
+  }
+  function pendingRecordDeletes(key, shadowIds, localArr, cloudArr) {
+    var del = {};
+    if (!shadowIds || !shadowIds.length) return del;
+    var localIds = {}, cloudIds = {};
+    (localArr || []).forEach(function (r) { var id = recordIdentity(key, r); if (id !== null) localIds[id] = 1; });
+    (cloudArr || []).forEach(function (r) { var id = recordIdentity(key, r); if (id !== null) cloudIds[id] = 1; });
+    shadowIds.forEach(function (id) { if (!localIds[id] && cloudIds[id]) del[id] = 1; });
+    return del;
+  }
+  function mergeRecordLists3(key, localArr, cloudArr, shadowIds) {
+    var merged = mergeRecordLists(key, localArr, cloudArr);
+    var del = pendingRecordDeletes(key, shadowIds, localArr, cloudArr);
+    var any = false, dk;
+    for (dk in del) { if (Object.prototype.hasOwnProperty.call(del, dk)) { any = true; break; } }
+    if (!any) return merged;
+    return merged.filter(function (r) {
+      var id = recordIdentity(key, r);
+      return id === null || !del[id];
+    });
   }
 
   function syncNow() {
@@ -1105,25 +1228,37 @@
         }
 
         /* v241: the record-list union (see mergeRecordLists
-           above) — runs before the generic whole-key rules
-           whenever this device holds a settled, own-account
-           array for the key; a stamp outcome never deletes a
-           record from these keys. */
-        if (RECORD_LIST_KEYS[key] && raw !== null && Array.isArray(d.v) && !localDirty &&
+           above) — runs before the generic whole-key rules;
+           a stamp outcome never deletes a record from these
+           keys. v272: the union now runs in DIRTY cycles too —
+           the settled-only gate was the recurrence hole (see
+           mergeRecordLists3) — and the per-key shadow (km.sh)
+           carries this device's pending deletions through it.
+           The recorded-owner guard stands: another account's
+           local records never union into this account's tree. */
+        if (RECORD_LIST_KEYS[key] && raw !== null && Array.isArray(d.v) &&
             !(km.u && S.uid && km.u !== S.uid)) {
           var rlLocal = parseJson(raw, undefined);
           if (Array.isArray(rlLocal)) {
-            var rlMerged = mergeRecordLists(key, rlLocal, d.v);
+            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, km.sh);
             if (JSON.stringify(rlMerged) !== JSON.stringify(rlLocal)) {
               lsSetRaw(key, JSON.stringify(rlMerged));
               applied++;
             }
             if (JSON.stringify(rlMerged) !== JSON.stringify(d.v)) {
               /* the union holds records the cloud lacks — keep
-                 the key dirty so the flush pushes the union UP. */
-              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+                 the key dirty so the flush pushes the union UP.
+                 The shadow names the cloud state just verified,
+                 VERBATIM: a pending deletion must stay visible
+                 to the push's own merge (in the shadow, absent
+                 locally, still in the cloud) until a landed
+                 write confirms it — advancing the shadow past
+                 it here would make the push resurrect it. */
+              km.t = Math.max(cloudTs, now); km.s = cloudTs;
+              km.sh = recordIdList(key, d.v);
             } else {
-              meta.keys[key] = { t: cloudTs, s: cloudTs };
+              km.t = cloudTs; km.s = cloudTs;
+              km.sh = recordIdList(key, rlMerged);
             }
             return;
           }

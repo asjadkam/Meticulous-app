@@ -31,6 +31,22 @@
  * whose recorded owner is a DIFFERENT account (shared phone)
  * is never unioned into this account's tree.
  *
+ * v272 RE-PIN (FUEL-HISTORY-LOST-RECURRENCE): the DIRTY-key
+ * guard above is RETIRED — it is the hole the loss recurred
+ * through (a key is dirty from every save until its push
+ * confirms; in that window the stamp war deleted the Oct 20 +
+ * Oct 22 fills a second time). The union now runs in dirty
+ * cycles too, and deliberate deletions are carried by the
+ * per-key shadow (km.sh) instead: U5 below is re-pinned to
+ * the new law — U5a (shadow on record: the delete is honored
+ * in the dirty cycle, locally and in the push) and U5b (no
+ * shadow on record — the first cycle after the v272 build:
+ * the union keeps both records, because an absence it cannot
+ * attribute must never be treated as a deletion; the delete
+ * may need one repeat that cycle). The different-account
+ * guard (U6) stands unchanged. The recurrence suite is
+ * tools/fuel-history-recurrence-v272-test.js.
+ *
  * Run: node tools/cloudsync-record-union-v241-test.js
  */
 'use strict';
@@ -168,17 +184,43 @@ const F_OCT22B = { date: '2026-10-22', time: '17:13', litres: 38.970, cost: 86.8
     eq('U4 both sessions survive', (w.get('sessions') || []).length, 2);
   }
 
-  /* ---- U5: GUARD — a locally dirty key (fresh delete) is NOT unioned ---- */
+  /* ---- U5: GUARD, RE-PINNED v272 — a pending delete is honored
+         through the shadow, in the dirty cycle itself ---- */
   {
+    /* record identities, mirroring recordIdentity() for fuel_fills */
+    const fuelId = function (rec) {
+      const fields = ['date', 'time', 'litres', 'cost', 'station', 'odo'];
+      return 'fp:' + fields.map(function (k) {
+        return k + '=' + JSON.stringify(rec[k] === undefined ? null : rec[k]);
+      }).join('|');
+    };
     const w = makeWorld({
       local: [['fuel_fills', [F_OCT19]]], /* F_OCT20 just deleted here, not yet flushed */
+      meta: { uid: 'u1', keys: { fuel_fills: { t: 3000, s: 1000, u: 'u1', sh: [fuelId(F_OCT19), fuelId(F_OCT20)] } } },
+      docs: [{ id: 'fuel_fills', v: [F_OCT19, F_OCT20], updatedAt: 2000 }]
+    });
+    w.sb.CloudSync.onAuth({ uid: 'u1' });
+    await settle();
+    eq('U5a the deleted fill stays deleted in the dirty cycle (shadow law)',
+      (w.get('fuel_fills') || []).length, 1);
+    const pushed = w.pushes.filter(function (p) { return p.id === 'fuel_fills'; });
+    ok('U5a the delete propagates UP (the pushed doc lacks it too)',
+      pushed.length > 0 && pushed[pushed.length - 1].v.length === 1);
+  }
+
+  /* ---- U5b: NO SHADOW ON RECORD (first cycle after the v272
+         build) — an unattributable absence is never treated as
+         a deletion; the union keeps both records ---- */
+  {
+    const w = makeWorld({
+      local: [['fuel_fills', [F_OCT19]]],
       meta: { uid: 'u1', keys: { fuel_fills: { t: 3000, s: 1000, u: 'u1' } } },
       docs: [{ id: 'fuel_fills', v: [F_OCT19, F_OCT20], updatedAt: 2000 }]
     });
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle();
-    eq('U5 the deleted fill stays deleted this cycle (stamp rules govern a dirty key)',
-      (w.get('fuel_fills') || []).length, 1);
+    eq('U5b with no shadow recorded, the union keeps both fills (a delete that cycle may need one repeat)',
+      (w.get('fuel_fills') || []).length, 2);
   }
 
   /* ---- U6: GUARD — another account's local records never union in ---- */
