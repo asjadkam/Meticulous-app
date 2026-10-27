@@ -1260,6 +1260,102 @@
     return out;
   }
 
+  /* v273 (NAV-TOP-CUTOFF-STILL — owner verdict, Oct 26, 2026
+     17:46 MDT: on v270 the drive view "is still cutting off"
+     at the top): the v260 lift was a FLAT 0.49 x viewport
+     height, derived at 768x1024 — a screen the owner does not
+     have. The Oct 26 recordings are 1080x2520 (Fold7 cover
+     display, DPR 2.625) -> the real drive viewport is 411x960
+     CSS px, where the flat rule's projected far reach runs
+     out at side headings (~593px against ~614px needed) and
+     even at 768x1024 it runs out in the corners at diagonal
+     headings — the viewport's sky gradient (navy) shows as a
+     band at the top and the map reads "cut off". There is no
+     honest flat fraction: the needed lift is a function of
+     BOTH viewport dimensions through the exact composition
+     (plane 260%x300% centred on the 50%/64% anchor,
+     perspective(1100px) rotateX(50deg) — the constants below
+     are a matched pair with planeTransform + .nv-drive-plane;
+     change them together). So the lift is DERIVED per
+     viewport: the smallest translate whose inverse
+     homography keeps the viewport's whole top strip inside
+     the plane at EVERY heading, plus a small safety margin.
+     Memoised per size — paintPlane calls this on every
+     repaint. Pure arithmetic, no DOM. */
+  var _covLiftMemo = {};
+  function _covMul(A, B) {
+    var C = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (var r = 0; r < 4; r++) for (var c = 0; c < 4; c++) {
+      var s = 0; for (var k = 0; k < 4; k++) s += A[r * 4 + k] * B[k * 4 + c];
+      C[r * 4 + c] = s;
+    }
+    return C;
+  }
+  function _covCovers(W, H, lift, deg) {
+    var pw = 2.6 * W, ph = 3.0 * H, x0 = -0.80 * W, y0 = -0.86 * H;
+    var ox = x0 + pw / 2, oy = y0 + ph / 2;
+    var t = deg * Math.PI / 180, cp = Math.cos(t), sp = Math.sin(t);
+    var P = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1 / 1100, 1];
+    var T = [1, 0, 0, 0, 0, 1, 0, -lift, 0, 0, 1, 0, 0, 0, 0, 1];
+    var c50 = Math.cos(50 * Math.PI / 180), s50 = Math.sin(50 * Math.PI / 180);
+    var RX = [1, 0, 0, 0, 0, c50, -s50, 0, 0, s50, c50, 0, 0, 0, 0, 1];
+    var RZ = [cp, sp, 0, 0, -sp, cp, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; /* rotate(-deg) */
+    var M = _covMul([1, 0, 0, ox, 0, 1, 0, oy, 0, 0, 1, 0, 0, 0, 0, 1],
+      _covMul(_covMul(P, _covMul(T, _covMul(RX, RZ))),
+        [1, 0, 0, -ox, 0, 1, 0, -oy, 0, 0, 1, 0, 0, 0, 0, 1]));
+    var a = M[0], b = M[1], c = M[3], d = M[4], e = M[5], f = M[7], g = M[12], h = M[13], i = M[15];
+    var A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    var det = a * A + b * B + c * C;
+    if (!det) return false;
+    var inv = [A / det, -(b * i - c * h) / det, (b * f - c * e) / det,
+               B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
+               C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
+    for (var ry = 0; ry <= 5; ry++) {
+      var sy = 0.25 * H * ry / 5;
+      for (var rx = 0; rx <= 12; rx++) {
+        var sx = W * rx / 12;
+        var X = inv[0] * sx + inv[1] * sy + inv[2];
+        var Y = inv[3] * sx + inv[4] * sy + inv[5];
+        var Wd = inv[6] * sx + inv[7] * sy + inv[8];
+        if (!Wd) return false;
+        var px = X / Wd, py = Y / Wd;
+        var wf = M[12] * px + M[13] * py + M[15];
+        if (!(wf > 0 && px >= x0 - 0.5 && px <= x0 + pw + 0.5 && py >= y0 - 0.5 && py <= y0 + ph + 0.5)) return false;
+      }
+    }
+    return true;
+  }
+  function coverageLiftPx(w, h) {
+    if (!(w > 0) || !(h > 0)) return 0;
+    var key = w + 'x' + h;
+    if (_covLiftMemo[key] !== undefined) return _covLiftMemo[key];
+    function coversAll(lift) {
+      for (var deg = 0; deg < 360; deg += 3) if (!_covCovers(w, h, lift, deg)) return false;
+      return true;
+    }
+    /* Coverage in the lift is a WINDOW, not a threshold: too
+       little and the far edge falls short of the top; too
+       much and the translate drags the far field across the
+       perspective eye plane (the pre-image of the top strip
+       slides down-plane ~1.6-2x the lift and out the near
+       side). So scan UP from zero for the FIRST covering
+       lift, then take only a small margin over it — and keep
+       the un-margined value if the margin ever steps out of
+       the window. */
+    var out = 0;
+    if (!coversAll(0)) {
+      var first = -1;
+      for (var L = 4; L <= h; L += 4) { if (coversAll(L)) { first = L; break; } }
+      if (first < 0) out = Math.round(h * 0.49); /* no covering lift found — the old posture, best effort */
+      else {
+        var cand = Math.ceil(first * 1.02) + 2;
+        out = coversAll(cand) ? cand : first;
+      }
+    }
+    _covLiftMemo[key] = out;
+    return out;
+  }
+
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -1511,6 +1607,49 @@
     try { return (document && typeof document.getElementById === 'function') ? document.getElementById(id) : null; }
     catch (e) { return null; }
   }
+  /* v273 (NAV-SMALL-SCREEN-BLUE — owner verdict, Oct 26, 2026
+     17:46 MDT: minimised, the map is "basically turning
+     blue"): the drive map is a Leaflet map sized ONCE, at
+     drive start, for the full screen (plane 260%x300% of
+     411x960 = ~1069x2880 px). When the window changes size —
+     system PiP, fold/unfold, rotation — CSS shrinks the plane
+     but Leaflet keeps its stale pixel size: the map centre
+     sits at (534,1440) in container px, far outside the
+     visible PiP plane (~575x417), so the window shows a
+     stale-offset slice of map and, where the slice runs off
+     the plane, the viewport's SKY GRADIENT (navy -> blue).
+     Nothing re-fit the map on a size change: no invalidateSize
+     on PiP enter/exit and no resize handler anywhere. The
+     refit is the exact pair the parked-restore path already
+     trusts (invalidateSize + a drive tick, which re-centres
+     on followTarget and repaints the plane at the new size);
+     the drive closure registers it as S._refitDrive when the
+     map is created, because the tick lives in that closure.
+     The bare invalidateSize below is the fallback for a drive
+     whose hook is somehow absent. */
+  function refitDriveMap() {
+    try {
+      if (!S || !S.drive) return;
+      if (typeof S._refitDrive === 'function') { S._refitDrive(); return; }
+      if (S.driveMap && S.driveMap.invalidateSize) S.driveMap.invalidateSize();
+    } catch (e) {}
+  }
+  /* v273: the same stale-size defect on plain window resizes
+     (this phone FOLDS — unfolding mid-drive changes the window
+     with no PiP event at all). Debounced; a no-op unless a
+     drive is live. */
+  var driveResizeTimer = null;
+  try {
+    if (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
+      window.addEventListener('resize', function () {
+        try {
+          if (driveResizeTimer) clearTimeout(driveResizeTimer);
+          driveResizeTimer = setTimeout(function () { driveResizeTimer = null; refitDriveMap(); }, 160);
+        } catch (e) {}
+      });
+    }
+  } catch (e) {}
+
   function applyPipFace(inPip) {
     try {
       if (S) S._inPip = !!inPip;
@@ -1533,6 +1672,9 @@
       var line = docEl('nvd_pip_line') ||
         (nvBody ? nvBody.querySelector('#nvd_pip_line') : null);
       if (line) line.classList.toggle('hidden', !inPip);
+      /* v273: the window just changed size (PiP in OR out) —
+         re-fit the map to the size it actually has now. */
+      refitDriveMap();
     } catch (e) {}
   }
 
@@ -3618,6 +3760,22 @@
             }, 650);
           } catch (e) { S.driveMap = null; }
         }
+        /* v273 (NAV-SMALL-SCREEN-BLUE): register the size refit
+           the module-level PiP/resize seams call — the tick
+           lives in THIS closure, so the hook is born with the
+           map. Same pair the parked-restore path uses:
+           invalidateSize, then a tick (re-centres on the
+           follow target, repaints the plane at the new size).
+           exitDrive/teardown clear it with the drive's state. */
+        if (S.driveMap) {
+          S._refitDrive = function () {
+            try {
+              if (!S || !S.driveMap) return;
+              S.driveMap.invalidateSize();
+              driveTick();
+            } catch (e) {}
+          };
+        }
         /* v215 (NAV-GESTURE-PLANE): a NEW drive always opens
            on the pure chase view — the manual two-finger
            adjustments (viewRot/viewPitch) are zeroed HERE, at
@@ -4352,9 +4510,17 @@
         if (plane) {
           /* v260 (NAV-TOP-CUTOFF): the transform's translate
              compensation is sized from the LIVE viewport (the
-             plane's parent) every paint — 0.49 of its height —
-             so rotation/resizing re-derives it and no stale
-             lift can outlive the drive screen that set it. */
+             plane's parent) every paint, so rotation/resizing
+             re-derives it and no stale lift can outlive the
+             drive screen that set it.
+             v273 (NAV-TOP-CUTOFF-STILL): the SIZE of the lift
+             is no longer the v260 flat 0.49 of height — that
+             fraction was tuned at 768x1024 and runs out on
+             the owner's real 411x960 cover screen (and in the
+             corners even at 768x1024). coverageLiftPx
+             (NAVPURE) derives the smallest lift whose
+             homography covers the top at every heading for
+             THIS viewport's actual width and height. */
           var vpEl = plane.parentElement;
           /* The lift belongs to the pure follow posture only:
              while a two-finger rotate/tilt owns the view (or
@@ -4365,7 +4531,7 @@
              the lift returns with the chase view. */
           var gestPivot = S._gestLock === 'rotate' || S._gestLock === 'tilt' ||
             !!(S.viewRot || (S.viewPitch !== null && S.viewPitch !== undefined));
-          S.driveLiftPx = (vpEl && vpEl.clientHeight && !gestPivot) ? Math.round(vpEl.clientHeight * 0.49) : 0;
+          S.driveLiftPx = (vpEl && vpEl.clientHeight && !gestPivot) ? coverageLiftPx(vpEl.clientWidth, vpEl.clientHeight) : 0;
           plane.style.transform = planeTransform(hdg);
         }
       }

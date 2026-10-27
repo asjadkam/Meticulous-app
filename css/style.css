@@ -478,7 +478,15 @@ label.chk input{width:18px;height:18px;}
    match), and the plane widens 230% -> 260% (left -80% =
    50 - 260/2, still centred on the anchor) for the raster
    the wider reach samples. Height/top are unchanged —
-   300%/-86% already centre the tall axis on the anchor. */
+   300%/-86% already centre the tall axis on the anchor.
+   v273 (NAV-TOP-CUTOFF-STILL): the flat 0.49 lift is
+   retired — it was tuned at 768x1024 and runs out on the
+   owner's real 411x960 screen (and in the corners at
+   768x1024 too). The lift is now DERIVED from the live
+   viewport by NAVPURE.coverageLiftPx, whose constants
+   (260%x300%, anchor 50%/64%, perspective 1100, pitch 50)
+   are a matched pair with THIS rule — change them
+   together. */
 .nv-drive-plane{position:absolute;width:260%;height:300%;left:-80%;top:-86%;transform-origin:50% 50%;}
 /* v220 (PIP-REDESIGN): the drive screen's picture-in-picture
    posture — NOT a miniature of the big map: the top directions
@@ -525,8 +533,13 @@ label.chk input{width:18px;height:18px;}
   display:flex;align-items:center;justify-content:center;}
 #bubPlus{background:var(--green);}
 #bubMinus{background:var(--red);}
+/* v273: same law as the PiP line — the docked face's direction
+   line wraps whole words instead of ellipsizing the street
+   name away ("…toward Deerfoot Tr…", the owner's Oct 26
+   frame). The bar already wraps its rows; the line now wraps
+   inside its own row too. */
 .bub-line{flex:1 0 100%;font-size:12.5px;font-weight:600;color:#C7D0E0;letter-spacing:.02em;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  white-space:normal;}
 .bub-line:empty{display:none;}
 /* v231: the DOCKED posture — the same cluster, compact, floated
    over the MAIN DASHBOARD (Back on the map page). Still no card:
@@ -542,9 +555,17 @@ label.chk input{width:18px;height:18px;}
 #bubbleFace.bub-dock .bub-loads{font-size:16px;}
 #bubbleFace.bub-dock .bub-cnt{width:44px;height:44px;font-size:17px;}
 #bubbleFace.bub-dock .bub-line{font-size:12px;}
+/* v273 (NAV-CARD-NO-USEFUL-INFO — owner verdict, Oct 26, 2026
+   17:46 MDT): the line WRAPS now. It was nowrap + ellipsis, so
+   at PiP width the street name was cut mid-word by design
+   ("130 m · Turn right onto Herita…") — the one thing the
+   small window exists to say, unreadable. Owner law: the full
+   street name, never truncated mid-word; the line takes a
+   second line (radius drops to a rounded bar when it does)
+   and stays centred. */
 .nv-drive-pip-line{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:7;
   background:rgba(10,18,32,.85);color:#fff;font-size:13px;font-weight:600;line-height:1.25;
-  padding:6px 12px;border-radius:999px;max-width:94%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  padding:6px 12px;border-radius:18px;max-width:94%;white-space:normal;text-align:center;}
 .nv-drive.nv-pip .nv-drive-top,.nv-drive.nv-pip .nv-drive-inset,.nv-drive.nv-pip .nv-drive-bar,
 .nv-drive.nv-pip .nv-avatar-picker,.nv-drive.nv-pip .nv-drive-reroute,.nv-drive.nv-pip .nv-drive-speed,
 .nv-drive.nv-pip .nv-layers-btn,.nv-drive.nv-pip .nv-layers-panel,

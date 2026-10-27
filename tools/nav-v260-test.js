@@ -153,8 +153,10 @@ check('the tick pan, the animator and the snap-back all aim at followTarget',
   /S\.driveMap\.panTo\(ft, \{ animate: false \}\)/.test(navSrc) &&
   /var tgt = followTarget\(\) \|\| S\.pos;/.test(navSrc) &&
   /S\.driveMap\.panTo\(followTarget\(\) \|\| S\.pos, \{ animate: false \}\)/.test(navSrc));
-check('paintPlane derives the lift from the live viewport (0.49 of its height)',
-  /S\.driveLiftPx = \(vpEl && vpEl\.clientHeight && !gestPivot\) \? Math\.round\(vpEl\.clientHeight \* 0\.49\) : 0;/.test(navSrc));
+check('paintPlane derives the lift from the live viewport (v273 RE-PIN: the flat 0.49-of-height ' +
+  'fraction is superseded — it ran out on the owner\'s real 411x960 screen; the lift is now ' +
+  'coverageLiftPx(clientWidth, clientHeight), derived per viewport — see nav-verdict-v273)',
+  /S\.driveLiftPx = \(vpEl && vpEl\.clientHeight && !gestPivot\) \? coverageLiftPx\(vpEl\.clientWidth, vpEl\.clientHeight\) : 0;/.test(navSrc));
 check('the lift suspends while a rotate/tilt gesture owns the view (v215 pivot contract)',
   /var gestPivot = S\._gestLock === 'rotate' \|\| S\._gestLock === 'tilt'/.test(navSrc) &&
   /if \(S\._gestLock !== 'pinch'\) gestureAnchor\(\);/.test(navSrc));
