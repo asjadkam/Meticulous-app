@@ -127,6 +127,20 @@
       return out;
     });
   };
+  /* v276 (SPARK-QUOTA): ONE doc, one read. The record-save
+     merge in cloudsync used to loadDocs the whole kv tree
+     (~36 reads) to find the single doc it merges; on the free
+     plan's 50k reads/day that made every fuel/PTI/session save
+     cost 36 reads. Resolves null when signed out or the doc
+     does not exist — the same shape loadDocs items carry. */
+  FB.loadDoc = function (collection, id) {
+    var c = FB.col(collection);
+    if (!c) return Promise.resolve(null);
+    return c.doc(id).get().then(function (snap) {
+      if (!snap.exists) return null;
+      return Object.assign({ id: snap.id }, snap.data());
+    });
+  };
   FB.deleteDoc = function (collection, id) {
     var c = FB.col(collection);
     if (!c) return Promise.resolve(null);

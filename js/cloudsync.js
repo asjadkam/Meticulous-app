@@ -54,6 +54,7 @@
   var CON_FAMILY_KEYS = { con_list: 1, con_hidden: 1, con_outbox: 1,
     pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1 };
   var DEBOUNCE_MS = 2500;
+  var TELEMETRY_PUSH_MIN_MS = 60000;    // v276: min gap between cloud writes of one telemetry key
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
   var PULL_TIMEOUT_MS = 25000;          // v32: never let a pull hang forever
@@ -82,11 +83,13 @@
     _transportFail: null,   // sync service itself unreachable (firebase never ready)
     _blockedSince: 0,       // when waiting work first found pushes unable to run
     _flushDurable: false,   // the in-flight flush carries >=1 durable key
+    _teleUrgent: false,     // v276: the next flush carries telemetry NOW (stop/pause/hide/unload)
     _truth: null,           // last computed syncTruth()
     _statusListeners: []
   };
   window.CloudSync = S;
   S._BLOCKED_GRACE_MS = BLOCKED_GRACE_MS; // exposed for the v136 suite
+  S._TELEMETRY_PUSH_MIN_MS = TELEMETRY_PUSH_MIN_MS; // exposed for the v276 suite
 
   /* The Preferences card (and any future face) paints from the SAME
      truth the dot does — one state machine, two faces. */
@@ -156,6 +159,21 @@
     if (km.d) return true; // unpushed tombstone (local delete)
     return (km.t || 0) > (km.s || 0);
   }
+  /* v276: the telemetry coalesce clock lives at the TOP level
+     of the meta (m.teleTp), never inside a per-key record: the
+     pull replaces whole per-key records in several branches
+     (the v224 telemetry merge among them), and a clock stored
+     there would be wiped by the first pull of a shift — the
+     gate would spring open mid-shift and the cadence with it. */
+  function teleLastPush(key) {
+    var m = getMeta();
+    return (m.teleTp && m.teleTp[key]) || 0;
+  }
+  function stampTelePush(key) {
+    var m = getMeta();
+    if (!m.teleTp) m.teleTp = {};
+    m.teleTp[key] = Date.now();
+  }
 
   /* ---------------- v136: durable vs telemetry, plain names ----------------
    * TELEMETRY keys hold continuously rewritten LIVE snapshots (the
@@ -163,7 +181,32 @@
    * geoloads — each at most every ~10s while a session runs). They
    * sync through the same flush as everything else; only the SETTLE
    * accounting differs (see the header note). Every other syncable
-   * key is DURABLE user data and decides green. */
+   * key is DURABLE user data and decides green.
+   *
+   * v276 (SPARK-QUOTA — the Oct 27 stress test + the owner's
+   * no-paid-plan-until-the-first-paying-user rule): the flush
+   * used to push a telemetry key on nearly every cycle, ~3,000–
+   * 7,000 Firestore writes per driver-day against the free
+   * plan's 20,000/day project cap. Telemetry pushes are now
+   * COALESCED: at most one cloud write per key per
+   * TELEMETRY_PUSH_MIN_MS (60s), however often the engines
+   * persist locally (local persistence is unchanged — the
+   * phone's own copy is never behind). The gate lifts at once
+   * (an URGENT flush) on the events that matter: a tracker pause
+   * or stop landing in the store — every stop, day close and
+   * dispatch close funnels through stopSessionAt, which stamps
+   * the tracker 'paused' / 'idle', and the wrapped store.set
+   * below sees those stamps — plus the page hiding and
+   * beforeunload (the same moments js/app.js flushes the
+   * engines). A telemetry TOMBSTONE is never gated: a
+   * deliberate delete goes out on the normal debounce. The
+   * per-key clock (m.teleTp in the sync meta — the last landed
+   * telemetry write) survives restarts and pull merges. What this
+   * does NOT change: pull merging (the v224 day-total merge
+   * restores a cold start from whatever the cloud holds — the
+   * stop/hide flushes keep that copy final at every moment a
+   * shift can end), durable keys (they push immediately, as
+   * always), and the v271/v272 semantics. */
   var TELEMETRY_KEYS = { livemiles: true, geoloads: true };
   function isTelemetryKey(key) { return !!TELEMETRY_KEYS[key]; }
 
@@ -406,6 +449,18 @@
         km.u = S.uid || getMeta().uid || null; // owner of this change
         delete km.d; // resurrected
         saveMeta();
+        /* v276: a tracker pause or stop is one of the moments
+           telemetry must reach the cloud NOW (see the telemetry
+           note above). stopSessionAt — the funnel for tracker
+           stop, day close and dispatch close — stamps the
+           tracker 'idle'; the pause toggle stamps 'paused'.
+           The engines' final snapshots land in the store in
+           the same breath (stopDay/flush run first), so the
+           urgent flush carries the day's final totals. */
+        if (pk === 'tracker' && v && typeof v === 'object' &&
+            (v.status === 'paused' || v.status === 'idle')) {
+          S._teleUrgent = true;
+        }
         scheduleFlush();
       }
       refreshDot();
@@ -446,9 +501,9 @@
       window.addEventListener('online', function () { S.online = true; S._blockedSince = 0; syncNow(); });
       window.addEventListener('offline', function () { S.online = false; refreshDot(); });
       document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'hidden') flush();
+        if (document.visibilityState === 'hidden') flushUrgent();
       });
-      window.addEventListener('beforeunload', function () { flush(); });
+      window.addEventListener('beforeunload', function () { flushUrgent(); });
       // v33: watchdog — every 30s, if dirty keys exist and no sync is in
       // flight, kick one off. Catches cases where an early-return or a
       // timed-out push left work stranded with a yellow dot.
@@ -686,9 +741,24 @@
     // work (a telemetry-only flush in flight must not paint amber over
     // a settled durable ledger).
     S._blockedSince = 0;
-    S._flushDurable = keys.some(function (k) { return !isTelemetryKey(k); });
+    /* v276 (SPARK-QUOTA): the telemetry coalesce gate. The urgent
+       flag is consumed HERE — only by a flush that is actually
+       proceeding — so a pause/stop/hide that lands while another
+       flush is in flight still makes the re-run urgent. A gated
+       telemetry key simply stays dirty; the 30s watchdog (or the
+       next durable flush after the window) carries it. */
+    var teleUrgent = !!S._teleUrgent;
+    S._teleUrgent = false;
+    var pushKeys = keys.filter(function (k) {
+      if (!isTelemetryKey(k)) return true;
+      if (teleUrgent) return true;
+      var km = keyMeta(k);
+      if (km.d) return true; // a tombstone never waits for the window
+      return (Date.now() - teleLastPush(k)) >= TELEMETRY_PUSH_MIN_MS;
+    });
+    S._flushDurable = pushKeys.some(function (k) { return !isTelemetryKey(k); });
     var chain = Promise.resolve();
-    keys.forEach(function (k) { chain = chain.then(function () { return pushOneWithTimeout(k); }); });
+    pushKeys.forEach(function (k) { chain = chain.then(function () { return pushOneWithTimeout(k); }); });
     chain.then(function () {
       S.flushing = false;
       S._flushDurable = false;
@@ -713,6 +783,42 @@
     });
   }
 
+  /* v276 (SPARK-QUOTA): read the ONE cloud doc a record-list
+     push merges against (its current array, or null). Before
+     v276 the push loaded the WHOLE kv collection (~36 docs)
+     to find this one doc — 36 Firestore reads per record
+     save on a plan that allows 50,000 a day. FB.loadDoc reads
+     exactly the doc the write will land on. The loadDocs
+     fallback stands for a half-updated bundle mid-OTA
+     (cloudsync v276 over firebase.js v275): same search, same
+     merge, more reads — correctness never depends on which
+     door the read came through. A read failure rejects, and
+     the caller fails the push honestly (v272 law). */
+  function loadCloudDoc(key, docId) {
+    if (typeof FB.loadDoc === 'function') {
+      return FB.loadDoc(KV_COLLECTION, docId).then(function (d) {
+        return (d && Array.isArray(d.v)) ? d.v : null;
+      });
+    }
+    return FB.loadDocs(KV_COLLECTION).then(function (docs) {
+      var arr = null;
+      (docs || []).forEach(function (d) {
+        if ((d.mt || d.id) === key && Array.isArray(d.v)) arr = d.v;
+      });
+      return arr;
+    });
+  }
+
+  /* v276 (SPARK-QUOTA): an urgent flush — telemetry rides NOW,
+     ahead of its coalesce window. Raised by the tracker
+     pause/stop stamps in the wrapped store.set, and by the
+     page-hide / beforeunload listeners in attach(). */
+  function flushUrgent() {
+    S._teleUrgent = true;
+    flush();
+  }
+  S.flushUrgent = flushUrgent;
+
   function pushOne(key) {
     var km = keyMeta(key);
     var raw = lsGetRaw(key);
@@ -720,6 +826,10 @@
     var done = function (ok) {
       if (ok) {
         km.s = Date.now(); delete km.d; S.stats.pushed++;
+        /* v276: the coalesce clock starts at the landed write
+           (a tombstone delete stamps nothing — the key is gone,
+           and a later recreate is a new snapshot, not a tick). */
+        if (isTelemetryKey(key) && raw !== null) stampTelePush(key);
         delete S._keyFails[key]; // v136: a successful push clears the key's failure record
         var _dm = getMeta(); _dm.uid = S.uid; _dm.globallySynced = true;
       }
@@ -788,11 +898,7 @@
         }).catch(rlPushFail);
       };
       try {
-        return FB.loadDocs(KV_COLLECTION).then(function (docs) {
-          var cloudArr = null;
-          (docs || []).forEach(function (d) {
-            if ((d.mt || d.id) === key && Array.isArray(d.v)) cloudArr = d.v;
-          });
+        return loadCloudDoc(key, docId).then(function (cloudArr) {
           if (!cloudArr) return rlSave(val);
           var mg = mergeRecordLists3(key, val, cloudArr, km.sh);
           if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
