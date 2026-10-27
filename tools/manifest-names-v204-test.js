@@ -110,7 +110,13 @@ console.log('— v204: stop names, not coordinates —');
 
 console.log('— v204: statics —');
 ok('collect wires placeNameFor into the stop labels',
-  man.indexOf('if (!label) label = placeNameFor(s.lat, s.lng);') !== -1);
+  /* v275 re-pin: the wiring moved into collect's ONE label chain
+     (labelTrailPoint — stops, route start and route end all
+     resolve through it), so the call now reads (lat, lng). The
+     law this pin guards is unchanged: collect's stop labels come
+     through placeNameFor. */
+  man.indexOf('if (!label) label = placeNameFor(lat, lng);') !== -1 &&
+  man.indexOf('labelTrailPoint(s.lat, s.lng, s.t)') !== -1);
 ok('placeNameFor is exported for this suite', man.indexOf('_placeNameFor: placeNameFor') !== -1);
 ok('the screen list renders the label before coordinates',
   man.indexOf("esc(s.label || ('Stop — '") !== -1);
