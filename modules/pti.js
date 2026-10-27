@@ -167,6 +167,21 @@
        whether the write landed. */
     return JSON.stringify(back) === JSON.stringify(reps);
   }
+  /* v274 (PTI-SIGNATURE-NOT-SAVED, owner Oct 26, 2026 18:27 MDT —
+     his post-trip recording: the Sign & file box opened EMPTY
+     though he had signed the pre-trip that morning; "Why is it
+     not saving my signature?"): before v274 there was NO saved
+     signature anywhere — the drawing lived only on the draft, and
+     filing wipes the draft (blankDraft below), so every form
+     opened empty by construction and he redrew every time. The
+     saved signature now lives on its own key (pti_sigsave), the
+     plate's set-once law for the pen: a signature that lands on a
+     filed report becomes the saved one; a fresh form opens with
+     it already in the box; drawing again replaces it. */
+  function savedSig() {
+    var s = S('sigsave', '');
+    return (typeof s === 'string' && s.indexOf('base64,') !== -1) ? s : '';
+  }
   /* A draft field: what the driver typed wins; until he types, the
      Preferences profile fills it. null on the draft = untouched. */
   function dVal(d, prof, key) {
@@ -551,6 +566,17 @@
   function renderForm(body) {
     var prof = profile();
     var d = draft();
+    /* v274: a FRESH form — nothing answered, no odometer yet, no
+       signature drawn — opens with the saved signature already in
+       the box (seeded onto the draft, so what the box shows is
+       exactly what files). Only a fresh draft is seeded: a form
+       he is midway through — checklist touched, odometer in, or
+       a signature he just Cleared — is never repainted behind
+       his back. */
+    if (!String(d.sig || '').trim() && !String(d.odo || '').trim() && checkedCount(d.items) === 0) {
+      var seedSig = savedSig();
+      if (seedSig) { d.sig = seedSig; saveDraft(d); }
+    }
     var reps = reports();
     var today = todayStr();
     var todays = reps.filter(function (r) { return r.date === today; })
@@ -891,6 +917,11 @@
       return;
     }
     try { if (window.FB && FB.saveDoc) { var c = Object.assign({}, rep); FB.saveDoc('pti', rep.id, c); } } catch (e) {}
+    /* v274 (PTI-SIGNATURE-NOT-SAVED): the signature that just
+       filed becomes the saved signature — drawn once, it is
+       offered on every later form; a redrawn signature replaces
+       it here, at the filing that carries it. */
+    if (rep.signature) W('sigsave', rep.signature);
     /* v241 (PTI-PLATE-SAVE): a plate that reaches a filed report
        becomes the truck record's plate (set-once law) — typed
        once on any PTI or in Preferences, it pre-fills every
@@ -1005,10 +1036,13 @@
     }
     body.innerHTML = h;
     /* v170: the signing prompt opens the pad — the drawn
-       signature is what signs (with the printed name). */
-    var signSig = '';
+       signature is what signs (with the printed name).
+       v274: the box opens with the saved signature in it, like
+       the form's — what signs is what the box shows; Clear or a
+       fresh drawing replaces it before the tap. */
+    var signSig = savedSig();
     try {
-      wireSigPad(body, 'pti2', '', function (url) { signSig = url; });
+      wireSigPad(body, 'pti2', signSig, function (url) { signSig = url; });
     } catch (e) {}
     var signBtn = body.querySelector('#pti_sign');
     if (signBtn) signBtn.onclick = function () {
@@ -1033,6 +1067,8 @@
         if (eEl) eEl.innerHTML = '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ That signature did NOT save — the app storage on your phone looks full, or the write failed. Free up some phone space and sign again.</div>';
         return;
       }
+      /* v274: a signature that signs here becomes the saved one. */
+      if (signSig) W('sigsave', signSig);
       try { if (window.FB && FB.saveDoc) FB.saveDoc('pti', r.id, Object.assign({}, r)); } catch (e) {}
       try { if (window.ConnectPipe && ConnectPipe.publishRecords) ConnectPipe.publishRecords(); } catch (e) {}
       Meticulous.modules.pti.render(body);
