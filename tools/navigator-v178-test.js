@@ -49,10 +49,10 @@ const cssSrc = read('css/style.css');
 const ver = JSON.parse(read('version.json'));
 
 console.log('— A1: the plane covers the corners —');
-check('the plane is 260% wide x 300% tall, anchor-centred (left:-80%, top:-86%) — v220 re-pin: A1 grew the SQUARE plane for the corners; the top still fell short on diagonal headings, so v220 grows the HEIGHT only (far-field), centre unmoved. v260 re-pin (NAV-TOP-CUTOFF): width 230% -> 260% (left -80% = 50 - 260/2) for the translate-compensated reach on the owner\'s 768x1024 screen; height/top unchanged',
-  /\.nv-drive-plane\{[^}]*width:260%;height:300%;left:-80%;top:-86%/.test(cssSrc));
-check('the raster budget holds: (260x300)/(340x340) = 0.67 of the v135 plane (v260 re-pin; was (230x300)/(340x340) = 0.60 at v220)',
-  (260 * 300) / (340 * 340) < 0.7);
+check('the plane is 460% wide x 300% tall, anchor-centred (left:-180%, top:-86%) — v220 re-pin: A1 grew the SQUARE plane for the corners; the top still fell short on diagonal headings, so v220 grows the HEIGHT only (far-field), centre unmoved. v260 re-pin (NAV-TOP-CUTOFF): width 230% -> 260% (left -80% = 50 - 260/2) for the translate-compensated reach on the owner\'s 768x1024 screen; height/top unchanged. v277 re-pin (NAV-SCREEN-STILL-CUTTING): width 260% -> 460% (left -180% = 50 - 460/2) — full-viewport coverage at the owner\'s real 411x960 sets a ~436% floor under the width; centre unmoved',
+  /\.nv-drive-plane\{[^}]*width:460%;height:300%;left:-180%;top:-86%/.test(cssSrc));
+check('the raster budget holds: (460x300)/(340x340) = 1.19 of the v135 plane (v277 re-pin, NAV-SCREEN-STILL-CUTTING: the budget is RE-BASED — the old <0.7 bound assumed the 768x1024 screen; full-viewport coverage at the owner\'s real 411x960 demands a ~436%-wide plane, so the raster floor is set by the coverage requirement, not by the v135 ratio; was (260x300)/(340x340) = 0.67 at v260)',
+  (460 * 300) / (340 * 340) < 1.2);
 
 console.log('— A2: movement is interpolated —');
 check('exactly ONE .style.transform writer remains, inside paintPlane, with the pinned composed call (v222 pin move: the plane lookup gained the docEl fallback — a PARKED drive screen lives in the shell dock, outside this render body, and its plane must still paint; the writer count and the composed call are unchanged. v260 pin move: paintPlane first derives the cutoff lift (S.driveLiftPx) from the live viewport, so the writer now sits in an if(plane) block a few lines below the lookup; the writer count and the composed call are unchanged)',

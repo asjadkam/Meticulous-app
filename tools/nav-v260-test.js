@@ -163,8 +163,13 @@ check('the lift suspends while a rotate/tilt gesture owns the view (v215 pivot c
 
 /* ---------- CSS pins: plane + palette ---------- */
 console.log('— CSS: plane geometry + the vibrant palette —');
-check('the plane is 260% x 300%, centred on the anchor (left:-80%, top:-86%)',
-  /\.nv-drive-plane\{[^}]*width:260%;height:300%;left:-80%;top:-86%/.test(css));
+check('the plane is 460% x 300%, centred on the anchor (left:-180%, top:-86%)',
+  /\.nv-drive-plane\{[^}]*width:460%;height:300%;left:-180%;top:-86%/.test(css));
+/* v277 re-pin (NAV-SCREEN-STILL-CUTTING): the plane widened
+ * 260% -> 460% — at the owner's real 411x960 the 260% width
+ * covered only a third of the screen at side headings (the
+ * full-viewport homography lives in nav-screen-cutting-v277).
+ * The lift assertions in this suite are width-agnostic. */
 const ti = css.indexOf('.nv-tile-street{');
 const trule = ti === -1 ? '' : css.slice(ti, css.indexOf('}', ti) + 1);
 check('the street lift is the v260 measured chain: saturate(2.3) hue-rotate(11deg) contrast(1.16)',

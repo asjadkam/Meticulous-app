@@ -123,8 +123,22 @@ function invert3(H) {
 /* Coverage: sample the viewport's top strip; a screen point is
  * covered when its inverse-mapped plane point is in front of
  * the eye (forward w > 0) and inside the plane rect. */
-function uncoveredSamples(W, H, transformStr) {
-  const pw = 2.6 * W, ph = 3.0 * H, x0 = -0.80 * W, y0 = -0.86 * H;
+/* v277 re-pin (NAV-SCREEN-STILL-CUTTING): the plane geometry
+ * is parsed off the SHIPPED css instead of restated — v277
+ * widened the plane 260% -> 460% (left -180%) to cover the
+ * FULL viewport at 411x960, and this suite's restated 260%
+ * constants judged the new lift against the old plane (3
+ * phantom failures). The full-viewport proof itself lives in
+ * nav-screen-cutting-v277-test.js; this suite keeps its
+ * top-strip contract. */
+const PLANE_GEOM = (function () {
+  const m = css.match(/\.nv-drive-plane\{[^}]*width:([\d.]+)%;height:([\d.]+)%;left:-([\d.]+)%;top:-([\d.]+)%/);
+  if (!m) throw new Error('plane rule not parseable');
+  return { w: parseFloat(m[1]) / 100, h: parseFloat(m[2]) / 100, l: -parseFloat(m[3]) / 100, t: -parseFloat(m[4]) / 100 };
+})();
+function uncoveredSamples(W, H, transformStr, geom) {
+  const G = geom || PLANE_GEOM;
+  const pw = G.w * W, ph = G.h * H, x0 = G.l * W, y0 = G.t * H;
   const ox = x0 + pw / 2, oy = y0 + ph / 2; // transform origin = anchor (0.5W, 0.64H)
   let M = parseTransform(transformStr);
   M = matMul(matTranslate(ox, oy), matMul(M, matTranslate(-ox, -oy)));
@@ -174,11 +188,11 @@ function shippedLift(W, H) {
   if (m) return Math.round(H * parseFloat(m[1]));
   return 0;
 }
-function coverageAt(W, H, lift) {
+function coverageAt(W, H, lift, geom) {
   let total = 0, worstH = null, worstN = 0;
   for (let deg = 0; deg < 360; deg += 5) {
     ptSb.S = { viewRot: 0, viewPitch: null, driveLiftPx: lift };
-    const r = uncoveredSamples(W, H, ptSb.planeTransform(deg));
+    const r = uncoveredSamples(W, H, ptSb.planeTransform(deg), geom);
     if (r.count > 0) { total += r.count; if (r.count > worstN) { worstN = r.count; worstH = deg; } }
   }
   return { total: total, worstHeading: worstH, worstCount: worstN };
@@ -195,10 +209,15 @@ const VIEWPORTS = [
 /* Witness FIRST: the v260 flat rule at his real size must FAIL
  * (this is the repro — if it passed, this suite would be
  * testing nothing). */
-const witness = coverageAt(411, 960, Math.round(960 * 0.49));
+/* The witnesses judge the v260-ERA combination — flat lift
+ * AND the 260% plane it shipped with (v277 widened the plane,
+ * under which even the flat lift covers the strip; the repro
+ * is of the combination that failed the owner). */
+const GEOM260 = { w: 2.6, h: 3.0, l: -0.80, t: -0.86 };
+const witness = coverageAt(411, 960, Math.round(960 * 0.49), GEOM260);
 check('WITNESS: the v260 flat 0.49 lift leaves the top uncovered at 411x960 (worst heading ' +
   witness.worstHeading + '°)', witness.total > 0, 'uncovered=' + witness.total);
-const blind = coverageAt(768, 1024, Math.round(1024 * 0.49));
+const blind = coverageAt(768, 1024, Math.round(1024 * 0.49), GEOM260);
 check('WITNESS: the flat rule fails at 768x1024 too — in the corners at diagonal headings ' +
   '(worst ' + blind.worstHeading + '°); v260 sampled only the straight-ahead reach',
   blind.total > 0, 'uncovered=' + blind.total);
@@ -275,8 +294,8 @@ check('a window resize while driving re-fits too (fold/unfold — the same stale
 
 console.log('— ITEM 3 (numbers): the stale-size misregistration, in px —');
 (function () {
-  const full = { w: 2.6 * 411, h: 3 * 960 };       // Leaflet size at drive start
-  const pip = { w: 2.6 * 221, h: 3 * 139 };        // the plane's CSS size inside PiP
+  const full = { w: PLANE_GEOM.w * 411, h: PLANE_GEOM.h * 960 }; // Leaflet size at drive start
+  const pip = { w: PLANE_GEOM.w * 221, h: PLANE_GEOM.h * 139 };  // the plane's CSS size inside PiP
   const centre = { x: full.w / 2, y: full.h / 2 }; // where Leaflet puts the map centre
   check('with the size stale, the map centre (' + Math.round(centre.x) + ',' + Math.round(centre.y) +
     ') falls OUTSIDE the visible ' + Math.round(pip.w) + 'x' + Math.round(pip.h) + ' PiP plane',

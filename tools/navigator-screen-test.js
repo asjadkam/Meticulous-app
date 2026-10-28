@@ -80,8 +80,8 @@ console.log('\n— (a) the map fills its area —');
    viewport's perspective property and the CSS 52° tilt layer
    are GONE — replaced by ONE bounded plane carrying a composed
    transform. The sky-gradient backstop keeps its job. */
-ok('v139+v178+v220+v260: the map rides ONE bounded plane — 260% × 300% (v178 A1 re-pin: 190% left the top corners short at diagonal headings; v220: height grew to 300% so the pitched far field reaches the top of the glass; v260 NAV-TOP-CUTOFF: width 230% -> 260% for the translate-compensated reach on the owner\'s 768x1024 screen), centred on the anchor by its offsets',
-  /\.nv-drive-plane\{[^}]*width:260%;height:300%;left:-80%;top:-86%/.test(css) &&
+ok('v139+v178+v220+v260+v277: the map rides ONE bounded plane — 460% × 300% (v178 A1 re-pin: 190% left the top corners short at diagonal headings; v220: height grew to 300% so the pitched far field reaches the top of the glass; v260 NAV-TOP-CUTOFF: width 230% -> 260% for the translate-compensated reach on the owner\'s 768x1024 screen; v277 NAV-SCREEN-STILL-CUTTING re-pin: width 260% -> 460% — at the owner\'s REAL 411x960 cover screen the 260% width covered only a third of the glass at side headings; full-viewport proof in nav-screen-cutting-v277), centred on the anchor by its offsets',
+  /\.nv-drive-plane\{[^}]*width:460%;height:300%;left:-180%;top:-86%/.test(css) &&
   !/\.nv-drive-mapbox\{/.test(css) && !/\.nv-drive-tilt\{/.test(css) && !/\.nv-drive-spin\{/.test(css));
 ok('v139+v260: the viewport carries NO perspective property — the projection is composed into the plane\'s single transform (v260: the composed string gains a translateY lift segment between perspective and rotateX — empty when no lift applies, so the rest string is byte-identical to the v259 form)',
   !/\.nv-drive-viewport\{[^}]*perspective:/.test(css) &&

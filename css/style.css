@@ -486,8 +486,23 @@ label.chk input{width:18px;height:18px;}
    viewport by NAVPURE.coverageLiftPx, whose constants
    (260%x300%, anchor 50%/64%, perspective 1100, pitch 50)
    are a matched pair with THIS rule — change them
-   together. */
-.nv-drive-plane{position:absolute;width:260%;height:300%;left:-80%;top:-86%;transform-origin:50% 50%;}
+   together.
+   v277 (NAV-SCREEN-STILL-CUTTING, owner, Oct 28, 2026
+   07:27 MDT): width WAS the complaint after all — the
+   v273 derivation only ever sampled the viewport's TOP
+   STRIP, and at 411x960 the 260% width (half 534px)
+   cannot hold the full screen at diagonal/side headings:
+   the pre-image of the lower two-thirds walks off the
+   plane's sides (63% of the glass uncovered at heading
+   90 — his "thin map strip at the top, truck floating on
+   the pale gradient"). The plane widens 260% -> 460%
+   (left -180% = 50 - 460/2, still centred on the anchor;
+   half-width 945px at 411 wide against the ~896px the
+   full-viewport homography demands there) and
+   coverageLiftPx now derives against the WHOLE viewport.
+   Height/top are unchanged — 300%/-86% already centre
+   the tall axis on the anchor and clear every class. */
+.nv-drive-plane{position:absolute;width:460%;height:300%;left:-180%;top:-86%;transform-origin:50% 50%;}
 /* v220 (PIP-REDESIGN): the drive screen's picture-in-picture
    posture — NOT a miniature of the big map: the top directions
    bar, the turn inset, the ETA bar and every control go away;
@@ -825,6 +840,12 @@ body.mt-driving #chatSheet{z-index:2120;}
    compact (junction capped at 140px, 27px lane cells, 38px
    header arrow) so the card reads at a glance. */
 .nv-drive-inset{position:absolute;top:calc(198px + env(safe-area-inset-top));right:10px;z-index:4;background:#1F3764;color:#fff;border-radius:16px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;box-shadow:0 4px 18px rgba(0,0,0,.45);width:200px;max-width:54vw;}
+/* v277 (NAV-SCREEN-STILL-CUTTING): the away dock — when the
+   maneuver bends RIGHT, the card rides the LEFT edge, so it
+   never covers the bend it describes (his Oct 28 frame: the
+   card sat on the Stoney Trail ramp it was announcing). The
+   tick toggles the class with the inset's rebuild key. */
+.nv-drive-inset.nv-inset-left{left:10px;right:auto;}
 /* v195 (NAV-POPUP): the junction view inside the pop-up — the
    enlarged drawing of the upcoming turn (route highlighted),
    over the v178 header row (bent arrow + distance + words). */

@@ -1281,7 +1281,22 @@
      homography keeps the viewport's whole top strip inside
      the plane at EVERY heading, plus a small safety margin.
      Memoised per size — paintPlane calls this on every
-     repaint. Pure arithmetic, no DOM. */
+     repaint. Pure arithmetic, no DOM.
+     v277 (NAV-SCREEN-STILL-CUTTING, owner Oct 28, 2026
+     07:27 MDT, drive video): the top strip was the wrong
+     sample — it is all the v273 check ever looked at, and
+     the owner's complaint moved DOWN the glass: at side
+     and diagonal headings the pre-image of the LOWER
+     two-thirds of his 411x960 screen walks off the SIDES
+     of the 260%-wide plane (63% of the viewport uncovered
+     at heading 90; the truck, at the 64% anchor, floats on
+     the viewport's bare gradient below a thin map strip).
+     Two matched moves: the plane widens to 460% (see
+     .nv-drive-plane — the constants below follow it), and
+     _covCovers now samples the WHOLE viewport, top to
+     bottom, so the derived lift guarantees the entire
+     screen at every heading — nothing left unexamined
+     below the strip again. */
   var _covLiftMemo = {};
   function _covMul(A, B) {
     var C = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -1292,7 +1307,7 @@
     return C;
   }
   function _covCovers(W, H, lift, deg) {
-    var pw = 2.6 * W, ph = 3.0 * H, x0 = -0.80 * W, y0 = -0.86 * H;
+    var pw = 4.6 * W, ph = 3.0 * H, x0 = -1.80 * W, y0 = -0.86 * H;
     var ox = x0 + pw / 2, oy = y0 + ph / 2;
     var t = deg * Math.PI / 180, cp = Math.cos(t), sp = Math.sin(t);
     var P = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1 / 1100, 1];
@@ -1310,8 +1325,8 @@
     var inv = [A / det, -(b * i - c * h) / det, (b * f - c * e) / det,
                B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
                C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
-    for (var ry = 0; ry <= 5; ry++) {
-      var sy = 0.25 * H * ry / 5;
+    for (var ry = 0; ry <= 20; ry++) {
+      var sy = H * ry / 20;
       for (var rx = 0; rx <= 12; rx++) {
         var sx = W * rx / 12;
         var X = inv[0] * sx + inv[1] * sy + inv[2];
@@ -1336,7 +1351,7 @@
     /* Coverage in the lift is a WINDOW, not a threshold: too
        little and the far edge falls short of the top; too
        much and the translate drags the far field across the
-       perspective eye plane (the pre-image of the top strip
+       perspective eye plane (the viewport's far pre-image
        slides down-plane ~1.6-2x the lift and out the near
        side). So scan UP from zero for the FIRST covering
        lift, then take only a small margin over it — and keep
@@ -4292,6 +4307,31 @@
                 '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
                 '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>' +
                 signHtml;
+              /* v277 (NAV-SCREEN-STILL-CUTTING): dock the card
+                 AWAY from the bend it describes — a right bend
+                 (positive delta) rides the LEFT edge, so the
+                 card never covers the ramp it announces; left
+                 bends and straight maneuvers keep the owner's
+                 top-right dock. */
+              insetEl.classList.toggle('nv-inset-left', dDeg >= 12);
+            } else {
+              insetEl.classList.remove('nv-inset-left');
+            }
+          }
+          /* v277 (NAV-SCREEN-STILL-CUTTING): the distance line
+             must never lag the banner. The rebuild above is
+             keyed on a 50 m bucket (the junction art does not
+             change faster), which left the inset's <b> frozen
+             at the bucket's entry value while the banner ticked
+             on its 10 m cadence — his Oct 28 frame: banner
+             380 m, inset 420 m. Refresh just the <b> text on
+             the banner's own write-on-change cadence; the SVG
+             and lanes still rebuild only on the coarse key. */
+          if (showInset) {
+            var insetDistEl = insetEl.querySelector('.nv-inset-text b');
+            if (insetDistEl) {
+              var insetDistTxt = fmtDist(dp.toTurnM);
+              if (insetDistEl.textContent !== insetDistTxt) insetDistEl.textContent = insetDistTxt;
             }
           }
         }

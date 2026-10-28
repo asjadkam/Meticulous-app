@@ -134,9 +134,9 @@ console.log('— 1. ONE transformed element: the bounded plane —');
     navSrc.indexOf('nv-drive-tilt') < 0 && navSrc.indexOf('nv-drive-spin') < 0 &&
     navSrc.indexOf('nv-drive-mapbox') < 0 && navSrc.indexOf('nvd_spin') < 0);
   const plane = ruleBody('.nv-drive-plane');
-  check('the plane is bounded: 260% x 300%, centred on the anchor by its offsets (left:-80% = 50 - 260/2, top:-86% = 64 - 300/2) — v220 re-pin: the plane grew TALLER for far-field/top coverage (NAV-CUTOFF-REPEAT); width unchanged from the v178 re-pin (A1). v260 re-pin (NAV-TOP-CUTOFF): width grew 230% -> 260% for the raster the translate-compensated reach samples on the owner\'s 768x1024 drive screen; centre unmoved',
-    !!plane && /width:260%/.test(plane) && /height:300%/.test(plane) &&
-    /left:-80%/.test(plane) && /top:-86%/.test(plane) && /transform-origin:50% 50%/.test(plane),
+  check('the plane is bounded: 260% x 300%, centred on the anchor by its offsets (left:-80% = 50 - 260/2, top:-86% = 64 - 300/2) — v220 re-pin: the plane grew TALLER for far-field/top coverage (NAV-CUTOFF-REPEAT); width unchanged from the v178 re-pin (A1). v260 re-pin (NAV-TOP-CUTOFF): width grew 230% -> 260% for the raster the translate-compensated reach samples on the owner\'s 768x1024 drive screen; centre unmoved. v277 re-pin (NAV-SCREEN-STILL-CUTTING): width 260% -> 460% (left -180% = 50 - 460/2) — the full-viewport homography at the owner\'s real 411x960 demands ~436% minimum; centre unmoved',
+    !!plane && /width:460%/.test(plane) && /height:300%/.test(plane) &&
+    /left:-180%/.test(plane) && /top:-86%/.test(plane) && /transform-origin:50% 50%/.test(plane),
     String(plane));
   const sizePct = 260; /* v178 re-pin (A1): plane grew 190 -> 230 for corner coverage; v260: -> 260, budget claim re-based below */
   check('the raster budget: the plane area stays a bounded fraction of the v135 340% plane — v178 re-pin: A1 corner coverage bought with a bounded raster increase. v220: (230x300)/(340x340) = 0.60 of the v135 raster. v260 re-pin: (260x300)/(340x340) = 0.67 — still a third cheaper than the v135 raster, a bounded, deliberate trade for a map that reaches the top of the glass on the owner\'s real screen (768x1024, 50° posture, translate-compensated)',
