@@ -324,31 +324,52 @@
      resolve from the day's final pegs — no place is invented
      for a move whose spot was never recorded. Days without
      pegs: null, and both renderers print exactly what they
-     printed before. */
+     printed before.
+     v284 (PEGS-SEEDS-NOT-FENCES): the pegs are seeds and the
+     spots drift, so the day's COUNTED events (geoDay.pegEvents —
+     every confirmed pickup and counted dump, with where it
+     happened) ride the same per-role sequence, merged by time:
+     the seed's place first, then each distinctly-named place
+     the work actually moved into, in order. An event at a place
+     the app has never seen prints its event time ("Loaded —
+     3:05 PM"); same distinctness rules as the pegs (by name,
+     or within 30 m unnamed). Days recorded before v284 carry
+     no pegEvents and render exactly as v283 left them. */
   function pegPlaceLabels(geoDay) {
     if (!geoDay || !geoDay.pegs) return null;
     var cur = geoDay.pegs;
     var log = Array.isArray(geoDay.pegLog) ? geoDay.pegLog : [];
-    function sequence(kind) {
+    function sequence(kind, word) {
       var pos = [];
       log.forEach(function (e) {
         if (e && e.kind === kind && isFinite(e.lat) && isFinite(e.lng)) {
-          pos.push({ lat: +e.lat, lng: +e.lng, t: +e.t || 0 });
+          pos.push({ lat: +e.lat, lng: +e.lng, t: +e.t || 0, fb: 'Pegged ' + word });
+        }
+      });
+      /* v284: the day's counted events ride the same sequence —
+         where this role's work actually happened as its centre
+         drifted from the seed. */
+      var evs = Array.isArray(geoDay.pegEvents) ? geoDay.pegEvents : [];
+      evs.forEach(function (e) {
+        if (e && e.kind === kind && isFinite(e.lat) && isFinite(e.lng)) {
+          pos.push({ lat: +e.lat, lng: +e.lng, t: +e.t || 0, fb: kind === 'load' ? 'Loaded' : 'Dumped' });
         }
       });
       var c = cur[kind];
       if (c && isFinite(c.lat) && isFinite(c.lng)) {
-        var last = pos[pos.length - 1];
-        if (!last || last.t !== (+c.t || 0) ||
-            trailDistM(last.lat, last.lng, +c.lat, +c.lng) > 1) {
-          pos.push({ lat: +c.lat, lng: +c.lng, t: +c.t || 0 });
+        var ct = +c.t || 0, seen = false;
+        for (var i = 0; i < pos.length; i++) {
+          if (pos[i].t === ct &&
+              trailDistM(pos[i].lat, pos[i].lng, +c.lat, +c.lng) <= 1) { seen = true; break; }
         }
+        if (!seen) pos.push({ lat: +c.lat, lng: +c.lng, t: ct, fb: 'Pegged ' + word });
       }
+      pos.sort(function (a, b) { return a.t - b.t; });
       return pos;
     }
     function labels(kind, word) {
       var named = [], unnamed = [], out = [];
-      sequence(kind).forEach(function (p) {
+      sequence(kind, word).forEach(function (p) {
         var name = placeNameFor(p.lat, p.lng);
         if (name) {
           if (named.indexOf(name) !== -1) return;
@@ -359,7 +380,7 @@
           if (trailDistM(unnamed[i].lat, unnamed[i].lng, p.lat, p.lng) <= 30) return;
         }
         unnamed.push(p);
-        out.push('Pegged ' + word + ' — ' + fmtClock(p.t > 0 ? p.t : null));
+        out.push(p.fb + ' — ' + fmtClock(p.t > 0 ? p.t : null));
       });
       return out;
     }

@@ -223,6 +223,27 @@
  * day is marked countSource 'pegs' on the record (surfaced via
  * forDate/today); past days are never rewritten. Days without
  * pegs run the inference stack exactly as before.
+ *
+ * v284 (Oct 29, 2026 — PEGS-SEEDS-NOT-FENCES): the owner's own
+ * correction to v282 (14:38 MDT): the tight fixed peg circles
+ * are "a double edged sword" — on same-site jobs the pickup and
+ * dump spots MOVE around the site load to load, so a tight fence
+ * works some days and not others, and re-pegging every load
+ * means touching the screen again and again — "tiresome… it's
+ * dangerous as well." His approved shape (14:55 MDT): the pegs
+ * are SEEDS, not fences. Each role's centre starts at its seed
+ * and DRIFTS with the work face (every counted event nudges it
+ * toward where the event happened, a bounded step off the
+ * smoothed fix); the fence is a generous 70 m because identity
+ * comes from the load->dump->load CYCLE, not the pinpoint; one
+ * wide SITE frame (the seeds' midpoint, covering both plus a
+ * buffer) rules every fix — a stop outside it counts nothing,
+ * whatever its length (place, not duration). No screen touches
+ * after the morning's two pegs; a re-peg is a re-seed for a job
+ * that truly changed (v282 banking, preserved). The day's
+ * counted events (pegEvents, with positions) and current
+ * centres (pegCentres) ride the record so the Manifest names
+ * where loading and dumping actually happened (v283 + v284).
  */
 (function () {
   'use strict';
@@ -301,7 +322,22 @@
       var dL = haversineM(lat, lng, LOAD.lat, LOAD.lng);
       var dD = haversineM(lat, lng, DUMP.lat, DUMP.lng);
       var inL = dL <= radiusM, inD = dD <= radiusM;
-      if (inL && inD) return dL <= dD ? 'load' : 'dump'; // overlap: nearer site wins
+      if (inL && inD) {
+        /* v284: a caller may break a GENUINE tie by EXPECTATION
+           — cfg.tieRole(dL, dD) returns the role the cycle is
+           waiting for, or null to let geometry speak (the peg
+           counter returns its expectation only inside its
+           coin-flip band). Otherwise nearer site wins, as
+           always: a truck parked ON a centre is nearer it by
+           the full separation, and expectation must never
+           override that — a stationary truck in a full overlap
+           would otherwise alternate the cycle by itself. */
+        if (typeof cfg.tieRole === 'function') {
+          var tb = cfg.tieRole(dL, dD);
+          if (tb === 'load' || tb === 'dump') return tb;
+        }
+        return dL <= dD ? 'load' : 'dump'; // overlap: nearer site wins
+      }
       if (inL) return 'load';
       if (inD) return 'dump';
       return 'out';
@@ -416,6 +452,14 @@
         };
       },
       stop: function () { if (S) S.active = false; },
+      /* v284: move the fences in place (the peg counter's
+         drifting centres). Zone/phase/count/armed are untouched
+         — only the ground the NEXT fixes are judged against
+         moves. Other counters never call it. */
+      moveSites: function (load, dump) {
+        if (isCoord(load)) { LOAD.lat = +load.lat; LOAD.lng = +load.lng; }
+        if (isCoord(dump)) { DUMP.lat = +dump.lat; DUMP.lng = +dump.lng; }
+      },
       /* v268: read-only live state for the Advanced readout
          (GeoLoads.status) — the same S the engine counts from,
          no parallel bookkeeping. candSince is when the current
@@ -444,7 +488,7 @@
     };
   }
 
-  /* ---- site pegs (v282 — LOADS-SITE-PEGS) ----
+  /* ---- site pegs (v282 — LOADS-SITE-PEGS; v284 — SEEDS) ----
      A peg is a place the DRIVER declared: he stood there and
      tapped PEG PICKUP / PEG DUMP, and the peg is the phone's
      position at that tap. Pegs can sit metres apart — pickup
@@ -453,43 +497,180 @@
      needs >= 250 m between sites; the pattern learner's
      sub-spots need 50 m). What separates two pegs is IDENTITY
      plus VISIT SEQUENCE: the armed alternation of the standard
-     counter (confirmed at pickup -> confirmed at dump counts),
-     run at the engine's intra-site grade (30 m fence, 30 m
-     accuracy bar).
-     Two adaptations make the close pair work:
+     counter (confirmed at pickup -> confirmed at dump counts).
+     Two v282 adaptations carry over:
        - Fixes are SMOOTHED through a short rolling centroid
          (PEG_WINDOW accepted fixes) before the zone machine
-         sees them. A stopped truck's raw fixes scatter metres
-         around the truth; per-fix nearer-wins attribution
-         would let that scatter accumulate dwell on the WRONG
-         peg over a long loading wait. A false zone must now
-         hold the SMOOTHED position nearer the wrong peg for
-         the whole dwell — scatter alone cannot do that.
-       - The arrival dwell is PEG_DWELL_MS (30 s), shorter
-         than the learned-place bars. Those bars exist because
-         an UNDECLARED place cannot be told from a mid-leg
-         stop; a peg is declared ground truth — the only
-         question the machine answers is whether the truck
-         visited the OTHER peg after this one.
-     The wrapper delegates every verdict to the standard counter
-     (same snapshot shape, same event shape), so the glue's
-     persistence and restore discipline apply unchanged. */
+         sees them, so a stopped truck's scatter cannot
+         accumulate dwell on the wrong peg.
+       - The arrival dwell is PEG_DWELL_MS (30 s), shorter than
+         the learned-place bars — a peg is declared ground
+         truth, not a guess that must out-dwell a washroom stop.
+     v284 (PEGS-SEEDS-NOT-FENCES) changes what a peg IS. The
+     owner: on same-site jobs the two spots MOVE load to load;
+     tight fixed circles (v282: 30 m) are right in the morning
+     and wrong by lunch, and re-pegging every load is screen
+     touching a driver must never do. So:
+       - Each role keeps a living CENTRE that starts at its
+         seed peg. Every COUNTED event of that role — a
+         confirmed pickup (the arm), a counted dump — nudges
+         the centre toward the event's smoothed position by at
+         most DRIFT_STEP_M: the face can wander all day with
+         zero touches, and one bad fix can never teleport a
+         centre. The wrapper delegates verdicts to the standard
+         counter and moves its fences via moveSites().
+       - The fence is PEG_FENCE_M (70 m — the owner's 60–80 m
+         band), generous because identity comes from the CYCLE.
+         THE AMBIGUITY RULE, exactly: a dwell inside only one
+         fence belongs to that fence's role (the unexpected
+         role alone = a visit — no count, no arm change; the
+         standard machine's law, unchanged). A dwell inside
+         BOTH fences belongs to the NEARER centre — with one
+         exception: when the truck is at least TIE_MIN_DIST_M
+         (20 m) from BOTH centres (it is sitting on neither)
+         AND the two distances are within TIE_BAND_M (10 m)
+         of each other, geometry is a coin flip and the role
+         the load->dump->load alternation is waiting for wins
+         (tieRole). The 20 m floor is load-bearing: a truck
+         parked ON a centre is nearer it by the whole
+         separation (15 m on the closest same-site pair), so
+         expectation can never override a parked truck — a
+         stationary truck in a full overlap cannot alternate
+         the cycle by itself. The same honesty gates the
+         DRIFT: an event only pulls its centre when the event
+         spot is nearer that centre than the other (within
+         the band) — a spot nearer the other face is no
+         evidence about this one.
+       - One wide SITE frame, derived from the seeds alone:
+         midpoint of the pair, radius max(SITE_MIN_M, half the
+         seed separation + SITE_BUFFER_M); a lone seed frames
+         itself at SITE_ONE_SEED_M. A smoothed fix outside the
+         frame never reaches the zone machine — an off-site
+         stop counts nothing, whatever its length (place, not
+         duration) — and the drift clamp keeps every centre
+         inside the frame.
+       - A re-peg RE-SEEDS: the glue rebuilds the counter on
+         the new seeds with the day's count banked (v282).
+     Centres + counted-event positions ride the snapshot
+     (pegCentres / pegEvents) so a relaunch resumes the drift
+     and the Manifest can name where the work actually happened. */
   var PEG_WINDOW = 4;           // accepted fixes in the rolling centroid
   var PEG_DWELL_MS = 30 * 1000; // presence at a peg that confirms arrival
+  var PEG_FENCE_M = 70;         // v284: the seeds fence (owner's 60–80 m band)
+  var DRIFT_STEP_M = 25;        // v284: most a centre moves per counted event
+  var SITE_BUFFER_M = 100;      // v284: site frame reaches this past the seeds
+  var SITE_MIN_M = 200;         // v284: site frame floor (close-pair days)
+  var SITE_ONE_SEED_M = 250;    // v284: site frame around a lone seed
+  var TIE_BAND_M = 10;          // v284: |dLoad - dDump| inside both fences
+                                // at or under this = a coin flip the
+                                // cycle's expected role decides
+  var TIE_MIN_DIST_M = 20;      // v284: ...but only when the truck is at
+                                // least this far from BOTH centres (it is
+                                // sitting on neither); a parked truck's
+                                // geometry always speaks for itself
 
   function createPegCounter(cfg) {
     var accBar = cfg.accMaxM || INTRA_ACC_MAX_M;
-    var inner = createGeoLoadCounter({
-      load: cfg.load, dump: cfg.dump,
-      radiusM: cfg.radiusM || INTRA_RADIUS_M,
-      dwellMs: cfg.dwellMs || PEG_DWELL_MS,
-      departMs: cfg.departMs || DEPART_MS,
-      accMaxM: accBar
-    });
+    var seedLoad = isCoord(cfg.load) ? { lat: +cfg.load.lat, lng: +cfg.load.lng } : null;
+    var seedDump = isCoord(cfg.dump) ? { lat: +cfg.dump.lat, lng: +cfg.dump.lng } : null;
+    /* the day's site frame, from the seeds alone */
+    var site = null;
+    if (seedLoad && seedDump) {
+      var sepM = haversineM(seedLoad.lat, seedLoad.lng, seedDump.lat, seedDump.lng);
+      site = {
+        lat: (seedLoad.lat + seedDump.lat) / 2,
+        lng: (seedLoad.lng + seedDump.lng) / 2,
+        radiusM: Math.max(SITE_MIN_M, sepM / 2 + SITE_BUFFER_M)
+      };
+    } else if (seedLoad || seedDump) {
+      var only = seedLoad || seedDump;
+      site = { lat: only.lat, lng: only.lng, radiusM: SITE_ONE_SEED_M };
+    }
+    var cen = {
+      load: seedLoad ? { lat: seedLoad.lat, lng: seedLoad.lng } : null,
+      dump: seedDump ? { lat: seedDump.lat, lng: seedDump.lng } : null
+    };
+    var evLog = [];            // counted events, with where they happened
+    var expectRole = 'load';   // the cycle's waiting role (tie-break input)
+    var inner = null;
+    if (seedLoad && seedDump) {
+      inner = createGeoLoadCounter({
+        load: seedLoad, dump: seedDump,
+        radiusM: cfg.radiusM || PEG_FENCE_M,
+        dwellMs: cfg.dwellMs || PEG_DWELL_MS,
+        departMs: cfg.departMs || DEPART_MS,
+        accMaxM: accBar,
+        tieRole: function (dL, dD) {
+          if (Math.min(dL, dD) < TIE_MIN_DIST_M) return null;
+          return Math.abs(dL - dD) <= TIE_BAND_M ? expectRole : null;
+        }
+      });
+    }
     var win = [];
+
+    /* One counted event pulls its role's centre toward where the
+       event happened — a bounded step, then the site clamp. The
+       event is logged either way (it counted); the PULL is gated:
+       a spot nearer the OTHER centre (beyond the tie band) is no
+       evidence about this face and moves nothing. */
+    function onEvent(kind, t, pos) {
+      evLog.push({ kind: kind, t: t, lat: pos.lat, lng: pos.lng });
+      var c = cen[kind];
+      if (!c || !inner) return;
+      var other = cen[kind === 'load' ? 'dump' : 'load'];
+      if (other &&
+          haversineM(pos.lat, pos.lng, c.lat, c.lng) >
+          haversineM(pos.lat, pos.lng, other.lat, other.lng) + TIE_BAND_M) return;
+      var d = haversineM(c.lat, c.lng, pos.lat, pos.lng);
+      if (d > 0) {
+        var f = Math.min(DRIFT_STEP_M, d) / d;
+        c.lat += (pos.lat - c.lat) * f;
+        c.lng += (pos.lng - c.lng) * f;
+      }
+      if (site) {
+        var ds = haversineM(site.lat, site.lng, c.lat, c.lng);
+        if (ds > site.radiusM) {
+          var g = site.radiusM / ds;
+          c.lat = site.lat + (c.lat - site.lat) * g;
+          c.lng = site.lng + (c.lng - site.lng) * g;
+        }
+      }
+      if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
+    }
+
     return {
-      begin: function (key, saved) { win = []; return inner.begin(key, saved); },
+      begin: function (key, saved) {
+        win = [];
+        evLog = [];
+        cen = {
+          load: seedLoad ? { lat: seedLoad.lat, lng: seedLoad.lng } : null,
+          dump: seedDump ? { lat: seedDump.lat, lng: seedDump.lng } : null
+        };
+        expectRole = 'load';
+        if (!inner) return null;
+        var k = inner.begin(key, saved);
+        /* resume the drift itself: centres + the event trail
+           ride the snapshot, keyed like the counter's own state */
+        if (saved && saved.sitesKey === key) {
+          if (saved.pegCentres) {
+            if (isCoord(saved.pegCentres.load)) cen.load = { lat: +saved.pegCentres.load.lat, lng: +saved.pegCentres.load.lng };
+            if (isCoord(saved.pegCentres.dump)) cen.dump = { lat: +saved.pegCentres.dump.lat, lng: +saved.pegCentres.dump.lng };
+          }
+          if (Array.isArray(saved.pegEvents)) {
+            evLog = saved.pegEvents.filter(function (e) {
+              return e && (e.kind === 'load' || e.kind === 'dump') && isCoord(e);
+            }).map(function (e) {
+              return { kind: e.kind, t: +e.t || 0, lat: +e.lat, lng: +e.lng };
+            });
+          }
+          if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
+          var dbg = inner.debug ? inner.debug() : null;
+          expectRole = (dbg && dbg.armed) ? 'dump' : 'load';
+        }
+        return k;
+      },
       ingest: function (fix) {
+        if (!inner) return { accepted: false, why: 'inactive' };
         if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) {
           return { accepted: false, why: 'bad-fix' };
         }
@@ -501,8 +682,19 @@
         if (win.length > PEG_WINDOW) win.shift();
         var sl = 0, sg = 0, i;
         for (i = 0; i < win.length; i++) { sl += win[i].lat; sg += win[i].lng; }
+        var sm = { lat: sl / win.length, lng: sg / win.length };
+        /* the SITE frame: a smoothed fix outside it is not site
+           data — it never reaches the zone machine, builds no
+           dwell and drifts no centre (place, not duration). */
+        if (site && haversineM(sm.lat, sm.lng, site.lat, site.lng) > site.radiusM) {
+          var jx = win.indexOf(entry);
+          if (jx >= 0) win.splice(jx, 1);
+          return { accepted: false, why: 'off-site' };
+        }
+        var before = inner.debug ? inner.debug() : null;
+        expectRole = (before && before.armed) ? 'dump' : 'load';
         var r = inner.ingest({
-          latitude: sl / win.length, longitude: sg / win.length,
+          latitude: sm.lat, longitude: sm.lng,
           accuracy: (fix.accuracy === undefined ? null : fix.accuracy),
           time: fix.time
         });
@@ -511,17 +703,47 @@
              inactive) — it must not linger in the centroid either */
           var ix = win.indexOf(entry);
           if (ix >= 0) win.splice(ix, 1);
+          return r;
         }
+        var after = inner.debug ? inner.debug() : null;
+        var t = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : 0;
+        /* a confirmed pickup = the arm flipping on at the load
+           fence; a counted dump rides the verdict itself */
+        if (before && after && !before.armed && after.armed && after.zone === 'load') {
+          onEvent('load', t, sm);
+        }
+        if (r.counted) onEvent('dump', t, sm);
         return r;
       },
-      stop: function () { inner.stop(); },
-      snapshot: function () { return inner.snapshot(); },
-      count: function () { return inner.count(); },
-      events: function () { return inner.events(); },
-      phase: function () { return inner.phase(); },
-      zone: function () { return inner.zone(); },
-      isActive: function () { return inner.isActive(); },
-      debug: function () { return inner.debug ? inner.debug() : null; }
+      stop: function () { if (inner) inner.stop(); },
+      snapshot: function () {
+        var s = inner ? inner.snapshot() : null;
+        if (s) {
+          s.pegCentres = {
+            load: cen.load ? { lat: cen.load.lat, lng: cen.load.lng } : null,
+            dump: cen.dump ? { lat: cen.dump.lat, lng: cen.dump.lng } : null
+          };
+          s.pegEvents = evLog.slice();
+        }
+        return s;
+      },
+      count: function () { return inner ? inner.count() : 0; },
+      events: function () { return inner ? inner.events() : []; },
+      phase: function () { return inner ? inner.phase() : 'away'; },
+      zone: function () { return inner ? inner.zone() : 'out'; },
+      isActive: function () { return !!(inner && inner.isActive()); },
+      debug: function () { return inner && inner.debug ? inner.debug() : null; },
+      /* v284: the drift, read by the glue's persist + the suite */
+      centres: function () {
+        return {
+          load: cen.load ? { lat: cen.load.lat, lng: cen.load.lng } : null,
+          dump: cen.dump ? { lat: cen.dump.lat, lng: cen.dump.lng } : null
+        };
+      },
+      pegEvents: function () { return evLog.slice(); },
+      site: function () {
+        return site ? { lat: site.lat, lng: site.lng, radiusM: site.radiusM } : null;
+      }
     };
   }
 
@@ -1135,6 +1357,8 @@
     INTRA_CLUSTER_M: INTRA_CLUSTER_M, INTRA_SEP_M: INTRA_SEP_M,
     INTRA_ACC_MAX_M: INTRA_ACC_MAX_M, INTRA_RADIUS_M: INTRA_RADIUS_M,
     PEG_WINDOW: PEG_WINDOW, PEG_DWELL_MS: PEG_DWELL_MS,
+    PEG_FENCE_M: PEG_FENCE_M, DRIFT_STEP_M: DRIFT_STEP_M,
+    TIE_BAND_M: TIE_BAND_M, TIE_MIN_DIST_M: TIE_MIN_DIST_M,
     CAND_GRACE_MS: CAND_GRACE_MS
   };
   /* GEOLOADS-ENGINE-END */
@@ -1178,6 +1402,16 @@
                                           pegged place; entries logged
                                           before v283 carry kind + t
                                           only),
+                                 pegEvents: [{ kind, t, lat, lng }]
+                                          (v284 — every COUNTED peg
+                                          event with where it happened:
+                                          the centres' drift trail,
+                                          read by the Manifest),
+                                 pegCentres: { load: {lat,lng} | null,
+                                               dump: {lat,lng} | null }
+                                          (v284 — the roles' current
+                                          drifted centres; the seeds
+                                          themselves stay in pegs),
                                  countSource: 'pegs' (v282 — set
                                           while the day's counter is
                                           peg-keyed; absent on
@@ -1605,6 +1839,10 @@
      must never erase loads already counted today. */
   var baseCount = 0;
   var baseEvents = [];
+  /* v284: the same carry for the day's counted peg events — a
+     re-seed or a new session starts a fresh counter, and its
+     pegEvents must EXTEND the day's trail, never erase it. */
+  var basePegEvents = [];
   /* v220 (owner, Oct 22, 2026 — LOADS-CORRECTION-BUTTONS): the
      driver's signed correction to the MACHINE count, carried on
      the day record as `corr`, apart from the raw machine count —
@@ -1640,6 +1878,14 @@
       rec.count = baseCount + counter.count();
       rec.events = baseEvents.concat(counter.events());
       rec.state = counter.snapshot();
+      /* v284: on a peg day, the counted-event trail + the
+         drifted centres ride the record too — the Manifest
+         names where loading/dumping actually happened from
+         them, and the trail survives re-seeds via basePegEvents. */
+      if (pegArmed && counter.pegEvents) {
+        rec.pegEvents = basePegEvents.concat(counter.pegEvents());
+        rec.pegCentres = counter.centres ? counter.centres() : null;
+      }
       rec.blocked = null;
       /* v140: a navigated dump earns its pair memory only once a
          cycle is PROVEN there (a counted dump arrival) — the
@@ -1669,6 +1915,7 @@
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
     learner = null; learnMode = null; curLoad = null;
+    basePegEvents = [];
     patternSeedWasDump = false;
     shadowLearner = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
@@ -1699,6 +1946,11 @@
       var savedPegCount = (savedPeg && typeof savedPeg.count === 'number') ? savedPeg.count : 0;
       baseCount = prevPegDay ? Math.max(0, (prevPegDay.count || 0) - savedPegCount) : 0;
       baseEvents = (!samePegSession && prevPegDay && prevPegDay.events) ? prevPegDay.events.slice() : [];
+      /* v284: when the counter will NOT restore the event trail
+         from a snapshot (moved peg, new session), the day's
+         trail so far becomes the base — a re-seed extends the
+         Manifest's story, it never restarts it. */
+      basePegEvents = (!savedPeg && prevPegDay && Array.isArray(prevPegDay.pegEvents)) ? prevPegDay.pegEvents.slice() : [];
       corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
       counter = ENGINE.createPegCounter({ load: curSites.load, dump: curSites.dump });
       counter.begin(pegKey, savedPeg);
@@ -2411,6 +2663,11 @@
            marking ('pegs' on a peg-counted day). */
         pegs: rec.pegs ? normalizePegs(rec.pegs) : null,
         pegLog: rec.pegLog || null,
+        /* v284: the counted-event trail + drifted centres ride
+           the same read (the Manifest reads the record directly;
+           this keeps the data layer's surface complete). */
+        pegEvents: rec.pegEvents || null,
+        pegCentres: rec.pegCentres || null,
         countSource: rec.countSource || null
       };
     },
