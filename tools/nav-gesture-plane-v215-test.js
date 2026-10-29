@@ -277,7 +277,14 @@ function makeWorld() {
   }
   const L = {
     map: function (id, opts) { return makeCamera(id, opts); },
-    tileLayer: function () { return { addTo: function (mm) { if (mm && mm.addLayer) mm.addLayer(this); return this; } }; },
+    tileLayer: function () { return { on: function () {}, setUrl: function () {}, redraw: function () {}, addTo: function (mm) { if (mm && mm.addLayer) mm.addLayer(this); return this; } }; },
+    /* v280 stub repair: v240's paintDriveLayers builds the base
+       stack through resilientTileLayer, which calls layer.on /
+       setUrl / redraw (real Leaflet API). The v210/v215 stub
+       predated it, so startDrive's try died before the gesture
+       observers attached — the suites measured a dead drive,
+       not the gestures. The stub now speaks the Leaflet surface
+       the production code legitimately uses. */
     marker: function () {
       const mk = { addTo: function (mm) { if (mm && mm.addLayer) mm.addLayer(this); return mk; },
         setLatLng: function () {}, setOpacity: function () {}, setIcon: function () {} };

@@ -1503,7 +1503,16 @@
       /* v262 (NAV-LIVE-TRAFFIC-CITYFEED): the live-traffic
          overlay (City of Calgary current incidents) — on by
          default, toggled from the layers panel. */
-      trafficOn: s.trafficOn === undefined ? true : !!s.trafficOn
+      trafficOn: s.trafficOn === undefined ? true : !!s.trafficOn,
+      /* v280 (NAV-VOICE-SELECTION-PREF, owner Oct 29, 2026): the
+         guidance voice he picked in Navigator settings, by its
+         speechSynthesis voiceURI ('' = phone default). The pick
+         IS the personality fix (NAV-VOICE-PERSONALITY): a real
+         device voice replaces the generic robot default — no
+         text tricks. The native bridge carries no voice
+         parameter, so a pick routes speak() through the WebView
+         voice below; no pick keeps the native-first order. */
+      voiceURI: s.voiceURI ? String(s.voiceURI) : ''
     };
     setNavViewMode(out.viewMode);
     return out;
@@ -1675,6 +1684,11 @@
       var scr = docEl('nv_drive_screen') ||
         (nvBody ? nvBody.querySelector('#nv_drive_screen') : null);
       if (scr) scr.classList.toggle('nv-pip', !!inPip);
+      /* v280 (NAV-PIP-NO-MIC-BUTTON): the PiP posture raises a
+         body class the chat-FAB CSS keys off — in PiP the mic
+         is display:none (his standing PiP law: no mic button
+         on the PiP map face). Full-screen restore removes it. */
+      try { if (document && document.body && document.body.classList) document.body.classList.toggle('mt-pip', !!inPip); } catch (e) {}
       var you = docEl('nvd_you') ||
         (nvBody ? nvBody.querySelector('#nvd_you') : null);
       if (you) {
@@ -1793,12 +1807,19 @@
        returns true only when the native side took the line;
        everywhere else — browser, iPhone, old shells, a dead
        engine — the WebView voice below runs exactly as before. */
-    try {
-      if (window.ShiftTrack && ShiftTrack.speakNative && ShiftTrack.speakNative(text)) {
-        if (S) S.voiceSpokeAt = Date.now();
-        return;
-      }
-    } catch (e) {}
+    /* v280 (NAV-VOICE-SELECTION-PREF): a picked voice bypasses
+       the native engine — speakText takes no voice, so the
+       native default would erase his choice. The WebView path
+       below picks the voice by voiceURI. */
+    var pickedURI = (S.settings && S.settings.voiceURI) ? String(S.settings.voiceURI) : '';
+    if (!pickedURI) {
+      try {
+        if (window.ShiftTrack && ShiftTrack.speakNative && ShiftTrack.speakNative(text)) {
+          if (S) S.voiceSpokeAt = Date.now();
+          return;
+        }
+      } catch (e) {}
+    }
     try {
       if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { S.voiceMissing = true; return; }
       var synth = window.speechSynthesis;
@@ -1810,7 +1831,8 @@
           var u = new SpeechSynthesisUtterance(text);
           u.rate = 1.02; u.volume = 1; u.lang = 'en-CA';
           for (var i = 0; i < voices.length; i++) {
-            if (/^en/i.test(voices[i].lang || '')) { u.voice = voices[i]; break; }
+            if (pickedURI && voices[i].voiceURI === pickedURI) { u.voice = voices[i]; break; }
+            if (!pickedURI && /^en/i.test(voices[i].lang || '')) { u.voice = voices[i]; break; }
           }
           voiceKeep = u;
           u.onend = u.onerror = function () { if (voiceKeep === u) voiceKeep = null; };
@@ -2012,6 +2034,16 @@
            warned about on THIS route, and the marker groups for
            the planning map and the drive map. */
         trafficList: [], trafficAt: 0, trafficSaid: {}, trafficGroup: null, driveTrafficGroup: null,
+        /* v280 (NAV-TRAFFIC-LIVE-ETA): live-ETA state — the
+           pace window (rolling GPS distance/time samples from
+           onPos), the licensed-provider traffic probe/poll
+           state (the server endpoint answers only when the
+           provider key is configured server-side — none is on
+           the box yet), and the faster-route offer's one-shot
+           arm + the ETA it must beat. */
+        paceWin: [], paceCum: 0, paceLastV: 0, paceLastAt: 0, paceLastCum: 0,
+        providerChecked: false, providerLive: false, providerEta: null, providerAt: 0,
+        providerName: '', offerFor: '', offerEta: 0, liveEtaMin: 0,
         /* v135: the drive wake lock's sentinel + visibility
            handler (see driveWake in the drive section). */
         wakeSentinel: null, wakeVis: null
@@ -2155,6 +2187,13 @@
            pattern as the reroute line above it; the tick shows
            it while an incident sits on the route ahead. */
         '<div class="nv-drive-traffic hidden" id="nvd_traffic"></div>' +
+        /* v280 (NAV-TRAFFIC-LIVE-ETA): the faster-route offer
+           pill — same transient pill family as the traffic chip,
+           one stack line above it; it exists only while an offer
+           is live (traffic is measurably slowing the drive) and
+           its tap re-checks the route. Never a card, never over
+           the road centre (C6 chrome budget). */
+        '<button class="nv-drive-offer hidden" id="nvd_offer"></button>' +
         /* v183 (pinch-to-zoom): appears only while the driver is
            in free-look (he pinched or dragged the drive map);
            one tap puts the map back on the truck. */
@@ -2639,6 +2678,53 @@
           else S.map.setView(S.pos, S.map.getZoom());
         }
       }
+      /* v280 (NAV-TRAFFIC-LIVE-ETA): the LIVE PACE window —
+         rolling GPS samples (wall time + cumulative metres)
+         kept for the last 180 s. The observed pace over the
+         window is the honest congestion signal the app owns:
+         when traffic slows the truck, the pace drops and the
+         ETA extends — no invented delay figures anywhere. */
+      function paceSample(prevPos, newPos) {
+        if (!prevPos || !newPos) return;
+        var d = haversineM(prevPos, newPos);
+        if (!(d >= 3)) return; /* jitter is not travel */
+        S.paceCum = (S.paceCum || 0) + d;
+        S.paceWin = S.paceWin || [];
+        S.paceWin.push({ at: Date.now(), cum: S.paceCum });
+        var cut = Date.now() - 180000;
+        while (S.paceWin.length > 1 && S.paceWin[0].at < cut) S.paceWin.shift();
+      }
+      function paceSpeed() {
+        var w = S.paceWin || [];
+        if (w.length >= 2) {
+          var first = w[0], last = w[w.length - 1];
+          var dt = (last.at - first.at) / 1000, dd = last.cum - first.cum;
+          if (dt >= 45 && dd >= 150) { /* enough road to judge */
+            var v = dd / dt;
+            if (v >= 1 && v <= 45) {
+              S.paceLastV = v; S.paceLastAt = Date.now(); S.paceLastCum = S.paceCum;
+              return v;
+            }
+          }
+        }
+        /* Standing in the jam IS the congestion signal: when the
+           window can no longer prove a pace because the truck has
+           barely moved since the last proven one (under 25 m in
+           under 10 minutes), the last proven pace stands — a
+           stopped truck must not snap the ETA back to the
+           free-flow plan figure. */
+        if (S.paceLastV > 0 && (Date.now() - S.paceLastAt) < 600000 &&
+            Math.abs((S.paceCum || 0) - S.paceLastCum) < 25) {
+          /* Re-anchor while the fallback is in use: each tick
+             that still finds the truck barely moved re-proves
+             the jam, so a long crawl never ages the pace out.
+             Real movement rebuilds the window and the measured
+             branch above takes over again. */
+          S.paceLastAt = Date.now(); S.paceLastCum = S.paceCum;
+          return S.paceLastV;
+        }
+        return 0;
+      }
       function onPos(lat, lon, heading, speed, fixT) {
         /* v222 (NAV-STUCK): stamp the stream's health on EVERY
            accepted fix — the watchdog below reads lastFixAt.
@@ -2651,6 +2737,7 @@
         var first = !S.pos;
         var prevPos = S.pos;
         S.pos = [lat, lon];
+        paceSample(prevPos, S.pos); /* v280: live pace window */
         if (heading !== null && heading !== undefined && isFinite(heading)) S.heading = heading;
         /* v124: no heading from the GPS stream (some devices never
            send one) — derive it from the movement itself once the
@@ -2983,6 +3070,18 @@
              speech; the planning screen keeps its first-line
              announcement exactly as before. */
           if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
+          /* v280 (NAV-TRAFFIC-LIVE-ETA): the offer's verdict —
+             the re-plan this route came from was the driver's
+             tap on the traffic offer; its remaining time
+             (totalMin, routed from here) is judged against the
+             live ETA he was shown when he tapped. */
+          if (S.offerEta) {
+            var tapEta = S.offerEta; S.offerEta = 0;
+            if (S.drive) {
+              if (S.plan.totalMin <= tapEta - 2) speak('Faster route found — saves about ' + Math.round(tapEta - S.plan.totalMin) + ' minutes.');
+              else speak('This is still the fastest way.');
+            }
+          }
           note('');
         }
 
@@ -3761,7 +3860,17 @@
                 if (!S || !S.driveMap) return;
                 S.driveMap.invalidateSize();
                 if (S.drive && S.pos && !S.driveMarker) {
-                  S.driveMarker = L.circleMarker(S.pos, { radius: 11, color: '#ffffff', weight: 3, fillColor: '#2b7de0', fillOpacity: 1 }).addTo(S.driveMap);
+                  /* v280 (NAV-GPS-FLICKER, owner Oct 29, 2026):
+                     NO circleMarker on the drive map any more.
+                     The blue dot was a SECOND position render
+                     riding the plane under the truck overlay —
+                     as the follow camera eased and panned, the
+                     two separated and alternated on his glass
+                     ("flipping between the truck icon and the
+                     plain dot"). One drive, ONE marker: the
+                     truck overlay (#nvd_you) at the anchor, fed
+                     by the one onPos stream. S.driveMarker stays
+                     null; its tick/exit guards already no-op. */
                 }
               } catch (e) {}
             }, 120);
@@ -3818,6 +3927,7 @@
            markers on it and refresh the list for the drive. */
         fetchTraffic(false);
         paintTrafficMarkers();
+        pollTrafficEta(true); /* v280: one traffic-ETA probe per drive */
         /* v266 (NAV-MAP-BLANK): the opening tick is guarded —
            a fault anywhere in the paint path must not abort
            drive-open itself (pre-v266 an unguarded lane-query
@@ -3865,6 +3975,7 @@
         S.wakeVis = null;
         try { document.removeEventListener('visibilitychange', onDriveVis); } catch (e) {}
         try { document.body.classList.remove('mt-driving'); } catch (e) {}
+        try { document.body.classList.remove('mt-pip'); } catch (e) {}
         if (S.driveTimer) { try { clearTimeout(S.driveTimer); } catch (e) {} S.driveTimer = null; }
         try { if (S.driveMap) S.driveMap.remove(); } catch (e) {}
         S.driveMap = null; S.driveLine = null; S.driveMarker = null; S.driveTrafficGroup = null;
@@ -4056,6 +4167,59 @@
         fetchTraffic(false);
       }
 
+      /* v280 (NAV-TRAFFIC-LIVE-ETA — the licensed-duration half):
+         the owner's design (Oct 29, 2026, decision 13:37 MDT) —
+         our own nav server asks a LICENSED traffic provider for
+         the live duration of the remaining route, and the app
+         shows the answer as NUMBERS on its own drive view.
+         Provider chosen: TOMTOM Routing (summary only). Two
+         reasons, both named: (1) Google's own Routes service
+         terms forbid Routes content "in conjunction with a
+         non-Google map", so Google durations are NOT displayed
+         over this OSM map; TomTom's API is licensed for
+         integration into third-party applications. (2) TomTom's
+         freemium allowance (2,500 non-tile transactions/day, no
+         credit card) honestly covers the poll: ONE call per
+         180 s = 20/active hour = ~160 per 8-hour driving day
+         (480 even if a drive ran 24 h). The server requests
+         routeRepresentation=summaryOnly — no geometry is ever
+         fetched, returned, cached or stored; the driven route
+         stays the truck-legal Valhalla route. The endpoint only
+         answers when TOMTOM_API_KEY is configured SERVER-side;
+         no key exists on the box yet, so the probe below hears
+         traffic_not_configured once per drive and the live
+         Socrata + measured-pace ETA carries the drive. Adding
+         the free-tier key server-side flips this half on with
+         no app change. */
+      var PROVIDER_ETA_POLL_MS = 180000;
+      function pollTrafficEta(force) {
+        if (!S || !S.drive || !S.pos || !S.dest || !S.settings.trafficOn) return;
+        if (typeof fetch !== 'function' || !S.settings.serverUrl) return;
+        var now = Date.now();
+        if (!force && S.providerChecked && !S.providerLive) return; /* probed: not configured — never re-burn */
+        if (!force && S.providerAt && now - S.providerAt < PROVIDER_ETA_POLL_MS) return;
+        S.providerAt = now; S.providerChecked = true;
+        var hdrs = { 'Content-Type': 'application/json' };
+        try { if (window.PowerRead && PowerRead.APP_TOKEN) hdrs['X-Meticulous-App'] = PowerRead.APP_TOKEN; } catch (e) {}
+        try {
+          fetch(S.settings.serverUrl.replace(/\/+$/, '') + '/ai/traffic-eta', {
+            method: 'POST', headers: hdrs, cache: 'no-store',
+            body: JSON.stringify({ origin: [S.pos[0], S.pos[1]], dest: [S.dest[0], S.dest[1]] })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (!S) return;
+              var dur = j ? Number(j.durationSec) : NaN;
+              if (isFinite(dur) && dur > 0) {
+                S.providerLive = true;
+                S.providerName = (j && j.source === 'tomtom-routing') ? 'TomTom' : 'Traffic provider';
+                S.providerEta = { at: Date.now(), durSec: dur, staticSec: isFinite(Number(j.staticDurationSec)) ? Number(j.staticDurationSec) : dur };
+              } else { S.providerLive = false; S.providerEta = null; }
+            })
+            .catch(function () { S.providerLive = false; });
+        } catch (e) {}
+      }
+
       function fetchTraffic(force) {
         if (!S || !S.settings || !S.settings.trafficOn) return;
         if (typeof fetch !== 'function') return;
@@ -4195,15 +4359,50 @@
         driveTextKeep(instEl, 'inst', showNext ? dp.next.instruction : (dp.current ? dp.current.instruction : ''));
         var roadEl = body.querySelector('#nvd_road');
         driveText(roadEl, 'road', dp.road ? 'On ' + dp.road : '');
+        /* v280 (NAV-TRAFFIC-LIVE-ETA): the LIVE ETA. The plan's
+           own remaining time (dp.etaMin) is a snapshot from
+           route time; the live figure recomputes EVERY tick
+           from (a) the truck's measured pace over the last
+           180 s of GPS (paceSpeed — congestion slows the pace
+           and the ETA honestly extends; no delay figure is
+           ever invented), blended half-and-half with the plan
+           pace so one red light cannot swing it, and (b) when
+           the server's Google traffic endpoint is configured
+           the server's licensed traffic endpoint is configured
+           (pollTrafficEta — no provider key on the box yet),
+           its live duration for the remaining route, with the
+           traffic delay it reports shown by name. The ETA line
+           also carries the visible congestion STATE every tick
+           (Slow traffic / Traffic flowing / provider delay), so
+           what his eyes see is a live picture, not a toggle. */
+        var liveEtaMin = dp.etaMin;
+        var paceV = paceSpeed();
+        if (paceV > 0 && S.plan.totalKm > 0 && S.plan.totalMin > 0 && dp.leftM > 0) {
+          var planV = (S.plan.totalKm * 1000) / (S.plan.totalMin * 60);
+          var blendV = (planV + paceV) / 2;
+          if (blendV > 0) liveEtaMin = (dp.leftM / blendV) / 60;
+        }
+        var trafficStateTxt = '';
+        if (S.providerLive && S.providerEta && (Date.now() - S.providerEta.at) < 300000) {
+          var pRemainSec = Math.max(0, S.providerEta.durSec - (Date.now() - S.providerEta.at) / 1000);
+          liveEtaMin = pRemainSec / 60;
+          var pDelayMin = Math.round((S.providerEta.durSec - S.providerEta.staticSec) / 60);
+          trafficStateTxt = (pDelayMin >= 2)
+            ? ' · traffic +' + pDelayMin + ' min · ' + (S.providerName || 'Traffic provider')
+            : ' · Traffic flowing · ' + (S.providerName || 'Traffic provider');
+        } else if (paceV > 0) {
+          trafficStateTxt = (liveEtaMin - dp.etaMin >= 2) ? ' · Slow traffic' : ' · Traffic flowing';
+        }
+        S.liveEtaMin = liveEtaMin;
         var etaMain = body.querySelector('#nvd_eta_main');
-        driveTextKeep(etaMain, 'etaMain', fmtClock(driveEtaInfo(S.plan, pr.along, Date.now()).arriveAt));
+        driveTextKeep(etaMain, 'etaMain', fmtClock(new Date(Date.now() + liveEtaMin * 60000)));
         var etaSub = body.querySelector('#nvd_eta_sub');
         /* v177 (F4): the speedometer overlay reads the GPS
            stream's own speed (m/s -> km/h), through the cached
            writer like every other drive-chrome text. */
         var spdEl = body.querySelector('#nvd_speed');
         if (spdEl && S.settings.showSpeed) driveText(spdEl, 'speed', (S.speed !== null && S.speed !== undefined && isFinite(S.speed)) ? String(Math.max(0, Math.round(S.speed * 3.6))) : '–');
-        driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(dp.etaMin) + ' · ' + fmtDist(dp.leftM) + ' left' +
+        driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(liveEtaMin) + ' · ' + fmtDist(dp.leftM) + ' left' + trafficStateTxt +
           /* v107: the bar shows the destination's first segment
              only — a full address would crowd the line (the CSS
              ellipsizes the sub-line; the main line never wraps). */
@@ -4277,7 +4476,24 @@
           var dDeg = showInset ? Math.round(turnDeltaDeg(S.plan, S.line, dp.idx)) : 0;
           if (showInset && (Math.abs(dDeg) >= 150 ||
               Math.abs(reversalDeltaDeg(S.plan, S.line, dp.idx)) >= 150)) showInset = false;
-          var insetKey = showInset ? (dp.idx + ':' + Math.round(dp.toTurnM / 50)) : '';
+          /* v280: the lane gate — no lane data for this
+             maneuver, no card (the banner already says the
+             turn; an instruction-only card is the duplicate
+             the owner banned). laneData/laneHtml are computed
+             here so the gate and the paint read one value. */
+          var laneData = null, laneHtml = '';
+          if (showInset) {
+            laneData = (S.serverLanes && S.serverLanes[dp.idx]) ||
+              (S.laneByTurn ? S.laneByTurn[dp.idx] : null);
+            laneHtml = laneGuidanceHtml(laneData, dDeg);
+            showInset = showInset && !!laneHtml;
+          }
+          /* v280: the not-showing key is distinct ('x'+idx) —
+             the lane fetchers clear insetKey when data lands,
+             and that clear must differ from the not-showing
+             state or the strip would wait for the next 50 m
+             bucket to appear. */
+          var insetKey = showInset ? (dp.idx + ':' + Math.round(dp.toTurnM / 50)) : ('x' + dp.idx);
           if (S.drive.insetKey !== insetKey) {
             S.drive.insetKey = insetKey;
             insetEl.classList.toggle('hidden', !showInset);
@@ -4292,21 +4508,21 @@
                  points — maneuverSign rode the plan since this
                  version) so the card carries usable information
                  even where no lane data exists anywhere. */
-              var laneData = (S.serverLanes && S.serverLanes[dp.idx]) ||
-                (S.laneByTurn ? S.laneByTurn[dp.idx] : null);
-              var sgn = insetSignOf(dp.next);
-              var signHtml = sgn ? '<div class="nv-inset-sign">' +
-                (sgn.exit ? '<span class="nv-inset-exit">EXIT ' + esc(sgn.exit) + '</span>' : '') +
-                '<div class="nv-inset-sign-text">' +
-                (sgn.branchText ? '<b>' + esc(sgn.branchText) + '</b>' : '') +
-                (sgn.towardText ? '<span>toward ' + esc(sgn.towardText) + '</span>' : '') +
-                '</div></div>' : '';
-              insetEl.innerHTML = '<div class="nv-inset-junction">' + junctionViewSvg(S.plan, S.line, dp.idx) + '</div>' +
-                laneGuidanceHtml(laneData, dDeg) +
-                '<div class="nv-inset-head"><svg viewBox="0 0 48 48" width="38" height="38" aria-hidden="true"><g transform="rotate(' + dDeg + ' 24 24)">' +
-                '<path d="M24 5 L33 21 L27.5 21 L27.5 43 L20.5 43 L20.5 21 L15 21 Z" fill="#ffffff"/></g></svg>' +
-                '<div class="nv-inset-text"><b>' + esc(fmtDist(dp.toTurnM)) + '</b><span>' + esc(dp.next.instruction || '') + '</span></div></div>' +
-                signHtml;
+              /* v280 (NAV-LANE-CARD-NO-USEFUL-INFO +
+                 NAV-DEMO-DUP-INSTRUCTION, owner Oct 28-29,
+                 2026): this card is the LANE inset — it exists
+                 ONLY for lane directions. The v264 paint stacked
+                 a junction drawing, the lane strip, a header
+                 REPEATING the banner's turn instruction, and a
+                 sign block: four things, the lanes buried in
+                 them, and his verdict was "no useful lane
+                 information". The paint is now the lane strip
+                 and nothing else, and the card shows only when
+                 lane guidance actually exists for this maneuver
+                 (laneHtml non-empty — see the showInset gate
+                 below, which reads the same laneHtml). The turn
+                 itself is the big banner's job, said once. */
+              insetEl.innerHTML = laneHtml;
               /* v277 (NAV-SCREEN-STILL-CUTTING): dock the card
                  AWAY from the bend it describes — a right bend
                  (positive delta) rides the LEFT edge, so the
@@ -4358,6 +4574,7 @@
            on-route set for THIS fix is computed once and
            shared by the spoken warning and the chip below. */
         if (S.settings.trafficOn) fetchTraffic(false);
+        pollTrafficEta(false); /* v280: licensed-provider traffic poll (no-op while unconfigured) */
         if (!S.trafficSaid) S.trafficSaid = {};
         /* v266 (NAV-MAP-BLANK): guarded like the lane warm-up
            above — the traffic overlay is a display aid riding
@@ -4424,6 +4641,29 @@
           }
           if (tShow) driveText(tEl, 'traffic', '⚠ Traffic ahead · ' + fmtDist(trafficHits[0].aheadM) +
             (trafficHits[0].inc.desc ? ' — ' + trafficHits[0].inc.desc : ''));
+        }
+        /* v280 (NAV-TRAFFIC-LIVE-ETA): the FASTER-ROUTE OFFER.
+           It appears only when BOTH are true on this tick: a
+           refreshed incident sits on the route ahead (the live
+           feed's own word), and the live ETA has stretched at
+           least 4 minutes past the plan's snapshot ETA (the
+           truck's own measured pace — congestion made visible).
+           One offer per incident; its tap re-plans through the
+           ordinary doRoute (truck-legal costing) and
+           finalizeRoute speaks the verdict against the ETA the
+           driver was shown. A transient pill in the existing
+           stack — never a card over the road (C6 law). */
+        var oEl = body.querySelector('#nvd_offer');
+        if (oEl) {
+          var hit0 = trafficHits.length ? trafficHits[0] : null;
+          if (!hit0) S.offerFor = '';
+          var showOffer = !!(hit0 && (liveEtaMin - dp.etaMin) >= 4 && S.offerFor !== hit0.inc.id);
+          if (showOffer) S.offerHitId = hit0.inc.id;
+          if (S.drive.offerShown !== showOffer) {
+            S.drive.offerShown = showOffer;
+            oEl.classList.toggle('hidden', !showOffer);
+          }
+          if (showOffer) driveText(oEl, 'offer', '🚦 Traffic slowing you · tap to re-check route');
         }
 
         maybeFetchSpeedLimit();
@@ -4681,6 +4921,19 @@
       if (dExit) dExit.onclick = function () { exitDrive(); };
       var dRecenter = body.querySelector('#nvd_recenter');
       if (dRecenter) dRecenter.onclick = function () { setDriveFree(false); };
+      /* v280 (NAV-TRAFFIC-LIVE-ETA): the offer's tap — remember
+         the incident (no second offer for it) and the live ETA
+         on screen, hide the pill, and re-plan through the one
+         routing door. finalizeRoute delivers the verdict. */
+      var offerBtn = body.querySelector('#nvd_offer');
+      if (offerBtn) offerBtn.onclick = function () {
+        S.offerFor = S.offerHitId || 'tapped';
+        S.offerEta = S.liveEtaMin || 0;
+        offerBtn.classList.add('hidden');
+        if (S.drive) S.drive.offerShown = false;
+        speak('Re-checking for a faster route.');
+        doRoute();
+      };
 
       /* v240 (NAV-LAYERS-BUTTON): the layers control's wiring.
          Standard / Satellite / Elevation switch the base
@@ -4702,6 +4955,19 @@
         var tb = body.querySelector('#nvd_layer_traffic');
         if (tb) tb.classList.toggle('on', !!S.settings.trafficOn);
       }
+      /* v280 (NAV-DEMO-FLOATING-CONTROLS-OVER-MAP): the layers
+         button no longer FLOATS over the map's right side — it
+         moves INTO the drive bar (before End drive), a bar
+         button like mute/gear. Its panel still floats above
+         the bar, as before. Guarded: a partial DOM without the
+         bar keeps the old docked button. */
+      try {
+        var driveBar = body.querySelector('.nv-drive-bar');
+        if (driveBar && layersBtn && typeof driveBar.insertBefore === 'function') {
+          driveBar.insertBefore(layersBtn, body.querySelector('#nvd_exit') || null);
+          layersBtn.classList.add('inbar');
+        }
+      } catch (e) {}
       if (layersBtn) layersBtn.onclick = function () {
         if (layersPanel) { layersPanel.classList.toggle('hidden'); paintLayerOpts(); }
       };
@@ -4837,7 +5103,14 @@
         S.settings.muted = !S.settings.muted;
         saveSettings({ muted: S.settings.muted });
         paintMute();
-        if (S.settings.muted) { try { speechSynthesis.cancel(); } catch (e) {} }
+        if (S.settings.muted) {
+          try { speechSynthesis.cancel(); } catch (e) {}
+          /* v280 (N-voice mute audit): muting used to cancel
+             only the WebView synth — a line the NATIVE engine
+             was already saying kept talking after the mute tap.
+             Mute now stops both engines. */
+          try { if (window.ShiftTrack && ShiftTrack.stopNativeSpeak) ShiftTrack.stopNativeSpeak(); } catch (e) {}
+        }
         /* v183: unmuting SPEAKS — the driver hears the voice is
            back in the same tap, instead of trusting a label. */
         else speak('Voice guidance on.');
@@ -4872,6 +5145,9 @@
           '<label class="chk" style="display:block;margin-top:12px"><input type="checkbox" id="nvs_speed"' + (st.showSpeed ? ' checked' : '') + '> Speedometer on screen</label>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_limit"' + (st.showSpeedLimit ? ' checked' : '') + '> Speed limit on screen (read live from map data for the road you are on; roads with no posted limit in the map show none)</label>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_mute"' + (st.muted ? ' checked' : '') + '> Voice guidance muted</label>' +
+          '<label class="f">Guidance voice</label>' +
+          '<select id="nvs_voice" style="width:100%"></select>' +
+          '<p class="note" style="margin-top:4px">The voices your phone offers. Pick one and it becomes the voice that talks you through every turn.</p>' +
           '<button class="btn navy" id="nvs_testvoice" style="margin-top:8px">🔊 Test my voice</button>' +
           '<p class="note" id="nvs_voicenote" style="margin-top:4px">Tap Test my voice — you should hear the guidance speak out loud.</p>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_grades"' + (st.gradeAlerts ? ' checked' : '') + '> Announce hills and steep grades ahead</label>' +
@@ -4958,6 +5234,38 @@
               : 'Played just now. If you heard nothing, check the phone media volume, then test again.';
           }, 350);
         };
+        /* v280 (NAV-VOICE-SELECTION-PREF): fill the voice
+           picker from the device TTS list itself — the voices
+           actually offered on THIS phone, never a hardcoded
+           list. getVoices() can answer empty until the engine
+           warms up, so a voiceschanged nudge refills it once. */
+        var vsel = panel.querySelector('#nvs_voice');
+        if (vsel) {
+          var fillVoices = function () {
+            var vs = [];
+            try { vs = (window.speechSynthesis && speechSynthesis.getVoices()) || []; } catch (e) {}
+            var cur = S.settings.voiceURI || '';
+            var html = '<option value="">Phone default voice</option>';
+            vs.forEach(function (v) {
+              var uri = String(v.voiceURI || '');
+              if (!uri) return;
+              html += '<option value="' + esc(uri) + '"' + (uri === cur ? ' selected' : '') + '>' +
+                esc(v.name || uri) + (v.lang ? ' (' + esc(v.lang) + ')' : '') + '</option>';
+            });
+            vsel.innerHTML = html;
+            vsel.value = cur;
+          };
+          fillVoices();
+          try { if (window.speechSynthesis && speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', fillVoices); } catch (e) {}
+          vsel.onchange = function () {
+            S.settings.voiceURI = vsel.value ? String(vsel.value) : '';
+            saveSettings({ voiceURI: S.settings.voiceURI });
+            var vn2 = panel.querySelector('#nvs_voicenote');
+            if (vn2) vn2.textContent = S.settings.voiceURI
+              ? 'Voice saved — tap Test my voice to hear it.'
+              : 'Phone default voice saved.';
+          };
+        }
         var gr = panel.querySelector('#nvs_grades');
         if (gr) gr.onchange = function () { S.settings.gradeAlerts = !!gr.checked; saveSettings({ gradeAlerts: S.settings.gradeAlerts }); };
         var profIds = { height: 'nvs_height', width: 'nvs_width', length: 'nvs_length', weight: 'nvs_weight', axleLoad: 'nvs_axleload', axles: 'nvs_axles' };
