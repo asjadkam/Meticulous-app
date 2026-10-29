@@ -83,6 +83,15 @@ body{
 .trkLoadBtns .trkAddBtn{margin-top:0;padding:14px 26px;font-size:17px;border-radius:26px;border:0;flex:0 1 auto;}
 .trkLoadBtns .trkPlusBtn{background:var(--green,#2e9e4f);}
 .trkLoadBtns .trkMinusBtn{background:var(--red,#e74c3c);}
+/* v282 (LOADS-SITE-PEGS): the peg pair — as big and glove-tappable
+   as the correction pair, in their own colours (pickup blue, dump
+   purple — never the green/red of +1/-1), full-width side by side,
+   with the peg state line (times only) underneath. */
+.trkPegBtns{display:flex;gap:12px;justify-content:center;margin-top:10px;}
+.trkPegBtns .trkAddBtn{margin-top:0;padding:14px 18px;font-size:16px;border-radius:26px;border:0;flex:1 1 0;}
+.trkPegBtns .trkPegLoadBtn{background:#2470c2;}
+.trkPegBtns .trkPegDumpBtn{background:#7d3c98;}
+.trkPegState{margin-top:8px;font-size:13px;font-weight:500;color:#fff;opacity:.85;text-align:center;}
 .tbtn{border:0;border-radius:50%;width:96px;height:96px;font-size:15px;font-weight:700;color:#fff;
   cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);}
 .tbtn.play{background:var(--green);}

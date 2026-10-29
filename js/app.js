@@ -2327,11 +2327,16 @@
        below shows it; taps ride along as the correction count. */
     var taps = (mode === 'Hourly' || mode === 'Miles') ? trkAccum().manualLoads : 0;
     var geoToday = null;
+    var pegState = null;
     if (mode === 'Hourly' || mode === 'Miles') {
       try { if (window.GeoLoads && GeoLoads.today) geoToday = GeoLoads.today(); } catch (e) { geoToday = null; }
+      /* v282 (LOADS-SITE-PEGS): the peg state rides the repaint
+         signature — a peg landing (or moving) repaints the card. */
+      try { if (window.GeoLoads && GeoLoads.pegs) pegState = GeoLoads.pegs(); } catch (e) { pegState = null; }
     }
     var sig = mode + '|' + App.tracker.status + '|' + taps + '|' +
-      (geoToday ? (geoToday.armed ? 'g' + geoToday.count : 'off') : 'na');
+      (geoToday ? (geoToday.armed ? 'g' + geoToday.count : 'off') : 'na') +
+      '|' + (pegState ? ((pegState.load ? pegState.load.t : 0) + ',' + (pegState.dump ? pegState.dump.t : 0)) : 'np');
     if (sig === _extraSig) return;
     _extraSig = sig;
     var h = '';
@@ -2355,12 +2360,32 @@
          while GPS counting is armed they move the day record's
          signed correction (js/geoloads.js), before that they move
          the tap count itself. */
+      /* v282 (LOADS-SITE-PEGS): under the correction pair, the
+         driver's own site pegs — two big, distinct one-tap
+         buttons. PEG PICKUP / PEG DUMP plant a peg at the
+         phone's current GPS position (js/geoloads.js setPeg);
+         re-pegging IS the mid-day adjustment when the job
+         changes. The state line shows each peg by TIME only —
+         coordinates are never displayed (places by name/time,
+         never raw coordinates). */
+      var pegLine = '';
+      if (pegState) {
+        pegLine = (pegState.load ? 'Pickup pegged ' + fmtTimeAMPM(pegState.load.t) : 'Pickup not pegged') +
+          ' · ' + (pegState.dump ? 'Dump pegged ' + fmtTimeAMPM(pegState.dump.t) : 'Dump not pegged');
+      }
       h = '<div class="trkLoadCount">🚛 Loads today: <b>' + shownLoads + '</b>' +
-          (machineLoads !== null ? ' <span class="trkLoadSrc">counted by GPS</span>' : '') + '</div>' +
+          (machineLoads !== null ? ' <span class="trkLoadSrc">' +
+            ((geoToday && geoToday.countSource === 'pegs') ? 'counted from your pegs' : 'counted by GPS') +
+            '</span>' : '') + '</div>' +
           '<div class="trkLoadBtns">' +
           '<button type="button" class="trkAddBtn trkPlusBtn" id="trkLoadTapBtn">+1 load</button>' +
           '<button type="button" class="trkAddBtn trkMinusBtn" id="trkLoadCutBtn">−1 load</button>' +
-          '</div>';
+          '</div>' +
+          '<div class="trkPegBtns">' +
+          '<button type="button" class="trkAddBtn trkPegLoadBtn" id="trkPegLoadBtn">📍 Peg pickup</button>' +
+          '<button type="button" class="trkAddBtn trkPegDumpBtn" id="trkPegDumpBtn">🎯 Peg dump</button>' +
+          '</div>' +
+          (pegLine ? '<div class="trkPegState">' + esc(pegLine) + '</div>' : '');
     }
     box.innerHTML = h;
   }
@@ -2391,6 +2416,22 @@
   App.trackerAddTrip = function () { var a = trackerAddTrip(); trackerTick(); return a; };
   App.trackerAddLoadTap = function () { var a = trackerAddLoadTap(); trackerTick(); return a; };
   App.trackerCutLoadTap = function () { var a = trackerCutLoadTap(); trackerTick(); return a; };
+  /* v282 (LOADS-SITE-PEGS): one tap plants the peg HERE (the
+     phone's live position, via js/geoloads.js). A refused tap
+     (no live fix yet, or a fix too rough to plant on) says so
+     plainly instead of silently doing nothing. */
+  App.trackerPegSite = function (kind) {
+    var r = null;
+    try { if (window.GeoLoads && GeoLoads.setPeg) r = GeoLoads.setPeg(kind); } catch (e) {}
+    if (!r || !r.ok) {
+      alert(r && r.why === 'rough-fix'
+        ? 'That GPS fix is too rough to plant a good peg — give it a few seconds and tap again.'
+        : 'No live GPS fix yet — a peg needs your current position. Give it a few seconds and tap again.');
+      return;
+    }
+    _extraSig = '';
+    trackerTick();
+  };
   App.trackerLoadTaps = function () { return sessionActive() ? trkAccum().manualLoads : 0; };
   App.noteDispatchCompleted = function (info) { var okd = noteDispatchCompleted(info); trackerTick(); return okd; };
 
@@ -6222,6 +6263,8 @@
       else if (id === 'trkAddLoadBtn') App.openLoadSheet();
       else if (id === 'trkLoadTapBtn') App.trackerAddLoadTap();
       else if (id === 'trkLoadCutBtn') App.trackerCutLoadTap();
+      else if (id === 'trkPegLoadBtn') App.trackerPegSite('load');
+      else if (id === 'trkPegDumpBtn') App.trackerPegSite('dump');
     };
     el('trkClock').onclick = function (ev) {
       if (ev.target && ev.target.id === 'trkUnitBtn' && payMode() === 'Weight') {

@@ -196,6 +196,33 @@
  *     as "Load counter — status". The learner's state was
  *     previously invisible in the UI, which is why three
  *     rounds of this defect were diagnosed blind.
+ *
+ * v282 (Oct 29, 2026 — LOADS-SITE-PEGS): the owner's answer to
+ * the whole inference problem: "this GPS load counter as smart
+ * as it is it can never be accurate where I'm picking up where
+ * I'm dumping — its system is only calculating based on times,
+ * how long I spent on either side. Instead… user should have
+ * somewhere to peg the pickup site and their dump sites, and
+ * they should be able to adjust that as the day goes on,
+ * because we don't know when the job is changing." So: two big
+ * one-tap controls on the tracker (js/app.js) — PEG PICKUP and
+ * PEG DUMP — each plants a peg at the phone's current position
+ * (GeoLoads.setPeg reads the counter's own last live fix; no
+ * coordinate display or entry exists anywhere — pegs show by
+ * TIME, "Pickup pegged 2:14 PM"). Pegs live on the day record;
+ * re-pegging overwrites (that IS the mid-day adjustment) and
+ * every move lands in the day's pegLog. When both pegs exist,
+ * configure() arms the PEG counter (engine createPegCounter)
+ * ahead of every inference source and no learner runs: the
+ * pegs are the driver's declared ground truth. The peg counter
+ * is the standard armed alternation at intra-site grade (30 m
+ * fence / 30 m accuracy bar / 30 s declared-place dwell) fed a
+ * rolling-centroid fix stream, so two pegs ~15 m apart inside
+ * one site still separate by peg identity + visit sequence —
+ * the case no fence geometry could ever solve. A peg-keyed
+ * day is marked countSource 'pegs' on the record (surfaced via
+ * forDate/today); past days are never rewritten. Days without
+ * pegs run the inference stack exactly as before.
  */
 (function () {
   'use strict';
@@ -414,6 +441,87 @@
       phase: function () { return S ? S.phase : 'away'; },
       zone: function () { return S ? S.zone : 'out'; },
       isActive: function () { return !!(S && S.active); }
+    };
+  }
+
+  /* ---- site pegs (v282 — LOADS-SITE-PEGS) ----
+     A peg is a place the DRIVER declared: he stood there and
+     tapped PEG PICKUP / PEG DUMP, and the peg is the phone's
+     position at that tap. Pegs can sit metres apart — pickup
+     pile and tip face inside ONE site — where fence separation
+     can never tell the two places apart (the standard counter
+     needs >= 250 m between sites; the pattern learner's
+     sub-spots need 50 m). What separates two pegs is IDENTITY
+     plus VISIT SEQUENCE: the armed alternation of the standard
+     counter (confirmed at pickup -> confirmed at dump counts),
+     run at the engine's intra-site grade (30 m fence, 30 m
+     accuracy bar).
+     Two adaptations make the close pair work:
+       - Fixes are SMOOTHED through a short rolling centroid
+         (PEG_WINDOW accepted fixes) before the zone machine
+         sees them. A stopped truck's raw fixes scatter metres
+         around the truth; per-fix nearer-wins attribution
+         would let that scatter accumulate dwell on the WRONG
+         peg over a long loading wait. A false zone must now
+         hold the SMOOTHED position nearer the wrong peg for
+         the whole dwell — scatter alone cannot do that.
+       - The arrival dwell is PEG_DWELL_MS (30 s), shorter
+         than the learned-place bars. Those bars exist because
+         an UNDECLARED place cannot be told from a mid-leg
+         stop; a peg is declared ground truth — the only
+         question the machine answers is whether the truck
+         visited the OTHER peg after this one.
+     The wrapper delegates every verdict to the standard counter
+     (same snapshot shape, same event shape), so the glue's
+     persistence and restore discipline apply unchanged. */
+  var PEG_WINDOW = 4;           // accepted fixes in the rolling centroid
+  var PEG_DWELL_MS = 30 * 1000; // presence at a peg that confirms arrival
+
+  function createPegCounter(cfg) {
+    var accBar = cfg.accMaxM || INTRA_ACC_MAX_M;
+    var inner = createGeoLoadCounter({
+      load: cfg.load, dump: cfg.dump,
+      radiusM: cfg.radiusM || INTRA_RADIUS_M,
+      dwellMs: cfg.dwellMs || PEG_DWELL_MS,
+      departMs: cfg.departMs || DEPART_MS,
+      accMaxM: accBar
+    });
+    var win = [];
+    return {
+      begin: function (key, saved) { win = []; return inner.begin(key, saved); },
+      ingest: function (fix) {
+        if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) {
+          return { accepted: false, why: 'bad-fix' };
+        }
+        if (fix.accuracy !== null && fix.accuracy !== undefined && fix.accuracy > accBar) {
+          return { accepted: false, why: 'accuracy' };
+        }
+        var entry = { lat: +fix.latitude, lng: +fix.longitude };
+        win.push(entry);
+        if (win.length > PEG_WINDOW) win.shift();
+        var sl = 0, sg = 0, i;
+        for (i = 0; i < win.length; i++) { sl += win[i].lat; sg += win[i].lng; }
+        var r = inner.ingest({
+          latitude: sl / win.length, longitude: sg / win.length,
+          accuracy: (fix.accuracy === undefined ? null : fix.accuracy),
+          time: fix.time
+        });
+        if (!r.accepted) {
+          /* the zone machine refused this fix (stale / teleport /
+             inactive) — it must not linger in the centroid either */
+          var ix = win.indexOf(entry);
+          if (ix >= 0) win.splice(ix, 1);
+        }
+        return r;
+      },
+      stop: function () { inner.stop(); },
+      snapshot: function () { return inner.snapshot(); },
+      count: function () { return inner.count(); },
+      events: function () { return inner.events(); },
+      phase: function () { return inner.phase(); },
+      zone: function () { return inner.zone(); },
+      isActive: function () { return inner.isActive(); },
+      debug: function () { return inner.debug ? inner.debug() : null; }
     };
   }
 
@@ -1017,6 +1125,7 @@
     sitesCheck: sitesCheck,
     looksLikeAddress: looksLikeAddress,
     createGeoLoadCounter: createGeoLoadCounter,
+    createPegCounter: createPegCounter,
     createDumpLearner: createDumpLearner,
     createPatternLearner: createPatternLearner,
     RADIUS_M: RADIUS_M, DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
@@ -1025,6 +1134,7 @@
     LEARN_CLUSTER_M: LEARN_CLUSTER_M, CONTEST_SEP_M: CONTEST_SEP_M,
     INTRA_CLUSTER_M: INTRA_CLUSTER_M, INTRA_SEP_M: INTRA_SEP_M,
     INTRA_ACC_MAX_M: INTRA_ACC_MAX_M, INTRA_RADIUS_M: INTRA_RADIUS_M,
+    PEG_WINDOW: PEG_WINDOW, PEG_DWELL_MS: PEG_DWELL_MS,
     CAND_GRACE_MS: CAND_GRACE_MS
   };
   /* GEOLOADS-ENGINE-END */
@@ -1054,6 +1164,18 @@
                                           (v68 — the teaching was
                                           retracted; day counts nothing
                                           learned),
+                                 pegs: { load: {lat,lng,t} | null,
+                                         dump: {lat,lng,t} | null }
+                                          (v282 — LOADS-SITE-PEGS:
+                                          the driver's own declared
+                                          sites for the day),
+                                 pegLog: [{ kind, t }] (v282 —
+                                          every peg set / re-peg, in
+                                          order — the day's peg moves),
+                                 countSource: 'pegs' (v282 — set
+                                          while the day's counter is
+                                          peg-keyed; absent on
+                                          inference days),
                                  updatedAt } } }
      One record per date: a day's cycles belong to the day each dump
      event happened (event timestamps carry their own date). Records
@@ -1104,6 +1226,25 @@
   var taughtOutstanding = false; // taught today; first cycle not closed yet
   var navArmDone = false; // v140: the navigated counter's lazy arm (see onFix)
   var wasDumpSinceTeach = false; // counter confirmed the dump zone since then
+
+  /* v282 (LOADS-SITE-PEGS): the driver's own pegs for the CURRENT
+     day — { load: {lat,lng,t} | null, dump: {lat,lng,t} | null }.
+     The day record (rec.pegs) is the source of truth; this is its
+     live mirror, reloaded by every configure() so a relaunch, a
+     day roll or a reconfigure can never strand a peg the record
+     holds. pegArmed: the live counter is the peg counter. */
+  var pegsNow = { load: null, dump: null };
+  var pegArmed = false;
+
+  function normalizePegs(p) {
+    var out = { load: null, dump: null };
+    if (!p || typeof p !== 'object') return out;
+    ['load', 'dump'].forEach(function (k) {
+      var g = p[k];
+      if (g && ENGINE.isCoord(g)) out[k] = { lat: +g.lat, lng: +g.lng, t: +g.t || 0 };
+    });
+    return out;
+  }
 
   function store() {
     try { return (window.App && App._store) || null; } catch (e) { return null; }
@@ -1482,6 +1623,12 @@
     rec.sessionKey = sessionKey;
     rec.sites = curSites;
     rec.corr = corrNow;
+    /* v282: the day's pegs ride every persist (their source of
+       truth), and a peg-keyed day is marked as one — the Manifest
+       reads peg counts as the driver's declared sites, never as
+       an inference the app made up. */
+    rec.pegs = pegsNow;
+    if (pegArmed) rec.countSource = 'pegs';
     rec.updatedAt = now;
     if (counter) {
       rec.count = baseCount + counter.count();
@@ -1519,6 +1666,40 @@
     patternSeedWasDump = false;
     shadowLearner = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
+    /* v282 (LOADS-SITE-PEGS): the driver's own pegs outrank EVERY
+       inference source. When both pegs exist for the day, the
+       counter keys off them and no learner runs — the pegs are
+       declared ground truth, not a guess to be second-guessed,
+       and they hold even on a day with no dispatch at all (the
+       tap is the authority). The restore discipline is the
+       armed branch's own: same key -> the counter resumes from
+       its snapshot with the base carried as record − snapshot;
+       a MOVED peg (new key) starts the counter fresh at zero
+       with the day's whole count in the base — loads already
+       counted today are never erased or recounted, and cycles
+       from the new peg count from the next pickup. */
+    var prevPegDay = recordFor(curDate);
+    pegsNow = normalizePegs(prevPegDay && prevPegDay.pegs);
+    pegArmed = false;
+    if (pegsNow.load && pegsNow.dump) {
+      curSites = {
+        load: { lat: pegsNow.load.lat, lng: pegsNow.load.lng, label: 'Pickup peg', src: 'peg' },
+        dump: { lat: pegsNow.dump.lat, lng: pegsNow.dump.lng, label: 'Dump peg', src: 'peg' }
+      };
+      curLoad = curSites.load;
+      var pegKey = sitesKeyFor('peg', curSites.load, curSites.dump);
+      var samePegSession = !!(prevPegDay && prevPegDay.sessionKey === sessionKey);
+      var savedPeg = (samePegSession && prevPegDay.state && prevPegDay.state.sitesKey === pegKey) ? prevPegDay.state : null;
+      var savedPegCount = (savedPeg && typeof savedPeg.count === 'number') ? savedPeg.count : 0;
+      baseCount = prevPegDay ? Math.max(0, (prevPegDay.count || 0) - savedPegCount) : 0;
+      baseEvents = (!samePegSession && prevPegDay && prevPegDay.events) ? prevPegDay.events.slice() : [];
+      corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
+      counter = ENGINE.createPegCounter({ load: curSites.load, dump: curSites.dump });
+      counter.begin(pegKey, savedPeg);
+      pegArmed = true;
+      persist(true);
+      return true;
+    }
     if (!d) { counter = null; curSites = null; return false; }
     var sites = sitesFromDispatch(d);
     /* v140: no pin on the record is not the end — the dispatch
@@ -2151,6 +2332,8 @@
       patternSeedWasDump = false;
       curSites = null;
       curLoad = null;
+      pegsNow = { load: null, dump: null };
+      pegArmed = false;
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
       navArmDone = false;
@@ -2216,7 +2399,13 @@
         learnedDump: rec.learnedDump || null,
         altDump: rec.altDump || null,
         dumpContested: rec.dumpContested || null,
-        navDump: rec.navDump || null
+        navDump: rec.navDump || null,
+        /* v282: the peg facts ride the Manifest's read — the pegs
+           themselves and every peg move, plus the countSource
+           marking ('pegs' on a peg-counted day). */
+        pegs: rec.pegs ? normalizePegs(rec.pegs) : null,
+        pegLog: rec.pegLog || null,
+        countSource: rec.countSource || null
       };
     },
 
@@ -2235,7 +2424,8 @@
         corr: rec ? (rec.corr || 0) : 0,
         blocked: rec ? (rec.blocked || null) : null,
         sites: rec ? (rec.sites || null) : null,
-        armed: !!(rec && rec.sites)
+        armed: !!(rec && rec.sites),
+        countSource: rec ? (rec.countSource || null) : null
       };
       if (watching && curDate === date) {
         out.armed = !!counter;
@@ -2244,6 +2434,7 @@
           out.corr = corrNow;
           out.sites = curSites || out.sites;
           out.blocked = null;
+          if (pegArmed) out.countSource = 'pegs'; // v282
         }
       }
       return out;
@@ -2329,6 +2520,62 @@
       if (machine + corrNow < 0) corrNow = -machine;
       persist(true);
       return corrNow;
+    },
+
+    /* v282 (LOADS-SITE-PEGS): plant (or move) a peg — 'load' for
+       PEG PICKUP, 'dump' for PEG DUMP. The peg is HERE: the most
+       recent live fix the counter's own stream produced (the
+       readout's lastFixSeen), gated by the same 50 m accuracy bar
+       the counter eats by — a rougher fix would plant a fence in
+       the wrong place, so the tap is refused honestly ('no-fix' /
+       'rough-fix') and the driver simply taps again. On success:
+       the old configuration's counts are flushed into the day
+       record FIRST (counted loads are never lost to a re-peg),
+       the peg + the move are written on the day record, and
+       configure() re-resolves — the pair arms the peg counter
+       the moment both pegs exist, and a moved peg re-arms on the
+       new spot with the day's banked count carried as the base.
+       Only meaningful on the live day (the tracker's session);
+       returns { ok, kind, t, armed } or { ok:false, why }. */
+    setPeg: function (kind) {
+      kind = (kind === 'dump') ? 'dump' : 'load';
+      if (!watching || !curDate) return { ok: false, why: 'no-day' };
+      var f = lastFixSeen;
+      if (!f || !isFinite(f.lat) || !isFinite(f.lng)) return { ok: false, why: 'no-fix' };
+      if (f.accuracy !== null && f.accuracy !== undefined && f.accuracy > ENGINE.ACC_MAX_M) {
+        return { ok: false, why: 'rough-fix' };
+      }
+      persist(true);
+      var rec = recordFor(curDate) || blankDay(curDate);
+      var pegs = normalizePegs(rec.pegs);
+      var t = (typeof f.t === 'number' && f.t > 0) ? f.t : Date.now();
+      pegs[kind] = { lat: f.lat, lng: f.lng, t: t };
+      rec.pegs = pegs;
+      rec.pegLog = (Array.isArray(rec.pegLog) ? rec.pegLog : []).concat([{ kind: kind, t: t }]);
+      rec.updatedAt = Date.now();
+      writeDay(rec);
+      pegsNow = pegs;
+      configure();
+      return { ok: true, kind: kind, t: t, armed: !!(pegs.load && pegs.dump) };
+    },
+
+    /* v282: the peg state for the tracker card — TIMES ONLY.
+       Coordinates never leave the data layer: the card shows
+       "Pickup pegged 2:14 PM" / "Dump not pegged", never a
+       number pair (the owner's standing places-by-name law). */
+    pegs: function () {
+      var p = null;
+      if (watching && curDate) {
+        p = pegsNow;
+      } else {
+        var rec = recordFor(dateStrOf(Date.now()));
+        p = normalizePegs(rec && rec.pegs);
+      }
+      return {
+        load: p.load ? { t: p.load.t } : null,
+        dump: p.dump ? { t: p.dump.t } : null,
+        armed: !!pegArmed
+      };
     },
 
     /* v222 (LOADS-RESTORE-FAIL-OCT22): re-seed the RUNNING counter
