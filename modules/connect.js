@@ -284,12 +284,20 @@
      item — the same payload cross-account delivery will send when
      sharing ships). */
   /* v243: the v242 seam, read the same way the writers stamp —
-     the ACTIVE profile's records are what the picker offers;
-     an unstamped record reads as Profile 1. */
-  function wpActiveId() {
-    try { if (App.workProfiles) return App.workProfiles.activeId(); } catch (e) {}
-    return 'p1';
-  }
+     an unstamped record reads as Profile 1.
+     v278 (CONNECT-SEND-DOC-SELECTION, owner Oct 29, 2026): the
+     picker offers the SHAREABLE book — Profile 1, the main
+     carrier's book — whatever work profile happens to be
+     active. Connect can only ever send that book (the v242
+     fence: another carrier's day never crosses to these
+     connections), so reading the ACTIVE profile's book was
+     the Oct 29 defect in both directions: sitting on a
+     non-main profile, his saved main-book items vanished
+     ("No damage photos saved yet") while the non-main items
+     it did list could never be sent (queueShare refused
+     them all). Now the list is exactly what can be sent,
+     and sending it works from any active profile. */
+  function wpShareId() { return 'p1'; }
   function wpIdOf(rec) {
     try { if (App.workProfiles) return App.workProfiles.idOf(rec); } catch (e) {}
     return (rec && rec.profileId) ? String(rec.profileId) : 'p1';
@@ -332,7 +340,15 @@
   function contentItems(type) {
     var out = [];
     if (type === 'dispatch') {
+      /* v278: the dispatch branch carries the same fence as
+         every other branch — only the shareable (main) book is
+         offered, a fenced day stays out — and the record's PIN
+         rides the package: the send handler reads content.lat /
+         lng / dumpLat / dumpLng / pickup / dropoff, which the
+         pre-v278 package never carried, so a Connect-sent
+         dispatch always landed pin-less (no Navigate offer). */
       App._store.get('dsp_list', []).forEach(function (d, i) {
+        if (!d || wpIdOf(d) !== wpShareId()) return;
         /* v153: the picker label + packaged date carry the
            record's date truth — scheduledAt's date wins, the
            same derivation the receiving side (below) already
@@ -343,23 +359,30 @@
           if (dm) dDate = dm[1];
         }
         dDate = dDate || d.date || '';
+        if (dayFenced(dDate)) return;
         out.push({
           id: d.id || ('d' + i),
           label: dDate + ' — ' + dispatchName(d),
           content: {
             jobSite: dispatchName(d), date: dDate, scheduledAt: d.scheduledAt || '',
             equipment: d.equipment || '', material: d.material || '',
-            ticketNo: d.ticketNo || '', notes: d.notes || ''
+            ticketNo: d.ticketNo || '', notes: d.notes || '',
+            lat: (d.lat === null || d.lat === undefined) ? undefined : d.lat,
+            lng: (d.lng === null || d.lng === undefined) ? undefined : d.lng,
+            dumpLat: (d.dumpLat === null || d.dumpLat === undefined) ? undefined : d.dumpLat,
+            dumpLng: (d.dumpLng === null || d.dumpLng === undefined) ? undefined : d.dumpLng,
+            pickup: d.pickup || '', dropoff: d.dropoff || ''
           }
         });
       });
     } else if (type === 'damage') {
       /* v243: the picker reads the store the Damage module
-         writes (dmg_reports), offers the ACTIVE profile's
-         reports, and the PHOTO ITSELF rides the share — the
+         writes (dmg_reports), offers the shareable book's
+         reports (v278: Profile 1, not the active profile's),
+         and the PHOTO ITSELF rides the share — the
          pre-v243 package carried only {title, desc, date},
          fields the module never even writes. */
-      var pidD = wpActiveId();
+      var pidD = wpShareId();
       App._store.get('dmg_reports', []).forEach(function (d, i) {
         if (!d || wpIdOf(d) !== pidD) return;
         var dsD = dmgDate(d);
@@ -374,7 +397,7 @@
       /* v243: haul-ticket photos — the dispatch record's own
          photo (inside tickets[] on new records, top-level on
          legacy ones: the same resolution dspPhotoFor applies). */
-      var pidT = wpActiveId();
+      var pidT = wpShareId();
       App._store.get('dsp_list', []).forEach(function (d) {
         if (!d || wpIdOf(d) !== pidT) return;
         var photo = d.photo || '';
@@ -394,7 +417,7 @@
       });
     } else if (type === 'fuel') {
       /* v243: fuel receipt photos, from the fills store. */
-      var pidF = wpActiveId();
+      var pidF = wpShareId();
       App._store.get('fuel_fills', []).forEach(function (f, i) {
         if (!f || !f.photo || wpIdOf(f) !== pidF) return;
         if (pidF === 'p1' && dayFenced(String(f.date || '').slice(0, 10))) return;
@@ -407,7 +430,7 @@
     } else if (type === 'pti') {
       /* v243: PTI defect photos — the filed report's defect
          list names them; the photo itself lives on its item. */
-      var pidP = wpActiveId();
+      var pidP = wpShareId();
       App._store.get('pti_reports', []).forEach(function (r) {
         if (!r || wpIdOf(r) !== pidP) return;
         var dsP = String(r.date || '').slice(0, 10);
@@ -426,7 +449,7 @@
       });
     } else if (type === 'odo') {
       /* v243: the session odometer photos (start / end of shift). */
-      var pidO = wpActiveId();
+      var pidO = wpShareId();
       App._store.get('sessions', []).forEach(function (s) {
         if (!s || wpIdOf(s) !== pidO) return;
         var dsO = String(s.date || '').slice(0, 10);
@@ -436,11 +459,11 @@
       });
     } else if (type === 'sticker') {
       /* v243: the truck's sticker photos — single-value stores
-         on the ACTIVE truck's chain (the Maintenance module's
-         own keyFor door), so they are the active profile's by
-         construction. */
+         on a truck's chain (the Maintenance module's own
+         keyFor door). v278: the SHAREABLE truck's chain
+         (Profile 1's), not whichever truck is active. */
       var keyFor = function (b) {
-        try { if (App.workProfiles) return App.workProfiles.keyFor(b); } catch (e) {}
+        try { if (App.workProfiles) return App.workProfiles.keyFor(b, wpShareId()); } catch (e) {}
         return b;
       };
       var nsPhoto = App._store.get(keyFor('mt_ns_sticker_photo'), '');
@@ -449,8 +472,8 @@
       if (sfPhoto) out.push({ id: 'stk-sf', label: 'Safety sticker photo', content: { photo: sfPhoto } });
     } else if (type === 'invoice') {
       /* v243: issued invoices — the document store (inv_list),
-         the ACTIVE profile's book. */
-      var pidI = wpActiveId();
+         the shareable profile's book (v278). */
+      var pidI = wpShareId();
       App._store.get('inv_list', []).forEach(function (r) {
         if (!r || wpIdOf(r) !== pidI) return;
         out.push({
@@ -460,11 +483,18 @@
         });
       });
     } else if (type === 'manifest') {
+      /* v278: every manifest_feed writer in the app (dispatch /
+         navigation / revenue manifestFeedPush) stores the entry
+         text as `summary` — the pre-v278 picker read `text`, a
+         field no writer produces, so real entries listed as a
+         bare "Manifest entry" and shared EMPTY. `text` stays
+         as the fallback for any legacy-shaped entry. */
       App._store.get('manifest_feed', []).forEach(function (m, i) {
+        var mText = (m && (m.summary || m.text)) || '';
         out.push({
           id: 'f' + i,
-          label: (m.date || m.at || '') + ' — ' + (m.text || 'Manifest entry'),
-          content: { text: m.text || '', date: m.date || m.at || '' }
+          label: ((m && (m.date || m.at)) || '') + ' — ' + (mText || 'Manifest entry'),
+          content: { text: mText, date: (m && (m.date || m.at)) || '' }
         });
       });
     } else if (type === 'location') {
@@ -496,14 +526,15 @@
   function queueShare(connIdx, type, item) {
     var c = conns()[connIdx];
     if (!c || !item) return false;
-    /* v243: the v242 Connect fence binds manual shares too —
-       while a non-main profile is active, nothing queues for a
-       connection: shares to connections come from the main
-       profile's book, never from a temp truck's day. */
-    if (wpActiveId() !== 'p1') {
-      uiShareBlock = 'That sits under your other work profile — shares to connections come from your main profile. Switch back to send it.';
-      return false;
-    }
+    /* v243/v278: the v242 Connect fence binds manual shares —
+       shares to connections come from the main profile's book,
+       never from a temp truck's day. The fence now lives in
+       the picker's READ path (contentItems offers only the
+       shareable book, from any active profile), so anything
+       that reaches this door is shareable by construction and
+       queues — the pre-v278 blanket refusal on the ACTIVE
+       profile trapped exactly the main-book items the picker
+       listed under a non-main profile. */
     var o = outbox();
     o.push({
       type: type,
@@ -687,8 +718,15 @@
       var line = q.status === 'pending'
         ? '⏳ Waiting for them to accept' + (qk ? ' · ' + KIND_NAMES[qk] : '')
         : 'They declined — you can send the request again any time.';
+      /* v278 (L2): the item list shows on the REQUESTER's side
+         too — a Limited/One-Time request I sent names exactly
+         what it covers, the same list the approver sees, so
+         neither side ever faces a blanket request. */
+      var oqMods = (qk === 'limited' || qk === 'once') ? modulesOfThing(q) : null;
+      var coversLine = oqMods
+        ? '<div class="b">Covers: <b>' + esc(moduleNames(oqMods)) + '</b></div>' : '';
       h += '<div class="listitem"><div class="a">' + esc(q.toName || 'Meticulous user') + '</div>' +
-        '<div class="b">' + esc(line) + '</div>' +
+        '<div class="b">' + esc(line) + '</div>' + coversLine +
         (q.status === 'declined'
           ? '<div class="row" style="margin-top:8px"><button class="btn small navy" data-cn-resend="' + esc(q.id) + '">Send again</button></div>'
           : '') + '</div>';
@@ -1269,8 +1307,13 @@
             if (!q) return;
             b.disabled = true;
             /* v148: a re-send carries the kind the request was
-               made with — the proposal survives the decline. */
-            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole, face: q.toFace, person: q.toPerson || '' }, q.kind, q.onceDate).then(function () { refreshLive(true); });
+               made with — the proposal survives the decline.
+               v278 (L2): it carries the ITEM LIST too — the
+               pre-v278 re-send dropped `modules`, re-opening
+               the pair as a blanket Limited/One-Time request
+               (exactly what L2 forbids). */
+            var rMods = (q.kind === 'limited' || q.kind === 'once') ? modulesOfThing(q) : undefined;
+            CL.sendRequest({ uid: q.to, name: q.toName, business: q.toBusiness, role: q.toRole, face: q.toFace, person: q.toPerson || '' }, q.kind, q.onceDate, rMods).then(function () { refreshLive(true); });
           };
         });
       }

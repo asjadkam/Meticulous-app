@@ -317,15 +317,15 @@ console.log('— P8: profile-aware (v242 seam) + the Connect fence on sends —'
   const onb2 = Object.assign(clone(ONB), { contractingCo: 'Other Carrier Ltd', truckNo: '12', plate: 'XYZ 999', ownWageRate: '35', nextInvoiceNo: '1' });
   const w2 = connectWorld({ fuel_fills: [clone(p2fill)], work_profiles: wpState, onboarding: onb2 });
   await openPicker(w2, 'fuel');
-  const btns = pickButtons(w2);
-  eq('P8 under Profile 2 its own fill IS listed', btns.length, 1);
-  if (btns.length) {
-    btns[0].onclick(); await ticks(3);
-    eq('P8 but the fence refuses the send — nothing queues from a non-main profile',
-      w2.store.get('con_outbox', []).length, 0);
-    ok('P8 the refusal says why, in plain words',
-      (w2.body._html + w2.body._wraps['#cn_results']._html).indexOf('main profile') !== -1);
-  }
+  /* v278 (CONNECT-SEND-DOC-SELECTION): the picker reads the
+     SHAREABLE book (Profile 1) from any active profile — a
+     Profile-2 fill is not offered to main connections even
+     while Profile 2 is active (the v243 shape listed it and
+     then refused the send: a trap, and the mirror image of
+     the owner's Oct 29 empty picker). The main-book fill
+     under Profile 2 IS listed and DOES send — proven in
+     tools/connect-send-doc-v278-test.js (S1). */
+  eq('P8 under Profile 2 its own fill is NOT offered to main connections', pickButtons(w2).length, 0);
 }
 
 console.log('— P9: a Profile-1 photo on a fenced day is not listed —');
