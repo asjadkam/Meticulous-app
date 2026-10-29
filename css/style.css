@@ -882,3 +882,26 @@ body.mt-driving #chatSheet{z-index:2120;}
 .nv-inset-sign-text b{font-size:12.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nv-inset-sign-text span{font-size:11.5px;color:#D9E1F3;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nv-route-arrow{background:transparent;border:none;}
+
+/* v279 (APP-PIP-POPUP-RENDER, owner, Oct 29, 2026): the app in a
+   small floating pop-up window (his PiP ≈ 221×139; Samsung
+   pop-up sizes vary). The base topbar's FIXED pieces — padding
+   16+16, two 44px buttons, the 36px logo, the sync dot, three
+   12px gaps — sum to ~228px, wider than the pop-up itself, so
+   the bar was sawn off at the right edge ("Me…us") and its
+   72px height left ~67px of body in a 139px window. This
+   query gives small windows a compact bar: 36px buttons, a
+   28px logo, tight gaps, and a title that shrinks with an
+   ellipsis instead of pushing the bar off-screen; the
+   dashboard pad and the trial banner trim so real content
+   reaches the visible area. Full-screen rules are untouched. */
+@media (max-width:340px), (max-height:240px){
+  .topbar{padding:8px 10px;gap:6px;}
+  .topbar .iconbtn{min-width:36px;min-height:36px;padding:4px;font-size:19px;}
+  .topbar .logo{width:28px;height:28px;border-radius:8px;}
+  .topbar .logo img{width:24px;height:24px;}
+  .topbar h1{font-size:16px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .syncdot{margin-left:0;padding:5px;}
+  .pad{padding:12px;}
+  .trialbar{margin:10px 10px 0;padding:8px 12px;}
+}

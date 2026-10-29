@@ -869,7 +869,12 @@
     lastFixAt = Date.now(); // v62: the stream is alive — remember when
     notifySubs(fix);
     var r = engine.ingest(fix);
-    if (r.accepted) { persist(false); paint(); }
+    if (r.accepted) {
+      /* v279: counted movement is the post-close heartbeat —
+         the stillness clock runs from the last real ground. */
+      if (postClose && r.addedM > 0) postLastMoveAt = Date.now();
+      persist(false); paint();
+    }
   }
   function onGeoError() {
     // Permission denied / plugin error: stop pretending. Accumulated
@@ -877,6 +882,47 @@
     broken = true;
     watching = false;
     paint();
+  }
+
+  /* v279 (MILES-HOME-LEG-AFTER-CLOSE): POST-CLOSE ACCRUAL.
+     The shift close (app.js stopSessionAt) asks stopDay for
+     { trailHome: true }: the session entry keeps the at-close
+     total and the day stays closed, but the watcher and the
+     engine stay alive in this mode, so the drive home keeps
+     adding crumbs + total to the CLOSED day's persisted
+     livemiles record — the record the Manifest joins for its
+     route (v275), which is where the owner asked for the home
+     leg to land. The dashboard miles line stays hidden in
+     this mode (paint() below): the tracker face is NOT
+     reopened, and sessionRunning() is false, so no wake hold
+     is wanted. STOP CONDITION (named): accrual ends after
+     POST_CLOSE_STILL_MS with no counted movement — the truck
+     is parked for the night — or when a new session's
+     startDay supersedes it, or on a plain stopDay(),
+     whichever comes first. Loads are NOT accrued here:
+     GeoLoads stops at the close as before. */
+  var POST_CLOSE_STILL_MS = 30 * 60 * 1000;
+  var postClose = false;
+  var postLastMoveAt = 0;
+  var postTimer = null;
+  function endPostClose() {
+    if (!postClose) return;
+    postClose = false;
+    if (postTimer) { try { clearInterval(postTimer); } catch (e) {} postTimer = null; }
+    try { engine.flushCrumb(); } catch (e) {}
+    persist(true);
+    if (watching) {
+      watching = false;
+      var g = geoApi();
+      if (g) { try { g.stop(); } catch (e) {} }
+    }
+    engine.stop();
+    dayKey = null;
+    paint();
+  }
+  function postCloseTick() {
+    if (!postClose) return;
+    if (Date.now() - postLastMoveAt >= POST_CLOSE_STILL_MS) endPostClose();
   }
 
   function paint() {
@@ -901,7 +947,9 @@
     var elm = null;
     try { elm = document.getElementById('trkMiles'); } catch (e) {}
     if (!elm) return;
-    var show = watching && !broken;
+    /* v279: post-close accrual never repaints the miles line —
+       the day is closed; the trail grows in the record only. */
+    var show = watching && !broken && !postClose;
     var txt = show ? '🛣 Miles (live): ' + (Math.round(engine.totalM() / 100) / 10).toFixed(1) + ' km' : '';
     var sig = (show ? '1' : '0') + '|' + txt;
     if (sig === lastPaint) return;
@@ -923,6 +971,19 @@
        record — the join segment is not counted (see engine.begin). */
     startDay: function (key, opts) {
       if (!key) return false;
+      /* v279: a new session supersedes post-close accrual. A
+         startDay for the SAME key (a reattach of the day that
+         just closed is not a session start — the close stands)
+         simply disarms the mode and falls through; a different
+         key seals the closed day first. */
+      if (postClose) {
+        if (key === dayKey) {
+          postClose = false;
+          if (postTimer) { try { clearInterval(postTimer); } catch (e) {} postTimer = null; }
+        } else {
+          endPostClose();
+        }
+      }
       // v62: the screen hold follows the SESSION (see the glue note
       // above), so it is wanted here — before the geo checks — and a
       // build without live location still keeps a running shift's
@@ -997,14 +1058,33 @@
 
     /* Session stopped: watcher off, final crumb appended, record
        persisted. Returns { liveKm, key } — liveKm is null when no fix
-       was ever accepted (no data is NOT 0 miles). */
-    stopDay: function () {
+       was ever accepted (no data is NOT 0 miles).
+       v279: opts.trailHome (the shift close's ask — see the
+       post-close note above) keeps the watcher + engine alive
+       accruing to the closed day's record when the day has a
+       fix-backed total; the returned liveKm is still the
+       at-close total the session entry carries. A plain
+       stopDay() while post-close is armed seals the accrual. */
+    stopDay: function (opts) {
+      if (postClose && !(opts && opts.trailHome)) {
+        var pk = dayKey;
+        endPostClose();
+        return { liveKm: LiveMiles.recordKmFor(pk), key: pk };
+      }
       wakeHold.unwant(); // v62: the session is over — the screen may sleep
       var out = { liveKm: null, key: dayKey };
       if (dayKey) {
         try { engine.flushCrumb(); } catch (e) {}
         persist(true);
         if (engine.hasFix()) out.liveKm = Math.round(engine.totalM() / 10) / 100;
+      }
+      if (opts && opts.trailHome && dayKey && out.liveKm !== null && watching) {
+        postClose = true;
+        postLastMoveAt = Date.now();
+        if (postTimer) { try { clearInterval(postTimer); } catch (e) {} }
+        postTimer = setInterval(postCloseTick, 60000);
+        paint();
+        return out;
       }
       if (watching) {
         watching = false;
@@ -1016,6 +1096,9 @@
       paint();
       return out;
     },
+
+    /* v279: post-close accrual state (see the note above). */
+    postCloseActive: function () { return postClose; },
 
     flush: function () { persist(true); },
     paint: paint,

@@ -57,6 +57,24 @@
   var TELEMETRY_PUSH_MIN_MS = 60000;    // v276: min gap between cloud writes of one telemetry key
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
+  /* v279 (WATCHDOG-PULL-READ-BURN, named in v276): a REPEAT
+     pull — this uid already pulled once in this page session —
+     waits this long between full-tree reads. The 30 s watchdog
+     kicks syncNow whenever keys sit dirty, and on a live shift
+     the telemetry engines keep a key dirty almost constantly,
+     so at the old 60 s gap the pull re-read the whole ~36-doc
+     kv tree ~once a minute all shift: ~21,600 reads per
+     driver-day against Spark's 50,000 reads/day project-wide.
+     The pull's job after the first one is CONVERGENCE (another
+     device's writes landing here); the first pull — cold-start
+     restore — is never gated by this gap (see pull()), and
+     PUSHES are never gated at all: syncNow's flush proceeds on
+     the watchdog cadence whether the pull ran or not. Every
+     merge law the pull carries (record union + shadow,
+     telemetry day-merge, phantom guard, onboarding field
+     merge) is unchanged — it runs at the convergence cadence
+     instead of every minute. */
+  var REPEAT_PULL_GAP_MS = 10 * 60 * 1000;
   var PULL_TIMEOUT_MS = 25000;          // v32: never let a pull hang forever
   var PUSH_TIMEOUT_MS = 20000;          // v33: never let a single push hang the flush
   var BLOCKED_GRACE_MS = 60000;         // v136: dead transport -> named failure after this long
@@ -1223,6 +1241,15 @@
     if (!fbReady() || S._pulling) return Promise.resolve({ applied: 0 });
     if (S.pulledUid === S.uid && Date.now() - S.lastPullAt < MIN_PULL_GAP_MS) {
       return Promise.resolve({ applied: 0 }); // already pulled recently
+    }
+    /* v279: a REPEAT pull (this uid already pulled in this page
+       session) additionally waits out REPEAT_PULL_GAP_MS — the
+       first pull for a uid always runs at once, so a cold start
+       or a fresh sign-in restores immediately; only the
+       watchdog's convergence re-reads are spaced out. */
+    if (S.pulledUid === S.uid && S.lastPullAt > 0 &&
+        Date.now() - S.lastPullAt < REPEAT_PULL_GAP_MS) {
+      return Promise.resolve({ applied: 0 }); // convergence pull not due yet
     }
     S._pulling = true;
     setDot('syncing', 'Syncing…');

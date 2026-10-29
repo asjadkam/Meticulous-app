@@ -2698,7 +2698,12 @@
     // v40: close out live-miles tracking first (watcher off, final
     // crumb + total persisted) so the finished entry can carry the day.
     var milesFin = null;
-    try { if (window.LiveMiles) milesFin = LiveMiles.stopDay(); } catch (e) {}
+    /* v279 (MILES-HOME-LEG-AFTER-CLOSE): the close keeps the
+       at-close total for this entry, and the miles engine
+       stays alive post-close accruing the drive home into the
+       closed day's trail record for the Manifest — the day
+       itself stays closed (see js/miles.js). */
+    try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (e) {}
     try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
     // v63: native background tracking — final crumb drain + service stop
     try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (e) {}
