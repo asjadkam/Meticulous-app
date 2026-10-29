@@ -721,6 +721,17 @@
       if (App._wirePhotoOCR) {
         App._wirePhotoOCR('pti_odo', 'odometer', function (kind, v) {
           var dd = draft(); dd.odo = String(v); saveDraft(dd);
+          /* v281 (PTI dash-photo warning, parked sub-item of v274):
+             a "Snap the dash photo first" warning left by an earlier
+             Sign & file tap must clear the moment the read lands —
+             the reading is in the form, so the warning's reason is
+             gone. Clear the stored error (no resurrection on the
+             next render) and the live line on the card. */
+          if (formErr && formErr.indexOf('Snap the dash photo') === 0) {
+            formErr = '';
+            var eEl = body.querySelector('#pti_err');
+            if (eEl) eEl.innerHTML = '';
+          }
         }, { origin: { module: 'pti', label: 'Pre-Trip Inspection' } });
       }
     } catch (e) {}
