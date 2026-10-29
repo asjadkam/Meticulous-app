@@ -306,6 +306,68 @@
     return best;
   }
 
+  /* v283 (MANIFEST-PEG-PLACES, owner, Oct 29, 2026 14:26 MDT:
+     "make sure these peg pickups and peg dumps are gonna go on
+     the manifest — as where it's being loaded and where it's
+     being dumped"). A peg day (v282) knows exactly where the
+     truck loaded and dumped — the driver declared both spots —
+     and the manifest now SAYS them. Each role's pegged places
+     resolve through placeNameFor (the same resolver the route
+     stops use); a peg at a place the app has never seen prints
+     its peg TIME instead ("Pegged pickup — 2:14 PM"). A peg's
+     coordinates NEVER print. Mid-day re-pegs: every DISTINCT
+     place per role, in the order pegged — a place is itself
+     again by name, and an unnamed place is itself again within
+     the peg counter's own 30 m (a stopped truck re-tapped on
+     the same ground is one place, however the scatter moved).
+     Peg moves logged before v283 carry no position; those days
+     resolve from the day's final pegs — no place is invented
+     for a move whose spot was never recorded. Days without
+     pegs: null, and both renderers print exactly what they
+     printed before. */
+  function pegPlaceLabels(geoDay) {
+    if (!geoDay || !geoDay.pegs) return null;
+    var cur = geoDay.pegs;
+    var log = Array.isArray(geoDay.pegLog) ? geoDay.pegLog : [];
+    function sequence(kind) {
+      var pos = [];
+      log.forEach(function (e) {
+        if (e && e.kind === kind && isFinite(e.lat) && isFinite(e.lng)) {
+          pos.push({ lat: +e.lat, lng: +e.lng, t: +e.t || 0 });
+        }
+      });
+      var c = cur[kind];
+      if (c && isFinite(c.lat) && isFinite(c.lng)) {
+        var last = pos[pos.length - 1];
+        if (!last || last.t !== (+c.t || 0) ||
+            trailDistM(last.lat, last.lng, +c.lat, +c.lng) > 1) {
+          pos.push({ lat: +c.lat, lng: +c.lng, t: +c.t || 0 });
+        }
+      }
+      return pos;
+    }
+    function labels(kind, word) {
+      var named = [], unnamed = [], out = [];
+      sequence(kind).forEach(function (p) {
+        var name = placeNameFor(p.lat, p.lng);
+        if (name) {
+          if (named.indexOf(name) !== -1) return;
+          named.push(name); out.push(name);
+          return;
+        }
+        for (var i = 0; i < unnamed.length; i++) {
+          if (trailDistM(unnamed[i].lat, unnamed[i].lng, p.lat, p.lng) <= 30) return;
+        }
+        unnamed.push(p);
+        out.push('Pegged ' + word + ' — ' + fmtClock(p.t > 0 ? p.t : null));
+      });
+      return out;
+    }
+    var load = labels('load', 'pickup'), dump = labels('dump', 'dump');
+    if (!load.length && !dump.length) return null;
+    return { load: load, dump: dump };
+  }
+
   /* v87: ONE Odometer line for the day (owner, Oct 15: there were
      "no Odos on the manifest either… even though I gave you the
      starting and ending" — his own sheet carries the pair every
@@ -379,6 +441,10 @@
        count + dump events + the site pair used, or the reason counting
        could not run. Shown separately; ticket loads stay the pay record. */
     var geoDay = ((G('geoloads', { days: {} }).days) || {})[d] || null;
+    /* v283 (MANIFEST-PEG-PLACES): the day's pegged loading /
+       dumping places, by name — see pegPlaceLabels. Null on
+       days the driver never pegged. */
+    var pegPlaces = pegPlaceLabels(geoDay);
     var odoStart = null, odoEnd = null, liveKm = 0, liveKmAny = false, milesIssues = [];
     /* v206 (P1-odo-prompt-photo): the dash photos that came WITH
        the readings ride the same sessions (startPhoto / endPhoto)
@@ -928,7 +994,7 @@
     if (!ptiPost) missing.push('post-trip PTI');
     if (!gpsTrail) missing.push('GPS trail');
     var complete = missing.length === 0;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, milesNote: milesNote, geoDay: geoDay, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, milesNote: milesNote, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
   }
 
   /* v247: one filed PTI report as the manifest prints it —
@@ -1102,7 +1168,8 @@
        themselves — words, order, toggles, the v127 live/closed
        label — are unchanged. */
     var anyFig = t.start || t.end || t.odo || t.earned ||
-      (t.loads && c.loads > 0) || (t.geoloads && c.geoDay && c.geoDay.sites);
+      (t.loads && c.loads > 0) || (t.geoloads && c.geoDay && c.geoDay.sites) ||
+      !!c.pegPlaces; /* v283: a peg day's places open the section on their own */
     if (anyFig) L.push({ k: 'h', a: 'Day summary' });
     if (t.start) L.push({ k: 'kv', a: 'Start Time', b: c.startT });
     if (t.end) L.push({ k: 'kv', a: 'End Time', b: c.endT });
@@ -1168,6 +1235,17 @@
       (c.geoDay.events || []).forEach(function (ev, i) {
         L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: fmtStamp(ev.t) });
       });
+    }
+    /* v283 (MANIFEST-PEG-PLACES): where the day loaded and
+       where it dumped, from the driver's own pegs (v282) — the
+       places print BY NAME (collect's pegPlaces; a place the
+       app has never seen prints its peg time). The lines ride
+       no section toggle: the pegs are the driver's own declared
+       facts, the same standing as the day note (v191). A role
+       never pegged prints no line. */
+    if (c.pegPlaces) {
+      if (c.pegPlaces.load.length) L.push({ k: 'kv', a: 'Loaded at', b: c.pegPlaces.load.join(' → ') });
+      if (c.pegPlaces.dump.length) L.push({ k: 'kv', a: 'Dumped at', b: c.pegPlaces.dump.join(' → ') });
     }
     /* v87: no blocked-reason note here anymore — see the v87 note
        where GEOLOAD_BLOCKED used to live. Silence over blame. */
@@ -1242,6 +1320,7 @@
     _trailStops: trailStops,
     _dropHomeStops: dropHomeStops, /* v190: the home-stop filter, exported for the suite */
     _placeNameFor: placeNameFor, /* v204: the stop-name resolver, exported for the suite */
+    _pegPlaceLabels: pegPlaceLabels, /* v283: the day's pegged places, exported for the suite */
     _applyDayEdit: applyDayEdit, /* v191: the manifest-edit layer, exported for the suite */
     _dayMiles: dayMilesAccounting, /* v275: the day's one miles accounting, exported for the suite */
     _toggles: toggles,
@@ -1493,6 +1572,13 @@
           h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
             esc(fmtStamp(ev.t)) + '</b></div>';
         });
+      }
+      /* v283 (MANIFEST-PEG-PLACES): the screen twin of the
+         printed Loaded at / Dumped at lines (see docLines) —
+         the day's pegged places, by name. */
+      if (c.pegPlaces) {
+        if (c.pegPlaces.load.length) h += '<div class="kv"><span>📍 Loaded at</span><b>' + esc(c.pegPlaces.load.join(' → ')) + '</b></div>';
+        if (c.pegPlaces.dump.length) h += '<div class="kv"><span>📍 Dumped at</span><b>' + esc(c.pegPlaces.dump.join(' → ')) + '</b></div>';
       }
       /* v87: no blocked-reason note here anymore — silence over
          blame (see the v87 note where GEOLOAD_BLOCKED used to be). */

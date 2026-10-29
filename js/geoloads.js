@@ -1169,9 +1169,15 @@
                                           (v282 — LOADS-SITE-PEGS:
                                           the driver's own declared
                                           sites for the day),
-                                 pegLog: [{ kind, t }] (v282 —
-                                          every peg set / re-peg, in
-                                          order — the day's peg moves),
+                                 pegLog: [{ kind, t, lat, lng }]
+                                          (v282 — every peg set /
+                                          re-peg, in order — the
+                                          day's peg moves; v283 —
+                                          lat/lng ride each move so
+                                          the Manifest can name every
+                                          pegged place; entries logged
+                                          before v283 carry kind + t
+                                          only),
                                  countSource: 'pegs' (v282 — set
                                           while the day's counter is
                                           peg-keyed; absent on
@@ -2551,7 +2557,7 @@
       var t = (typeof f.t === 'number' && f.t > 0) ? f.t : Date.now();
       pegs[kind] = { lat: f.lat, lng: f.lng, t: t };
       rec.pegs = pegs;
-      rec.pegLog = (Array.isArray(rec.pegLog) ? rec.pegLog : []).concat([{ kind: kind, t: t }]);
+      rec.pegLog = (Array.isArray(rec.pegLog) ? rec.pegLog : []).concat([{ kind: kind, t: t, lat: f.lat, lng: f.lng }]);
       rec.updatedAt = Date.now();
       writeDay(rec);
       pegsNow = pegs;
