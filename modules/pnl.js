@@ -1045,11 +1045,18 @@
         '<button class="btn small ghost" id="pnl_next">Next →</button>' +
         '</div>' +
         /* v177 (D3): custom dates, like Revenue's picker */
+        /* v285 (PNL-DATE-PICKER-SQUISHED, owner Oct 30, 2026): the
+           From/To fields shared their row with the buttons, so on a
+           phone each date input got a third of the card and rendered
+           tiny and cramped. The fields now own their row (half the
+           card each, 16px type) and the buttons sit on their own. */
         '<div class="row" style="margin-top:8px;align-items:flex-end">' +
-        '<div style="flex:1"><label class="f">From</label><input type="date" id="pnl_from" value="' + (pr ? pr.from : '') + '"></div>' +
-        '<div style="flex:1"><label class="f">To</label><input type="date" id="pnl_to" value="' + (pr ? pr.to : '') + '"></div>' +
-        '<button class="btn small navy" id="pnl_usedates">Use dates</button>' +
-        (pr ? '<button class="btn small ghost" id="pnl_clearrange">Back to month</button>' : '') +
+        '<div style="flex:1;min-width:0"><label class="f">From</label><input type="date" id="pnl_from" style="font-size:16px" value="' + (pr ? pr.from : '') + '"></div>' +
+        '<div style="flex:1;min-width:0"><label class="f">To</label><input type="date" id="pnl_to" style="font-size:16px" value="' + (pr ? pr.to : '') + '"></div>' +
+        '</div>' +
+        '<div class="row" style="margin-top:8px">' +
+        '<button class="btn navy" id="pnl_usedates">Use dates</button>' +
+        (pr ? '<button class="btn ghost" id="pnl_clearrange">Back to month</button>' : '') +
         '</div>' +
         '<p class="note" style="margin:4px 0 0">Pick any start and end date to see P&L for exactly that stretch. No dates = the month above.</p>' +
         '</div>';

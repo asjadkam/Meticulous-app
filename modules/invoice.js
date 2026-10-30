@@ -1799,7 +1799,12 @@
         /* v122: the stub remembers HOW it was built — calculated
            vs hand-entered, and which fields were overridden — so
            the print carries the right honesty label. */
-        autoCalc: !!psCalc, overFields: Object.keys(psOver)
+        autoCalc: !!psCalc, overFields: Object.keys(psOver),
+        /* v285: whether the provincial leg was auto-calculated —
+           the printed footer must never claim a province the
+           engine did not calculate (unsupported provinces stay
+           honest on paper, not just on the form). */
+        provAuto: !!(psCalc && psCalc.provSupported)
       };
       var l = paystubs(); l.push(rec); W('stubs', l);
       printPayStub(rec);
@@ -1845,7 +1850,9 @@
       '<div class="row" style="font-size:18px"><span><b>Net pay</b></span><span><b>$' + Number(rec.net || 0).toFixed(2) + '</b></span></div>' +
       '</div>' +
       '<p class="muted foot">' + (rec.autoCalc
-        ? 'Calculated with the federal' + (provName ? ' + ' + esc(provName) : '') + ' basic amounts using CRA payroll formulas. Your employer\'s figures may differ if your TD1 claims more than the basic amounts. This stub is a record, not tax advice.'
+        ? (rec.provAuto === false
+          ? 'Calculated with the federal basic amounts using CRA payroll formulas. Provincial tax for ' + esc(provName || 'your province') + ' is not auto-calculated yet — the provincial figure shown is the one entered from the employer\'s stub. Your employer\'s figures may differ if your TD1 claims more than the basic amounts. This stub is a record, not tax advice.'
+          : 'Calculated with the federal' + (provName ? ' + ' + esc(provName) : '') + ' basic amounts using CRA payroll formulas. Your employer\'s figures may differ if your TD1 claims more than the basic amounts. This stub is a record, not tax advice.')
         : 'Deductions entered manually. This stub is a record, not tax advice.') + '</p>');
   }
 
@@ -1870,6 +1877,23 @@
        if the period cannot be read. */
     status: function () {
       try {
+        /* v285 (PAY-STUB-MODULE-AUDIT, owner Oct 30, 2026): the card
+           preview follows the SAME employment branch as the module
+           itself — a Payroll user's card previews their open pay
+           period (the saved stub's net, else the period's pre-filled
+           gross), never the invoice book. */
+        if (onb().employment === 'Payroll') {
+          var sp = invCycOpenPeriod(paystubs().map(function (r) { return { pb: r.b }; }), App._today());
+          if (sp) {
+            var saved = null;
+            paystubs().forEach(function (r) { if (r && r.a === sp.a && r.b === sp.b) saved = r; });
+            if (saved) return invCycShort(sp) + ': net $' + Number(saved.net || 0).toFixed(2);
+            var g = 0;
+            try { g = psPeriodGross(onb(), sp.a, sp.b).gross || 0; } catch (e2) { g = 0; }
+            return invCycShort(sp) + (g > 0 ? ': $' + g.toFixed(2) + ' gross so far' : ' · no days yet');
+          }
+          return paystubs().length + ' saved';
+        }
         /* v242: the card preview reads the ACTIVE profile's book. */
         var spid = wpActiveId();
         var p = invCycOpenPeriod(invoicesFor(spid), App._today());
@@ -1884,15 +1908,17 @@
     render: function (body) {
       invBody = body;
       var o = onb();
-      var mode = S('mode', o.employment === 'Payroll' ? 'paystub' : 'invoice');
-      var h = '<div class="card"><div class="row">' +
-        '<button class="btn small ' + (mode === 'invoice' ? 'primary' : 'ghost') + '" data-m="invoice" style="margin:0">🧾 Invoice</button>' +
-        '<button class="btn small ' + (mode === 'paystub' ? 'primary' : 'ghost') + '" data-m="paystub" style="margin:0">💵 Pay Stub</button>' +
-        '</div></div><div id="iv_body"></div>';
-      body.innerHTML = h;
-      body.querySelectorAll('[data-m]').forEach(function (b) {
-        b.onclick = function () { W('mode', b.getAttribute('data-m')); Meticulous.modules.invoice.render(body); };
-      });
+      /* v285 (PAY-STUB-MODULE-AUDIT, owner Oct 30, 2026 — his law,
+         restated today: employment status decides the document,
+         everywhere): the mode is DECIDED by the employment status
+         alone. The v116 in-module switcher is gone — a Payroll user
+         is never handed the invoice flow and a Contract user is
+         never handed the pay-stub flow. back()/resetView() keep
+         reading the stored mode, which now always holds the home
+         mode, so Back leaves the module as it should. */
+      var mode = o.employment === 'Payroll' ? 'paystub' : 'invoice';
+      W('mode', mode);
+      body.innerHTML = '<div id="iv_body"></div>';
       var inner = body.querySelector('#iv_body');
       if (mode === 'invoice') renderInvoice(inner); else renderPayroll(inner);
     }
