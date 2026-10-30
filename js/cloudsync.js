@@ -801,6 +801,38 @@
     });
   }
 
+  /* v289 (FUEL-LIST-STALE, owner report Oct 30, 2026): the sync
+     copy of a fuel book. Receipt photos ride inside the fill
+     records as data URLs, so a working book outgrows the one-doc
+     byte cap on photos alone — and pushOne's oversized guard ran
+     BEFORE the record-list branch, skipped every write and sealed
+     the key clean, freezing the cloud copy at the last state that
+     fit (Oct 22) while fills kept saving locally; the first local
+     loss after that (the Oct 30 install churn) restored the frozen
+     copy wholesale and the newer fills were gone from phone AND
+     cloud — the same signature as Oct 20–22 and Oct 26. The facts
+     are what the list, the merges and P&L read, and they fit
+     trivially, so when the full array exceeds the cap the cloud
+     copy carries the same records without the photo field (each
+     fill's photo is ALSO written to its own per-fill cloud doc by
+     the Fuel save handler itself, so no photo leaves the account).
+     Fuel identity never reads the photo (date/time/litres/cost/
+     station/odo), so merges, the shadow and the v188 duplicate
+     rule are untouched; and merge completeness scores a photo +3,
+     so a photo-bearing local copy always beats the stripped cloud
+     twin — a pull can never strip a photo off the phone. */
+  function recordSyncCopy(key, arr) {
+    if (key !== 'fuel_fills' || !Array.isArray(arr)) return arr;
+    if (JSON.stringify(arr).length <= MAX_DOC_BYTES) return arr;
+    return arr.map(function (rec) {
+      if (!rec || typeof rec !== 'object' || !rec.photo) return rec;
+      var c = {};
+      for (var f in rec) { if (f !== 'photo') c[f] = rec[f]; }
+      return c;
+    });
+  }
+  function syncCopyJson(key, arr) { return JSON.stringify(recordSyncCopy(key, arr)); }
+
   /* v276 (SPARK-QUOTA): read the ONE cloud doc a record-list
      push merges against (its current array, or null). Before
      v276 the push loaded the WHOLE kv collection (~36 docs)
@@ -921,7 +953,10 @@
     }
     var size = 0;
     try { size = raw.length; } catch (e) {}
-    if (size > MAX_DOC_BYTES) {
+    /* v289: record-list keys never take this skip — they proceed
+       to the read-merge-write below, which writes the sync copy
+       (recordSyncCopy) that fits the cap, or fails honestly. */
+    if (size > MAX_DOC_BYTES && !RECORD_LIST_KEYS[key]) {
       try { console.warn('[cloudsync] skipping oversized key (kept locally):', key, size); } catch (e) {}
       km.s = km.t; // don't retry forever; local copy remains the truth
       delete S._keyFails[key]; // v136: handled by design — not a standing failure
@@ -948,7 +983,19 @@
         return done(false);
       };
       var rlSave = function (arr) {
-        return FB.saveDoc(KV_COLLECTION, docId, { v: arr }).then(function (res) {
+        /* v289: write the sync copy (facts-complete; photos ride
+           only while the whole book fits the doc cap). A copy that
+           STILL exceeds the cap fails honestly — the key stays
+           dirty and the failure is named — never the old silent
+           seal that froze the cloud at Oct 22. The shadow advances
+           from the full merged array: fuel identities never read
+           the photo, so the identity set is the same either way. */
+        var copy = recordSyncCopy(key, arr);
+        if (JSON.stringify(copy).length > MAX_DOC_BYTES) {
+          try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': the record list exceeds the cloud document size limit even without receipt photos' }); } catch (e) {}
+          return Promise.resolve(done(false));
+        }
+        return FB.saveDoc(KV_COLLECTION, docId, { v: copy }).then(function (res) {
           if (res === null) {
             try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
             return done(false);
@@ -1471,7 +1518,12 @@
               lsSetRaw(key, JSON.stringify(rlMerged));
               applied++;
             }
-            if (JSON.stringify(rlMerged) !== JSON.stringify(d.v)) {
+            /* v289: compare the SYNC COPY against the cloud doc —
+               a photo-bearing local book's stripped copy IS the
+               cloud state once the push has landed; comparing the
+               full array would keep the key dirty forever and
+               re-push the whole book every cycle. */
+            if (syncCopyJson(key, rlMerged) !== JSON.stringify(d.v)) {
               /* the union holds records the cloud lacks — keep
                  the key dirty so the flush pushes the union UP.
                  The shadow names the cloud state just verified,
