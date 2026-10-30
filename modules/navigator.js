@@ -1701,6 +1701,16 @@
       var line = docEl('nvd_pip_line') ||
         (nvBody ? nvBody.querySelector('#nvd_pip_line') : null);
       if (line) line.classList.toggle('hidden', !inPip);
+      /* v286 (PIP-HOME): a system-PiP exit must not strip the
+         compact posture off a drive that is still parked as the
+         in-app mini map — the float keeps its trimmed chrome
+         (and the mic stays off the face) until the tap-back
+         restore or the drive's end clears the park. */
+      if (!inPip && S && S._parkedMini) {
+        if (scr) scr.classList.add('nv-pip');
+        try { if (document && document.body && document.body.classList) document.body.classList.add('mt-pip'); } catch (e) {}
+        S._inPip = true;
+      }
       /* v273: the window just changed size (PiP in OR out) —
          re-fit the map to the size it actually has now. */
       refitDriveMap();
@@ -1725,18 +1735,68 @@
      A tap on the face reopens the Navigator full-screen (App
      wires the face); only End-drive or the map's X ends the
      drive. TRUE system PiP remains only for genuinely leaving
-     the app (Home), via the native arm. */
+     the app (Home), via the native arm.
+     v286 (PIP-HOME, owner Oct 30 07:40 MDT — v60 verdict FAILED
+     in his hands, with video): the v227 float needs a LIVE
+     session — the shell raises the tracker face only while a
+     session runs (refreshBubbleFace gates on sessionActive).
+     His repro drive had NO session (pre-8 AM run to the site,
+     dashboard behind him reading "Ready to work"): Back parked
+     the drive screen hidden in the dock, no face could rise,
+     and he landed on a plain dashboard with navigation buried
+     and no way back but reopening the module cold. So the park
+     splits on the session: WITH a session the v227 law stands
+     untouched (tracker face floats, drive survives hidden).
+     WITHOUT one there are no tracker facts to float — the
+     drive screen itself floats as the compact mini map (the
+     posture v222 built and his Oct 30 spec restates: map
+     visible, compact, no mic button, map never buried by
+     text), and a tap on it reopens the Navigator full-screen.
+     The two floats can never coexist: the mini park does NOT
+     raise the drive-docked flag, and refreshBubbleFace stands
+     the bubble down whenever a mini is parked (one-float law). */
+  function driveSessionLive() {
+    try {
+      var t = window.App && App.tracker;
+      return !!(t && t.status && t.status !== 'idle');
+    } catch (e) { return false; }
+  }
+  function unparkMiniTap() {
+    try {
+      var scr = docEl('nv_drive_screen');
+      if (scr && S && S._miniTap) scr.removeEventListener('click', S._miniTap, true);
+    } catch (e) {}
+    if (S) S._miniTap = null;
+  }
   function parkDrive() {
     if (!S || !S.drive || S.parked) return false;
     var scr = docEl('nv_drive_screen');
     var dock = docEl('pipDock');
     if (!scr || !dock) return false;
     S.parked = true;
-    scr.classList.remove('nv-mini');
-    scr.classList.add('nv-parked');
-    scr.classList.add('hidden');
+    if (driveSessionLive()) {
+      S._parkedMini = false;
+      scr.classList.remove('nv-mini');
+      scr.classList.add('nv-parked');
+      scr.classList.add('hidden');
+      dock.appendChild(scr);
+      try { if (window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
+      try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
+      return true;
+    }
+    /* v286: no session — float the drive itself as the mini map. */
+    S._parkedMini = true;
+    scr.classList.remove('nv-parked');
+    scr.classList.remove('hidden');
+    scr.classList.add('nv-mini');
     dock.appendChild(scr);
-    try { if (window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
+    applyPipFace(true);
+    unparkMiniTap();
+    S._miniTap = function (ev) {
+      try { if (ev && ev.stopPropagation) ev.stopPropagation(); } catch (e) {}
+      try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {}
+    };
+    try { scr.addEventListener('click', S._miniTap, true); } catch (e) {}
     try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
     return true;
   }
@@ -1911,6 +1971,11 @@
        (its state + the floated drive screen are the driver's
        live navigation; killing them was never the ask). */
     keepAlive: function () { return !!(S && S.drive && S.parked); },
+    /* v286 (PIP-HOME): the shell asks whether the floated piece
+       right now is the mini map itself — while it is, the tracker
+       bubble face stands down even if a session starts mid-park
+       (one float at a time; the face returns at the tap-back). */
+    parkedMini: function () { return !!(S && S.drive && S.parked && S._parkedMini); },
 
     back: function () {
       if (nvFace === 'drive') {
@@ -1961,6 +2026,10 @@
         var dockScr = docEl('nv_drive_screen');
         if (dockScr) {
           S.parked = false;
+          /* v286: a mini-park restore also clears the mini flag
+             and its whole-bubble tap before the posture strips. */
+          S._parkedMini = false;
+          unparkMiniTap();
           S._restoredParked = true;
           nvFace = 'drive';
           body.innerHTML = '';
@@ -1979,6 +2048,8 @@
         /* the parked screen is gone (page rebuilt under it):
            fall through to a fresh render rather than a ghost. */
         S.parked = false;
+        S._parkedMini = false;
+        unparkMiniTap();
       }
       var hasPending = false;
       try { hasPending = !!App._store.get('nav_pending', null); } catch (e) {}
@@ -3954,7 +4025,21 @@
         /* v227: the docked tracker face stands down with the
            drive — End-drive is one of the two ways the map (and
            its float) shuts off. */
-        if (S.parked) { S.parked = false; try { if (window.App && App.setDriveDocked) App.setDriveDocked(false); } catch (e) {} }
+        if (S.parked) {
+          S.parked = false;
+          /* v286: a drive that ends while parked as the mini map
+             (arrival fires under the park) must not leave a dead
+             float on the dashboard — the screen stands down to
+             the hidden parked posture with the drive. */
+          var wasMini = !!S._parkedMini;
+          S._parkedMini = false; unparkMiniTap();
+          if (wasMini) {
+            var pScr = docEl('nv_drive_screen');
+            if (pScr) { pScr.classList.remove('nv-mini'); pScr.classList.add('nv-parked'); pScr.classList.add('hidden'); }
+            applyPipFace(false);
+          }
+          try { if (window.App && App.setDriveDocked) App.setDriveDocked(false); } catch (e) {}
+        }
         /* v183: free-look state dies with the drive. */
         if (S.driveFreeTimer) { try { clearTimeout(S.driveFreeTimer); } catch (e) {} S.driveFreeTimer = null; }
         S.driveFree = false;

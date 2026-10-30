@@ -454,6 +454,50 @@
     return true;
   };
   /* SYS-BACK-END */
+  /* HERO-PAINT-BEGIN — harness-extractable (tools/sis-timer-v286-test.js).
+     Pure paint driver + kick; every DOM/bridge read lives in the
+     env object the app passes in at init below.
+     v286 (TIMER-DISPLAY-FROZEN, owner Oct 30 10:34 MDT): the
+     dashboard hero's only paint driver was a 1 s setInterval —
+     and on his phone the page gets put to sleep while the
+     session counts underneath ("Screen not held — the app may
+     sleep"): the interval is exactly the continuation the OS
+     freezes, so the clock he LOOKED at read minutes stale while
+     the engine ran true. The hero's VALUE was never wrong
+     (paintHero derives it from the session start timestamp);
+     only its repaint starved. This driver re-paints from
+     requestAnimationFrame — a callback that exists only while
+     the page is actually being rendered — on a bounded 200 ms
+     cadence while the dashboard is on screen and a session is
+     live, and kick() paints the true time the instant the page
+     becomes visible again, so the first glance is never stale.
+     The 1 s interval stays as the deep-background continuation. */
+  App.heroPaint = function (env) {
+    var last = null, rafId = null, stopped = false;
+    function frame() {
+      rafId = null;
+      if (stopped) return;
+      try {
+        if (env.visible() && env.dashShown() && env.live()) {
+          var t = env.now();
+          if (last === null || t - last >= 200) { last = t; env.tick(); }
+        }
+      } catch (e) {}
+      rafId = env.raf(frame);
+    }
+    return {
+      start: function () { if (rafId === null && !stopped) rafId = env.raf(frame); },
+      kick: function () {
+        try { if (env.visible() && env.live()) { last = env.now(); env.tick(); } } catch (e) {}
+      },
+      stop: function () {
+        stopped = true;
+        if (rafId !== null && env.caf) { try { env.caf(rafId); } catch (e) {} }
+        rafId = null;
+      }
+    };
+  };
+  /* HERO-PAINT-END */
   (function () {
     try {
       var Cap = window.Capacitor;
@@ -516,7 +560,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 42; // <- bump on every native (APK) release
+      var APK_VERSION = 43; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -2108,8 +2152,18 @@
   }
   function refreshBubbleFace() {
     var pipShow = !!App._pip && !(window.ShiftTrack && ShiftTrack._driving) && !shellDrawsBubbleFace();
+    /* v286 (PIP-HOME): while the Navigator's mini map is the
+       floated piece (a no-session park), the tracker face stands
+       down even if a session starts mid-park — one float at a
+       time. The face returns on the next refresh after the
+       tap-back restore clears the mini park. */
+    var miniParked = false;
+    try {
+      var navMod286 = window.Meticulous && Meticulous.modules && Meticulous.modules.navigator;
+      miniParked = !!(navMod286 && navMod286.parkedMini && navMod286.parkedMini());
+    } catch (e) {}
     var show = (pipShow || !!App._docked)
-      && sessionActive() && !App._authLocked();
+      && sessionActive() && !App._authLocked() && !miniParked;
     var bf = bubbleEl('bubbleFace');
     if (bf) {
       bf.classList.toggle('hidden', !show);
@@ -6289,6 +6343,32 @@
     } catch (e) {}
     trackerPaint();
     setInterval(trackerTick, 1000);
+    /* v286 (TIMER-DISPLAY-FROZEN): the frame-driven hero paint +
+       return-to-visibility kicks (HERO-PAINT block above). The
+       interval above stays for the deep-background case; this
+       driver is what keeps the clock honest while he is looking
+       at it, and paints the true time on the first glance back. */
+    try {
+      var heroPaint = App.heroPaint({
+        raf: function (cb) {
+          return window.requestAnimationFrame
+            ? window.requestAnimationFrame(cb)
+            : setTimeout(function () { cb(Date.now()); }, 250);
+        },
+        caf: function (id) { if (window.cancelAnimationFrame) window.cancelAnimationFrame(id); },
+        now: function () { return Date.now(); },
+        visible: function () { return document.visibilityState === 'visible'; },
+        dashShown: function () { var d = el('dashView'); return !!(d && !d.classList.contains('hidden')); },
+        live: function () { return !!(App.tracker && App.tracker.status !== 'idle'); },
+        tick: function () { trackerTick(); }
+      });
+      heroPaint.start();
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') heroPaint.kick();
+      });
+      window.addEventListener('pageshow', function () { heroPaint.kick(); });
+      window.addEventListener('focus', function () { heroPaint.kick(); });
+    } catch (e) {}
 
     /* v220: PiP posture changes drive the tracker bubble face;
        a widget tap may already be waiting from a cold start. */
