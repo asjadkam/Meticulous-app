@@ -837,6 +837,48 @@
   }
   S.flushUrgent = flushUrgent;
 
+  /* v288 (REWORK2): read the ONE cloud doc a TELEMETRY push
+     merges against, as a value of any shape (loadCloudDoc above
+     narrows to arrays for the record lists). Same one-doc read,
+     same honest failure: a read failure rejects and the caller
+     fails the push rather than overwriting blind. */
+  function loadCloudValue(key, docId) {
+    if (typeof FB.loadDoc === 'function') {
+      return FB.loadDoc(KV_COLLECTION, docId).then(function (d) {
+        return (d && d.v !== undefined) ? d.v : null;
+      });
+    }
+    return FB.loadDocs(KV_COLLECTION).then(function (docs) {
+      var v = null;
+      (docs || []).forEach(function (d) {
+        if ((d.mt || d.id) === key && d.v !== undefined) v = d.v;
+      });
+      return v;
+    });
+  }
+
+  /* v288 (REWORK2 — REINSTALL-LIVE-KM): after-pull subscribers.
+     Fired at the end of every pull that CHANGED one of the
+     watched keys locally (the telemetry day maps + the tracker):
+     the shell adopts the healed store into the running engines
+     and re-pushes the session facts to the native record. The
+     v222/v287 reseeds rode auth-gated call sites (App.onAuth's
+     reattach, the first-pull callback); the owner's v62 verdict
+     (Oct 30, 14:46 MDT — the day still reset to ~0.1 km in his
+     hands) proved those gates can all be missed on a real
+     reinstall sequence. The pull itself is the one moment that
+     cannot be missed: it is what lands the healed values. */
+  var afterPullCbs = [];
+  S.onAfterPull = function (fn) {
+    if (typeof fn === 'function' && afterPullCbs.indexOf(fn) < 0) afterPullCbs.push(fn);
+  };
+  function fireAfterPull(changedKeys) {
+    if (!changedKeys.length) return;
+    afterPullCbs.forEach(function (fn) {
+      try { fn(changedKeys.slice()); } catch (e) {}
+    });
+  }
+
   function pushOne(key) {
     var km = keyMeta(key);
     var raw = lsGetRaw(key);
@@ -923,6 +965,48 @@
           return rlSave(mg);
         }).catch(rlPushFail);
       } catch (e) { return Promise.resolve(rlPushFail(e)); }
+    }
+    /* v288 (REWORK2 — REINSTALL-LIVE-KM, owner verdict Oct 30
+       14:46 MDT): a telemetry key (livemiles / geoloads) is
+       never blind-overwritten either — the same v272 law the
+       record lists got, applied to the day maps. Before this,
+       pushOne wrote the local value wholesale: a fresh install's
+       young engine snapshot (~0.1 km, begun against an empty
+       store before the first pull landed) pushed UP over the
+       cloud's full day (39.3 km) and destroyed it everywhere —
+       the pull-side day merge (v224) never got a push-side
+       twin. The push now reads the cloud doc first and writes
+       mergeTelemetryDays' union (larger day wins, exactly the
+       pull's rule), learns the union into the local store at
+       the same moment, and fails honestly — key stays dirty,
+       retried — when the read fails, rather than overwriting
+       a day's driving blind. */
+    if (isTelemetryKey(key) && val && typeof val === 'object' &&
+        val.days && typeof val.days === 'object') {
+      var tlPushFail = function (e) {
+        var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+        try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
+        try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
+        return done(false);
+      };
+      var tlSave = function (v) {
+        return FB.saveDoc(KV_COLLECTION, docId, { v: v }).then(function (res) {
+          if (res === null) {
+            try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
+            return done(false);
+          }
+          return done(true);
+        }).catch(tlPushFail);
+      };
+      try {
+        return loadCloudValue(key, docId).then(function (cloudVal) {
+          if (!cloudVal || typeof cloudVal !== 'object' ||
+              !cloudVal.days || typeof cloudVal.days !== 'object') return tlSave(val);
+          var mg = mergeTelemetryDays(key, val, cloudVal);
+          if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
+          return tlSave(mg);
+        }).catch(tlPushFail);
+      } catch (e) { return Promise.resolve(tlPushFail(e)); }
     }
     try {
       return FB.saveDoc(KV_COLLECTION, docId, { v: val }).then(function (res) {
@@ -1271,6 +1355,15 @@
     return Promise.race([loadP, timeoutP]).then(function (docs) {
       if (timedOut) return { applied: 0 }; // stale late response; ignore
       var applied = 0, cloudKeys = {}, now = Date.now();
+      /* v288 (REWORK2): snapshot the watched keys' local values
+         before the merge pass — the after-pull diff below is
+         what tells the shell a heal actually landed. */
+      var teleBefore = {};
+      try {
+        ['livemiles', 'geoloads', 'tracker'].forEach(function (wk) {
+          teleBefore[wk] = lsGetRaw(wk);
+        });
+      } catch (e) {}
       docs.forEach(function (d) {
         var key = d.mt || d.id;
         if (!isSyncable(key)) return;
@@ -1563,6 +1656,16 @@
           }
         } catch (e2) {}
       }
+      /* v288 (REWORK2): the pull landed — if it changed a
+         watched key, tell the subscribers NOW (engine adoption
+         + native facts refresh ride this; see S.onAfterPull). */
+      try {
+        var teleChanged = [];
+        ['livemiles', 'geoloads', 'tracker'].forEach(function (wk) {
+          if (teleBefore[wk] !== lsGetRaw(wk)) teleChanged.push(wk);
+        });
+        fireAfterPull(teleChanged);
+      } catch (e) {}
       drainPullWaiters(true);
       return { applied: applied };
     }).catch(function (e) {

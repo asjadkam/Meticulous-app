@@ -1772,7 +1772,40 @@
     if (!S || !S.drive || S.parked) return false;
     var scr = docEl('nv_drive_screen');
     var dock = docEl('pipDock');
-    if (!scr || !dock) return false;
+    if (!scr || !dock) {
+      /* v288 (REWORK2 — BUBBLE-FLOAT-ABSENT, owner Oct 30 14:48
+         MDT: on v62 the float "is not showing up at all"): this
+         gate used to return false with NO float anywhere — the
+         caller (back()) then fell through to the PiP request or
+         the face staircase, and the staircase could demote the
+         live drive to places and re-render over it: Back
+         consumed, navigation gone, nothing floated. The screen
+         node can genuinely be missing (render itself anticipates
+         a parked screen "gone — page rebuilt under it"). When a
+         session is live, the TRACKER FACE is the float and it
+         needs no dock and no drive screen: mark the park, raise
+         the face, and let the caller's home landing proceed —
+         a float appears on this Back press, every time. The
+         drive state itself stays parked in memory (keepAlive
+         holds); the next module open rebuilds its screen. */
+      try {
+        if (driveSessionLive()) {
+          S.parked = true;
+          S._parkedMini = false;
+          if (window.App && App.setDriveDocked) App.setDriveDocked(true);
+          /* land home like the normal session park does — the
+             shell's teardown choke point re-enters parkForHome,
+             sees the park already made (keepAlive holds) and
+             skips the teardown; the landing completes once. */
+          if (window.App && App.showDashboard) App.showDashboard();
+          setTimeout(function () {
+            try { if (S && S.parked && !S._parkedMini && window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
+          }, 400);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
     S.parked = true;
     if (driveSessionLive()) {
       S._parkedMini = false;
@@ -2032,6 +2065,16 @@
           if (pipSent) return true;
         }
         if (S && S.drive && typeof S.backFn === 'function' && S.backFn()) return true;
+        /* v288 (REWORK2 — BUBBLE-FLOAT-ABSENT): a LIVE drive is
+           never demoted to places by a failed park. This fall-
+           through used to re-render the places face over the
+           drive (render's teardown kills it) — Back consumed,
+           navigation destroyed, no float: one of the silent
+           exits behind the owner's "the float never appears".
+           With the park impossible and PiP declined, Back is
+           consumed and the driver STAYS on the drive — doing
+           nothing visible beats silently killing navigation. */
+        if (S && S.drive) return true;
         nvFace = 'places';
         if (nvBody) api.render(nvBody);
         return true;

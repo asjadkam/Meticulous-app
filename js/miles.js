@@ -843,6 +843,35 @@
     snap.date = dayDate;
     snap.updatedAt = now;
     var d = loadAll();
+    /* v288 (REWORK2 — REINSTALL-LIVE-KM, owner verdict Oct 30
+       14:46 MDT: v62 "ruined the miles" AGAIN): the write is
+       MONOTONIC. A stored record for this day that is LARGER
+       than the running engine's snapshot — the cloud pull just
+       healed the store (mergeTelemetryDays, larger day wins)
+       while the engine, begun young on a fresh install, has not
+       adopted it yet — must never be overwritten by the smaller
+       snapshot: the young engine folds the stored record in
+       first (the reseed fold: begin from the stored snapshot,
+       merge the live crumbs back through coverage dedupe) and
+       persists the union. If the fold itself fails, the larger
+       stored record is kept untouched rather than stomped. A
+       day's total can no longer move backward through persist,
+       whatever order boot / sign-in / pull landed in. */
+    var existingRec = d.days[dayKey];
+    if (existingRec && typeof existingRec.totalM === 'number' &&
+        typeof snap.totalM === 'number' && existingRec.totalM > snap.totalM) {
+      try {
+        var liveCrumbs = snap.crumbs || [];
+        engine.begin(dayKey, existingRec);
+        if (liveCrumbs.length) { try { engine.mergeCrumbs(liveCrumbs); } catch (e) {} }
+        snap = engine.snapshot();
+        if (!snap) return;
+        snap.date = dayDate;
+        snap.updatedAt = now;
+      } catch (e) {
+        snap = existingRec;
+      }
+    }
     d.days[dayKey] = snap;
     // prune old session records
     Object.keys(d.days).forEach(function (k) {
@@ -1233,6 +1262,19 @@
       persist(true);
       paint();
       return true;
+    },
+
+    /* v288 (REWORK2): the after-pull adoption seam — the name
+       the shell's CloudSync.onAfterPull handler calls the moment
+       a pull changes the livemiles day map. Same fold as
+       reseedFromStore (kept as the single implementation): the
+       v287 ship already reseeded from two auth-gated call sites,
+       yet the owner's v62 verdict (Oct 30, 14:46 MDT) proved the
+       day could still die in his hands — the adoption now rides
+       the pull itself, every pull, with no auth bookkeeping
+       between the healed store and the running engine. */
+    adoptFromStore: function () {
+      return LiveMiles.reseedFromStore();
     },
 
     /* v63 (native v34): fold native-service breadcrumbs for the LIVE

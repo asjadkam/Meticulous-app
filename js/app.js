@@ -560,7 +560,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 44; // <- bump on every native (APK) release
+      var APK_VERSION = 45; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -679,6 +679,44 @@
       return;
     }
     _lockedHeroPainted = false;
+    /* v288 (REWORK2 — REINSTALL-LIVE-KM + WIDGET-LOADS, owner
+       verdict Oct 30, 14:46 MDT: v62 "ruined the miles and the
+       load on the widget"): the after-pull heal, registered ONCE.
+       The v222/v287 reseeds rode THIS function's reattach and the
+       first-pull callback — auth-gated paths a real reinstall
+       sequence can step around — and nothing re-pushed the
+       session facts to the native record after a pull healed the
+       web side, so the widget kept repainting its pre-pull record
+       (loads 0, miles ~0.1 km) while the dashboard healed. The
+       registration below rides the pull itself (CloudSync fires
+       it whenever a pull changes livemiles / geoloads / the
+       tracker): adopt the healed store into the running engines,
+       then re-push the facts — the forced heal arbitrates against
+       the native record exactly like the first-pull heal below,
+       and an applied:false answer runs the same adoption. */
+    try {
+      if (!App._afterPullWired && window.CloudSync && CloudSync.onAfterPull) {
+        App._afterPullWired = true;
+        CloudSync.onAfterPull(function (keys) {
+          try {
+            if (keys.indexOf('livemiles') >= 0 && window.LiveMiles && LiveMiles.adoptFromStore) {
+              try { LiveMiles.adoptFromStore(); } catch (e) {}
+            }
+            if (keys.indexOf('geoloads') >= 0 && window.GeoLoads && GeoLoads.reseedFromStore) {
+              try { GeoLoads.reseedFromStore(); } catch (e) {}
+            }
+            if ((keys.indexOf('livemiles') >= 0 || keys.indexOf('geoloads') >= 0 ||
+                 keys.indexOf('tracker') >= 0) && sessionActive() &&
+                window.ShiftTrack && ShiftTrack.sessionSync) {
+              ShiftTrack.sessionSync(sessionFacts(true)).then(function (r) {
+                if (r && typeof r.rev === 'number') App._sessRev = r.rev;
+                if (r && r.applied === false) { try { adoptSessionRecord(r); } catch (e) {} }
+              }).catch(function () {});
+            }
+          } catch (e) {}
+        });
+      }
+    } catch (e) {}
     /* v220 (LIVE-MILES-REINSTALL-RESET): a sign-in can RESTORE a
        running tracker the boot path never saw (fresh install: the
        local store was empty at init, the session arrived with the
