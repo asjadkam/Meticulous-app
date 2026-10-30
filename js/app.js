@@ -560,7 +560,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 43; // <- bump on every native (APK) release
+      var APK_VERSION = 44; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -712,6 +712,9 @@
            tracker's own fact — raise it for the restored session
            (the native side's own arm died with the old install). */
         try { if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true); } catch (e2) {}
+        /* v287 (REINSTALL-LIVE-KM): re-arm the native recording
+           side for the restored session too (service + drain). */
+        try { if (window.ShiftTrack && ShiftTrack.sessionRestored) ShiftTrack.sessionRestored('s' + trackerSessionKeyMs()); } catch (eR) {}
         try {
           if (window.CloudSync && CloudSync.whenFirstPullDone) {
             CloudSync.whenFirstPullDone(12000).then(function () {
@@ -721,6 +724,10 @@
                   if (window.LiveMiles && LiveMiles.reseedFromStore) LiveMiles.reseedFromStore();
                   if (window.GeoLoads && GeoLoads.reseedFromStore) GeoLoads.reseedFromStore();
                   if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true);
+                  /* v287 (REINSTALL-LIVE-KM): the first pull is what
+                     lands the session on a fresh install — re-arm
+                     the native recording side for it here too. */
+                  if (window.ShiftTrack && ShiftTrack.sessionRestored) ShiftTrack.sessionRestored('s' + trackerSessionKeyMs());
                 }
               } catch (e3) {}
             }, function () {});
@@ -1271,6 +1278,18 @@
   function teardownModule() {
     try {
       var prev = App._modKey && Meticulous.modules[App._modKey];
+      /* v287 (PIP-HOME, owner Oct 30 13:31 MDT — v61 failed in his
+         hands): BEFORE the keepAlive question, a module holding a
+         live UNPARKED view gets the chance to park it (the
+         Navigator's parkForHome). Every home-bound shell path
+         crosses this choke point — dashboard opens, module
+         switches, the system-Back fallthrough — and before v287
+         any path that arrived here with a drive live and unparked
+         TORE IT DOWN below: Back landed on a plain dashboard,
+         navigation dead, no float anywhere. Parking first makes
+         the float appear on every home-bound path, not only the
+         one route the module's own back() consumes. */
+      if (prev && prev.parkForHome) { try { prev.parkForHome(); } catch (e) {} }
       /* v222 (PIP-LANDS-HOME-OCT22): a module holding a LIVE
          parked view (the Navigator's drive, floated over the
          dashboard in its in-app screen-in-screen) is NOT torn
@@ -1723,6 +1742,23 @@
   function sessionFacts(force) {
     var t = App.tracker || {};
     var idle = !t.status || t.status === 'idle';
+    /* v287 (WIDGET-FREEZE): the session's live miles ride the
+       record too — read from LiveMiles' PERSISTED record for this
+       session's key (the same total the dashboard hero shows), so
+       the native widget/bubble can compose their miles line from
+       the record itself instead of depending on this page being
+       awake to push a widget_state string. -1 = no fix-backed
+       total yet (the faces fall back, exactly like recordKmFor's
+       null). */
+    var milesM = -1;
+    if (!idle) {
+      try {
+        if (window.LiveMiles && LiveMiles.recordKmFor) {
+          var rkm = LiveMiles.recordKmFor('s' + trackerSessionKeyMs());
+          if (typeof rkm === 'number' && isFinite(rkm) && rkm >= 0) milesM = Math.round(rkm * 1000);
+        }
+      } catch (e) {}
+    }
     return {
       status: idle ? 'idle' : t.status,
       elapsed: trackerElapsedSec(),
@@ -1730,6 +1766,7 @@
       loads: loadsNumber(),
       loadsManual: (t.accum && t.accum.manualLoads) || 0,
       loadsArmed: loadsArmedNow(),
+      milesM: milesM,
       sessionKey: idle ? '' : ('s' + trackerSessionKeyMs()),
       baseRev: (typeof App._sessRev === 'number') ? App._sessRev : -1,
       force: !!force
@@ -6160,6 +6197,11 @@
          shell's own arm is a start() side effect that a restored
          session may never re-run. */
       try { if (window.ShiftTrack && ShiftTrack.setSession) ShiftTrack.setSession(true); } catch (e) {}
+      /* v287 (REINSTALL-LIVE-KM): the same restored session must
+         also re-arm the native RECORDING side — service + crumb
+         drain — or the rest of the shift's background miles are
+         never recorded (the v61 reinstall harm). */
+      try { if (window.ShiftTrack && ShiftTrack.sessionRestored) ShiftTrack.sessionRestored('s' + trackerSessionKeyMs()); } catch (eR) {}
     }
     // v63: reconcile with the native background tracker — it may hold
     // breadcrumbs (or a whole orphaned session) from while we were dead.

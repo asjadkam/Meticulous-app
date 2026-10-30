@@ -1023,13 +1023,30 @@
       // live key and the fragment keys retired, so no later relaunch
       // can fold the same miles twice.
       var adoptedFrom = [];
+      var foldFrags = [];
+      var savedFromFrag = false;
+      var frags = adoptableFragments(dayDate, keyMs, key);
       if (!saved) {
-        var frags = adoptableFragments(dayDate, keyMs, key);
         if (frags.length) {
           frags.sort(function (x, y) { return (y.totalM - x.totalM) || (y.lastT - x.lastT); });
           saved = frags[0].rec;
+          savedFromFrag = true;
           adoptedFrom = frags;
+          foldFrags = frags.slice(1);
         }
+      } else if (frags.length) {
+        /* v287 (REINSTALL-LIVE-KM / D3, owner Oct 30 13:31 MDT):
+           the fold used to run ONLY when no saved record existed.
+           On a reinstall the cloud-restored session record DOES
+           exist — so miles the fresh boot counted into the
+           day-watch fragment before sign-in (App.armDayMiles arms
+           it at every boot) were orphaned for the whole shift.
+           The fragments now fold into the restored session too:
+           mergeCrumbs' timestamp dedupe + segs coverage keep the
+           fold exactly-once, and only fragments whose crumbs
+           actually folded are retired. */
+        adoptedFrom = frags;
+        foldFrags = frags;
       }
       if (saved && saved.date) dayDate = saved.date;
       // A record under this key can only belong to THIS session (the key
@@ -1039,15 +1056,22 @@
       watching = true;
       paint();
       if (adoptedFrom.length) {
-        for (var fi = 1; fi < adoptedFrom.length; fi++) {
-          var frec = adoptedFrom[fi].rec;
+        var foldedKeys = [];
+        /* the no-saved path: frags[0] became the record itself —
+           its key retires with the fold like the original code. */
+        if (savedFromFrag) foldedKeys.push(adoptedFrom[0].key);
+        for (var fi = 0; fi < foldFrags.length; fi++) {
+          var frec = foldFrags[fi].rec;
           if (frec.crumbs && frec.crumbs.length) {
             try { engine.mergeCrumbs(frec.crumbs); } catch (e) {}
+            foldedKeys.push(foldFrags[fi].key);
           }
         }
-        persist(true);
-        dropRecords(adoptedFrom.map(function (f) { return f.key; }));
-        paint();
+        if (foldedKeys.length) {
+          persist(true);
+          dropRecords(foldedKeys);
+          paint();
+        }
       }
       g.start(onFix, onGeoError).then(function (ok) {
         if (!ok) { watching = false; broken = true; paint(); }

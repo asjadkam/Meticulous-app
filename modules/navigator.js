@@ -1782,6 +1782,16 @@
       dock.appendChild(scr);
       try { if (window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
       try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
+      /* v287 (PIP-HOME): re-assert the float once the dashboard
+         landing settles — if anything in the landing repaint hid
+         the tracker face, raise it again (setDriveDocked is
+         idempotent; a restore in the meantime clears the park and
+         this no-ops). */
+      try {
+        setTimeout(function () {
+          try { if (S && S.parked && !S._parkedMini && window.App && App.setDriveDocked) App.setDriveDocked(true); } catch (e) {}
+        }, 400);
+      } catch (e) {}
       return true;
     }
     /* v286: no session — float the drive itself as the mini map. */
@@ -1976,8 +1986,33 @@
        bubble face stands down even if a session starts mid-park
        (one float at a time; the face returns at the tap-back). */
     parkedMini: function () { return !!(S && S.drive && S.parked && S._parkedMini); },
+    /* v287 (PIP-HOME): the shell's home-bound choke point
+       (teardownModule) asks the module to park a live drive
+       BEFORE any teardown question — the same park Back performs,
+       so the float exists whichever shell path took the driver
+       home (Back fallthrough, a dashboard open, a module switch),
+       never a torn-down drive on a plain dashboard. */
+    parkForHome: function () {
+      if (S && S.drive && !S.parked) { try { return parkDrive(); } catch (e) {} }
+      return false;
+    },
 
     back: function () {
+      /* v287 (PIP-HOME, owner Oct 30 13:31 MDT — v61 failed in his
+         hands): a LIVE DRIVE parks on Back, whatever face flag the
+         module happens to carry. The park used to sit behind the
+         nvFace === 'drive' gate alone; any state that left the
+         flag elsewhere with a drive live fell through to the
+         shell's home path, which tore the module down — Back
+         landed on a plain dashboard, navigation dead, no float.
+         The drive check now stands first; the v222 staircase
+         below is unchanged for the no-drive states. */
+      if (S && S.drive) {
+        try { if (parkDrive()) return true; } catch (e) {}
+        var pipSent0 = false;
+        try { pipSent0 = !!(window.ShiftTrack && ShiftTrack.enterPip && ShiftTrack.enterPip()); } catch (e) {}
+        if (pipSent0) return true;
+      }
       if (nvFace === 'drive') {
         /* v222 (PIP-LANDS-HOME-OCT22, owner spec — supersedes the
            v220 system-PiP behaviour): while a DRIVE is live, Back

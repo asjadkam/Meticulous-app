@@ -358,6 +358,12 @@
         if (s2 && s2.backgroundLocation) {
           bannerDone[currentKey] = true;
           paintBanner();
+          /* v287 (REINSTALL-LIVE-KM / D2): the grant just landed —
+             a reinstall had reset it and the geo error latched the
+             miles watcher broken (the "Miles (live)" line hides).
+             Re-poke the watcher so counting resumes at once
+             instead of staying latched off for the shift. */
+          try { if (window.LiveMiles && LiveMiles.onVisible) LiveMiles.onVisible(); } catch (e) {}
         } else {
           // The system prompt is exhausted (Android routes further
           // changes to the settings page): offer that instead.
@@ -417,6 +423,39 @@
         return refreshStatus();
       }).then(function () {
         paintBanner();
+        startDrainLoop();
+        drain(key);
+      }).catch(function () {});
+    },
+
+    /* v287 (REINSTALL-LIVE-KM, owner Oct 30 13:31 MDT: reinstalling
+       v61 mid-shift "messed up my Live km's" — the counter broke on
+       the running day): the start flows call sessionStarted, but a
+       session RESTORED into a fresh page life — an app
+       reinstall/upgrade mid-shift, a WebView relaunch, the OTA
+       restart — never passes a start flow, and the native side of
+       a fresh install holds nothing at all (no record, no
+       service). Before v287 nothing re-armed it: the foreground
+       service never restarted for the restored session and the
+       45 s crumb drain never ran, so the rest of the shift's
+       background miles went unrecorded. The restore paths
+       (App.onAuth's reattach, its first-pull callback, init's own
+       restore) call this with the restored session's key: the same
+       native start + drain as a fresh start. Already recording
+       this very key → just re-kick the drain. */
+    sessionRestored: function (key) {
+      var p = plugin();
+      if (!p || !key) return;
+      if (currentKey === key && lastStatus && lastStatus.recording) {
+        startDrainLoop();
+        drain(key);
+        return;
+      }
+      currentKey = key;
+      ShiftTrack.setSession(true); // v222: the session arm is the web tracker's own fact
+      p.start({ sessionKey: key }).then(function () {
+        return refreshStatus();
+      }).then(function () {
         startDrainLoop();
         drain(key);
       }).catch(function () {});
@@ -528,6 +567,15 @@
       var p = plugin();
       if (!p) return Promise.resolve(null);
       return p.requestBackground().then(function () { return refreshStatus(); })
+        .then(function (s) {
+          /* v287 (REINSTALL-LIVE-KM / D2): same grant-landed poke
+             as the banner's Allow — the miles watcher may be
+             latched broken from the pre-grant geo errors. */
+          if (s && s.backgroundLocation) {
+            try { if (window.LiveMiles && LiveMiles.onVisible) LiveMiles.onVisible(); } catch (e) {}
+          }
+          return s;
+        })
         .catch(function () { return lastStatus; });
     },
     openBatterySettings: function () {
