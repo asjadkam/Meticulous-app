@@ -15,9 +15,12 @@
     ['dispatch', 'Dispatch list'], ['nav', 'Navigation list'], ['expense', 'Expense list'],
     ['incident', 'Incident list'], ['pti', 'PTI (inspections)'], ['start', 'Start Time'], ['end', 'End Time'],
     ['odo', 'Odometer'], ['loads', 'Loads hauled'],
-    ['geoloads', 'GPS-counted loads'],
     ['earned', 'Total Earned Income']
   ];
+  /* v291 (MANIFEST-LOADS-SUMMARY): the 'geoloads' section is
+     GONE — the GPS-count block it toggled no longer exists on
+     the manifest at all (see docLines). A stored mft_sections
+     set still carrying the key is simply never read again. */
 
   /* v87: the "why GPS load counting could not run" notes are GONE
      from the manifest (owner, Oct 15: "I told you yesterday that
@@ -167,7 +170,12 @@
      Inside the engine's own tolerance (max(2 km, 3%)) the
      day is confirmed silently — no block at all. The words
      "an odometer reading may be wrong" never print on a
-     manifest. Pure — the suite drives it. */
+     manifest. Pure — the suite drives it.
+     v291 (MANIFEST-VERBOSE, owner Oct 30 17:28 MDT: "All of
+     this writing can be trimmed down"): the accounting's
+     NUMBERS are exactly as above; its LINES are now short
+     factual lines — the post-close portion is one line, the
+     undercount remainder is one line, no essay sentences. */
   function dayGaps(crumbs) {
     var cs = (crumbs || []).filter(function (cr) { return cr && isFinite(cr.a) && isFinite(cr.o) && +cr.t > 0; })
       .slice().sort(function (x, y) { return x.t - y.t; });
@@ -192,7 +200,7 @@
     var lines = ['Live tracking counted ' + r1(inp.liveKm).toFixed(1) + ' km · odometer shows ' +
       r1(odoKm) + ' km · difference ' + (diff < 0 ? '-' : '+') + Math.abs(diff).toFixed(1) + ' km.'];
     if (diff > 0) {
-      lines.push('Live tracking counted more ground than the odometer shows — GPS drift while the truck sits still counts in the live miles. The odometer stays the day\'s record.');
+      lines.push('GPS drift at a standstill counts in the live miles — the odometer stays the record.');
       return { lines: lines, diff: diff, gapKm: 0, boundsBefore: 0, boundsAfter: 0, residual: 0 };
     }
     var missing = -diff;
@@ -204,16 +212,16 @@
     });
     var boundsBefore = (inp.driveStartOdo > 0) ? Math.max(0, r1(inp.driveStartOdo - inp.odoStart)) : 0;
     var boundsAfter = (inp.driveEndOdo > 0) ? Math.max(0, r1(inp.odoEnd - inp.driveEndOdo)) : 0;
-    if (boundsBefore > 0) lines.push('≈' + boundsBefore.toFixed(1) + ' km of the odometer total was driven before the tracked shift started — outside the tracked hours, so it is not in the live miles.');
-    if (boundsAfter > 0) lines.push('≈' + boundsAfter.toFixed(1) + ' km of the odometer total was driven after the tracked shift ended — outside the tracked hours, so it is not in the live miles.');
+    if (boundsBefore > 0) lines.push('≈' + boundsBefore.toFixed(1) + ' km driven before the tracked shift started — not in the live miles.');
+    if (boundsAfter > 0) lines.push('≈' + boundsAfter.toFixed(1) + ' km driven after the tracked shift ended — not in the live miles.');
     var explained = r1(gapKm + boundsBefore + boundsAfter);
     var residual = r1(missing - explained);
     if (residual <= tol) {
-      lines.push('The untracked driving and the driving outside the tracked hours explain the difference.');
+      lines.push('Untracked and outside-hours driving explains the difference.');
     } else if (explained > 0) {
-      lines.push('The rest (≈' + residual.toFixed(1) + ' km) is ground the GPS undercounts — short hops, yard crawls and stopped time still turn the odometer, but the trail only counts the ground it saw.');
+      lines.push('Rest ≈' + residual.toFixed(1) + ' km — GPS undercount (short hops, yard crawls).');
     } else {
-      lines.push('The difference (≈' + residual.toFixed(1) + ' km) is ground the GPS undercounts — short hops, yard crawls and stopped time still turn the odometer, but the trail only counts the ground it saw.');
+      lines.push('Difference ≈' + residual.toFixed(1) + ' km — GPS undercount (short hops, yard crawls).');
     }
     return { lines: lines, diff: diff, gapKm: gapKm, boundsBefore: boundsBefore, boundsAfter: boundsAfter, residual: Math.max(0, residual) };
   }
@@ -460,7 +468,10 @@
        last end reading of the day win; live miles sum across sessions. */
     /* v50: GPS/geofence load counting for the day (js/geoloads.js) —
        count + dump events + the site pair used, or the reason counting
-       could not run. Shown separately; ticket loads stay the pay record. */
+       could not run. v291: the record itself no longer prints as a
+       block on the manifest — it feeds the ONE loads line (through
+       the ladder, and as the peg count of record on a peg day) and
+       the day's place names. */
     var geoDay = ((G('geoloads', { days: {} }).days) || {})[d] || null;
     /* v283 (MANIFEST-PEG-PLACES): the day's pegged loading /
        dumping places, by name — see pegPlaceLabels. Null on
@@ -838,6 +849,40 @@
         if (wLoads > 0) { loads = wLoads; loadsSrc = 'weight'; }
       }
     }
+    /* v291 (MANIFEST-LOADS-SUMMARY, owner Oct 30, 2026 17:28
+       MDT): on a PEG day the manifest's loads figure IS the
+       peg count — the count of record the dashboard showed
+       all day ("Loads today: 17 counted from your pegs") =
+       the geoloads record's count + the driver's correction,
+       the same figure GeoLoads.forDate()/today() carry. His
+       Oct 30 manifest instead printed the ladder's 20 (a
+       ticket rung) over a separate GPS block's raw 19, while
+       his day was 17. Presentation only: the counting
+       engines and the shared dayLoads ladder (invoice /
+       Revenue) are untouched — this collect feeds the
+       manifest alone (and the documents Connect ships from
+       it, which are the driver's own manifest by law). */
+    if (geoDay && geoDay.countSource === 'pegs') {
+      var pegCount = Math.max(0, (parseInt(geoDay.count, 10) || 0) + (parseInt(geoDay.corr, 10) || 0));
+      if (pegCount > 0) { loads = pegCount; loadsSrc = 'pegs'; }
+    }
+    /* v291: the ONE site name the loads line may carry — the
+       day's work place BY NAME, never coordinates, never a
+       generic placeholder: a peg day names its dump peg's
+       place (its load peg's when the dump peg sits somewhere
+       unnamed); any other counted day names the counted
+       pair's dump place when the record carries a real name
+       for it. No name on record → the line carries the
+       count alone; nothing is invented. */
+    var loadsSite = '';
+    if (geoDay && geoDay.pegs) {
+      if (geoDay.pegs.dump) loadsSite = placeNameFor(geoDay.pegs.dump.lat, geoDay.pegs.dump.lng) || '';
+      if (!loadsSite && geoDay.pegs.load) loadsSite = placeNameFor(geoDay.pegs.load.lat, geoDay.pegs.load.lng) || '';
+    }
+    if (!loadsSite && geoDay && geoDay.sites && geoDay.sites.dump) {
+      var dspLabel = geoDay.sites.dump.label || '';
+      if (dspLabel && ['Load site', 'Dump site', 'Load peg', 'Dump peg', 'Pickup peg'].indexOf(dspLabel) === -1) loadsSite = dspLabel;
+    }
     /* v184 (M-route): the day's actual travel from the session
        GPS trail (livemiles crumbs for this date — navigation is
        NOT the gate; the trail exists from driving itself). Stop
@@ -1015,7 +1060,7 @@
     if (!ptiPost) missing.push('post-trip PTI');
     if (!gpsTrail) missing.push('GPS trail');
     var complete = missing.length === 0;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, milesNote: milesNote, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, milesNote: milesNote, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
   }
 
   /* v247: one filed PTI report as the manifest prints it —
@@ -1189,7 +1234,7 @@
        themselves — words, order, toggles, the v127 live/closed
        label — are unchanged. */
     var anyFig = t.start || t.end || t.odo || t.earned ||
-      (t.loads && c.loads > 0) || (t.geoloads && c.geoDay && c.geoDay.sites) ||
+      (t.loads && c.loads > 0) ||
       !!c.pegPlaces; /* v283: a peg day's places open the section on their own */
     if (anyFig) L.push({ k: 'h', a: 'Day summary' });
     if (t.start) L.push({ k: 'kv', a: 'Start Time', b: c.startT });
@@ -1221,41 +1266,22 @@
         L.push({ k: 'note', a: ln });
       });
     }
-    /* v82 (item 3b): the driver's own confirmed load count for the
-       day (see collect) — printed as plain "Loads"; the GPS line
-       below stays a separate cross-check. */
+    /* v291 (MANIFEST-LOADS-SUMMARY, owner Oct 30, 2026 17:28
+       MDT: "Manifest doesn't have to give details of every
+       single load...... It can say just 17 loads on site!"):
+       the day's loads print as ONE line — the count of
+       record (collect: the peg count on a peg day, else the
+       shared ladder's figure) plus the site by name when
+       the day has one. The v50 GPS-count block that stood
+       here — its own competing figure, its explainer, the
+       learned/remembered/alt-dump notes and a row for every
+       load — is GONE from the manifest entirely, and so are
+       the v82/v86 source annotations: two counts on one
+       document was the defect, and the one line now carries
+       the count itself. The Loaded at / Dumped at lines
+       below still name the day's places. */
     if (t.loads && c.loads > 0) {
-      L.push({ k: 'kv', a: 'Loads', b: String(c.loads) });
-      /* v86: the note CARRIES the count — on Oct 15 a live drive
-         read this annotation as the loads content and reported the
-         number missing; the count now appears in the note itself
-         as well as on the Loads line, so the two can never be seen
-         apart. */
-      if (c.loadsSrc === 'taps') L.push({ k: 'note', a: 'Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
-      if (c.loadsSrc === 'recorded') L.push({ k: 'note', a: 'Loads recorded on the day\'s dispatch — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
-      if (c.loadsSrc === 'sites') L.push({ k: 'note', a: 'Counted from the truck\'s pit and dump-site visits — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') });
-    }
-    if (t.geoloads && c.geoDay && c.geoDay.sites) {
-      L.push({ k: 'kv', a: 'Loads counted by GPS', b: String(c.geoDay.count || 0) });
-      L.push({ k: 'note', a: 'Counted between the load site (' +
-        ((c.geoDay.sites.load && c.geoDay.sites.load.label) || 'load site') + ') and the dump site (' +
-        ((c.geoDay.sites.dump && c.geoDay.sites.dump.label) || 'dump site') +
-        ') while the tracker was running. Ticket loads above stay the record for pay.' });
-      if (c.geoDay.learnedDump) {
-        L.push({ k: 'note', a: 'The dump site was not on the dispatch — the app learned it from today’s driving (' +
-          Number(c.geoDay.learnedDump.lat).toFixed(5) + ', ' + Number(c.geoDay.learnedDump.lng).toFixed(5) +
-          ') and will remember it for this load site. Learned counts are a cross-check only; ticket loads stay the record for pay.' });
-      } else if (c.geoDay.sites.dump && c.geoDay.sites.dump.src === 'remembered') {
-        L.push({ k: 'note', a: 'The dump site was remembered from an earlier day’s driving to this load site — the app learned it from the truck’s trips; nobody had to type it in.' });
-      }
-      if (c.geoDay.altDump) {
-        L.push({ k: 'note', a: 'Another place also looked like a dump stop this day (' +
-          Number(c.geoDay.altDump.lat).toFixed(5) + ', ' + Number(c.geoDay.altDump.lng).toFixed(5) +
-          '). The dump site already on record was kept.' });
-      }
-      (c.geoDay.events || []).forEach(function (ev, i) {
-        L.push({ k: 'kv', a: 'Load ' + (i + 1) + ' — dumped', b: fmtStamp(ev.t) });
-      });
+      L.push({ k: 'kv', a: 'Loads', b: String(c.loads) + (c.loadsSite ? ' on site — ' + c.loadsSite : '') });
     }
     /* v283 (MANIFEST-PEG-PLACES): where the day loaded and
        where it dumped, from the driver's own pegs (v282) — the
@@ -1501,7 +1527,7 @@
             h += '<div class="kv"><span>GPS distance</span><b>' + c.routeInfo.km.toFixed(1) + ' km</b></div>';
           }
         }
-        h += '<div class="note" style="margin:2px 0 6px">From the truck\'s own GPS trail today — it is recorded by driving, whether or not you navigated.</div>';
+        h += '<div class="note" style="margin:2px 0 6px">From the truck\'s GPS trail today.</div>';
       }
       if (t.expense && (c.fills.length || c.expenses.length)) {
         h += '<h3>Fuel & expenses</h3>' + c.fills.map(function (x) {
@@ -1554,45 +1580,13 @@
           c.milesNote.map(function (ln) { return '<div style="margin:3px 0">' + esc(ln) + '</div>'; }).join('') +
           '</div></details>';
       }
-      /* v82 (item 3b): the driver's own confirmed load count (see
-         collect) — the plain Loads line; GPS below stays separate. */
+      /* v291 (MANIFEST-LOADS-SUMMARY): the screen twin of the
+         printed ONE loads line (see docLines) — the count of
+         record plus the site by name. The GPS-count block and
+         the source annotations that stood here are gone with
+         their printed twins. */
       if (t.loads && c.loads > 0) {
-        h += '<div class="kv"><span>🚛 Loads</span><b>' + c.loads + '</b></div>';
-        if (c.loadsSrc === 'taps') h += '<div class="note" style="margin:2px 0 6px">Counted with the +1 load button while working — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
-        if (c.loadsSrc === 'recorded') h += '<div class="note" style="margin:2px 0 6px">Loads recorded on the day\'s dispatch — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
-        if (c.loadsSrc === 'sites') h += '<div class="note" style="margin:2px 0 6px">Counted from the truck\'s pit and dump-site visits — ' + c.loads + (c.loads === 1 ? ' load.' : ' loads.') + '</div>';
-      }
-      /* v50: GPS-counted loads — counted from the truck's GPS cycling
-         between the active dispatch's load-site and dump-site pins
-         while the tracker ran. Deliberately separate from the ticket
-         loads in the dispatch entries above: tickets stay the record
-         for pay; this is the location proof alongside them. */
-      if (t.geoloads && c.geoDay && c.geoDay.sites) {
-        h += '<div class="kv"><span>🚛 Loads counted by GPS</span><b>' + (c.geoDay.count || 0) + '</b></div>';
-        h += '<div class="note" style="margin:2px 0 6px">Counted between the load site (' +
-          esc((c.geoDay.sites.load && c.geoDay.sites.load.label) || 'load site') + ') and the dump site (' +
-          esc((c.geoDay.sites.dump && c.geoDay.sites.dump.label) || 'dump site') +
-          ') while the tracker was running. Ticket loads above stay the record for pay.</div>';
-        /* v68: honesty about WHERE the dump site came from — a site
-           the app learned or remembered from driving is a cross-check
-           aid, never as certain as a pin the office put on the
-           dispatch, and the Manifest says which kind it was. */
-        if (c.geoDay.learnedDump) {
-          h += '<div class="note" style="margin:2px 0 6px">📍 The dump site was not on the dispatch — the app learned it from today’s driving (' +
-            Number(c.geoDay.learnedDump.lat).toFixed(5) + ', ' + Number(c.geoDay.learnedDump.lng).toFixed(5) +
-            ') and will remember it for this load site. Learned counts are a cross-check only; ticket loads stay the record for pay.</div>';
-        } else if (c.geoDay.sites.dump && c.geoDay.sites.dump.src === 'remembered') {
-          h += '<div class="note" style="margin:2px 0 6px">📍 The dump site was remembered from an earlier day’s driving to this load site — the app learned it from the truck’s trips; nobody had to type it in.</div>';
-        }
-        if (c.geoDay.altDump) {
-          h += '<div class="note" style="margin:2px 0 6px">📍 Another place also looked like a dump stop this day (' +
-            Number(c.geoDay.altDump.lat).toFixed(5) + ', ' + Number(c.geoDay.altDump.lng).toFixed(5) +
-            '). The dump site already on record was kept.</div>';
-        }
-        (c.geoDay.events || []).forEach(function (ev, i) {
-          h += '<div class="kv"><span>Load ' + (i + 1) + ' — dumped</span><b>' +
-            esc(fmtStamp(ev.t)) + '</b></div>';
-        });
+        h += '<div class="kv"><span>🚛 Loads</span><b>' + c.loads + (c.loadsSite ? ' on site — ' + esc(c.loadsSite) : '') + '</b></div>';
       }
       /* v283 (MANIFEST-PEG-PLACES): the screen twin of the
          printed Loaded at / Dumped at lines (see docLines) —

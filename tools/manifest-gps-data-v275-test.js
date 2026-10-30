@@ -292,11 +292,11 @@ ok('the one true untracked stretch lists once, with its real times',
   /≈1\.8 km untracked between 4:36 PM and 5:04 PM/.test(doc), doc.split('\n').filter(l => /untracked/.test(l)).join(' ;; '));
 ok('the cross-day phantom gap never prints (no 11:32 AM → 9:02 AM)',
   !/11:32 AM and 9:02 AM/.test(doc));
-ok('the drive home is named as out-of-shift ground — 32 km after the tracked shift',
-  /32\.0 km of the odometer total was driven after the tracked shift ended/.test(doc),
+ok('the drive home is named as out-of-shift ground — 32 km after the tracked shift (v291: one short line)',
+  /32\.0 km driven after the tracked shift ended — not in the live miles/.test(doc),
   doc.split('\n').filter(l => /odometer total/.test(l)).join(' ;; '));
-ok('the closing line reconciles: 1.8 untracked + 32 after-shift + the rest named as GPS undercount (≈8.0 km)',
-  /explain the difference/.test(doc) || /≈8\.0 km\) is ground the GPS undercounts/.test(doc),
+ok('the closing line reconciles: 1.8 untracked + 32 after-shift + the rest named as GPS undercount (≈8.0 km; v291: one short line)',
+  /Rest ≈8\.0 km — GPS undercount/.test(doc),
   doc.split('\n').filter(l => /Live tracking|untracked|odometer total|undercount|explain/.test(l)).join(' ;; '));
 ok('the odometer is NEVER accused on a manifest', !/odometer reading may be wrong/.test(doc) &&
   !/may have been read wrong/.test(doc));

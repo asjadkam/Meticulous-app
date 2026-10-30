@@ -319,7 +319,7 @@ console.log('\n— D2/D5/D4b: 2 taps, plain Complete, manifest (no confirmed tim
   const bodyM = new FakeEl('body');
   w.sb.Meticulous.modules.manifest.render(bodyM);
   has('preview: the Loads line shows the count', bodyM.innerHTML, '🚛 Loads</span><b>2</b>');
-  has('preview: the note CARRIES the count too (v86)', bodyM.innerHTML, 'Counted with the +1 load button while working — 2 loads.');
+  ok('preview: v291 — the v86 source annotation is GONE (the one Loads line carries the count)', bodyM.innerHTML.indexOf('Counted with the +1 load button') < 0);
   /* D4b fallback: no confirmed time anywhere → labelled tracker fallback */
   eq('collect: start falls back to the tracker', c.startSrc, 'tracker');
   has('preview: the tracker fallback is LABELLED', bodyM.innerHTML, 'from the tracker');

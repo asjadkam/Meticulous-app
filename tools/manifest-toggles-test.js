@@ -141,8 +141,8 @@ function makeWorld(mem, writes) {
   const mem = fixtureMem(), writes = [];
   const w = makeWorld(mem, writes);
   w.render();
-  /* v247 (MANIFEST-PTI): the count moved 10 → 11 ON PURPOSE — the PTI section is the owner's named eleventh section, with its own toggle like every other. */
-  eq('a: 11 toggle checkboxes rendered (v87: the two odometer lines merged into one; v247: + PTI)', w.body._toggles.length, 11);
+  /* v247 (MANIFEST-PTI): the count moved 10 → 11 ON PURPOSE — the PTI section is the owner's named eleventh section, with its own toggle like every other. v291 (MANIFEST-LOADS-SUMMARY): back to 10 — the GPS-counted loads section left the manifest entirely, and its toggle went with it. */
+  eq('a: 10 toggle checkboxes rendered (v87: the two odometer lines merged into one; v247: + PTI; v291: − GPS-counted loads)', w.body._toggles.length, 10);
   check('a: all 10 default ON', w.body._toggles.every(function (t) { return t.checked; }));
   check('a: mft_sections created in the store on first read', 'mft_sections' in mem);
   check('a: no legacy mani_toggles created', !('mani_toggles' in mem));
@@ -182,7 +182,7 @@ function makeWorld(mem, writes) {
   w.render();
   check('d: after relaunch expense is still off', w.body.toggle('expense').checked === false);
   check('d: after relaunch nav is still off', w.body.toggle('nav').checked === false);
-  check('d: after relaunch the other 9 are on (v247: + PTI, default on)', w.body._toggles.filter(function (t) { return t.checked; }).length === 9);
+  check('d: after relaunch the other 8 are on (v247: + PTI, default on; v291: no geoloads toggle)', w.body._toggles.filter(function (t) { return t.checked; }).length === 8);
   check('d: preview after relaunch still drops Fuel & expenses', w.body._html.indexOf('Fuel & expenses') < 0);
 }
 
@@ -194,7 +194,7 @@ function makeWorld(mem, writes) {
   w.render();
   check('e: migrated dispatch is off', w.body.toggle('dispatch').checked === false);
   check('e: migrated earned is off', w.body.toggle('earned').checked === false);
-  check('e: migrated geoloads is off', w.body.toggle('geoloads').checked === false);
+  check('e: v291 — the migrated set\'s geoloads key renders NO toggle (its section left the manifest)', w.body.toggle('geoloads') === undefined);
   check('e: untouched sections default ON after migration', w.body.toggle('start').checked === true && w.body.toggle('odo').checked === true);
   eq('e: the most recent set became mft_sections', mem.mft_sections.dispatch, false);
   eq('e: migrated set kept an explicit ON too', mem.mft_sections.expense, true);

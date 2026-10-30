@@ -333,7 +333,7 @@ console.log('— (d) no pegs: no Loaded/Dumped-at lines, the day renders as befo
     JSON.stringify(c.pegPlaces));
   const doc = flat(M._docLines(DAY, c, M._toggles()));
   ok('no Loaded at / Dumped at lines', !/^Loaded at\|/m.test(doc) && !/^Dumped at\|/m.test(doc));
-  ok('the GPS loads block still prints (baseline behaviour)', /Loads counted by GPS/.test(doc));
+  ok('v291: the GPS loads block no longer prints — the one loads line only', !/Loads counted by GPS/.test(doc) && !/^Load \d+ — dumped/m.test(doc));
   const body = makeBody();
   M.render(body);
   ok('screen manifest: no Loaded at / Dumped at either',
