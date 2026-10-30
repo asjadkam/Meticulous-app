@@ -335,6 +335,9 @@
   /* ---------------- view state ---------------- */
   var view = { mode: 'form', id: null };   // 'form' | 'report' | 'dot'
   var formErr = '';
+  /* v290 (PTI-HISTORY-LONG-LIST): the Past inspections card's
+     Show more state — the Fuel Fill-ups v177 pattern. */
+  var histShowAll = false;
   var dotErr = '';
   var lastOdoNote = '';   // the filing moment's odometer-commit note (confirmation line only, never stored on the report)
 
@@ -677,10 +680,33 @@
   }
 
   function historyHtml(reps) {
-    var list = reps.slice().sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+    var sorted = reps.slice().sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+    /* v290 (PTI-HISTORY-LONG-LIST, owner Oct 30, 2026 17:25 MDT —
+       "why the long list of history!"): the card painted the
+       newest 30 filings as one unbroken scroll, a direct hit on
+       the NO-LONG-LISTS baked-in law (Oct 30, 09:11). Two moves,
+       both display-only (the stored book is never rewritten):
+       (1) DEDUPE — a doubled entry renders once: the same id
+       twice, or an exact factual clone (same date, kind, filed
+       second and odometer under a second id — one filing the
+       store came to hold two copies of). Two genuinely distinct
+       inspections never share all four facts, so nothing real
+       can be hidden. (2) CAP — the house pattern (Fuel Fill-ups
+       v177 D6, Revenue Entries): the newest 3 by default, the
+       rest behind a deliberate "Show more — N more inspections"
+       expansion, "Show less" folds it back. */
+    var seenId = {}, seenFact = {}, list = [];
+    sorted.forEach(function (r) {
+      if (r.id) { if (seenId[r.id]) return; seenId[r.id] = 1; }
+      var fk = (r.date || '') + '|' + kindOf(r) + '|' + (r.filedAt || 0) + '|' + (r.odometer || '');
+      if (seenFact[fk]) return;
+      seenFact[fk] = 1;
+      list.push(r);
+    });
     var h = '<div class="card"><h3 style="margin-top:0">📁 Past inspections</h3>';
     if (!list.length) return h + '<div class="empty">No inspections filed yet.</div></div>';
-    h += list.slice(0, 30).map(function (r) {
+    var shown = histShowAll ? list : list.slice(0, 3);
+    h += shown.map(function (r) {
       return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
         '<div class="a">' + esc(r.date) + ' · ' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
         '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
@@ -688,7 +714,10 @@
         (r.defects && r.defects.length ? '<br>' + r.defects.map(function (df) { return esc((df.severity === 'major' ? '⛔ ' : '') + df.item + ': ' + df.note); }).join('<br>') : '') +
         '</div></div>';
     }).join('');
-    if (list.length > 30) h += '<p class="note">Showing the newest 30 of ' + list.length + '.</p>';
+    if (list.length > 3) {
+      h += '<button type="button" class="btn ghost" id="pti_hist_more" style="width:100%;margin-top:8px">' +
+        (histShowAll ? 'Show less' : 'Show more — ' + (list.length - 3) + ' more inspection' + (list.length - 3 === 1 ? '' : 's')) + '</button>';
+    }
     return h + '</div>';
   }
 
@@ -862,6 +891,10 @@
     body.querySelectorAll('[data-pti-open]').forEach(function (row) {
       row.onclick = function () { view = { mode: 'report', id: row.getAttribute('data-pti-open') }; Meticulous.modules.pti.render(body); };
     });
+
+    /* v290 (PTI-HISTORY-LONG-LIST): the history Show more / less */
+    var histMore = body.querySelector('#pti_hist_more');
+    if (histMore) histMore.onclick = function () { histShowAll = !histShowAll; Meticulous.modules.pti.render(body); };
 
     var fileBtn = body.querySelector('#pti_file');
     if (fileBtn) fileBtn.onclick = function () { fileInspection(body); };
