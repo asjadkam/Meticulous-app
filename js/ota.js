@@ -306,7 +306,37 @@
            (sessionStorage guard prevents a repair loop). */
         if (!v || !v.files) { done(); return; }
         verifySet(v.files).then(function (bad) {
-          if (!bad.length) { clearNotice(); done(); return; }
+          if (!bad.length) {
+            clearNotice();
+            /* v300 (SYNC-SUPPORT — OTA-AUTO-STEP): the running
+               copy is whole — but is it CURRENT? This branch
+               never used to ask the host: the newer-version
+               comparison lived only in the cold-start path, so a
+               phone running the OTA copy (his phone, every day)
+               only updated when it happened to cold-start from
+               the bundled copy or when he found the manual Check
+               button. (Oct 31: v297 sat hosted ~90 minutes while
+               his phone kept reopening into v296.) Ask the host;
+               when it is newer, download the delta against THIS
+               copy's manifest and step into it, exactly like the
+               cold-start path. Offline/timeout just runs the
+               current copy. Loop-safe by construction: after the
+               restart the versions match and this branch ends at
+               done(). */
+            fetchTimeout(HOST + '/version.json', 6000, false).then(function (t) {
+              var hosted = null;
+              try { hosted = JSON.parse(t); } catch (e) {}
+              if (!hosted || !hosted.webVersion || !hosted.files || hosted.webVersion <= (v.webVersion || 0)) { done(); return; }
+              setStatus('Downloading update…');
+              downloadFiles(hosted, v.files, function (n, count) {
+                setStatus('Downloading update… ' + n + '/' + count);
+              }).then(function () {
+                setStatus('Update ready — restarting…');
+                setTimeout(restartToOta, 400);
+              }).catch(function () { done(); });
+            }).catch(function () { done(); });
+            return;
+          }
           var alreadyTried = false;
           try { alreadyTried = sessionStorage.getItem('ota_healed') === '1'; } catch (e) {}
           if (alreadyTried) {

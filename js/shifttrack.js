@@ -599,15 +599,34 @@
        the engine could not speak flips _ttsDead, and later lines
        fall back to the web voice instead of vanishing. */
     _ttsDead: false,
-    speakNative: function (text) {
+    speakNative: function (text, voiceName) {
       var p = plugin();
       if (!p || typeof p.speakText !== 'function' || ShiftTrack._ttsDead || !text) return false;
       try {
-        p.speakText({ text: String(text) }).then(function (r) {
+        /* v300/v65: an optional voice NAME rides along — the
+           plugin (native v65+) speaks with that device voice;
+           older shells ignore the extra field and speak with
+           the engine default, which since v65 is itself the
+           best device voice, never the robotic compact one. */
+        p.speakText({ text: String(text), voice: voiceName ? String(voiceName) : '' }).then(function (r) {
           if (r && r.ok === false) ShiftTrack._ttsDead = true;
         }).catch(function () {});
       } catch (e) { return false; }
       return true;
+    },
+    /* v300/v65: the DEVICE's real TTS voices (the WebView list
+       is empty in the shell — the Navigator's picker was empty
+       on his phone). Resolves [{name, lang}] or null when the
+       shell has no such method (pre-v65) — callers fall back
+       to the WebView list. */
+    getVoicesNative: function () {
+      var p = plugin();
+      if (!p || typeof p.getVoices !== 'function') return Promise.resolve(null);
+      try {
+        return p.getVoices().then(function (r) {
+          return (r && r.voices && r.voices.length) ? r.voices : null;
+        }).catch(function () { return null; });
+      } catch (e) { return Promise.resolve(null); }
     },
     stopNativeSpeak: function () {
       var p = plugin();

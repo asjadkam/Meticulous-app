@@ -568,6 +568,29 @@
                                 // least this far from BOTH centres (it is
                                 // sitting on neither); a parked truck's
                                 // geometry always speaks for itself
+  /* v300 (LOADS-FENCE-RECOVERY, owner Oct 31): the drift above
+     moves a centre ONLY on a counted event — so one missed dump
+     at a MOVING tip face strands every later dump: the face
+     walks away from a centre no miss can pull back (Oct 31:
+     dumps counted at 9:36 and 10:38, then the face moved and
+     the 12:27 cycle's dump never registered; the strict cycle
+     masked the fourth load entirely). The recovery: while the
+     truck is CARRYING (the cycle waits for a dump), a sustained
+     stop-cluster NEAR but OUTSIDE the dump fence — within
+     RECOVERY_BAND_M of the dump centre, nearer it than the load
+     centre (the onEvent honesty gate), its fixes holding within
+     RECOVERY_CLUSTER_M of their own centroid for a full arrival
+     dwell — nudges the dump centre toward the cluster by the
+     same bounded DRIFT_STEP_M a counted event would, once per
+     dwell of continued presence. A nudge never counts a dump:
+     counting stays the zone machine's verdict, which can now
+     judge the truck inside the fence it drifted to. A fixed
+     face (Oct 30, 17/17) never triggers any of this — the truck
+     is inside the fence, where recovery stands down. */
+  var RECOVERY_BAND_M = 200;    // v300: cluster centroid must be within
+                                // this of the dump centre to nudge it
+  var RECOVERY_CLUSTER_M = 35;  // v300: a "stopped here" cluster's
+                                // fixes hold within this of its centroid
 
   function createPegCounter(cfg) {
     var accBar = cfg.accMaxM || INTRA_ACC_MAX_M;
@@ -607,6 +630,11 @@
       });
     }
     var win = [];
+    /* v300: the fence-recovery cluster (see RECOVERY_BAND_M) —
+       {lat, lng, since, lastNudge} while a candidate stop builds,
+       and the day's nudge count (rides the snapshot). */
+    var rec = null;
+    var recCount = 0;
 
     /* One counted event pulls its role's centre toward where the
        event happened — a bounded step, then the site clamp. The
@@ -642,6 +670,8 @@
       begin: function (key, saved) {
         win = [];
         evLog = [];
+        rec = null;
+        recCount = (saved && saved.sitesKey === key && saved.pegRecovery) ? (saved.pegRecovery | 0) : 0;
         cen = {
           load: seedLoad ? { lat: seedLoad.lat, lng: seedLoad.lng } : null,
           dump: seedDump ? { lat: seedDump.lat, lng: seedDump.lng } : null
@@ -693,6 +723,55 @@
         }
         var before = inner.debug ? inner.debug() : null;
         expectRole = (before && before.armed) ? 'dump' : 'load';
+        /* v300 (LOADS-FENCE-RECOVERY): while carrying, watch for
+           the sustained stop-cluster near-but-outside the dump
+           fence and nudge the centre (see the RECOVERY_BAND_M
+           note). Runs BEFORE the zone machine judges this fix,
+           so a fence that recovers onto the truck judges this
+           very fix inside it. */
+        var fixT = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now();
+        if (before && before.armed && cen.dump) {
+          var dDumpC = haversineM(sm.lat, sm.lng, cen.dump.lat, cen.dump.lng);
+          var dLoadC = cen.load ? haversineM(sm.lat, sm.lng, cen.load.lat, cen.load.lng) : Infinity;
+          var recCandidate = dDumpC > PEG_FENCE_M && dDumpC <= RECOVERY_BAND_M &&
+            dDumpC <= dLoadC + TIE_BAND_M;
+          if (recCandidate) {
+            if (!rec) {
+              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: 0 };
+            } else if (haversineM(sm.lat, sm.lng, rec.lat, rec.lng) > RECOVERY_CLUSTER_M) {
+              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: rec.lastNudge };
+            } else {
+              rec.lat += (sm.lat - rec.lat) * 0.35;
+              rec.lng += (sm.lng - rec.lng) * 0.35;
+            }
+            if (rec && (fixT - rec.since) >= PEG_DWELL_MS &&
+                (fixT - (rec.lastNudge || rec.since)) >= PEG_DWELL_MS &&
+                haversineM(rec.lat, rec.lng, cen.dump.lat, cen.dump.lng) <=
+                  (cen.load ? haversineM(rec.lat, rec.lng, cen.load.lat, cen.load.lng) : Infinity) + TIE_BAND_M) {
+              var rd = haversineM(cen.dump.lat, cen.dump.lng, rec.lat, rec.lng);
+              if (rd > 0) {
+                var rf = Math.min(DRIFT_STEP_M, rd) / rd;
+                cen.dump.lat += (rec.lat - cen.dump.lat) * rf;
+                cen.dump.lng += (rec.lng - cen.dump.lng) * rf;
+                if (site) {
+                  var rds = haversineM(site.lat, site.lng, cen.dump.lat, cen.dump.lng);
+                  if (rds > site.radiusM) {
+                    var rg = site.radiusM / rds;
+                    cen.dump.lat = site.lat + (cen.dump.lat - site.lat) * rg;
+                    cen.dump.lng = site.lng + (cen.dump.lng - site.lng) * rg;
+                  }
+                }
+                if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
+                recCount++;
+                rec.lastNudge = fixT;
+              }
+            }
+          } else if (dDumpC <= PEG_FENCE_M) {
+            rec = null; /* inside the fence: recovery stands down */
+          }
+        } else {
+          rec = null; /* not carrying: no cluster may build */
+        }
         var r = inner.ingest({
           latitude: sm.lat, longitude: sm.lng,
           accuracy: (fix.accuracy === undefined ? null : fix.accuracy),
@@ -712,7 +791,7 @@
         if (before && after && !before.armed && after.armed && after.zone === 'load') {
           onEvent('load', t, sm);
         }
-        if (r.counted) onEvent('dump', t, sm);
+        if (r.counted) { onEvent('dump', t, sm); rec = null; }
         return r;
       },
       stop: function () { if (inner) inner.stop(); },
@@ -724,6 +803,7 @@
             dump: cen.dump ? { lat: cen.dump.lat, lng: cen.dump.lng } : null
           };
           s.pegEvents = evLog.slice();
+          s.pegRecovery = recCount; /* v300: the day's fence-recovery nudges */
         }
         return s;
       },

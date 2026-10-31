@@ -258,6 +258,19 @@
     /* v84: a place's pin rides the recent entry, so "Go again"
        navigates to the same pin, not a name search. */
     if (fav.lat && fav.lng) { rec.lat = fav.lat; rec.lng = fav.lng; }
+    /* v300 (NAV-RECENTS-ENDLESS): a repeat navigation to the
+       same place MOVES its entry to the top instead of stacking
+       another copy — the old log added one row per trip (his
+       Oct 30 list was the same site over and over). Identity =
+       the resolved name plus the pin (or the address when there
+       is no pin). */
+    var recKey = String(rec.name || '').trim().toLowerCase() + '|' +
+      (rec.lat ? rec.lat.toFixed(5) + ',' + rec.lng.toFixed(5) : ('a:' + String(rec.address || '').trim().toLowerCase()));
+    d.recent = (d.recent || []).filter(function (r) {
+      var k = String(displayPlaceName(r) || '').trim().toLowerCase() + '|' +
+        (r.lat ? Number(r.lat).toFixed(5) + ',' + Number(r.lng).toFixed(5) : ('a:' + String(r.address || '').trim().toLowerCase()));
+      return k !== recKey;
+    });
     d.recent.unshift(rec);
     d.recent = d.recent.slice(0, 20);
     if (kind === 'work') {
@@ -282,7 +295,12 @@
      dispatcher actually sent), an address-only place hands over
      its address as the search text. */
   function goNavigate(fav, kind) {
-    recordNav(fav, kind);
+    /* v300 (NAVIGATE-FROM-DISPATCH-DEAD): the recording is
+       bookkeeping — it must never be able to kill the hand-off
+       itself. A throw in recordNav (a store hiccup) used to end
+       the tap with nothing on screen: no Navigator, no message.
+       The pending record + module open below now run regardless. */
+    try { recordNav(fav, kind); } catch (e) {}
     var pend = { name: displayPlaceName(fav), ts: Date.now() };
     if (fav.lat && fav.lng) { pend.lat = fav.lat; pend.lng = fav.lng; }
     /* v183: the query is the ADDRESS ALONE — gluing the place
@@ -606,13 +624,30 @@
       if (!d.recent.length) {
         h += '<div class="empty">Nothing yet. Navigate somewhere and it will show here.</div>';
       } else {
-        h += d.recent.slice(0, 10).map(function (r) {
+        /* v300 (NAV-RECENTS-ENDLESS): five unique places, then
+           a "Show more" door — the no-long-lists law. recordNav
+           dedupes at write time (v300), and this render dedupes
+           again by the same key so a list written by an older
+           build collapses too. */
+        var seenK = {}, uniqRecents = [];
+        d.recent.forEach(function (r) {
+          var k = String(displayPlaceName(r) || '').trim().toLowerCase() + '|' +
+            (r.lat ? Number(r.lat).toFixed(5) + ',' + Number(r.lng).toFixed(5) : ('a:' + String(r.address || '').trim().toLowerCase()));
+          if (seenK[k]) return;
+          seenK[k] = 1; uniqRecents.push(r);
+        });
+        var recRow = function (r) {
           return '<div class="listitem"><div class="a">' + esc(r.name) +
             ' <span class="pill">' + (r.kind === 'work' ? 'work' : 'personal') + '</span></div>' +
             (r.address && !nameIsCoords(r.address) ? '<div class="b">' + esc(r.address) + '</div>' : '') +
             '<div class="b">' + fmtWhen(r.ts) + '</div>' +
             '<div class="row" style="margin-top:6px"><button class="btn small navy" data-rgo="' + esc(r.id) + '">Go again</button></div></div>';
-        }).join('');
+        };
+        h += uniqRecents.slice(0, 5).map(recRow).join('');
+        if (uniqRecents.length > 5) {
+          h += '<div id="nv_recent_more" class="hidden">' + uniqRecents.slice(5).map(recRow).join('') + '</div>' +
+            '<button class="btn ghost small" id="nv_recent_show" style="margin-top:6px">Show more — ' + (uniqRecents.length - 5) + ' more</button>';
+        }
       }
       h += '</div>';
 
@@ -852,6 +887,13 @@
          matching saved place when there is one, the recent itself
          otherwise), so the flow continues from the populated box
          through the detail's Navigate — one pattern everywhere. */
+      /* v300: the recents "Show more" door (see the render). */
+      var recShowBtn = body.querySelector('#nv_recent_show');
+      if (recShowBtn) recShowBtn.onclick = function () {
+        var more = body.querySelector('#nv_recent_more');
+        if (more) more.classList.remove('hidden');
+        recShowBtn.classList.add('hidden');
+      };
       body.querySelectorAll('[data-rgo]').forEach(function (b) {
         b.onclick = function () {
           var dd = data(), id = b.getAttribute('data-rgo'), r = null;

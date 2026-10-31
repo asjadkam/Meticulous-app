@@ -517,20 +517,49 @@
   function dspPlaceHit(d) {
     try {
       if (typeof window !== 'undefined' && window.GeoLoads && GeoLoads.placeByName) {
-        return GeoLoads.placeByName((d && (d.jobSite || d.pickup)) || '');
+        /* v300 (DISPATCH-NO-NAVIGATE-OFFER): each destination
+           field is tried on its own. The old chain read only
+           (jobSite || pickup) as ONE string — an OCR'd jobSite
+           sentence that matched nothing silently vetoed a
+           pickup that would have resolved. */
+        var fields = [(d && d.jobSite) || '', (d && d.pickup) || '', (d && d.dropoff) || '', (d && d.address) || ''];
+        for (var i = 0; i < fields.length; i++) {
+          if (!String(fields[i]).trim()) continue;
+          var hit = GeoLoads.placeByName(fields[i]);
+          if (hit) return hit;
+        }
       }
     } catch (e) {}
     return null;
   }
+  /* v300: the last-resort hand-off — the record's own site text
+     rides into the Navigator as its search (nav_pending query:
+     saved places by name first, then the geocoder), so a tap on
+     Navigate ALWAYS lands somewhere real. */
+  function dspNavigateQuery(text) {
+    var q = String(text || '').trim();
+    if (!q) return false;
+    try {
+      App._store.set('nav_pending', { name: q, ts: Date.now(), query: q });
+      App.openModule('navigator');
+      return true;
+    } catch (e) { return false; }
+  }
   /* v220 (DSP-PIN-NAVIGATE): the ACTIVE card's Navigate — the
      driver's own day, so no day gate; the destination is the
      record's pin, or the known place its site names. Quiet
-     secondary styling: Close stays the card's one primary. */
+     secondary styling: Close stays the card's one primary.
+     v300: the offer no longer requires the pin/place to
+     resolve — ANY destination text on the record earns the
+     button, because the tap now has the query fallback above.
+     His Oct 31 Aecon dispatch carried text that resolved
+     neither way, and the card simply had no Navigate at all. */
   function dspActiveNavBtn(a, isOffice) {
     if (!a || isOffice) return '';
     var hasPin = a.lat !== null && a.lat !== undefined && a.lng !== null && a.lng !== undefined &&
       isFinite(parseFloat(a.lat)) && isFinite(parseFloat(a.lng));
-    if (!hasPin && !dspPlaceHit(a)) return '';
+    var hasText = !!(String((a && (a.jobSite || a.pickup || a.dropoff || a.address)) || '').trim());
+    if (!hasPin && !hasText && !dspPlaceHit(a)) return '';
     return '<button class="btn ghost small" id="dp_nav_active">🧭 Navigate</button>';
   }
   function dspNavigatePin(lat, lng, name) {
@@ -1760,8 +1789,12 @@
               ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
           /* v220 (DSP-PIN-NAVIGATE): no pin, but the site NAMES a
              known place — the same one-tap Navigate, resolved at
-             tap time (data-navname). Same v172 day gate. */
-          ((d.lat === null || d.lat === undefined) && !isOffice && dspNavDayOk(d) && dspPlaceHit(d) ?
+             tap time (data-navname). Same v172 day gate.
+             v300: any destination text earns the row's button
+             too (the tap falls back to the Navigator's search —
+             see the data-navname handler). */
+          ((d.lat === null || d.lat === undefined) && !isOffice && dspNavDayOk(d) &&
+            (dspPlaceHit(d) || String(d.jobSite || d.pickup || d.dropoff || d.address || '').trim()) ?
             ' · <button type="button" class="btn small ghost" data-navname="' + i + '" style="padding:2px 8px">🧭 Navigate</button>' : '') +
           (d.material ? ' · ' + esc(d.material) : '') +
           (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
@@ -3704,21 +3737,28 @@
       body.querySelectorAll('[data-navname]').forEach(function (b) {
         b.onclick = function () {
           var d = list()[+b.getAttribute('data-navname')];
-          var hit = d ? dspPlaceHit(d) : null;
-          if (hit) dspNavigatePin(hit.lat, hit.lng, hit.label || d.jobSite || d.pickup || '');
+          if (!d) return;
+          var hit = dspPlaceHit(d);
+          if (hit) { dspNavigatePin(hit.lat, hit.lng, hit.label || d.jobSite || d.pickup || ''); return; }
+          /* v300: no known place — the text itself navigates. */
+          dspNavigateQuery(d.jobSite || d.pickup || d.dropoff || d.address || '');
         };
       });
-      /* v220: the active card's Navigate. */
+      /* v220: the active card's Navigate.
+         v300: pin -> known place -> the record's own text as the
+         Navigator's search (see dspNavigateQuery) — the tap can
+         no longer land nowhere. */
       var navActiveBtn = body.querySelector('#dp_nav_active');
       if (navActiveBtn) navActiveBtn.onclick = function () {
         var cur = active();
         if (!cur) return;
         if (cur.lat !== null && cur.lat !== undefined && isFinite(parseFloat(cur.lat))) {
           dspNavigatePin(cur.lat, cur.lng, cur.jobSite || cur.pickup || '');
-        } else {
-          var hit = dspPlaceHit(cur);
-          if (hit) dspNavigatePin(hit.lat, hit.lng, hit.label || cur.jobSite || cur.pickup || '');
+          return;
         }
+        var hit = dspPlaceHit(cur);
+        if (hit) { dspNavigatePin(hit.lat, hit.lng, hit.label || cur.jobSite || cur.pickup || ''); return; }
+        dspNavigateQuery(cur.jobSite || cur.pickup || cur.dropoff || cur.address || '');
       };
       /* v129: a completed record's row View opens its face. */
       body.querySelectorAll('[data-view]').forEach(function (b) {

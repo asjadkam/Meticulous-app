@@ -788,8 +788,15 @@ body.mt-driving #chatSheet{z-index:2120;}
    map shrank to a strip. In landscape the banner goes compact
    and horizontal — distance left, instruction + road stacked
    beside it — and the bar tightens, so the map keeps the
-   middle of the screen. */
-@media (orientation:landscape) and (max-height:500px){
+   middle of the screen.
+   v300 (NAV-LANDSCAPE-ORIENTATION): the height cap rises
+   500 -> 760 px. His phone is a Galaxy Z Fold — unfolded in
+   landscape its screen is ~700 CSS px tall, so the v125 query
+   NEVER matched on the truck mount and the drive view kept
+   its portrait posture sideways ("no landscape mode",
+   Oct 31). The compact landscape face now engages on the
+   Fold open or closed, and on ordinary phones as before. */
+@media (orientation:landscape) and (max-height:760px){
 .nv-drive-top{display:flex;align-items:center;gap:16px;padding:8px 14px;top:calc(6px + env(safe-area-inset-top));left:8px;right:8px;}
 .nv-drive-toptext{flex:1;min-width:0;}
 .nv-drive-dist{font-size:30px;}

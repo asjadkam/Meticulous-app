@@ -207,17 +207,77 @@
     return { dist: Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)), along: t * Math.sqrt(len2) };
   }
 
-  /* Closest approach of p to a whole route line: {dist, along} in
-     metres from the route start. Drives both the banner countdown
-     and the off-route check. */
-  function distToRouteM(p, line) {
-    var best = { dist: Infinity, along: 0 }, cum = 0, i, seg;
-    for (i = 0; i + 1 < line.length; i++) {
-      seg = pointSegM(p, line[i], line[i + 1]);
-      if (seg.dist < best.dist) best = { dist: seg.dist, along: cum + seg.along };
-      cum += haversineM(line[i], line[i + 1]);
+  /* v300 (MONDAY-FIX — NAV-PREMATURE-ARRIVAL / NAV-ROUTE-LINE-
+     MISSING / NAV-OFFROUTE-DETECTION / NAV-ETA-STALE, owner
+     Oct 31 drive): the projection is WINDOWED and MONOTONIC.
+     The old code projected the truck onto the GLOBALLY nearest
+     segment of the whole route line; where the route approaches
+     itself — final-approach streets that pass near the
+     destination early, braided interchanges, the exit line
+     peeling past the through lanes — `along` leapt kilometres
+     to a later segment and fell back again. On his Oct 31 tape
+     that one defect announced arrival 830 m early (the jumped
+     along read ~0 m of route left while the ETA card, fed by a
+     different projection, still read 640 m), masked real
+     off-route moments, and swung the remaining distance
+     (9.8 km → 9.9 km going backwards). Now the truck's
+     projection searches a generous window around the last
+     known along (2 segments back, 30 forward), so it can
+     neither leap ahead to a parallel later segment nor fall
+     back behind progress already made; a new line (every plan,
+     every re-route) reseeds at 0. A global scan still answers
+     when the windowed best is implausibly far (>300 m — the
+     truck genuinely left the corridor) or the caller asks for
+     a one-off projection (traffic incidents ahead), and the
+     cumulative lengths are cached per line instead of being
+     re-walked on every call (three full-line scans per tick
+     was the projection's share of NAV-GPS-FLICKER's load). */
+  var projState = { line: null, cum: null, total: 0, along: 0 };
+  function projCum(line) {
+    if (projState.line === line && projState.cum) return projState.cum;
+    var cum = [0], i;
+    for (i = 0; i + 1 < line.length; i++) cum.push(cum[i] + haversineM(line[i], line[i + 1]));
+    projState = { line: line, cum: cum, total: cum[cum.length - 1] || 0, along: 0 };
+    return cum;
+  }
+  function projectOnto(p, line, seeded) {
+    if (!line || line.length < 2 || !p) return { dist: Infinity, seg: 0, t: 0, along: 0 };
+    var cum = projCum(line);
+    var n = line.length - 1, i, seg;
+    function scan(from, to) {
+      var best = { dist: Infinity, seg: from, t: 0, along: cum[from] || 0 };
+      for (i = from; i <= to && i < n; i++) {
+        seg = pointSegM(p, line[i], line[i + 1]);
+        if (seg.dist < best.dist) {
+          var segLen = cum[i + 1] - cum[i];
+          best = { dist: seg.dist, seg: i, t: segLen ? Math.max(0, Math.min(1, seg.along / segLen)) : 0, along: cum[i] + seg.along };
+        }
+      }
+      return best;
     }
+    if (!seeded) return scan(0, n - 1);
+    /* the seed segment: the last segment whose start is at or
+       before the remembered along */
+    var lo = 0, hi = n - 1;
+    while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (cum[mid] <= projState.along) lo = mid; else hi = mid - 1; }
+    var from = Math.max(0, lo - 2), to = Math.min(n - 1, lo + 30);
+    var best = scan(from, to);
+    if (best.dist > 300 || (best.seg >= to && to < n - 1 && best.dist > 40)) {
+      /* the window lost the truck (or never had it): one global
+         scan, and the seed follows the honest answer */
+      best = scan(0, n - 1);
+    }
+    if (best.along > projState.along) projState.along = best.along;
     return best;
+  }
+
+  /* Closest approach of p to the route line: {dist, along} in
+     metres from the route start. Drives the banner countdown,
+     the off-route check and the drive tick — all truck
+     projections, all seeded (see projectOnto). */
+  function distToRouteM(p, line) {
+    var b = projectOnto(p, line, true);
+    return { dist: b.dist, along: b.along };
   }
 
   /* v125: the DRIVE basemap spec. The v124 drive map drew the
@@ -368,18 +428,15 @@
      the projected position on the line; the last point is the
      route's end. A fully-travelled line collapses to the final
      point (padded so a polyline can still draw it). */
-  function routeRemainder(line, pos) {
+  function routeRemainder(line, pos, seeded) {
     if (!line || line.length < 2 || !pos) return null;
-    var best = { dist: Infinity, seg: 0, t: 0, along: 0 }, cum = 0, i, seg, segLen, t;
-    for (i = 0; i + 1 < line.length; i++) {
-      seg = pointSegM(pos, line[i], line[i + 1]);
-      if (seg.dist < best.dist) {
-        segLen = haversineM(line[i], line[i + 1]);
-        t = segLen ? Math.max(0, Math.min(1, seg.along / segLen)) : 0;
-        best = { dist: seg.dist, seg: i, t: t, along: cum + seg.along };
-      }
-      cum += haversineM(line[i], line[i + 1]);
-    }
+    /* v300: the same windowed projection as distToRouteM (the
+       drive caller is seeded; one-off callers — the traffic
+       incident relevance check — pass seeded=false and get the
+       honest global answer for a point anywhere on the route). */
+    var best = projectOnto(pos, line, seeded !== false);
+    if (!isFinite(best.dist)) return null;
+    var i;
     var a = line[best.seg], b = line[best.seg + 1];
     var pts = [[a[0] + (b[0] - a[0]) * best.t, a[1] + (b[1] - a[1]) * best.t]];
     for (i = best.seg + 1; i < line.length; i++) pts.push(line[i]);
@@ -424,6 +481,38 @@
     };
   }
 
+  /* v300 (NAV-INSTRUCTION-WORDING, owner Oct 31 drive): the
+     engine's raw strings reach the banner and the voice
+     verbatim, and some of them are wrong to a driver's ear —
+     "Take the 2 exit…" (Highway 2's exit, not the second one),
+     "Take the 2 North ramp…" (Highway 2 North), "Keep right to
+     take Southland Drive toward Southland Drive" (the road
+     named twice), "Glenmore Trail South East" (the spelled-out
+     pair). Conservative cleanups only, applied once here so
+     the banner, the steps list and every spoken line agree:
+       - "Take the <N> exit" -> "Take exit <N>"
+       - "Take the <N> <Dir> ramp" -> "Take the Highway <N>
+         <Dir> ramp" (N is a highway number in this phrasing)
+       - a trailing " toward <name>" clause drops when <name>
+         already appears earlier in the same line
+       - "<RoadType> <Dir1> <Dir2>" abbreviates the pair
+         ("Trail South East" -> "Trail SE") — ONLY after a
+         road-type word, so a road genuinely NAMED "South East"
+         something keeps its name. */
+  function cleanInstructionText(s) {
+    if (!s) return '';
+    var t = String(s);
+    t = t.replace(/\bTake the (\d+) exit\b/gi, 'Take exit $1');
+    t = t.replace(/\bTake the (\d+) (North|South|East|West) ramp\b/g, 'Take the Highway $1 $2 ramp');
+    var tw = t.match(/^(.*?) toward (.+)$/i);
+    if (tw && tw[1].toLowerCase().indexOf(tw[2].trim().replace(/\.$/, '').toLowerCase()) >= 0) {
+      t = tw[1] + (/\.$/.test(t) ? '.' : '');
+    }
+    t = t.replace(/\b(Trail|Drive|Avenue|Road|Street|Boulevard|Highway|Way|Terrace|Crescent|Parkway) (North|South) (East|West)\b/g,
+      function (m, rt, d1, d2) { return rt + ' ' + d1.charAt(0) + d2.charAt(0); });
+    return t;
+  }
+
   /* Flatten a Valhalla trip into a banner-ready plan: every maneuver
      with cumulative start/end distances (km) and its spoken lines. */
   function maneuverPlan(trip) {
@@ -432,9 +521,9 @@
       (leg.maneuvers || []).forEach(function (m) {
         var len = Number(m.length) || 0;
         out.push({
-          instruction: m.instruction || '',
-          verbalPre: m.verbal_pre_transition_instruction || '',
-          verbalPost: m.verbal_post_transition_instruction || '',
+          instruction: cleanInstructionText(m.instruction || ''),
+          verbalPre: cleanInstructionText(m.verbal_pre_transition_instruction || ''),
+          verbalPost: cleanInstructionText(m.verbal_post_transition_instruction || ''),
           streets: (m.street_names || []).slice(),
           sign: maneuverSign(m.sign),
           lengthKm: len, cumStartKm: cum, cumEndKm: cum + len, type: m.type
@@ -839,7 +928,12 @@
     for (var idx = 0; idx + 1 < plan.maneuvers.length; idx++) {
       var tp = pointAlongLine(line, plan.maneuvers[idx].cumEndKm * 1000);
       if (!tp) continue;
-      var best = null, bestD = 75;
+      /* v300 (NAV-LANE-CARD-NO-USEFUL-INFO): the pin radius
+         widens 75 -> 120 m — at braided interchanges the turn
+         point and the lane answer's point can sit further apart
+         than 75 m, and the nearest-only rule below still keeps
+         a farther junction's lanes from ever pinning here. */
+      var best = null, bestD = 120;
       laned.forEach(function (L) {
         var d = haversineM(tp, [L.lat, L.lng]);
         if (d <= bestD) { bestD = d; best = L; }
@@ -1249,7 +1343,10 @@
     for (var i = 0; i < incidents.length; i++) {
       var inc = incidents[i];
       if (!inc) continue;
-      var pr = routeRemainder(line, [inc.lat, inc.lng]);
+      /* v300: an incident can sit anywhere on the route, far
+         beyond the truck's projection window — project it
+         globally (seeded=false), never through the truck's seed. */
+      var pr = routeRemainder(line, [inc.lat, inc.lng], false);
       if (!pr) continue;
       var ahead = pr.along - truckAlong;
       if (pr.dist <= offMaxM && ahead > 0 && ahead <= aheadMaxM) {
@@ -1899,6 +1996,34 @@
      (a Capacitor text-to-speech plugin) needs a new APK and is
      parked BY NAME for the native pass in BUGS.md. */
   var voiceKeep = null;
+  /* v300 (NAV-VOICE-DEFAULT-ROBOT): the no-pick WebView choice
+     used to be the FIRST English voice the engine listed —
+     on many phones that first entry is the robotic compact
+     voice, and his "same robotic lady" verdict (Oct 30) is
+     exactly that accident. The pick is now SCORED: Canadian
+     English first, then the engines that name themselves
+     well (Google, Natural/Neural/Premium/Enhanced), the
+     system default as a small plus, and the known robotic
+     compact engines pushed to the bottom. Only ever chooses
+     among voices the device actually offers. */
+  function bestWebVoice(voices) {
+    var en = [];
+    for (var i = 0; i < (voices || []).length; i++) {
+      if (/^en/i.test(voices[i].lang || '')) en.push(voices[i]);
+    }
+    if (!en.length) return null;
+    function score(v) {
+      var n = String(v.name || '').toLowerCase(), s = 0;
+      if (/^en[-_]ca/i.test(v.lang || '') || /canada/i.test(n)) s += 5;
+      if (/google/i.test(n)) s += 4;
+      if (/natural|neural|premium|enhanced/i.test(n)) s += 3;
+      if (/espeak|compact|robot/i.test(n)) s -= 5;
+      if (v.default) s += 1;
+      return s;
+    }
+    en.sort(function (a, b) { return score(b) - score(a); });
+    return en[0];
+  }
   function speak(text) {
     if (!text || !S || S.settings.muted) return;
     /* v212 (NATIVE TTS — Stage E): in the Android shell the
@@ -1913,8 +2038,23 @@
     /* v280 (NAV-VOICE-SELECTION-PREF): a picked voice bypasses
        the native engine — speakText takes no voice, so the
        native default would erase his choice. The WebView path
-       below picks the voice by voiceURI. */
+       below picks the voice by voiceURI.
+       v300: the native engine (v65) takes a voice NAME — a pick
+       stored as 'native:<name>' routes to it and keeps his
+       choice in the shell, where the WebView voice list is
+       empty and a WebView pick could never exist. */
     var pickedURI = (S.settings && S.settings.voiceURI) ? String(S.settings.voiceURI) : '';
+    if (pickedURI.indexOf('native:') === 0) {
+      try {
+        if (window.ShiftTrack && ShiftTrack.speakNative && ShiftTrack.speakNative(text, pickedURI.slice(7))) {
+          if (S) S.voiceSpokeAt = Date.now();
+          return;
+        }
+      } catch (e) {}
+      /* the named native voice is unreachable (old shell): fall
+         through to the no-pick paths rather than going silent */
+      pickedURI = '';
+    }
     if (!pickedURI) {
       try {
         if (window.ShiftTrack && ShiftTrack.speakNative && ShiftTrack.speakNative(text)) {
@@ -1933,9 +2073,13 @@
         try {
           var u = new SpeechSynthesisUtterance(text);
           u.rate = 1.02; u.volume = 1; u.lang = 'en-CA';
-          for (var i = 0; i < voices.length; i++) {
-            if (pickedURI && voices[i].voiceURI === pickedURI) { u.voice = voices[i]; break; }
-            if (!pickedURI && /^en/i.test(voices[i].lang || '')) { u.voice = voices[i]; break; }
+          if (pickedURI) {
+            for (var i = 0; i < voices.length; i++) {
+              if (voices[i].voiceURI === pickedURI) { u.voice = voices[i]; break; }
+            }
+          } else {
+            var bv = bestWebVoice(voices);
+            if (bv) u.voice = bv;
           }
           voiceKeep = u;
           u.onend = u.onerror = function () { if (voiceKeep === u) voiceKeep = null; };
@@ -2137,6 +2281,24 @@
       var hasPending = false;
       try { hasPending = !!App._store.get('nav_pending', null); } catch (e) {}
       if (hasPending) nvFace = 'drive';
+      /* v300 (PREFS-NAVIGATION-BROKEN): the Preferences door
+         sets nav_open_settings and lands here — consume it
+         HERE, before the places delegation below can return
+         early. The flag used to be read only at the END of the
+         drive-face render path, so the door landed him on the
+         places screen under a "Navigator" header, the settings
+         sheet never opened, and the stale flag fired on some
+         later drive-face entry instead. Consumed here, it
+         forces the drive face for this render; the end-of-
+         render block opens the sheet off this local. */
+      var openSettingsWanted = false;
+      try {
+        if (App._store.get('nav_open_settings', null)) {
+          App._store.set('nav_open_settings', null);
+          openSettingsWanted = true;
+          nvFace = 'drive';
+        }
+      } catch (e) {}
       if (nvFace === 'places') {
         teardown();
         var navMod = (window.Meticulous && Meticulous.modules.navigation) || null;
@@ -3173,6 +3335,16 @@
              and refreshes the incident list against the new line. */
           S.trafficSaid = {};
           fetchTraffic(true);
+          /* v300 (NAV-ETA-STALE): a new plan INVALIDATES the
+             provider ETA. The old route's live duration used to
+             survive into the new plan for up to the 300 s
+             freshness window — after his Oct 31 21:06 re-route
+             the card paired the OLD route's ~3 provider minutes
+             with the NEW plan's 9.8 km left. Cleared here, and a
+             fresh poll is forced (it also re-stamps the answer
+             with this route's identity — see pollTrafficEta). */
+          S.providerEta = null; S.providerLive = false; S.providerAt = 0;
+          try { pollTrafficEta(true); } catch (e) {}
           /* v196 (NAV-LANES): lane lookups belong to THIS
              route's maneuvers — a new route starts with an
              empty cache. */
@@ -3419,13 +3591,23 @@
       function trackProgress() {
         if (!S.plan || !S.line || !S.pos) return;
         var pr = distToRouteM(S.pos, S.line);
-        /* Off-route: >60 m off the line, held for a few seconds so a
-           parking-lot wiggle never triggers a re-route. */
-        if (pr.dist > 60) {
+        /* Off-route: >55 m off the line, held briefly so a
+           parking-lot wiggle never triggers a re-route.
+           v300 (NAV-OFFROUTE-DETECTION): the hold drops 4 s ->
+           2.5 s and the detection SPEAKS. With the old global
+           projection, dist itself lied near braided geometry
+           (the truck read as "on route" on the through lanes
+           while the exit peeled away), and even when it fired
+           the only warning was a silent banner — on his Oct 31
+           tape the Southland departure took ~15-20 s to surface
+           and never said a word. The windowed projection makes
+           dist honest immediately; the voice makes it heard. */
+        if (pr.dist > 55) {
           if (!S.offSince) S.offSince = Date.now();
-          else if (Date.now() - S.offSince > 4000 && !S.rerouting) {
+          else if (Date.now() - S.offSince > 2500 && !S.rerouting) {
             S.offSince = 0;
             banner('Off route — re-routing…', '');
+            speak('Off route. Re-routing.');
             doRoute();
           }
           return;
@@ -3868,18 +4050,45 @@
         if (S.limitPos && haversineM(S.limitPos, S.pos) < 150) return;
         S.limitFetchedAt = now; S.limitPos = S.pos;
         var lat = S.pos[0], lon = S.pos[1];
-        var q = '[out:json][timeout:8];way(around:25,' + lat + ',' + lon + ')["maxspeed"];out tags 1;';
+        /* v300 (NAV-SPEED-LIMIT-WRONG): the old query asked for
+           tags only and took the FIRST parseable maxspeed within
+           25 m — any ramp or parallel road's tag (a 100) won over
+           the road under the truck (114 Ave SE, posted 75), and
+           one wrong answer then painted for the whole leg. The
+           query now returns GEOMETRY for several ways, and the
+           choice is judged: a way whose NAME matches the road
+           the plan says he is on wins; else the way whose line
+           passes NEAREST the truck; and if even the nearest is
+           >20 m away the answer is "unknown" (badge hides)
+           rather than a borrowed number. */
+        var q = '[out:json][timeout:8];way(around:30,' + lat + ',' + lon + ')["maxspeed"];out tags geom 12;';
+        var roadWanted = '';
+        try { roadWanted = String(currentRoadName(S.plan, S.manIdx) || '').toLowerCase(); } catch (e) {}
         fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) })
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (!S) return;
             var v = null;
-            if (j && j.elements) {
+            if (j && j.elements && j.elements.length) {
+              var pos = [lat, lon], named = null, nearest = null, nearestD = Infinity;
               for (var i = 0; i < j.elements.length; i++) {
-                var t = j.elements[i].tags && j.elements[i].tags.maxspeed;
-                var parsed = parseMaxspeed(t);
-                if (parsed) { v = parsed; break; }
+                var el = j.elements[i];
+                var parsed = parseMaxspeed(el.tags && el.tags.maxspeed);
+                if (!parsed) continue;
+                var d = Infinity, g = el.geometry || [];
+                for (var gi = 0; gi + 1 < g.length; gi++) {
+                  var sd = pointSegM(pos, [g[gi].lat, g[gi].lon], [g[gi + 1].lat, g[gi + 1].lon]).dist;
+                  if (sd < d) d = sd;
+                }
+                if (g.length === 1) d = haversineM(pos, [g[0].lat, g[0].lon]);
+                if (d < nearestD) { nearestD = d; nearest = parsed; }
+                var nm = String((el.tags && el.tags.name) || '').toLowerCase();
+                if (roadWanted && nm && (roadWanted.indexOf(nm) >= 0 || nm.indexOf(roadWanted.split(' / ')[0]) >= 0) && d < 40) {
+                  if (!named || d < named.d) named = { v: parsed, d: d };
+                }
               }
+              if (named) v = named.v;
+              else if (nearest !== null && nearestD <= 20) v = nearest;
             }
             S.limitKmh = v;
             paintSpeedOverlay();
@@ -4381,7 +4590,13 @@
               if (isFinite(dur) && dur > 0) {
                 S.providerLive = true;
                 S.providerName = (j && j.source === 'tomtom-routing') ? 'TomTom' : 'Traffic provider';
-                S.providerEta = { at: Date.now(), durSec: dur, staticSec: isFinite(Number(j.staticDurationSec)) ? Number(j.staticDurationSec) : dur };
+                /* v300: the answer is stamped with the route it
+                   belongs to (destination + plan size) — the
+                   drive tick ignores an answer whose stamp does
+                   not match the live plan, so no route change
+                   can ever pair an old ETA with a new distance. */
+                S.providerEta = { at: Date.now(), durSec: dur, staticSec: isFinite(Number(j.staticDurationSec)) ? Number(j.staticDurationSec) : dur,
+                  destKey: S.dest ? S.dest.join(',') : '', planKm: S.plan ? S.plan.totalKm : 0 };
               } else { S.providerLive = false; S.providerEta = null; }
             })
             .catch(function () { S.providerLive = false; });
@@ -4513,7 +4728,37 @@
           .catch(function () { /* total failure: cache nothing — a later tick retries */ });
       }
 
+      /* v300 (NAV-GPS-FLICKER blast radius): the tick is guarded
+         as a whole. Its body paints the essentials (camera,
+         remainder line, plane) LAST, after a long row of display
+         aids — so one throwing aid used to cost the whole frame:
+         the bottom cluster and the truck overlay vanished for
+         seconds at a time on his tapes, worst exactly at
+         maneuvers and re-routes where the aids work hardest.
+         Now a throw anywhere in the body still lands the
+         essentials through driveEssentialsFallback, and costs
+         only its own aid. */
       function driveTick() {
+        try { return driveTickBody(); }
+        catch (e) {
+          try { driveEssentialsFallback(); } catch (e2) {}
+          return null;
+        }
+      }
+      function driveEssentialsFallback() {
+        if (!S || !S.drive || !S.pos) return;
+        if (S.driveMap && !S.driveFree) {
+          try { S.driveMap.panTo(followTarget() || S.pos, { animate: false }); } catch (e) {}
+        }
+        if (S.drive) {
+          var hdg = (S.heading !== null && S.heading !== undefined)
+            ? S.heading : ((S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) ? S.drive.headingApplied : 0);
+          S.drive.headingApplied = hdg;
+          paintPlane(hdg);
+        }
+        driveAnimKick();
+      }
+      function driveTickBody() {
         if (!S.drive || !S.plan || !S.line || !S.pos || S.arrived) return null;
         var pr = distToRouteM(S.pos, S.line);
         var dp = driveProgress(S.plan, pr.along);
@@ -4550,18 +4795,61 @@
           var blendV = (planV + paceV) / 2;
           if (blendV > 0) liveEtaMin = (dp.leftM / blendV) / 60;
         }
+        var paceEtaMin = liveEtaMin;
         var trafficStateTxt = '';
-        if (S.providerLive && S.providerEta && (Date.now() - S.providerEta.at) < 300000) {
+        /* v300 (NAV-ETA-STALE): the provider answer is used only
+           when its route stamp matches THIS plan (pollTrafficEta
+           stamps it; finalizeRoute clears it) — an answer from a
+           previous route can never pair with this distance. */
+        var providerUsed = false, pDelayMin = 0;
+        var etaStampOk = S.providerEta &&
+          (!S.providerEta.destKey || !S.dest || S.providerEta.destKey === S.dest.join(',')) &&
+          (!S.providerEta.planKm || !S.plan || Math.abs(S.providerEta.planKm - S.plan.totalKm) < 0.05);
+        if (S.providerLive && S.providerEta && etaStampOk && (Date.now() - S.providerEta.at) < 300000) {
           var pRemainSec = Math.max(0, S.providerEta.durSec - (Date.now() - S.providerEta.at) / 1000);
           liveEtaMin = pRemainSec / 60;
-          var pDelayMin = Math.round((S.providerEta.durSec - S.providerEta.staticSec) / 60);
+          pDelayMin = Math.round((S.providerEta.durSec - S.providerEta.staticSec) / 60);
+          providerUsed = true;
           trafficStateTxt = (pDelayMin >= 2)
             ? ' · traffic +' + pDelayMin + ' min · ' + (S.providerName || 'Traffic provider')
             : ' · Traffic flowing · ' + (S.providerName || 'Traffic provider');
         } else if (paceV > 0) {
           trafficStateTxt = (liveEtaMin - dp.etaMin >= 2) ? ' · Slow traffic' : ' · Traffic flowing';
         }
+        /* v300: the implied-speed sanity clamp — if the chosen
+           ETA would need the truck to average over ~120 km/h for
+           the distance left, the pairing is impossible (a stale
+           or mismatched figure) and the honest pace blend stands
+           instead. The card can never again show 3 minutes for
+           9.8 km. */
+        if (dp.leftM > 500 && liveEtaMin > 0 && (dp.leftM / (liveEtaMin * 60)) > 33) {
+          liveEtaMin = paceEtaMin;
+          providerUsed = false;
+          if (paceV > 0) trafficStateTxt = (liveEtaMin - dp.etaMin >= 2) ? ' · Slow traffic' : ' · Traffic flowing';
+        }
         S.liveEtaMin = liveEtaMin;
+        /* v300 (NAV-TRAFFIC-COLORS): the guidance line's core and
+           the ETA clock take the traffic severity — green when
+           the road ahead is flowing, orange on a real delay, red
+           on a heavy one. Severity = the provider's reported
+           delay when it is live, else the ETA stretch over the
+           plan (live minus planned minutes); with NO live data
+           at all the colours stay the defaults — a colour is a
+           fact, never a guess. Change-gated like every paint. */
+        try {
+          var sevDelay = providerUsed ? pDelayMin : (paceV > 0 ? (liveEtaMin - dp.etaMin) : null);
+          var sev = (sevDelay === null) ? '' : (sevDelay >= 6 ? 'red' : (sevDelay >= 2 ? 'orange' : 'green'));
+          var sevHex = sev === 'red' ? '#d42b2b' : sev === 'orange' ? '#dd6b00' : sev === 'green' ? '#1f9d55' : '#1a56db';
+          if (S.drive.sevKey !== sev) {
+            S.drive.sevKey = sev;
+            if (S.driveLine && S.driveLine.getLayers) {
+              var dl = S.driveLine.getLayers();
+              if (dl && dl[1] && dl[1].setStyle) dl[1].setStyle({ color: sevHex });
+            }
+            var emEl = body.querySelector('#nvd_eta_main');
+            if (emEl) emEl.style.color = sev ? sevHex : '';
+          }
+        } catch (e) {}
         var etaMain = body.querySelector('#nvd_eta_main');
         driveTextKeep(etaMain, 'etaMain', fmtClock(new Date(Date.now() + liveEtaMin * 60000)));
         var etaSub = body.querySelector('#nvd_eta_sub');
@@ -4594,7 +4882,7 @@
         } catch (e) {}
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
-          var showRr = S.rerouting || pr.dist > 60;
+          var showRr = S.rerouting || pr.dist > 55; /* v300: same line trackProgress judges */
           /* v128: the pill is STATE, not a per-tick write — its
              class and text are touched only when the shown state
              actually flips (hidden / off-route / rerouting). */
@@ -4863,7 +5151,19 @@
                the pan on every tick and park the camera on the
                truck, undoing the compensation. */
             var ft = followTarget() || S.pos;
-            if (!S.driveFree && (!ctr || haversineM(ft, [ctr.lat, ctr.lng]) > 3)) {
+            /* v300 (NAV-GPS-FLICKER): while the animator is
+               alive IT owns the camera — the tick's own instant
+               panTo duelled the animator's per-frame ease (two
+               writers steering one camera = the judder inside
+               the dropout frames). The tick pans only when the
+               animator is down; the animator (extrapolating,
+               below) glides between fixes the rest of the time.
+               "Alive" means it painted within the last 1.5 s —
+               a throttled rAF (background, PiP) hands the camera
+               back to the tick instead of starving it. */
+            var animAlive = S.drive.animId !== null && S.drive.animId !== undefined &&
+              S.drive.animAt && (Date.now() - S.drive.animAt) < 1500;
+            if (!S.driveFree && !animAlive && (!ctr || haversineM(ft, [ctr.lat, ctr.lng]) > 3)) {
               S.driveMap.panTo(ft, { animate: false });
             }
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
@@ -5013,6 +5313,7 @@
       function driveAnim() {
         if (!S || !S.drive) return;
         S.drive.animId = null;
+        S.drive.animAt = Date.now(); /* v300: the tick's animator-liveness proof */
         var moving = false;
         try {
           if (S.heading !== null && S.heading !== undefined &&
@@ -5033,6 +5334,22 @@
                centring on the truck itself would walk the
                marker up off its anchor between ticks. */
             var tgt = followTarget() || S.pos;
+            /* v300 (NAV-MAP-STEP-MOTION): bounded extrapolation.
+               Fixes land ~1 Hz; easing toward the LAST fix means
+               the view always chases where the truck WAS — the
+               hop-then-wait stepping on his tape (at 91 km/h a
+               fix is 25 m of road). The glide now aims at where
+               the truck will be ~1.2 s ahead at its measured
+               speed, along the applied heading, capped at 30 m —
+               the camera leads gently instead of lurching from
+               fix to fix, and a stopped truck (speed ~0) aims at
+               itself exactly as before. */
+            var exM = Math.min((S.speed || 0) * 1.2, 30);
+            if (exM > 1 && tgt && S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) {
+              var hRad = S.drive.headingApplied * Math.PI / 180;
+              var kxE = 111320 * Math.cos(tgt[0] * Math.PI / 180), kyE = 110540;
+              tgt = [tgt[0] + (Math.cos(hRad) * exM) / kyE, tgt[1] + (Math.sin(hRad) * exM) / kxE];
+            }
             if (ctr) {
               var gap = haversineM([ctr.lat, ctr.lng], tgt);
               if (gap > 0.5) {
@@ -5310,6 +5627,7 @@
           '<button class="btn ghost small" id="nvs_close">✕ Close</button></div>' +
           '<label class="f">Map view</label>' + seg('nvs_view', st.viewMode, [['3d', '🏔️ 3D chase'], ['2d', '🗺️ 2D flat']]) +
           '<label class="f">Route preference</label>' + seg('nvs_route', st.routePref, [['fastest', '⚡ Fastest'], ['economical', '⛽ Most economical']]) +
+          '<p class="note" style="margin-top:4px">Fastest = the quickest route the truck engine can price from map data (speed limits, road class) plus the live traffic ETA when it is on. Most economical = the shortest route. This engine has no signal-timing or traffic-history data — a route Google calls faster using ITS traffic history can differ (that data is Google\'s and cannot be licensed into this app).</p>' +
           '<label class="chk" style="display:block;margin-top:12px"><input type="checkbox" id="nvs_speed"' + (st.showSpeed ? ' checked' : '') + '> Speedometer on screen</label>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_limit"' + (st.showSpeedLimit ? ' checked' : '') + '> Speed limit on screen (read live from map data for the road you are on; roads with no posted limit in the map show none)</label>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_mute"' + (st.muted ? ' checked' : '') + '> Voice guidance muted</label>' +
@@ -5409,11 +5727,27 @@
            warms up, so a voiceschanged nudge refills it once. */
         var vsel = panel.querySelector('#nvs_voice');
         if (vsel) {
+          /* v300 (NAV-VOICE-PICKER-EMPTY): in the Android shell
+             the WebView's own voice list is EMPTY — the picker
+             showed "Phone default voice" and nothing else on his
+             phone, so there was never anything to pick. The
+             shell (v65) lists the DEVICE's real TTS voices
+             through the bridge; they ride in as 'native:<name>'
+             values (speak() routes those to the native engine).
+             The WebView list still fills the picker in a plain
+             browser, exactly as before. */
+          var nativeVoices = null;
           var fillVoices = function () {
             var vs = [];
             try { vs = (window.speechSynthesis && speechSynthesis.getVoices()) || []; } catch (e) {}
             var cur = S.settings.voiceURI || '';
             var html = '<option value="">Phone default voice</option>';
+            (nativeVoices || []).forEach(function (v) {
+              var uri = 'native:' + String(v.name || '');
+              if (!v.name) return;
+              html += '<option value="' + esc(uri) + '"' + (uri === cur ? ' selected' : '') + '>' +
+                esc(v.name) + (v.lang ? ' (' + esc(v.lang) + ')' : '') + '</option>';
+            });
             vs.forEach(function (v) {
               var uri = String(v.voiceURI || '');
               if (!uri) return;
@@ -5424,6 +5758,13 @@
             vsel.value = cur;
           };
           fillVoices();
+          try {
+            if (window.ShiftTrack && ShiftTrack.getVoicesNative) {
+              ShiftTrack.getVoicesNative().then(function (list) {
+                if (list && list.length) { nativeVoices = list; fillVoices(); }
+              }).catch(function () {});
+            }
+          } catch (e) {}
           try { if (window.speechSynthesis && speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', fillVoices); } catch (e) {}
           vsel.onchange = function () {
             S.settings.voiceURI = vsel.value ? String(vsel.value) : '';
@@ -5463,15 +5804,11 @@
       if (gearBtn) gearBtn.onclick = function () { openNavSettings(false); };
       var dGear = body.querySelector('#nvd_gear');
       if (dGear) dGear.onclick = function () { openNavSettings(true); };
-      /* the Preferences door: it set nav_open_settings before
-         landing here — open the same menu, then clear the flag
-         so a later plain entry does not reopen it. */
-      try {
-        if (App._store.get('nav_open_settings', null)) {
-          App._store.set('nav_open_settings', null);
-          openNavSettings(false);
-        }
-      } catch (e) {}
+      /* the Preferences door: render() consumed nav_open_settings
+         BEFORE the places delegation and forced this face (v300 —
+         it used to be read only here, where the places face never
+         arrives); open the same menu off that local. */
+      if (openSettingsWanted) { try { openNavSettings(false); } catch (e) {} }
       paintSpeedOverlay();
 
       /* v103: the mode pair lives in the quiet row — the active
