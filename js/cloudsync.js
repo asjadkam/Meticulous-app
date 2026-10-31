@@ -56,6 +56,23 @@
   var DEBOUNCE_MS = 2500;
   var TELEMETRY_PUSH_MIN_MS = 60000;    // v276: min gap between cloud writes of one telemetry key
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
+  /* v296 (SYNC-STILL-FAILING — the v295 verdict failed in the
+     owner's hands too, Oct 31, 2026, incl. after a force-stop +
+     cold start): Firestore's REAL document limit is 1,048,576
+     BYTES under its own size accounting (field names + values;
+     a number costs 8 bytes however many digits its JSON text
+     has). The telemetry copy gate measured JSON TEXT LENGTH
+     against 900,000 — for crumb-heavy data (13-digit timestamps,
+     6-decimal coordinates) the JSON text runs ~1.7x the real
+     size (the v295 harness measured a full 14-day value at
+     1,036,280 chars but 612,337 real bytes), so the app could
+     refuse — honestly, by name, forever — writes Firestore
+     would happily accept. The telemetry gate now measures the
+     REAL size (fsDocEstimate) against a safety-margined cap.
+     JSON length remains the gate for the other key kinds,
+     untouched. */
+  var FS_DOC_LIMIT = 1048576;           // Firestore's hard per-document limit, bytes
+  var TELE_FS_CAP_BYTES = 1000000;      // telemetry copy cap under real accounting (margin below the hard limit)
   var MIN_PULL_GAP_MS = 60000;          // don't re-pull more often than this
   /* v279 (WATCHDOG-PULL-READ-BURN, named in v276): a REPEAT
      pull — this uid already pulled once in this page session —
@@ -102,6 +119,14 @@
     _blockedSince: 0,       // when waiting work first found pushes unable to run
     _flushDurable: false,   // the in-flight flush carries >=1 durable key
     _teleUrgent: false,     // v276: the next flush carries telemetry NOW (stop/pause/hide/unload)
+    /* v296: telemetry push diagnostics — the last attempt per
+       telemetry key (stage reached, verbatim error, real sizes)
+       and the last cloud-doc inventory per key, captured at
+       push/pull time. Mirrored to localStorage mt___syncdiag so
+       the Advanced readout survives a cold start. */
+    _teleDiag: {},          // key -> last push attempt record
+    _cloudTeleInv: {},      // key -> last cloud doc inventory
+    _diagPersist: null,     // parsed mt___syncdiag cache
     _truth: null,           // last computed syncTruth()
     _statusListeners: []
   };
@@ -421,8 +446,40 @@
     S._truth = t; return t;
   }
 
+  /* v296 (SYNC-FAILURE-WARNING-UNMISSABLE, owner order Oct 31,
+     2026): the header dot can be — and was — ignored for a whole
+     week while fuel never reached the cloud. While the sync
+     truth stands at a NAMED failure (state 'err': a store that
+     keeps failing to back up, dead transport past its grace,
+     offline with work waiting — the truth machine only paints
+     'err' after repetition/grace, never on a single blip), the
+     MAIN dashboard carries a persistent red strip in plain
+     words. It clears by itself the moment a sync lands green
+     (the truth leaves 'err'), because every refreshDot repaints
+     it from the same state machine as the dot — one truth,
+     three faces. The element lives in index.html (#syncWarn);
+     where it is absent (suite worlds) this is a no-op. */
+  var syncWarnEl = null;
+  function paintSyncWarn(t) {
+    var elw = syncWarnEl;
+    try {
+      if (elw && document && document.contains && !document.contains(elw)) elw = null;
+    } catch (e) {}
+    if (!elw) {
+      try { elw = document.getElementById('syncWarn'); } catch (e) { elw = null; }
+      syncWarnEl = elw;
+    }
+    if (!elw) return;
+    var show = !!(t && t.state === 'err');
+    try {
+      elw.classList.toggle('hidden', !show);
+      if (show) elw.textContent = '⚠ Not backing up — your work is only on this phone';
+    } catch (e) {}
+  }
+
   function refreshDot() {
     var t = syncTruth();
+    paintSyncWarn(t);
     S.lastError = currentErrorString();
     if (!S.uid) { setDot('off', 'Sync off — sign in to back up your data'); }
     else if (t.state === 'err') {
@@ -705,6 +762,21 @@
     });
     return Promise.race([pushP, timeoutP]).catch(function (e) {
       var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+      /* v296: if this was the 20 s race expiring on a telemetry
+         attempt, stamp the timeout onto the attempt record the
+         push left open — the Advanced readout then shows WHICH
+         stage consumed the 20 s instead of a bare failure. (A
+         late completion of the underlying push overwrites the
+         record with its real outcome, as it should.) */
+      try {
+        var openAtt = S._teleDiag && S._teleDiag[key];
+        if (openAtt && openAtt.open && String((e && e.message) || e).indexOf('push-timeout') === 0) {
+          openAtt.err = msg + ' — the attempt was still at stage "' + openAtt.stage + '" when the ' +
+            Math.round(PUSH_TIMEOUT_MS / 1000) + 's budget expired';
+          openAtt.open = false;
+          noteTeleAttempt(key, openAtt);
+        }
+      } catch (e4) {}
       try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
       try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
       return false;
@@ -899,9 +971,73 @@
   function teleFieldLen(v) {
     try { var s = JSON.stringify(v); return s ? s.length : 0; } catch (e) { return 0; }
   }
-  function telemetrySyncCopy(key, val) {
+  /* v296: Firestore's own size accounting for a value (the
+     formula the v295 harness proved against: field name UTF-8
+     +1, numbers 8 bytes, strings UTF-8 +1, booleans/null 1,
+     maps/arrays the sum of their parts; timestamps — the
+     serverTimestamp saveDoc adds — 8). A walk, not a
+     serialization: far cheaper than JSON.stringify on a
+     multi-MB value, which is also main-thread relief. */
+  function fsSizeEstimate(v) {
+    if (v === null || v === undefined) return 1;
+    var tv = typeof v;
+    if (tv === 'boolean') return 1;
+    if (tv === 'number') return 8;
+    if (tv === 'string') return utf8Len(v) + 1;
+    if (Array.isArray(v)) {
+      var sa = 0;
+      for (var i = 0; i < v.length; i++) sa += fsSizeEstimate(v[i]);
+      return sa;
+    }
+    if (tv === 'object') {
+      if (typeof v.toMillis === 'function') return 8; // a Firestore timestamp
+      var so = 0;
+      for (var k in v) {
+        if (Object.prototype.hasOwnProperty.call(v, k)) so += utf8Len(k) + 1 + fsSizeEstimate(v[k]);
+      }
+      return so;
+    }
+    return 1;
+  }
+  function utf8Len(s) {
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) n += 1;
+      else if (c < 0x800) n += 2;
+      else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; }
+      else n += 3;
+    }
+    return n;
+  }
+  /* The estimated size of the kv DOCUMENT { v, updatedAt } for
+     a key, resource name included — the number Firestore's
+     1,048,576-byte limit is actually enforced against. */
+  function fsDocEstimate(key, val) {
+    var name = 'projects/meticulous-dd570/databases/(default)/documents/users/' +
+      (S.uid || '') + '/kv/' + docIdFor(key);
+    return utf8Len(name) + 1 + (utf8Len('v') + 1 + fsSizeEstimate(val)) +
+      (utf8Len('updatedAt') + 1 + 8);
+  }
+  /* v296: telemetrySyncCopy measures and gates on the REAL
+     Firestore size (fsDocEstimate vs TELE_FS_CAP_BYTES), not
+     JSON text length — see the constants note. The shed set
+     also closes the last gap in the v295 class: v295 shed only
+     OBJECT-typed bulk (arrays/maps); a heavy STRING field (an
+     old shape's serialized log riding in a day record or on
+     the shell) rode every rung exactly the same way. Any
+     non-fact field whose real size exceeds TELE_SHED_BYTES —
+     string, array or map — is now shed from the copy. Facts
+     are never shed: crumbs/segs (livemiles) and events/
+     pegEvents/pegs (geoloads) ride the crumb ladder as before,
+     and every small field rides whole. The optional `out`
+     object receives the build's account (rung chosen, real
+     size, shed field names) for the diagnostics below. */
+  function telemetrySyncCopy(key, val, out) {
     if (!val || typeof val !== 'object' || !val.days || typeof val.days !== 'object') return val;
-    if (JSON.stringify(val).length <= MAX_DOC_BYTES) return val;
+    var wholeFs = fsDocEstimate(key, val);
+    if (out) { out.rung = 'whole'; out.fsBytes = wholeFs; out.shed = []; }
+    if (wholeFs <= TELE_FS_CAP_BYTES) return val;
     var dayKeys = Object.keys(val.days);
     /* newest first, by the records' own updatedAt — the harsh
        rungs shed the oldest days' trails before the newest. */
@@ -914,26 +1050,25 @@
        Small fields always ride (cheap, and possibly meaningful
        to a future shape). */
     var factArrays = TELE_FACT_ARRAYS[key] || { crumbs: 1, segs: 1 };
-    var shedDay = {}, shedTop = {}, shedAny = false;
+    var shedDay = {}, shedTop = {}, shedAny = false, shedNames = {};
     dayKeys.forEach(function (dk) {
       var rec = val.days[dk];
       if (!rec || typeof rec !== 'object') return;
       for (var f in rec) {
         if (!Object.prototype.hasOwnProperty.call(rec, f)) continue;
         if (f === 'crumbs' || factArrays[f]) continue;
-        var fv = rec[f];
-        if (fv && typeof fv === 'object' && teleFieldLen(fv) > TELE_SHED_BYTES) {
+        if (fsSizeEstimate(rec[f]) > TELE_SHED_BYTES) {
           (shedDay[dk] = shedDay[dk] || {})[f] = 1;
-          shedAny = true;
+          shedAny = true; shedNames[f] = 1;
         }
       }
     });
     for (var tf in val) {
       if (!Object.prototype.hasOwnProperty.call(val, tf)) continue;
       if (tf === 'days') continue;
-      var tv = val[tf];
-      if (tv && typeof tv === 'object' && teleFieldLen(tv) > TELE_SHED_BYTES) { shedTop[tf] = 1; shedAny = true; }
+      if (fsSizeEstimate(val[tf]) > TELE_SHED_BYTES) { shedTop[tf] = 1; shedAny = true; shedNames[tf] = 1; }
     }
+    if (out) out.shed = Object.keys(shedNames);
     function build(cap, keepDays) {
       var nd = {};
       newestFirst.forEach(function (dk, i) {
@@ -951,14 +1086,14 @@
         }
         nd[dk] = c;
       });
-      var out = {};
+      var outv = {};
       for (var f2 in val) {
         if (!Object.prototype.hasOwnProperty.call(val, f2)) continue;
         if (f2 === 'days' || shedTop[f2]) continue;
-        out[f2] = val[f2];
+        outv[f2] = val[f2];
       }
-      out.days = nd;
-      return out;
+      outv.days = nd;
+      return outv;
     }
     /* Rung 0 (bulk shed, trails whole) exists only when there is
        bulk to shed — with none, it would be the value itself,
@@ -967,14 +1102,97 @@
     if (shedAny) rungs.push([null, dayKeys.length]);
     rungs.push([400, dayKeys.length], [120, dayKeys.length], [40, dayKeys.length],
                [40, 3], [24, 1], [0, 0]);
-    var lastCopy = null;
+    var lastCopy = null, lastFs = 0;
     for (var i = 0; i < rungs.length; i++) {
       lastCopy = build(rungs[i][0], rungs[i][1]);
-      if (JSON.stringify(lastCopy).length <= MAX_DOC_BYTES) return lastCopy;
+      lastFs = fsDocEstimate(key, lastCopy);
+      if (lastFs <= TELE_FS_CAP_BYTES) {
+        if (out) {
+          out.rung = (rungs[i][0] === null) ? 'shed, trails whole'
+            : 'crumbs ' + rungs[i][0] + '/day' + (rungs[i][1] < dayKeys.length ? ', newest ' + rungs[i][1] + ' days' : '');
+          out.fsBytes = lastFs;
+        }
+        return lastCopy;
+      }
     }
+    if (out) { out.rung = 'facts only — still over'; out.fsBytes = lastFs; }
     return lastCopy; // facts only; caller fails honestly if even this is over
   }
   function telemetryCopyJson(key, val) { return JSON.stringify(telemetrySyncCopy(key, val)); }
+
+  /* ---------------- v296: telemetry diagnostics ----------------
+   * Three sync builds (293, 295) shipped against a failure whose
+   * actual error string the app had been capturing all along —
+   * in S._keyFails — where no screen ever showed it, and whose
+   * cloud document no pass had ever inventoried. These helpers
+   * end that: every telemetry push attempt records the stage it
+   * reached, the verbatim error, per-stage timings and the real
+   * sizes; every pull inventories the cloud doc's actual fields
+   * (names + sizes, top-level and per-day). Both are persisted
+   * to mt___syncdiag (internal — never synced) so the record
+   * survives a cold start, and surfaced via status().teleDiag
+   * to the Advanced troubleshooting readout. */
+  var DIAG_LS_KEY = '__syncdiag';       // -> mt___syncdiag (never synced)
+  function diagStore() {
+    if (!S._diagPersist) {
+      S._diagPersist = parseJson(lsGetRaw(DIAG_LS_KEY), null) || {};
+      if (!S._diagPersist.attempts) S._diagPersist.attempts = {};
+      if (!S._diagPersist.cloudInv) S._diagPersist.cloudInv = {};
+    }
+    return S._diagPersist;
+  }
+  function saveDiag() {
+    try { lsSetRaw(DIAG_LS_KEY, JSON.stringify(diagStore())); } catch (e) {}
+  }
+  function teleInventory(val) {
+    var inv = { days: 0, fsBytes: 0, top: [], dayFields: [] };
+    if (!val || typeof val !== 'object') return inv;
+    inv.fsBytes = fsSizeEstimate(val);
+    var agg = {}, tf;
+    for (tf in val) {
+      if (!Object.prototype.hasOwnProperty.call(val, tf)) continue;
+      if (tf === 'days') continue;
+      inv.top.push({ f: tf, t: Array.isArray(val[tf]) ? 'array' : typeof val[tf], b: fsSizeEstimate(val[tf]) });
+    }
+    var dv = (val.days && typeof val.days === 'object') ? val.days : null;
+    if (dv) {
+      var dks = Object.keys(dv);
+      inv.days = dks.length;
+      dks.forEach(function (dk) {
+        var rec = dv[dk];
+        if (!rec || typeof rec !== 'object') return;
+        for (var rf in rec) {
+          if (!Object.prototype.hasOwnProperty.call(rec, rf)) continue;
+          var sz = fsSizeEstimate(rec[rf]);
+          var a = agg[rf] || (agg[rf] = { f: rf, n: 0, b: 0, max: 0 });
+          a.n++; a.b += sz; if (sz > a.max) a.max = sz;
+        }
+      });
+    }
+    inv.dayFields = Object.keys(agg).map(function (k) { return agg[k]; })
+      .sort(function (a, b) { return b.b - a.b; }).slice(0, 10);
+    inv.top.sort(function (a, b) { return b.b - a.b; });
+    inv.top = inv.top.slice(0, 10);
+    return inv;
+  }
+  function noteTeleAttempt(key, att) {
+    S._teleDiag[key] = att;
+    try { diagStore().attempts[key] = att; saveDiag(); } catch (e) {}
+  }
+  function noteCloudInv(key, inv) {
+    S._cloudTeleInv[key] = inv;
+    try { diagStore().cloudInv[key] = inv; saveDiag(); } catch (e) {}
+  }
+  function diagSnapshot() {
+    var d = diagStore();
+    var attempts = {}, inv = {}, k;
+    for (k in d.attempts) if (Object.prototype.hasOwnProperty.call(d.attempts, k)) attempts[k] = d.attempts[k];
+    for (k in S._teleDiag) if (Object.prototype.hasOwnProperty.call(S._teleDiag, k)) attempts[k] = S._teleDiag[k];
+    for (k in d.cloudInv) if (Object.prototype.hasOwnProperty.call(d.cloudInv, k)) inv[k] = d.cloudInv[k];
+    for (k in S._cloudTeleInv) if (Object.prototype.hasOwnProperty.call(S._cloudTeleInv, k)) inv[k] = S._cloudTeleInv[k];
+    return { attempts: attempts, cloudInv: inv };
+  }
+  S.diag = function () { return diagSnapshot(); };
   /* v295: a macrotask yield — the telemetry push awaits this
      around its two heavy CPU steps (the merge, the copy build)
      so a big sync never holds the main thread across frames:
@@ -1188,8 +1406,36 @@
        a day's driving blind. */
     if (isTelemetryKey(key) && val && typeof val === 'object' &&
         val.days && typeof val.days === 'object') {
+      /* v296: the attempt is INSTRUMENTED end to end (see the
+         diagnostics helpers above): the stage it reached, the
+         verbatim error, per-stage timings, the real sizes of
+         the local value / cloud doc / merged value / copy, the
+         rung that fit and what was shed — recorded on every
+         attempt, success or failure, and persisted so a cold
+         start still shows the last attempt. The merge's learn
+         compare now rides mergeTelemetryDays' change flag
+         instead of two full-value serializations (part of the
+         remaining sync churn behind the ghosted screen). */
+      var tlT0 = Date.now();
+      var att = {
+        at: tlT0, ok: false, open: true, stage: 'read', err: null,
+        localBytes: size, readMs: 0, mergeMs: 0, writeMs: 0,
+        cloudFsBytes: 0, mergedFsBytes: 0, copyFsBytes: 0,
+        rung: null, shed: [], days: 0
+      };
+      if (!S._teleDiag) S._teleDiag = {};
+      S._teleDiag[key] = att;
+      var tlClose = function () {
+        att.open = false;
+        /* the diagnostics are a passenger, never a pilot: a
+           world without the diag helpers (a sliced test world)
+           must not be able to break the push itself. */
+        try { noteTeleAttempt(key, att); } catch (e) {}
+      };
       var tlPushFail = function (e) {
         var msg = 'push ' + key + ': ' + String((e && e.message) || e);
+        att.err = msg;
+        tlClose();
         try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: msg }); } catch (e2) {}
         try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
         return done(false);
@@ -1202,34 +1448,64 @@
            breadcrumb trails thinned only when the document
            would exceed the cap. A copy that STILL exceeds it
            fails honestly — the key stays dirty and the failure
-           is named — never the old silent seal. */
-        var copy = telemetrySyncCopy(key, v);
-        if (JSON.stringify(copy).length > MAX_DOC_BYTES) {
-          try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': the tracking history exceeds the cloud document size limit even with its map trail thinned' }); } catch (e) {}
+           is named — never the old silent seal.
+           v296: the gate is the REAL Firestore size
+           (TELE_FS_CAP_BYTES), and the failure names the sizes. */
+        att.stage = 'copy';
+        var outMeta = {};
+        var copy = telemetrySyncCopy(key, v, outMeta);
+        att.rung = outMeta.rung || null;
+        att.shed = outMeta.shed || [];
+        att.copyFsBytes = outMeta.fsBytes || fsDocEstimate(key, copy);
+        if (att.copyFsBytes > TELE_FS_CAP_BYTES) {
+          var bigMsg = 'push ' + key + ': the tracking history is too large for one cloud document even with its map trail thinned (about ' +
+            att.copyFsBytes + ' bytes; the limit is about ' + FS_DOC_LIMIT + ')';
+          att.err = bigMsg;
+          tlClose();
+          try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: bigMsg }); } catch (e) {}
           return Promise.resolve(done(false));
         }
+        att.stage = 'write';
+        var tlW0 = Date.now();
         return FB.saveDoc(KV_COLLECTION, docId, { v: copy }).then(function (res) {
+          att.writeMs = Date.now() - tlW0;
           if (res === null) {
-            try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
+            att.err = 'push ' + key + ': not signed in';
+            tlClose();
+            try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: att.err }); } catch (e2) {}
             return done(false);
           }
+          att.ok = true; att.err = null;
+          tlClose();
           return done(true);
         }).catch(tlPushFail);
       };
       try {
         return loadCloudValue(key, docId).then(function (cloudVal) {
+          att.readMs = Date.now() - tlT0;
           if (!cloudVal || typeof cloudVal !== 'object' ||
               !cloudVal.days || typeof cloudVal.days !== 'object') {
+            att.stage = 'copy';
             return yieldFrame().then(function () { return tlSave(val); });
           }
+          try {
+            att.cloudFsBytes = fsDocEstimate(key, cloudVal);
+            noteCloudInv(key, teleInventory(cloudVal));
+          } catch (e) {}
           /* v295: yield around the merge and the copy build —
              the sync's two heavy CPU steps — so the page keeps
              painting while a big telemetry value backs up (with
              the v293 ladder the owner's screen froze and its
              labels double-drew for seconds per attempt). */
           return yieldFrame().then(function () {
-            var mg = mergeTelemetryDays(key, val, cloudVal);
-            if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
+            att.stage = 'merge';
+            var tlM0 = Date.now();
+            var mgFlags = {};
+            var mg = mergeTelemetryDays(key, val, cloudVal, mgFlags);
+            att.mergeMs = Date.now() - tlM0;
+            att.mergedFsBytes = fsDocEstimate(key, mg);
+            att.days = mg.days ? Object.keys(mg.days).length : 0;
+            if (mgFlags.changed) lsSetRaw(key, JSON.stringify(mg));
             return yieldFrame().then(function () { return tlSave(mg); });
           });
         }).catch(tlPushFail);
@@ -1347,14 +1623,21 @@
     var ls = geoTrailSig(lr), cs = geoTrailSig(cr);
     return !!ls && ls === cs && ls !== 'events:0:|pegEvents:0:';
   }
-  function mergeTelemetryDays(key, localV, cloudV) {
+  /* v296: the optional `flags` out-object learns whether the
+     merged value differs from the LOCAL value (a cloud day won,
+     a day exists on one side only, or the cloud shell differs
+     from the local shell) — callers use it to decide the local
+     learn WITHOUT serializing two multi-MB values to compare
+     them (part of the sync churn behind the frozen/ghosted
+     screen). The merge laws themselves are untouched. */
+  function mergeTelemetryDays(key, localV, cloudV, flags) {
     var out = {}, k, seen = {};
     var a = (localV && localV.days) || {}, b = (cloudV && cloudV.days) || {};
     for (k in a) if (Object.prototype.hasOwnProperty.call(a, k)) seen[k] = true;
     for (k in b) if (Object.prototype.hasOwnProperty.call(b, k)) seen[k] = true;
     for (k in seen) {
       var lr = a[k], cr = b[k];
-      if (!lr) { out[k] = cr; continue; }
+      if (!lr) { out[k] = cr; if (flags) flags.changed = true; continue; }
       if (!cr) { out[k] = lr; continue; }
       var lt = telemetryDayTotal(key, lr), ct = telemetryDayTotal(key, cr);
       /* v293 (the correction half of SYNC-STOMP): for geoloads,
@@ -1396,6 +1679,25 @@
     var merged = {}, sk;
     for (sk in shell) if (Object.prototype.hasOwnProperty.call(shell, sk)) merged[sk] = shell[sk];
     merged.days = out;
+    if (flags && !flags.changed) {
+      /* v296: did any contested day resolve to the CLOUD record,
+         or does the winning shell differ from the local value's?
+         Either means the merged value differs from the local
+         one (a local-only day or a local win leaves it equal). */
+      for (var fk in seen) {
+        if (Object.prototype.hasOwnProperty.call(seen, fk) && out[fk] !== a[fk]) { flags.changed = true; break; }
+      }
+      if (!flags.changed) {
+        var lvObj = (localV && typeof localV === 'object') ? localV : {};
+        var shellKeys = {}, lk;
+        for (lk in shell) if (Object.prototype.hasOwnProperty.call(shell, lk)) shellKeys[lk] = true;
+        for (lk in lvObj) if (Object.prototype.hasOwnProperty.call(lvObj, lk)) shellKeys[lk] = true;
+        for (lk in shellKeys) {
+          if (lk === 'days') continue;
+          if (shell[lk] !== lvObj[lk]) { flags.changed = true; break; }
+        }
+      }
+    }
     return merged;
   }
 
@@ -1726,6 +2028,17 @@
         var localDirty = (km.t || 0) > (km.s || 0);
         var cloudChanged = cloudTs > (km.s || 0);
 
+        /* v296: inventory the telemetry cloud docs as they
+           actually are — field names + real sizes, top-level
+           and per-day — on EVERY pull, whichever branch below
+           handles the key. This is the read three sync passes
+           never had: what the account's livemiles / geoloads
+           documents truly carry. */
+        if ((key === 'livemiles' || key === 'geoloads') &&
+            d.v && typeof d.v === 'object' && d.v.days && typeof d.v.days === 'object') {
+          try { noteCloudInv(key, teleInventory(d.v)); } catch (e) {}
+        }
+
         /* v219 (CONNECT-DELETE-CROSS-ACCOUNT): a legacy Connect-
            family doc in MY OWN tree seeds my namespaced slot the
            first time this build pulls — the list (and my own
@@ -1789,8 +2102,13 @@
             d.v && typeof d.v === 'object' && d.v.days && typeof d.v.days === 'object') {
           var teleLocal = parseJson(raw, undefined);
           if (teleLocal && typeof teleLocal === 'object' && teleLocal.days && typeof teleLocal.days === 'object') {
-            var teleMerged = mergeTelemetryDays(key, teleLocal, d.v);
-            if (JSON.stringify(teleMerged) !== JSON.stringify(teleLocal)) {
+            /* v296: the learn decision rides the merge's change
+               flag (v296 note at mergeTelemetryDays) — two
+               full-value serializations per pull per telemetry
+               key were part of the churn that ghosted the page. */
+            var teleFlags = {};
+            var teleMerged = mergeTelemetryDays(key, teleLocal, d.v, teleFlags);
+            if (teleFlags.changed) {
               lsSetRaw(key, JSON.stringify(teleMerged));
               applied++;
             }
@@ -2071,6 +2389,10 @@
       blocked: t.blocked,
       lastSettledAt: t.lastSettledAt,
       lastSettledLabel: t.lastSettledAt ? fmtClock(t.lastSettledAt) : null,
+      /* v296: the telemetry diagnostics (last push attempt per
+         telemetry key + the cloud docs' real field inventory) —
+         the Advanced troubleshooting readout paints from this. */
+      teleDiag: diagSnapshot(),
       lastError: S.lastError, stats: S.stats
     };
   };

@@ -586,6 +586,18 @@
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote"></p>' +
         '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
+        /* v296 (SYNC-STILL-FAILING — the v295 verdict failed too):
+           the live-miles backup's DETAIL readout. Three builds
+           shipped against a failure whose real error the app had
+           captured all along where no screen showed it; this row
+           paints CloudSync.status().teleDiag — the last push
+           attempt (stage + verbatim error + real sizes) and the
+           cloud document's actual field inventory — so the next
+           failure describes itself on this screen. Same
+           troubleshooting-row pattern as the load counter below. */
+        '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
+        '<p class="note" style="margin-top:0">🩺 Live miles backup — detail</p>' +
+        '<p class="note" id="pf_syncdiag" style="white-space:pre-line;"></p></div>' +
         /* v268 (owner, Oct 26 — LOAD-COUNT-ONEPIN-AUDIT): the load
            counter's learner state used to be invisible — a blind
            day could not be told apart from a learning day from the
@@ -1220,8 +1232,54 @@
          status, not skeleton. */
       (function () {
         var note = body.querySelector('#pf_syncnote');
+        var diag = body.querySelector('#pf_syncdiag');
         var btn = body.querySelector('#pf_syncnow');
         if (!btn) return;
+        /* v296: plain sizes + clock for the detail readout. */
+        function fmtB(n) {
+          if (typeof n !== 'number' || !isFinite(n)) return '—';
+          if (n >= 1048576) return (n / 1048576).toFixed(2) + ' MB';
+          if (n >= 1024) return Math.round(n / 1024) + ' KB';
+          return n + ' B';
+        }
+        function fmtT(ms) {
+          var d = new Date(ms || 0), h = d.getHours(), m = d.getMinutes();
+          var ap = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+          return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+        }
+        function paintDiag(st) {
+          if (!diag) return;
+          try {
+            var td = st && st.teleDiag;
+            var L = [];
+            var inv = td && td.cloudInv && td.cloudInv.livemiles;
+            var att = td && td.attempts && td.attempts.livemiles;
+            if (inv) {
+              L.push('Cloud copy: ' + inv.days + ' day records, about ' + fmtB(inv.fsBytes) + ' in all.');
+              if (inv.top && inv.top.length) {
+                L.push('Cloud fields beside the days: ' + inv.top.map(function (x) { return x.f + ' (' + fmtB(x.b) + ')'; }).join(' · ') + '.');
+              }
+              if (inv.dayFields && inv.dayFields.length) {
+                L.push('Inside the day records: ' + inv.dayFields.slice(0, 5).map(function (x) { return x.f + ' ×' + x.n + ' (' + fmtB(x.b) + ')'; }).join(' · ') + '.');
+              }
+            }
+            if (att) {
+              L.push('Last backup try: ' + fmtT(att.at) + ' — ' + (att.ok ? 'landed ✓.' : 'FAILED at the ' + att.stage + ' step.'));
+              if (att.err) L.push('Error: ' + String(att.err).slice(0, 280));
+              var sz = [];
+              if (att.localBytes) sz.push('this phone ' + fmtB(att.localBytes));
+              if (att.cloudFsBytes) sz.push('cloud ' + fmtB(att.cloudFsBytes));
+              if (att.copyFsBytes) sz.push('backup copy ' + fmtB(att.copyFsBytes));
+              if (sz.length) L.push('Sizes: ' + sz.join(' · ') + '.');
+              if (att.rung) L.push('Trail kept in the backup copy: ' + att.rung + '.');
+              if (att.shed && att.shed.length) L.push('Left out of the cloud copy (kept on this phone): ' + att.shed.join(', ') + '.');
+              var gl = td && td.attempts && td.attempts.geoloads;
+              if (gl && !gl.ok && gl.err) L.push('Load counting backup also failed: ' + String(gl.err).slice(0, 200));
+            }
+            diag.textContent = L.length ? L.join('\n')
+              : 'No backup attempt recorded yet — tap “Retry sync now”.';
+          } catch (e) { diag.textContent = 'Could not read the backup detail.'; }
+        }
         function paint() {
           if (!note) return;
           try { if (document && document.contains && !document.contains(note)) return; } catch (e) {}
@@ -1235,6 +1293,7 @@
               : st.state === 'err' ? '⚠️ Sync can\'t reach the cloud — check your connection, then tap “Retry sync now”.'
               : st.state === 'syncing' ? 'Syncing…'
               : 'Sync is off (not signed in).';
+            paintDiag(st);
           } catch (e) { if (note) note.textContent = 'Could not read the sync result.'; }
         }
         paint();

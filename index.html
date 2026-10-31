@@ -10,7 +10,7 @@
 <link rel="manifest" href="assets/manifest.json">
 <link rel="icon" type="image/png" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="css/style.css?v=292">
+<link rel="stylesheet" href="css/style.css?v=296">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 /* critical splash: visible before style.css / JS load */
@@ -117,6 +117,13 @@
 
     <div id="dashView">
       <div class="trialbar hidden" id="trialBar"></div>
+      <!-- v296 (SYNC-FAILURE-WARNING-UNMISSABLE): the persistent red
+           backup warning. Painted by js/cloudsync.js (refreshDot ->
+           paintSyncWarn) from the one sync truth: shown while the
+           truth stands at a named failure, cleared by itself the
+           moment a sync lands green. Static text here matches what
+           the painter sets, so it is correct even before JS runs. -->
+      <div class="syncwarn hidden" id="syncWarn">⚠ Not backing up — your work is only on this phone</div>
       <div class="tracker" id="trkCard">
         <!-- v242 (WORK-PROFILES): the active work profile, named on the dashboard (company + truck) — painted by trackerPaint (js/app.js) -->
         <div class="trkprofile hidden" id="trkProfile"></div>
@@ -306,7 +313,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script src="js/firebase.js?v=276"></script>
-<script src="js/cloudsync.js?v=295"></script>
+<script src="js/cloudsync.js?v=296"></script>
 <script src="js/connectlive.js?v=256"></script>
 <script src="js/connectpipe.js?v=256"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -329,7 +336,7 @@
 <script src="modules/connect.js?v=278"></script>
 <script src="modules/reminders.js?v=256"></script>
 <script src="modules/autostart.js?v=96"></script>
-<script src="modules/preferences.js?v=268"></script>
+<script src="modules/preferences.js?v=296"></script>
 <script src="modules/account.js?v=256"></script>
 <script src="modules/billing.js?v=256"></script>
 <script src="modules/subscription.js?v=256"></script>
