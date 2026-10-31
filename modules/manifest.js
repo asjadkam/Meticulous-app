@@ -135,96 +135,20 @@
     return out;
   }
 
-  /* v275 (MANIFEST-NO-GPS-DATA, owner, Oct 26, 2026 — on his
-     printed Oct 26 manifest: "This should have gps data"):
-     ONE miles accounting for the whole DAY, computed here from
-     the manifest's own figures — never the stored per-session
-     verdicts. The old rendering printed each discrepancy
-     session's stored report verbatim: Oct 26 carried a real
-     session (69.6 live vs its own 80 km span) AND a stray
-     fragment (0.5 live vs the whole 112 km PTI span), so the
-     manifest printed TWO contradictory accountings and the
-     fragment's verdict accused the driver's odometer. A
-     manifest speaks for the day, once:
-       headline — the day's live GPS km vs the day's odometer
-         span (the same pair the Day summary prints);
-       untracked stretches — the gap law of js/miles.js
-         (a silence over 10 minutes spanning at least 1 km),
-         read off the day's JOINED trail (v245), so a crumb
-         from another day can never pose as a gap here, and
-         each true stretch lists once, in time order;
-       out-of-shift ground — the part of the odometer span
-         driven outside the day's REAL driving sessions'
-         own spans (before the first / after the last). A
-         session counts as a driving session only when it
-         itself tracked at least 1 km of GPS ground: a
-         fragment that sat still (~0 km) drove nothing and
-         sets no bounds, so its stamped span can never widen
-         or indict the day. This is where the drive home
-         lives — inside the PTI odometer span, outside the
-         tracked shift — and it is named plainly, never as
-         an odometer error;
-       the rest — GPS undercount (short hops, yard crawls,
-         stopped time): the odometer counts every metre,
-         the trail only the ground it saw.
-     Inside the engine's own tolerance (max(2 km, 3%)) the
-     day is confirmed silently — no block at all. The words
-     "an odometer reading may be wrong" never print on a
-     manifest. Pure — the suite drives it.
-     v291 (MANIFEST-VERBOSE, owner Oct 30 17:28 MDT: "All of
-     this writing can be trimmed down"): the accounting's
-     NUMBERS are exactly as above; its LINES are now short
-     factual lines — the post-close portion is one line, the
-     undercount remainder is one line, no essay sentences. */
-  function dayGaps(crumbs) {
-    var cs = (crumbs || []).filter(function (cr) { return cr && isFinite(cr.a) && isFinite(cr.o) && +cr.t > 0; })
-      .slice().sort(function (x, y) { return x.t - y.t; });
-    var out = [];
-    for (var i = 0; i + 1 < cs.length; i++) {
-      var dt = cs[i + 1].t - cs[i].t;
-      if (!(dt > 600000)) continue;
-      var dKm = trailDistM(cs[i].a, cs[i].o, cs[i + 1].a, cs[i + 1].o) / 1000;
-      if (dKm < 1) continue;
-      out.push({ fromMs: +cs[i].t, toMs: +cs[i + 1].t, km: Math.round(dKm * 10) / 10 });
-    }
-    return out;
-  }
-  function dayMilesAccounting(inp) {
-    if (!inp || typeof inp.liveKm !== 'number' || !isFinite(inp.liveKm)) return null;
-    if (!(inp.odoStart > 0) || !(inp.odoEnd > inp.odoStart)) return null;
-    var r1 = function (x) { return Math.round(x * 10) / 10; };
-    var odoKm = inp.odoEnd - inp.odoStart;
-    var diff = r1(inp.liveKm - odoKm);
-    var tol = Math.max(2, odoKm * 0.03);
-    if (Math.abs(diff) <= tol) return null;
-    var lines = ['Live tracking counted ' + r1(inp.liveKm).toFixed(1) + ' km · odometer shows ' +
-      r1(odoKm) + ' km · difference ' + (diff < 0 ? '-' : '+') + Math.abs(diff).toFixed(1) + ' km.'];
-    if (diff > 0) {
-      lines.push('GPS drift at a standstill counts in the live miles — the odometer stays the record.');
-      return { lines: lines, diff: diff, gapKm: 0, boundsBefore: 0, boundsAfter: 0, residual: 0 };
-    }
-    var missing = -diff;
-    var gaps = dayGaps(inp.crumbs);
-    var gapKm = 0;
-    gaps.forEach(function (g) {
-      gapKm = r1(gapKm + g.km);
-      lines.push('≈' + g.km.toFixed(1) + ' km untracked between ' + fmtClock(g.fromMs) + ' and ' + fmtClock(g.toMs) + '.');
-    });
-    var boundsBefore = (inp.driveStartOdo > 0) ? Math.max(0, r1(inp.driveStartOdo - inp.odoStart)) : 0;
-    var boundsAfter = (inp.driveEndOdo > 0) ? Math.max(0, r1(inp.odoEnd - inp.driveEndOdo)) : 0;
-    if (boundsBefore > 0) lines.push('≈' + boundsBefore.toFixed(1) + ' km driven before the tracked shift started — not in the live miles.');
-    if (boundsAfter > 0) lines.push('≈' + boundsAfter.toFixed(1) + ' km driven after the tracked shift ended — not in the live miles.');
-    var explained = r1(gapKm + boundsBefore + boundsAfter);
-    var residual = r1(missing - explained);
-    if (residual <= tol) {
-      lines.push('Untracked and outside-hours driving explains the difference.');
-    } else if (explained > 0) {
-      lines.push('Rest ≈' + residual.toFixed(1) + ' km — GPS undercount (short hops, yard crawls).');
-    } else {
-      lines.push('Difference ≈' + residual.toFixed(1) + ' km — GPS undercount (short hops, yard crawls).');
-    }
-    return { lines: lines, diff: diff, gapKm: gapKm, boundsBefore: boundsBefore, boundsAfter: boundsAfter, residual: Math.max(0, residual) };
-  }
+  /* v299 (MANIFEST-JARGON-BLOCK, owner, Oct 31, 2026 14:22
+     MDT, the essay circled in red on his printed Oct 31
+     manifest): "So much of this technical jargon is not
+     needed." The v275 day miles accounting — headline,
+     untracked stretches, before/after-shift bounds, the
+     closing reconciliation — is REMOVED from the manifest
+     entirely: collect no longer computes it, neither
+     renderer prints it, and no replacement wording takes
+     its place. The Day summary keeps the clean facts only:
+     the Odometer line, the Miles (live) figure, and the
+     GPS distance in the route section. (dayGaps and
+     dayMilesAccounting are deleted with it; the stored
+     per-session verdicts still ride the record as data,
+     unprinted.) */
 
   /* v190 (M-route home-stops, owner, Oct 21, 2026 07:23 MDT):
      the day's stops start when the truck LEAVES home. His Oct 21
@@ -284,34 +208,100 @@
      its sites as pairs (v203), and a named save is one tap in
      the Navigator. Screen list and PDF both render collect's
      routeStops labels, so one resolution serves both. */
+  /* v299 (MANIFEST-WRONG-PLACE-NAME, owner, Oct 31, 2026
+     14:24–14:26 MDT): the v204 pool was ONE nearest-wins race
+     across every source — so on Oct 31 a built-in pit pin
+     ("Maple Ridge", a few hundred metres off the site) named
+     his Remington arrival stop, and a learned pair label
+     ("Nitestar") named the Petro at Road King fuel stop,
+     even though HIS saved names covered both grounds. His
+     law: names on the manifest are the DRIVER'S OWN names.
+     The pool is now TIERED — tier 1 is his own saved places
+     (nav_data personal + work); only when none of his sits
+     within 250 m do the built-in pits and the learned pair
+     labels get a say (nearest within 250 m, as before). */
   function placeNameFor(lat, lng) {
     if (!isFinite(lat) || !isFinite(lng)) return '';
-    var best = '', bestD = 250;
-    function consider(name, la, lo) {
-      if (!name || !isFinite(la) || !isFinite(lo)) return;
-      var d = trailDistM(lat, lng, la, lo);
-      if (d <= bestD) { bestD = d; best = String(name); }
+    function nearest(consider) {
+      var best = '', bestD = 250;
+      consider(function (name, la, lo) {
+        if (!name || !isFinite(la) || !isFinite(lo)) return;
+        var d = trailDistM(lat, lng, la, lo);
+        if (d <= bestD) { bestD = d; best = String(name); }
+      });
+      return best;
     }
+    var mine = nearest(function (consider) {
+      try {
+        var nd = G('nav_data', null) || {};
+        [nd.personal || [], nd.work || []].forEach(function (list) {
+          list.forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
+        });
+      } catch (e) {}
+    });
+    if (mine) return mine;
+    return nearest(function (consider) {
+      try {
+        var nav = window.Meticulous && Meticulous.modules && Meticulous.modules.navigation;
+        if (nav && typeof nav.builtinPlaces === 'function') {
+          nav.builtinPlaces().forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
+        }
+      } catch (e) {}
+      try {
+        var pairs = (G('geoload_pairs', {}) || {}).pairs || {};
+        Object.keys(pairs).forEach(function (k) {
+          var pr = pairs[k];
+          if (pr && pr.dump) consider(pr.dump.label, parseFloat(pr.dump.lat), parseFloat(pr.dump.lng));
+        });
+      } catch (e) {}
+    });
+  }
+
+  /* v299 (MANIFEST-WRONG-PLACE-NAME, the navigation half,
+     owner, Oct 31, 2026 14:26 MDT): "I use my GPS to go to
+     it in the morning" — when he NAVIGATED to a place that
+     day, the app already knows that ground's name from his
+     own hand: the Navigator records every Navigate tap in
+     nav_data.recent with the destination's name and pin
+     (the same record the peg counter reads for its dump
+     candidate). The day's destinations are the strongest
+     name truth there is — a stop at one takes the
+     DESTINATION's name, ahead of saved-place proximity and
+     every learned label. Nearest of today's destinations
+     within radiusM wins (the door that names a stop uses a
+     wider radius than the door that names a peg: a stop's
+     cluster centroid can sit a few hundred metres from the
+     pin he drove to). */
+  function navRecentName(lat, lng, dayStr, radiusM) {
+    if (!isFinite(lat) || !isFinite(lng) || !dayStr) return '';
+    var best = '', bestD = radiusM || 250;
     try {
       var nd = G('nav_data', null) || {};
-      [nd.personal || [], nd.work || []].forEach(function (list) {
-        list.forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
-      });
-    } catch (e) {}
-    try {
-      var nav = window.Meticulous && Meticulous.modules && Meticulous.modules.navigation;
-      if (nav && typeof nav.builtinPlaces === 'function') {
-        nav.builtinPlaces().forEach(function (p) { if (p) consider(p.name, parseFloat(p.lat), parseFloat(p.lng)); });
-      }
-    } catch (e) {}
-    try {
-      var pairs = (G('geoload_pairs', {}) || {}).pairs || {};
-      Object.keys(pairs).forEach(function (k) {
-        var pr = pairs[k];
-        if (pr && pr.dump) consider(pr.dump.label, parseFloat(pr.dump.lat), parseFloat(pr.dump.lng));
+      (nd.recent || []).forEach(function (r) {
+        if (!r || !r.name || !isFinite(+r.ts)) return;
+        var la = parseFloat(r.lat), lo = parseFloat(r.lng);
+        if (!isFinite(la) || !isFinite(lo)) return;
+        var dt = new Date(+r.ts);
+        var ds = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+        if (ds !== dayStr) return;
+        var d = trailDistM(lat, lng, la, lo);
+        if (d <= bestD) { bestD = d; best = String(r.name); }
       });
     } catch (e) {}
     return best;
+  }
+
+  /* v299 (PEG-IS-THE-DAYS-TRUTH, owner, Oct 31, 2026
+     14:28 MDT): "App should have been able to tell that
+     was my dump site for the day." A peg's place resolves
+     with navigation truth FIRST — this morning he pegged
+     the dump at the place he calls Dog Park, a place he
+     had navigated to; the peg sits a few metres from that
+     destination pin, and the destination's name is the
+     peg's name. Only a peg he never navigated to falls
+     back to the (now tiered) place pool. */
+  function pegNameFor(lat, lng, dayStr) {
+    return navRecentName(lat, lng, dayStr, 250) || placeNameFor(lat, lng);
   }
 
   /* v283 (MANIFEST-PEG-PLACES, owner, Oct 29, 2026 14:26 MDT:
@@ -343,7 +333,7 @@
      3:05 PM"); same distinctness rules as the pegs (by name,
      or within 30 m unnamed). Days recorded before v284 carry
      no pegEvents and render exactly as v283 left them. */
-  function pegPlaceLabels(geoDay) {
+  function pegPlaceLabels(geoDay, dayStr) {
     if (!geoDay || !geoDay.pegs) return null;
     var cur = geoDay.pegs;
     var log = Array.isArray(geoDay.pegLog) ? geoDay.pegLog : [];
@@ -378,7 +368,10 @@
     function labels(kind, word) {
       var named = [], unnamed = [], out = [];
       sequence(kind, word).forEach(function (p) {
-        var name = placeNameFor(p.lat, p.lng);
+        /* v299: a peg resolves navigation-first (pegNameFor) —
+           the destination he drove to that morning outranks
+           the place pool for the ground he pegged. */
+        var name = pegNameFor(p.lat, p.lng, dayStr);
         if (name) {
           if (named.indexOf(name) !== -1) return;
           named.push(name); out.push(name);
@@ -476,7 +469,7 @@
     /* v283 (MANIFEST-PEG-PLACES): the day's pegged loading /
        dumping places, by name — see pegPlaceLabels. Null on
        days the driver never pegged. */
-    var pegPlaces = pegPlaceLabels(geoDay);
+    var pegPlaces = pegPlaceLabels(geoDay, d);
     var odoStart = null, odoEnd = null, liveKm = 0, liveKmAny = false, milesIssues = [];
     /* v206 (P1-odo-prompt-photo): the dash photos that came WITH
        the readings ride the same sessions (startPhoto / endPhoto)
@@ -485,12 +478,37 @@
        session that gave the start reading, end photo from the
        one that gave the (last) end reading. */
     var odoStartPhoto = null, odoEndPhoto = null;
+    /* v299 (MANIFEST-ODO-START-DAY, owner, Oct 31, 2026 14:22
+       MDT): Oct 31's Odometer line opened at 170,664 — Oct 30's
+       PRE-trip reading — while the day's own driving session
+       started at 170,749 (its pre-trip PTI) and the true span
+       was 202 km, not the printed 287. Proven chain: the loop
+       below took the first session entry carrying a startOdo,
+       and a non-driving FRAGMENT session ahead of the real one
+       in the stored array carried a stale snapshot of the
+       tracker odometer (written before the morning's PTI
+       refreshed it) — the v275 accounting's own bounds math
+       convicts it (boundsBefore = driveStart − odoStart printed
+       as 85.x km = exactly 170,749 − 170,664). A day's odometer
+       span now opens at the earliest startOdo among the day's
+       DRIVING sessions (liveKm ≥ 1 km — the v275 "real driving
+       session" test, so yard crawls and tracker restarts never
+       pose as the day's drive); the first-session rule remains
+       only as the fallback for a day nothing drove. The end
+       reading is unchanged: the last endOdo of the day. */
+    var driveStartCand = null, driveStartPhoto = null;
     sessions.forEach(function (s) {
       if (odoStart === null && s.startOdo) { odoStart = s.startOdo; if (s.startPhoto) odoStartPhoto = s.startPhoto; }
       if (s.endOdo) { odoEnd = s.endOdo; if (s.endPhoto) odoEndPhoto = s.endPhoto; }
       if (typeof s.liveKm === 'number') { liveKm += s.liveKm; liveKmAny = true; }
       if (s.milesStatus === 'discrepancy' && s.milesReport) milesIssues.push(s);
+      if (typeof s.liveKm === 'number' && s.liveKm >= 1 && s.startOdo > 0 &&
+          (driveStartCand === null || s.startOdo < driveStartCand)) {
+        driveStartCand = s.startOdo;
+        driveStartPhoto = s.startPhoto || null;
+      }
     });
+    if (driveStartCand !== null) { odoStart = driveStartCand; odoStartPhoto = driveStartPhoto; }
     /* v69: a session still RUNNING (or paused) has NO saved entry —
        entries are only written at STOP (app.js stopSessionAt) — so a
        manifest read from saved entries alone shows Start Time "—"
@@ -891,23 +909,51 @@
        anything else prints as its coordinates — never a guessed
        name. */
     /* v275: ONE label chain for every point of the day's trail
-       — a stop, the route's start, the route's end: the day's
-       GPS site pair (within 200 m), then a known place's name
-       (v204), then a navigation entry at that time. */
+       — a stop, the route's start, the route's end.
+       v299 (MANIFEST-WRONG-PLACE-NAME + MANIFEST-PEG-NAMES +
+       PEG-IS-THE-DAYS-TRUTH, owner, Oct 31, 2026 14:24–14:28
+       MDT): the chain is re-ordered around the day's OWN
+       truths, because Oct 31's chain named his Remington
+       arrival "Maple Ridge" (a built-in pit in the place
+       pool) and his fuel stop "Nitestar" (a learned label),
+       and named every peg stop with the bare words "Pickup
+       peg" / "Dump peg". The doors now run:
+         1. the day's PEGS (within 200 m) — a stop at a peg IS
+            that peg's site, named by the peg's own place
+            (navigation-first: pegNameFor);
+         2. the day's counted SITES carrying a REAL label —
+            a generic label ('Load site', 'Dump site', the
+            peg words) is not a name and never prints; the
+            ground resolves by name through the doors below;
+         3. today's NAVIGATION destinations (within 300 m) —
+            where he drove to this morning outranks every
+            proximity match;
+         4. the tiered place pool (v204, tiered by v299: his
+            saved places first, built-ins and learned labels
+            only when he has nothing there);
+         5. a navigation-log entry at that time (legacy). */
     var labelTrailPoint = function (lat, lng, tMs) {
       var label = '';
-      if (geoDay && geoDay.sites) {
+      if (geoDay && geoDay.pegs) {
+        [['load', geoDay.pegs.load], ['dump', geoDay.pegs.dump]].forEach(function (pair) {
+          var pg = pair[1];
+          if (!label && pg && isFinite(pg.lat) && isFinite(pg.lng) &&
+              trailDistM(lat, lng, Number(pg.lat), Number(pg.lng)) <= 200) {
+            label = pegNameFor(Number(pg.lat), Number(pg.lng), d);
+          }
+        });
+      }
+      if (!label && geoDay && geoDay.sites) {
         [['load', geoDay.sites.load], ['dump', geoDay.sites.dump]].forEach(function (pair) {
           var site = pair[1];
           if (!label && site && isFinite(site.lat) && isFinite(site.lng) &&
               trailDistM(lat, lng, Number(site.lat), Number(site.lng)) <= 200) {
-            label = site.label || (pair[0] === 'load' ? 'Load site' : 'Dump site');
+            var sl = site.label || '';
+            if (sl && ['Load site', 'Dump site', 'Load peg', 'Dump peg', 'Pickup peg'].indexOf(sl) === -1) label = sl;
           }
         });
       }
-      /* v204: a stop at a known place takes the place's name —
-         the day's own sites (above) speak first, then the saved
-         / built-in / learned places, then the navigation log. */
+      if (!label) label = navRecentName(lat, lng, d, 300);
       if (!label) label = placeNameFor(lat, lng);
       if (!label) {
         for (var ni = 0; ni < navLog.length; ni++) {
@@ -956,6 +1002,70 @@
     } catch (e) { routeStops = []; }
     /* v190: home is not a work stop (see homePin/dropHomeStops). */
     routeStops = dropHomeStops(routeStops, homePin());
+    /* v299 (MANIFEST-HAUL-SUMMARY-LINE + MANIFEST-PEG-NAMES,
+       owner, Oct 31, 2026 14:24 MDT): "I don't want it
+       counting every step of the way." On a peg day the route
+       section no longer lists the haul cycles stop by stop —
+       the dwells at the day's two pegs come OUT of the stop
+       list, and the cycles print as ONE summary line per
+       pickup–dump pairing in the route section, in his
+       format: "Remington – Dog Park · N loads". The pairings
+       are counted from the peg counter's own event log
+       (counted load → the next counted dump), names resolved
+       per event through pegNameFor (navigation truth first).
+       A load whose dump the counter never logged still ran —
+       it folds into the day's dump place of record, so the
+       lines count the cycles the driver RAN; the day's Loads
+       line stays the count of record and the two agree
+       whenever the counter saw every dump. A peg day whose
+       events name no complete pairing falls back to the
+       day's pegged places with the count of record. Genuine
+       stops (the site wait, the fuel stop, home) are
+       untouched — only the peg dwells collapse. */
+    var haulLines = [];
+    if (geoDay && geoDay.pegs && (geoDay.pegs.load || geoDay.pegs.dump)) {
+      var pegPts299 = [];
+      ['load', 'dump'].forEach(function (kind) {
+        var pg = geoDay.pegs[kind];
+        if (pg && isFinite(pg.lat) && isFinite(pg.lng)) pegPts299.push({ lat: +pg.lat, lng: +pg.lng });
+      });
+      if (pegPts299.length) {
+        routeStops = routeStops.filter(function (s) {
+          if (!s || !isFinite(s.lat) || !isFinite(s.lng)) return true;
+          return !pegPts299.some(function (p) { return trailDistM(s.lat, s.lng, p.lat, p.lng) <= 200; });
+        });
+        var dumpNameOfRecord = function () {
+          return (pegPlaces && pegPlaces.dump && pegPlaces.dump.length)
+            ? pegPlaces.dump[pegPlaces.dump.length - 1] : '';
+        };
+        var addPair299 = function (from, to, at) {
+          if (!from || !to) return;
+          for (var i = 0; i < haulLines.length; i++) {
+            if (haulLines[i].from === from && haulLines[i].to === to) { haulLines[i].n++; return; }
+          }
+          haulLines.push({ from: from, to: to, n: 1, at: at || 0 });
+        };
+        var evs299 = (Array.isArray(geoDay.pegEvents) ? geoDay.pegEvents : [])
+          .filter(function (e) { return e && (e.kind === 'load' || e.kind === 'dump') && isFinite(e.lat) && isFinite(e.lng); })
+          .slice().sort(function (a, b) { return (+a.t || 0) - (+b.t || 0); });
+        var openLoad299 = null;
+        evs299.forEach(function (e) {
+          if (e.kind === 'load') {
+            if (openLoad299) addPair299(pegNameFor(+openLoad299.lat, +openLoad299.lng, d), dumpNameOfRecord(), +openLoad299.t || 0);
+            openLoad299 = e;
+          } else if (openLoad299) {
+            addPair299(pegNameFor(+openLoad299.lat, +openLoad299.lng, d), pegNameFor(+e.lat, +e.lng, d), +openLoad299.t || 0);
+            openLoad299 = null;
+          }
+        });
+        if (openLoad299) addPair299(pegNameFor(+openLoad299.lat, +openLoad299.lng, d), dumpNameOfRecord(), +openLoad299.t || 0);
+        if (!haulLines.length && pegPlaces && pegPlaces.load && pegPlaces.load.length &&
+            pegPlaces.dump && pegPlaces.dump.length && loads > 0) {
+          haulLines.push({ from: pegPlaces.load[0], to: pegPlaces.dump[pegPlaces.dump.length - 1],
+            n: loads, at: evs299.length ? (+evs299[0].t || 0) : 0 });
+        }
+      }
+    }
     /* v275 (MANIFEST-NO-GPS-DATA): the route's own frame — the
        day's FIRST and LAST trail points, named by the same
        chain as the stops, plus the day's GPS distance (the
@@ -1007,33 +1117,12 @@
     var edited = applyDayEdit({ odoEnd: odoEnd, milesIssues: milesIssues }, dayEdit);
     odoEnd = edited.odoEnd; milesIssues = edited.milesIssues;
     var dayNote = edited.dayNote;
-    /* v275 (MANIFEST-NO-GPS-DATA): the day's ONE miles
-       accounting (see dayMilesAccounting), computed on the
-       FINAL odometer pair — after the v177 correction and
-       the driver's own day edit — from the day's joined
-       trail and the spans of the day's REAL driving
-       sessions (a session that itself tracked ≥1 km; a
-       ~0 km fragment drove nothing and sets no bounds).
-       The stored per-session verdicts in milesIssues stay
-       on the record for the other surfaces that read them;
-       the manifest no longer prints them. */
-    var driveStartOdo = null, driveEndOdo = null;
-    sessions.forEach(function (s) {
-      if (!s || typeof s.liveKm !== 'number' || !(s.liveKm >= 1)) return;
-      var so = parseFloat(s.startOdo), eo = parseFloat(s.endOdo);
-      if (so > 0 && (driveStartOdo === null || so < driveStartOdo)) driveStartOdo = so;
-      if (eo > 0 && (driveEndOdo === null || eo > driveEndOdo)) driveEndOdo = eo;
-    });
-    var milesNote = null;
-    try {
-      var dayAcct = dayMilesAccounting({
-        liveKm: liveKmAny ? liveKm : null,
-        odoStart: odoStart, odoEnd: odoEnd,
-        crumbs: (typeof allCrumbs !== 'undefined' && allCrumbs) ? allCrumbs : [],
-        driveStartOdo: driveStartOdo, driveEndOdo: driveEndOdo
-      });
-      if (dayAcct) milesNote = dayAcct.lines;
-    } catch (e) { milesNote = null; }
+    /* v299: the v275 day miles accounting that stood here is
+       REMOVED (MANIFEST-JARGON-BLOCK — see the note at the top
+       of this module's trail section). Nothing replaces the
+       computation: the record carries no milesNote anymore.
+       The stored per-session verdicts in milesIssues still
+       ride the record as data; they are not printed. */
     /* v247 (MANIFEST-PTI, owner Oct 22, 2026 20:04 MDT + Oct 23):
        the day's inspections ride the manifest — pre + post, each
        with its time, odometer reading, defects result and
@@ -1060,7 +1149,7 @@
     if (!ptiPost) missing.push('post-trip PTI');
     if (!gpsTrail) missing.push('GPS trail');
     var complete = missing.length === 0;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, milesNote: milesNote, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, haulLines: haulLines, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
   }
 
   /* v247: one filed PTI report as the manifest prints it —
@@ -1190,15 +1279,29 @@
        GPS distance closes it. The section prints whenever a
        trail exists (c.routeInfo), even on a day whose stops
        were all too short to list (Oct 26). */
-    if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length))) {
+    /* v299: the section also prints when the day carries haul
+       lines but no trail frame (a peg day whose trail is gone
+       keeps its summary). */
+    if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length) || (c.haulLines && c.haulLines.length))) {
       L.push({ k: 'h', a: 'Where the truck went (from its GPS trail)' });
       if (c.routeInfo) {
         L.push({ k: 'kv', a: 'Start — ' + (c.routeInfo.start.label || (Number(c.routeInfo.start.lat).toFixed(5) + ', ' + Number(c.routeInfo.start.lng).toFixed(5))),
           b: fmtStamp(c.routeInfo.start.at) });
       }
-      (c.routeStops || []).forEach(function (s) {
-        L.push({ k: 'kv', a: s.label || ('Stop — ' + Number(s.lat).toFixed(5) + ', ' + Number(s.lng).toFixed(5)),
-          b: fmtStamp(s.at) + ' · ' + s.mins + ' min' });
+      /* v299 (MANIFEST-HAUL-SUMMARY-LINE): the day's haul
+         cycles print as ONE line per pickup–dump pairing,
+         merged with the genuine stops in time order — the
+         cycles never list stop by stop again. */
+      var routeRows299 = (c.routeStops || []).map(function (s) { return { stop: s, at: Date.parse(s.at) || 0 }; })
+        .concat((c.haulLines || []).map(function (hl) { return { haul: hl, at: +hl.at || 0 }; }));
+      routeRows299.sort(function (x, y) { return x.at - y.at; });
+      routeRows299.forEach(function (r) {
+        if (r.haul) {
+          L.push({ k: 'kv', a: r.haul.from + ' – ' + r.haul.to, b: r.haul.n + (r.haul.n === 1 ? ' load' : ' loads') });
+        } else {
+          L.push({ k: 'kv', a: r.stop.label || ('Stop — ' + Number(r.stop.lat).toFixed(5) + ', ' + Number(r.stop.lng).toFixed(5)),
+            b: fmtStamp(r.stop.at) + ' · ' + r.stop.mins + ' min' });
+        }
       });
       if (c.routeInfo) {
         L.push({ k: 'kv', a: 'End — ' + (c.routeInfo.end.label || (Number(c.routeInfo.end.lat).toFixed(5) + ', ' + Number(c.routeInfo.end.lng).toFixed(5))),
@@ -1256,16 +1359,11 @@
        is exactly what the owner reported on Oct 17. */
     if (t.odo) { var ol = odoLineText(c); L.push({ k: 'kv', a: 'Odometer', b: (ol !== null) ? ol : 'no readings captured' }); }
     if (t.odo && c.liveKmAny) L.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km' });
-    /* v275 (MANIFEST-NO-GPS-DATA): the day's ONE accounting
-       (collect's milesNote) — the stored per-session reports
-       no longer print here: one block per discrepancy session
-       let a stray fragment contradict the real session and
-       accuse the odometer on the day's own document. */
-    if (t.odo && c.milesNote && c.milesNote.length) {
-      c.milesNote.forEach(function (ln) {
-        L.push({ k: 'note', a: ln });
-      });
-    }
+    /* v299 (MANIFEST-JARGON-BLOCK): nothing prints under
+       Miles (live) anymore — the v275 accounting block that
+       stood here was the jargon he circled. The Odometer
+       line and the Miles (live) figure above are the whole
+       miles story on this document. */
     /* v291 (MANIFEST-LOADS-SUMMARY, owner Oct 30, 2026 17:28
        MDT: "Manifest doesn't have to give details of every
        single load...... It can say just 17 loads on site!"):
@@ -1369,7 +1467,8 @@
     _placeNameFor: placeNameFor, /* v204: the stop-name resolver, exported for the suite */
     _pegPlaceLabels: pegPlaceLabels, /* v283: the day's pegged places, exported for the suite */
     _applyDayEdit: applyDayEdit, /* v191: the manifest-edit layer, exported for the suite */
-    _dayMiles: dayMilesAccounting, /* v275: the day's one miles accounting, exported for the suite */
+    /* v299: _dayMiles is GONE with the accounting it exported
+       (MANIFEST-JARGON-BLOCK) — nothing computes it anymore. */
     _toggles: toggles,
     /* v78: the card preview — TODAY's worked time so far. This is
        the tracker COMPLEMENT, not a repeat: the hero card counts
@@ -1510,15 +1609,25 @@
          printed route (see docLines) — Start and End frame
          the stops and the GPS distance closes the section,
          whenever a trail exists, stops or no stops. */
-      if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length))) {
+      if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length) || (c.haulLines && c.haulLines.length))) {
         h += '<h3>🗺️ Where the truck went</h3>';
         if (c.routeInfo) {
           h += '<div class="kv"><span>Start — ' + esc(c.routeInfo.start.label || (Number(c.routeInfo.start.lat).toFixed(5) + ', ' + Number(c.routeInfo.start.lng).toFixed(5))) + '</span><b>' +
             esc(fmtStamp(c.routeInfo.start.at)) + '</b></div>';
         }
-        h += (c.routeStops || []).map(function (s) {
-          return '<div class="kv"><span>' + esc(s.label || ('Stop — ' + Number(s.lat).toFixed(5) + ', ' + Number(s.lng).toFixed(5))) + '</span><b>' +
-            esc(fmtStamp(s.at)) + ' · ' + s.mins + ' min</b></div>';
+        /* v299: the screen twin of the printed haul summary —
+           one line per pairing, merged with the stops in
+           time order. */
+        var routeRowsS299 = (c.routeStops || []).map(function (s) { return { stop: s, at: Date.parse(s.at) || 0 }; })
+          .concat((c.haulLines || []).map(function (hl) { return { haul: hl, at: +hl.at || 0 }; }));
+        routeRowsS299.sort(function (x, y) { return x.at - y.at; });
+        h += routeRowsS299.map(function (r) {
+          if (r.haul) {
+            return '<div class="kv"><span>' + esc(r.haul.from + ' – ' + r.haul.to) + '</span><b>' +
+              r.haul.n + (r.haul.n === 1 ? ' load' : ' loads') + '</b></div>';
+          }
+          return '<div class="kv"><span>' + esc(r.stop.label || ('Stop — ' + Number(r.stop.lat).toFixed(5) + ', ' + Number(r.stop.lng).toFixed(5))) + '</span><b>' +
+            esc(fmtStamp(r.stop.at)) + ' · ' + r.stop.mins + ' min</b></div>';
         }).join('');
         if (c.routeInfo) {
           h += '<div class="kv"><span>End — ' + esc(c.routeInfo.end.label || (Number(c.routeInfo.end.lat).toFixed(5) + ', ' + Number(c.routeInfo.end.lng).toFixed(5))) + '</span><b>' +
@@ -1571,15 +1680,9 @@
         if (c.odoEndPhoto) h += '<div style="margin:2px 0">📸 Ending dash photo ' + App._photoDl(c.odoEndPhoto, 'odometer-end-' + d) + '</div>';
       }
       if (t.odo && c.liveKmAny) h += '<div class="kv"><span>Miles (live)</span><b>' + (Math.round(c.liveKm * 10) / 10).toFixed(1) + ' km</b></div>';
-      /* v275 (MANIFEST-NO-GPS-DATA): ONE details block — the
-         day's own accounting (collect's milesNote), never one
-         block per stored session verdict. */
-      if (t.odo && c.milesNote && c.milesNote.length) {
-        h += '<details style="margin:8px 0"><summary style="color:#c2410c;font-weight:700;cursor:pointer">⚠️ Miles discrepancy — tap for details</summary>' +
-          '<div style="font-size:13px;margin:6px 0 0 4px">' +
-          c.milesNote.map(function (ln) { return '<div style="margin:3px 0">' + esc(ln) + '</div>'; }).join('') +
-          '</div></details>';
-      }
+      /* v299 (MANIFEST-JARGON-BLOCK): the screen twin of the
+         printed removal — no discrepancy details block under
+         Miles (live); the figure stands alone. */
       /* v291 (MANIFEST-LOADS-SUMMARY): the screen twin of the
          printed ONE loads line (see docLines) — the count of
          record plus the site by name. The GPS-count block and

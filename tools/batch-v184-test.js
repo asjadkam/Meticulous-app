@@ -40,7 +40,13 @@ ok('collect returns routeStops', man.indexOf('routeStops: routeStops') !== -1);
 ok('preview shows Where the truck went', man.indexOf('Where the truck went') !== -1);
 ok('PDF lines carry the trail stops', man.indexOf('Where the truck went (from its GPS trail)') !== -1);
 ok('stop names only from recorded facts (site pair / nav log), else coordinates',
-  man.indexOf("label = site.label") !== -1 && man.indexOf("'Stop — '") !== -1);
+  /* v299 re-pin: the site-label door now guards the label first
+     (a generic label — 'Load site', the peg words — is not a
+     name and resolves by name instead; MANIFEST-PEG-NAMES), so
+     the assignment reads through the guarded sl. The law is
+     unchanged: names come from recorded facts only, else the
+     stop prints as its coordinates. */
+  man.indexOf("label = sl;") !== -1 && man.indexOf("'Stop — '") !== -1);
 {
   /* drive the real trailStops out of the module source */
   const vm = require('vm');

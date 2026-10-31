@@ -224,17 +224,18 @@ console.log('— (a) the peg day: ONE loads line, the peg count, the site —');
   ok('screen: no per-load rows', !/Load \d+ — dumped/.test(h));
   ok('screen: no GPS explainer writing', h.indexOf('Counted between the load site') < 0);
 
-  console.log('— (a3) the miles writing on the same day is trimmed —');
-  ok('the accounting exists (live 1.7 vs the 85 km span)', Array.isArray(c.milesNote) && c.milesNote.length >= 2,
+  /* v299 (MANIFEST-JARGON-BLOCK, owner, Oct 31, 2026 14:22 MDT):
+     section (a3) asserted the trimmed accounting's lines; his
+     Oct 31 word removed the block entirely, so the pins move
+     DELIBERATELY to absence. The day's own facts — the 85 km
+     Odometer span and the Miles (live) figure — still print;
+     they are pinned in the v299 suite and the v275 suite. */
+  console.log('— (a3) the miles writing on the same day is GONE entirely (v299) —');
+  ok('no accounting rides the collect (milesNote is gone)', c.milesNote === undefined || c.milesNote === null,
     JSON.stringify(c.milesNote));
-  ok('every accounting line is ONE short line (≤ 100 chars)',
-    (c.milesNote || []).every(l => l.length <= 100), JSON.stringify(c.milesNote));
-  ok('no essay sentences survive',
-    !(c.milesNote || []).some(l => /odometer total was driven|still turn the odometer|outside the tracked hours, so it is not|only counts the ground it saw/.test(l)),
-    JSON.stringify(c.milesNote));
-  ok('the facts survive in the lines: live, span, difference',
-    (c.milesNote || []).some(l => /Live tracking counted 1\.7 km · odometer shows 85 km · difference -83\.3 km/.test(l)),
-    JSON.stringify(c.milesNote));
+  ok('no accounting language prints on the day',
+    !/Live tracking counted|untracked between|driven after the tracked shift|GPS undercount/.test(doc),
+    doc.split('\n').filter(l => /Live tracking|untracked|tracked shift|undercount/.test(l)).join(' ;; '));
 }
 
 /* ================= (b) a learned GPS day: still ONE line ================= */
@@ -273,39 +274,13 @@ console.log('— (c) no counting ran: the ticket count, no invented site —');
   eq('no site on the collect either', c.loadsSite, '');
 }
 
-/* ================= (d) the accounting, driven directly ================= */
-console.log('— (d) MANIFEST-VERBOSE: short lines, every fact, same numbers —');
+/* ================= (d) the accounting is retired (v299) ================= */
+console.log('— (d) MANIFEST-JARGON-BLOCK: the accounting no longer exists to drive —');
 {
   const M = makeWorld(baseMem(null, []));
-  const f = M._dayMiles;
-  ok('dayMilesAccounting is exported for the suite', typeof f === 'function');
-  if (typeof f === 'function') {
-    /* his Oct 30 shape: 85 km span, the session's driving
-       ended at 170,714 — 35.0 km of the span is post-close */
-    const a = f({ liveKm: 1.7, odoStart: 170664, odoEnd: 170749, crumbs: [],
-      driveStartOdo: 170664, driveEndOdo: 170714 });
-    eq('the trimmed lines, exactly', a && a.lines, [
-      'Live tracking counted 1.7 km · odometer shows 85 km · difference -83.3 km.',
-      '≈35.0 km driven after the tracked shift ended — not in the live miles.',
-      'Rest ≈48.3 km — GPS undercount (short hops, yard crawls).'
-    ]);
-    ok('the numbers are unchanged: bounds 35.0 after, residual 48.3',
-      !!a && a.boundsAfter === 35 && Math.abs(a.residual - 48.3) < 1e-9 && a.gapKm === 0,
-      JSON.stringify(a && { b: a.boundsAfter, r: a.residual, g: a.gapKm }));
-    const before = f({ liveKm: 40, odoStart: 170664, odoEnd: 170749, crumbs: [],
-      driveStartOdo: 170700, driveEndOdo: 170749 });
-    ok('a before-shift portion is ONE short line too',
-      !!before && before.lines.some(l => l === '≈36.0 km driven before the tracked shift started — not in the live miles.') &&
-      before.lines.every(l => l.length <= 100), JSON.stringify(before && before.lines));
-    const over = f({ liveKm: 130, odoStart: 170664, odoEnd: 170749, crumbs: [],
-      driveStartOdo: 170664, driveEndOdo: 170749 });
-    ok('live ABOVE odometer: one short line, odometer still the record',
-      !!over && over.lines.length === 2 && over.lines.every(l => l.length <= 100) &&
-      /odometer stays the record/.test(over.lines[1]), JSON.stringify(over && over.lines));
-    const within = f({ liveKm: 84.0, odoStart: 170664, odoEnd: 170749, crumbs: [],
-      driveStartOdo: 170664, driveEndOdo: 170749 });
-    ok('a day inside tolerance still prints NO accounting', within === null, JSON.stringify(within));
-  }
+  /* v299: dayMilesAccounting was deleted with the block it fed;
+     the export is gone, not stubbed. */
+  ok('dayMilesAccounting is NOT exported anymore (deleted, not stubbed)', M._dayMiles === undefined);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

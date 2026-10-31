@@ -282,28 +282,32 @@ ok('collect carries the route summary', !!c.routeInfo && c.routeInfo.start.label
   c.routeInfo.end.label === 'East Ivor' && Math.abs(c.routeInfo.km - 70.2) < 1e-9,
   JSON.stringify(c.routeInfo));
 
-console.log('— the printed manifest: ONE miles accounting, reconciled —');
+/* v299 (MANIFEST-JARGON-BLOCK, owner, Oct 31, 2026 14:22 MDT):
+   the v275/v291 pins in this section asserted the day miles
+   accounting EXISTS on the manifest. His Oct 31 word retired
+   the whole block as jargon — these pins are moved
+   DELIBERATELY to assert its ABSENCE (the v298 pattern). The
+   route/frame/GPS-distance/odo-figure pins above and the
+   never-accuse pins below are untouched and still bind. */
+console.log('— the printed manifest: the miles accounting is GONE (v299) —');
 const heads = doc.split('\n').filter(l => /^Live tracking counted/.test(l));
-ok('exactly ONE accounting headline (not one per session)', heads.length === 1, JSON.stringify(heads));
-ok('the headline is the DAY\'s: 70.2 live vs 112 odometer, difference -41.8',
-  heads.length === 1 && /70\.2 km · odometer shows 112 km · difference -41\.8 km/.test(heads[0]), heads[0]);
-ok('the one true untracked stretch lists once, with its real times',
-  (doc.match(/untracked between 4:36 PM and 5:04 PM/g) || []).length === 1 &&
-  /≈1\.8 km untracked between 4:36 PM and 5:04 PM/.test(doc), doc.split('\n').filter(l => /untracked/.test(l)).join(' ;; '));
+ok('NO accounting headline prints at all (v299 removed the block)', heads.length === 0, JSON.stringify(heads));
+ok('no untracked-stretch lines print', !/untracked between/.test(doc),
+  doc.split('\n').filter(l => /untracked/.test(l)).join(' ;; '));
 ok('the cross-day phantom gap never prints (no 11:32 AM → 9:02 AM)',
   !/11:32 AM and 9:02 AM/.test(doc));
-ok('the drive home is named as out-of-shift ground — 32 km after the tracked shift (v291: one short line)',
-  /32\.0 km driven after the tracked shift ended — not in the live miles/.test(doc),
-  doc.split('\n').filter(l => /odometer total/.test(l)).join(' ;; '));
-ok('the closing line reconciles: 1.8 untracked + 32 after-shift + the rest named as GPS undercount (≈8.0 km; v291: one short line)',
-  /Rest ≈8\.0 km — GPS undercount/.test(doc),
-  doc.split('\n').filter(l => /Live tracking|untracked|odometer total|undercount|explain/.test(l)).join(' ;; '));
+ok('no before/after-shift bounds lines print',
+  !/driven before the tracked shift/.test(doc) && !/driven after the tracked shift/.test(doc),
+  doc.split('\n').filter(l => /tracked shift/.test(l)).join(' ;; '));
+ok('no reconciliation closing line prints',
+  !/explains the difference/.test(doc) && !/GPS undercount/.test(doc),
+  doc.split('\n').filter(l => /undercount|explain/.test(l)).join(' ;; '));
 ok('the odometer is NEVER accused on a manifest', !/odometer reading may be wrong/.test(doc) &&
   !/may have been read wrong/.test(doc));
 ok('the stray session\'s own accounting never prints (no 0.5 vs 112 headline)',
   !/counted 0\.5 km/.test(doc) && !/-111\.5/.test(doc));
-ok('collect carries the one accounting as lines', Array.isArray(c.milesNote) &&
-  c.milesNote.filter(l => /^Live tracking counted/.test(l)).length === 1, JSON.stringify(c.milesNote));
+ok('collect carries NO accounting (milesNote is gone)', c.milesNote === undefined || c.milesNote === null,
+  JSON.stringify(c.milesNote));
 
 console.log('— the screen preview matches the print —');
 {
@@ -312,33 +316,17 @@ console.log('— the screen preview matches the print —');
   const h = body._html;
   ok('screen shows the route section with Start, End and GPS distance',
     /Where the truck went/.test(h) && /Start — Home/.test(h) && /End — East Ivor/.test(h) && /GPS distance/.test(h) && /70\.2 km/.test(h));
-  ok('screen shows exactly ONE miles details block',
-    (h.match(/<details/g) || []).length === 1 && (h.match(/Miles discrepancy/g) || []).length === 1,
+  ok('screen shows NO miles details block (v299 removed it)',
+    (h.match(/<details/g) || []).length === 0 && (h.match(/Miles discrepancy/g) || []).length === 0,
     JSON.stringify((h.match(/<details/g) || []).length));
   ok('screen never accuses the odometer either', !/odometer reading may be wrong/.test(h));
 }
 
-console.log('— the accounting law, driven directly —');
+console.log('— the accounting law is retired (v299) —');
 {
-  const f = M._dayMiles;
-  ok('dayMilesAccounting is exported for the suite', typeof f === 'function');
-  if (typeof f === 'function') {
-    const crumbs = buildDayCrumbs();
-    const acct = f({ liveKm: 70.2, odoStart: 170149, odoEnd: 170261, crumbs: crumbs,
-      driveStartOdo: 170149, driveEndOdo: 170229 });
-    ok('Oct 26 inputs reconcile: -41.8 = 1.8 gap + 32 after-shift + 8.0 undercount',
-      !!acct && acct.gapKm === 1.8 && acct.boundsAfter === 32 && acct.boundsBefore === 0 &&
-      Math.abs(acct.residual - 8.0) < 1e-9, JSON.stringify(acct && { g: acct.gapKm, a: acct.boundsAfter, r: acct.residual }));
-    const within = f({ liveKm: 111.0, odoStart: 170149, odoEnd: 170261, crumbs: crumbs,
-      driveStartOdo: 170149, driveEndOdo: 170261 });
-    ok('a day inside tolerance prints NO accounting at all (confirmed silently)', within === null, JSON.stringify(within));
-    const nodesc = f({ liveKm: 40, odoStart: 170149, odoEnd: 170261, crumbs: [], driveStartOdo: null, driveEndOdo: null });
-    ok('no driving sessions → no bounds claimed, and still no odometer accusation',
-      !!nodesc && nodesc.boundsAfter === 0 && !nodesc.lines.some(l => /may be wrong/.test(l)), JSON.stringify(nodesc));
-    const over = f({ liveKm: 130, odoStart: 170149, odoEnd: 170261, crumbs: [], driveStartOdo: 170149, driveEndOdo: 170261 });
-    ok('live ABOVE odometer: plain words, no accusation',
-      !!over && over.lines.length >= 2 && !over.lines.some(l => /may be wrong|read wrong/.test(l)), JSON.stringify(over && over.lines));
-  }
+  /* v299: dayMilesAccounting was deleted with the block it fed;
+     the export is gone, not stubbed. */
+  ok('dayMilesAccounting is NOT exported anymore (deleted, not stubbed)', M._dayMiles === undefined);
 }
 
 console.log('— a clean day stays quiet —');

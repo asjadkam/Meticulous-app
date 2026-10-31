@@ -119,9 +119,13 @@ ok('collect wires placeNameFor into the stop labels',
   man.indexOf('labelTrailPoint(s.lat, s.lng, s.t)') !== -1);
 ok('placeNameFor is exported for this suite', man.indexOf('_placeNameFor: placeNameFor') !== -1);
 ok('the screen list renders the label before coordinates',
-  man.indexOf("esc(s.label || ('Stop — '") !== -1);
+  /* v299 re-pin: the renderers merge stops with the day's haul
+     summary lines through one row shape, so the stop's label now
+     reads through r.stop — the law is unchanged: the label
+     renders, coordinates only when there is no label. */
+  man.indexOf("esc(r.stop.label || ('Stop — '") !== -1);
 ok('the PDF lines render the same labels',
-  man.indexOf("a: s.label || ('Stop — '") !== -1);
+  man.indexOf("a: r.stop.label || ('Stop — '") !== -1);
 eq('webVersion', ver.webVersion, 255);
 ok('index pin agrees', idxSrc.includes('modules/manifest.js?v=' + ver.webVersion));
 
