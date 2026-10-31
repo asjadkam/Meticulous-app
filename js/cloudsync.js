@@ -536,6 +536,25 @@
             (v.status === 'paused' || v.status === 'idle')) {
           S._teleUrgent = true;
         }
+        /* v301 (SYNC-PUSH-TRIGGERS): the close is not done at
+           the stop tap. The engines keep stamping telemetry
+           after the tracker has gone idle — the post-close
+           accrual (the drive home, v279) folds in for minutes
+           — and GeoLoads' final counts land the same way.
+           Those stamps are part of the close: a telemetry
+           stamp that lands while the tracker sits idle or
+           paused re-arms the urgent flag, so the final totals
+           ride the debounce out instead of sitting behind
+           the 60 s coalesce until the next boot (owner,
+           Oct 31, 2026 16:58 MDT: "it only pushes once when
+           I start the app... it needs to push when I am
+           closing it"). */
+        if (isTelemetryKey(pk)) {
+          try {
+            var trkNow = parseJson(lsGetRaw('tracker'), null);
+            if (trkNow && (trkNow.status === 'idle' || trkNow.status === 'paused')) S._teleUrgent = true;
+          } catch (e) {}
+        }
         scheduleFlush();
       }
       refreshDot();
@@ -577,8 +596,16 @@
       window.addEventListener('offline', function () { S.online = false; refreshDot(); });
       document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') flushUrgent();
+        /* v301 (SYNC-PUSH-TRIGGERS): returning to the app syncs
+           at once — whatever folded in while the page slept (a
+           native fold, a correction, a close) does not wait
+           for the 30 s watchdog to happen by. */
+        else if (document.visibilityState === 'visible' && S.uid) syncNow();
       });
       window.addEventListener('beforeunload', function () { flushUrgent(); });
+      /* v301: pagehide is the door mobile WebViews actually
+         close through; beforeunload alone missed it. */
+      window.addEventListener('pagehide', function () { flushUrgent(); });
       // v33: watchdog — every 30s, if dirty keys exist and no sync is in
       // flight, kick one off. Catches cases where an early-return or a
       // timed-out push left work stranded with a yellow dot.
@@ -713,6 +740,7 @@
     S._keyFails = {}; S._pullFails = 0; S._pullFailMsg = null;
     S._genFails = 0; S._genFailMsg = null;
     S._transportFail = null; S._blockedSince = 0; S._flushDurable = false;
+    S._bootGateOpen = false; // v301: each session's pushes wait for its own first pull
     if (!newUid) { setDot('off', 'Sync off — sign in to back up your data'); return; }
     // New (or changed) user: pull first, then flush. Guard against FB not ready yet.
     ensureFbReady(function () { syncNow(); });
@@ -785,6 +813,33 @@
 
   function flush() {
     if (S.flushing) { scheduleFlush(); return; }
+    /* v301 (SYNC-PUSH-TRIGGERS): no push precedes this session's
+       first pull. Boot-time store stamps (engine persists, the
+       state rebuild, adoption writes) schedule this flush on a
+       2.5 s debounce, while the first pull of a cold start can
+       take longer — and a generic key's push is a blind
+       overwrite, so a young pre-restore value (fresh-install
+       defaults, a just-begun tracker) could stomp the cloud
+       before restore landed, and the pull then adopted the
+       stomp as truth. The flush now defers until the first
+       pull settles — success, failure or the waiter's own
+       timeout (9 s), so a hung pull can never wedge pushes
+       for the session. syncNow's own flush is unaffected: it
+       runs from the pull's completion, when pulledUid is
+       already set. */
+    if (S.uid && S.pulledUid !== S.uid && !S._bootGateOpen) {
+      if (!S._bootGateWaiting) {
+        S._bootGateWaiting = true;
+        var gateUid = S.uid;
+        S.whenFirstPullDone(9000).then(function () {
+          S._bootGateWaiting = false;
+          if (S.uid === gateUid) S._bootGateOpen = true;
+          try { flush(); } catch (e) {}
+        });
+      }
+      refreshDot();
+      return;
+    }
     if (!fbReady() || !S.online) {
       refreshDot();
       // v33: don't give up silently — Firebase Auth can be slow to restore
@@ -893,13 +948,55 @@
      rule are untouched; and merge completeness scores a photo +3,
      so a photo-bearing local copy always beats the stripped cloud
      twin — a pull can never strip a photo off the phone. */
+  /* v301 (SYNC-STUB-MERGE, owner evidence Oct 31, 2026 16:44–
+     16:54 MDT): the shed is no longer fuel-only. The same
+     freeze the v289 law killed for fuel had taken `sessions`
+     in the field: a session entry carries its start/end dash
+     photos (data URLs — the day's odometer evidence), so once
+     the phone's book crossed the gate the rlSave above failed
+     EVERY push honestly ("exceeds the cloud document size
+     limit even without receipt photos"), the key stayed dirty
+     as the standing named failure ("your shift records"), and
+     the only sessions writer that could land was a small
+     photo-less second instance — whose Oct 31 fragment (a
+     young tracker snapshot: 170,664 km, liveKm 0.1, no end
+     reading) became the cloud's whole truth for the day,
+     while the livemiles push landed fine beside it. The
+     manifest reads Miles (live), GPS distance and the
+     Odometer line from the SESSIONS entries, not from the
+     telemetry totals — so the cloud rendered the stub with
+     a green "landed ✓" for miles. Now every photo-bearing
+     record list sheds its photo fields from the sync copy
+     when the full book exceeds the cap. The facts always
+     ride; the photos stay in the local store, and each also
+     lives in its own per-record cloud doc (fuel: the save
+     handler's per-fill doc, v289; sessions: the stop's
+     per-session doc in app.js). A PTI report's SIGNATURE is
+     a fact (it is weighted in merge completeness) and is
+     never in a shed set — only its defect-photo field is.
+     Identity and completeness never read the shed fields
+     for these keys either (sessions identity =
+     date|seconds|endedAt), so merges and the shadow rule
+     are untouched. */
+  var RECORD_PHOTO_FIELDS = {
+    fuel_fills: ['photo'],
+    sessions: ['startPhoto', 'endPhoto', 'photo'],
+    pti_reports: ['photo'],
+    dmg_reports: ['photo'],
+    rev_entries: ['photo'],
+    rev_extras: ['photo']
+  };
   function recordSyncCopy(key, arr) {
-    if (key !== 'fuel_fills' || !Array.isArray(arr)) return arr;
+    var fields = RECORD_PHOTO_FIELDS[key];
+    if (!fields || !Array.isArray(arr)) return arr;
     if (JSON.stringify(arr).length <= MAX_DOC_BYTES) return arr;
     return arr.map(function (rec) {
-      if (!rec || typeof rec !== 'object' || !rec.photo) return rec;
+      if (!rec || typeof rec !== 'object') return rec;
+      var had = false, fi;
+      for (fi = 0; fi < fields.length; fi++) if (rec[fields[fi]]) { had = true; break; }
+      if (!had) return rec;
       var c = {};
-      for (var f in rec) { if (f !== 'photo') c[f] = rec[f]; }
+      for (var f in rec) { if (fields.indexOf(f) === -1) c[f] = rec[f]; }
       return c;
     });
   }
@@ -1661,7 +1758,16 @@
       } catch (e) { return Promise.resolve(tlPushFail(e)); }
     }
     try {
-      return FB.saveDoc(KV_COLLECTION, docId, { v: val }).then(function (res) {
+      /* v301 (SYNC-RETRY-RESIDUAL): the generic fall-through was
+         the last write door with no sanitizer — a value carrying
+         a nested array or an undefined leaf (a shape no special
+         branch claims) was refused by the store on EVERY cycle
+         and stood as a named failure forever, beside pushes
+         that landed. The write now goes through the same
+         deep-clean the telemetry door got in v297. Sealing on
+         this path is stamp-based, so a cleaned write cannot
+         dirty-loop; the local value itself is untouched. */
+      return FB.saveDoc(KV_COLLECTION, docId, { v: sanitizeForFirestore(val, '', [], 0) }).then(function (res) {
         if (res === null) {
           try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
         }
@@ -1992,8 +2098,30 @@
           if (fuelCopyWins(out[slot], rec, isLocal, doomed, recordIdentity(key, out[slot]), id)) out[slot] = rec;
         } else {
           var cur = out[slot];
-          var cs = recordCompleteness(key, cur), ns = recordCompleteness(key, rec);
-          if (ns > cs || (isLocal && ns === cs)) out[slot] = rec;
+          /* v301 (SYNC-STUB-MERGE): a session's liveKm is the
+             one fact that legitimately GROWS after the record
+             first exists — patchSessionEntry folds late miles
+             into the stopped entry in place (same identity,
+             larger liveKm), and the post-close accrual does
+             the same. Between two copies of ONE session the
+             larger liveKm is strictly later knowledge, the
+             same totals law telemetry days live by (v224):
+             it wins before the field-count compare and
+             before locality, so a young same-session copy
+             (born on a second instance with the day barely
+             begun) can never outrank the real entry on any
+             device, in either merge direction. */
+          var takeIt;
+          if (key === 'sessions') {
+            var lkC = (cur && typeof cur.liveKm === 'number') ? cur.liveKm : -1;
+            var lkR = (rec && typeof rec.liveKm === 'number') ? rec.liveKm : -1;
+            if (lkC !== lkR) takeIt = lkR > lkC;
+          }
+          if (takeIt === undefined) {
+            var cs = recordCompleteness(key, cur), ns = recordCompleteness(key, rec);
+            takeIt = ns > cs || (isLocal && ns === cs);
+          }
+          if (takeIt) out[slot] = rec;
         }
         return;
       }
