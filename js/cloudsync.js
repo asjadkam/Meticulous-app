@@ -1120,6 +1120,139 @@
   }
   function telemetryCopyJson(key, val) { return JSON.stringify(telemetrySyncCopy(key, val)); }
 
+  /* v297 (SYNC-STILL-FAILING, fourth pass — the cause is PROVEN,
+     no longer a candidate): the owner's phone read its own
+     attempt record aloud (Oct 31, 2026, 11:53 MDT, web 296):
+     "Error: push livemiles: Function … called with invalid
+     data. N… (found in document users/72kLjT1dbCOLdWo…)" at
+     sizes of 32 KB local / 56 KB cloud / 72 KB copy — size was
+     never the phone's problem. The refused value is the miles
+     engine's counted-coverage spans: a day record's `segs` rode
+     as [t0, t1] PAIRS — a list inside a list, the one shape the
+     document store rejects outright ("Nested arrays are not
+     supported"). Every day with a counted span poisoned every
+     backup: deterministic, cold-start-proof, and invisible to
+     three passes of harnesses whose Firestore double never
+     enforced the nested-list rule (their fixture records
+     carried the very same pairs and "landed"). The engine now
+     persists the spans as { f, t } maps (js/miles.js), and THIS
+     boundary makes the whole class impossible rather than
+     merely unlikely: before any telemetry write, the copy is
+     walked — the first value the store would refuse is NAMED
+     in the attempt record (path + kind), and the copy is then
+     deep-cleaned so the write lands. Cleaning repairs facts,
+     never drops them: a span list becomes its { f, t } map; a
+     NaN/infinite number becomes blank (a total the merge reads
+     as "no total", never a fake zero); a Date or timestamp
+     object becomes its time number; an undefined field is
+     simply absent (it held no value); any other list-in-list
+     becomes a numeric-key map. The local store is untouched —
+     this runs on the sync copy only. */
+  var FS_DROP = {};
+  function fsIsPlain(v) {
+    if (!v || typeof v !== 'object') return false;
+    /* plain = made by an object literal, in ANY realm: its
+       prototype is null or is itself a bare prototype (whose
+       own prototype is null). A class instance's prototype
+       chain is one link longer. */
+    var p = Object.getPrototypeOf(v);
+    return p === null || Object.getPrototypeOf(p) === null;
+  }
+  function fsIsDate(v) {
+    try { return Object.prototype.toString.call(v) === '[object Date]'; } catch (e) { return false; }
+  }
+  /* The first value in `v` the store would refuse, as
+     { path, kind } — or null when the value is clean. */
+  function findFsInvalid(v, path) {
+    if (v === undefined) return { path: path || '(the whole value)', kind: 'undefined' };
+    var tv = typeof v;
+    if (tv === 'function' || tv === 'symbol') return { path: path || '(the whole value)', kind: 'a function' };
+    if (tv === 'number') {
+      if (isNaN(v)) return { path: path, kind: 'NaN' };
+      if (!isFinite(v)) return { path: path, kind: 'Infinity' };
+      return null;
+    }
+    if (v === null || tv === 'string' || tv === 'boolean') return null;
+    if (fsIsDate(v)) return { path: path, kind: 'a Date' };
+    if (Array.isArray(v)) {
+      for (var i = 0; i < v.length; i++) {
+        if (Array.isArray(v[i])) return { path: path + '[' + i + ']', kind: 'a nested array' };
+        var ra = findFsInvalid(v[i], path + '[' + i + ']');
+        if (ra) return ra;
+      }
+      return null;
+    }
+    if (typeof v.toMillis === 'function') return null; // a stored timestamp is legal there
+    if (!fsIsPlain(v)) return { path: path, kind: 'a custom object' };
+    for (var k in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      var ro = findFsInvalid(v[k], path ? path + '.' + k : k);
+      if (ro) return ro;
+    }
+    return null;
+  }
+  /* Deep-clean a sync copy for the write. Returns the cleaned
+     value (FS_DROP for a field that held no storable value);
+     every repair is named in `cleaned`. Deterministic. */
+  function sanitizeForFirestore(v, path, cleaned, depth) {
+    if (v === undefined || typeof v === 'function' || typeof v === 'symbol') return FS_DROP;
+    var tv = typeof v;
+    if (tv === 'number') {
+      if (isFinite(v)) return v;
+      cleaned.push(path + ' held ' + (isNaN(v) ? 'NaN' : 'an infinite number') + ' — written blank');
+      return null;
+    }
+    if (v === null || tv === 'string' || tv === 'boolean') return v;
+    var d = (depth || 0) + 1;
+    if (d > 40) { cleaned.push(path + ' was nested too deep — written blank'); return null; }
+    if (fsIsDate(v)) {
+      cleaned.push(path + ' held a Date — written as its time number');
+      var gt = 0;
+      try { gt = v.getTime(); } catch (e) {}
+      return isFinite(gt) ? gt : null;
+    }
+    if (Array.isArray(v)) {
+      var isSegs = /(^|\.)segs$/.test(path);
+      var out = [], notedSegs = false, i2, el, sv;
+      for (i2 = 0; i2 < v.length; i2++) {
+        el = v[i2];
+        if (Array.isArray(el)) {
+          if (isSegs) {
+            var f0 = sanitizeForFirestore(el[0], path + '[' + i2 + '].f', cleaned, d);
+            var f1 = sanitizeForFirestore(el[1], path + '[' + i2 + '].t', cleaned, d);
+            if (typeof f0 === 'number' && typeof f1 === 'number') out.push({ f: f0, t: f1 });
+            if (!notedSegs) { cleaned.push(path + ' held coverage spans as lists — re-shaped as maps'); notedSegs = true; }
+          } else {
+            var mo = {}, mj;
+            for (mj = 0; mj < el.length; mj++) {
+              var svm = sanitizeForFirestore(el[mj], path + '[' + i2 + '][' + mj + ']', cleaned, d);
+              if (svm !== FS_DROP) mo[String(mj)] = svm;
+            }
+            cleaned.push(path + '[' + i2 + '] held a list inside a list — written as a map');
+            out.push(mo);
+          }
+        } else {
+          sv = sanitizeForFirestore(el, path + '[' + i2 + ']', cleaned, d);
+          out.push(sv === FS_DROP ? null : sv);
+        }
+      }
+      return out;
+    }
+    if (typeof v.toMillis === 'function') {
+      cleaned.push(path + ' held a timestamp object — written as its time number');
+      try { var tm = v.toMillis(); return isFinite(tm) ? tm : null; } catch (e) { return null; }
+    }
+    var plain = fsIsPlain(v);
+    var oo = {};
+    for (var k3 in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k3)) continue;
+      var sv3 = sanitizeForFirestore(v[k3], path ? path + '.' + k3 : k3, cleaned, d);
+      if (sv3 !== FS_DROP) oo[k3] = sv3;
+    }
+    if (!plain) cleaned.push(path + ' held an object the cloud cannot store — written as a plain copy');
+    return oo;
+  }
+
   /* ---------------- v296: telemetry diagnostics ----------------
    * Three sync builds (293, 295) shipped against a failure whose
    * actual error string the app had been capturing all along —
@@ -1421,7 +1554,8 @@
         at: tlT0, ok: false, open: true, stage: 'read', err: null,
         localBytes: size, readMs: 0, mergeMs: 0, writeMs: 0,
         cloudFsBytes: 0, mergedFsBytes: 0, copyFsBytes: 0,
-        rung: null, shed: [], days: 0
+        rung: null, shed: [], days: 0,
+        invalidPath: null, invalidKind: null, cleaned: []
       };
       if (!S._teleDiag) S._teleDiag = {};
       S._teleDiag[key] = att;
@@ -1456,7 +1590,22 @@
         var copy = telemetrySyncCopy(key, v, outMeta);
         att.rung = outMeta.rung || null;
         att.shed = outMeta.shed || [];
-        att.copyFsBytes = outMeta.fsBytes || fsDocEstimate(key, copy);
+        /* v297: name the first value the store would refuse,
+           then clean the copy so the write can land (see the
+           sanitizer note above telemetryCopyJson) — the refusal
+           this replaces WAS the livemiles failure. The size
+           gate below then measures the copy actually written. */
+        att.invalidPath = null; att.invalidKind = null; att.cleaned = [];
+        try {
+          var badFs = findFsInvalid(copy, '');
+          if (badFs) { att.invalidPath = badFs.path; att.invalidKind = badFs.kind; }
+          var cleanedFs = [];
+          copy = sanitizeForFirestore(copy, '', cleanedFs, 0);
+          att.cleaned = cleanedFs.slice(0, 12);
+          att.copyFsBytes = fsDocEstimate(key, copy);
+        } catch (e) {
+          att.copyFsBytes = outMeta.fsBytes || fsDocEstimate(key, copy);
+        }
         if (att.copyFsBytes > TELE_FS_CAP_BYTES) {
           var bigMsg = 'push ' + key + ': the tracking history is too large for one cloud document even with its map trail thinned (about ' +
             att.copyFsBytes + ' bytes; the limit is about ' + FS_DOC_LIMIT + ')';

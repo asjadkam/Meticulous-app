@@ -1266,6 +1266,10 @@
             if (att) {
               L.push('Last backup try: ' + fmtT(att.at) + ' — ' + (att.ok ? 'landed ✓.' : 'FAILED at the ' + att.stage + ' step.'));
               if (att.err) L.push('Error: ' + String(att.err).slice(0, 280));
+              /* v297: the value the cloud would have refused, named —
+                 and what was cleaned so the backup could land. */
+              if (att.invalidPath) L.push('One stored value could not be sent as-is: ' + att.invalidPath + ' held ' + (att.invalidKind || 'an unsupported value') + '.');
+              if (att.cleaned && att.cleaned.length) L.push('Fixed up so the backup could land: ' + att.cleaned.slice(0, 3).join('; ') + '.');
               var sz = [];
               if (att.localBytes) sz.push('this phone ' + fmtB(att.localBytes));
               if (att.cloudFsBytes) sz.push('cloud ' + fmtB(att.cloudFsBytes));

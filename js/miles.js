@@ -170,9 +170,18 @@
           S.hasFix = !!saved.hasFix;
           if (saved.segs && saved.segs.length) {
             for (var si = 0; si < saved.segs.length; si++) {
-              var sp = saved.segs[si];
-              if (sp && isFinite(+sp[0]) && isFinite(+sp[1]) && +sp[1] > +sp[0]) {
-                S.segs.push([+sp[0], +sp[1]]);
+              /* v297: a saved span arrives in one of three shapes —
+                 the pre-v297 [t0, t1] pair, the v297 { f, t } map
+                 (snapshot() below), or a numeric-key map a sync
+                 pass wrote. All three mean the same span. */
+              var sp = saved.segs[si], f0 = NaN, f1 = NaN;
+              if (Array.isArray(sp)) { f0 = +sp[0]; f1 = +sp[1]; }
+              else if (sp && typeof sp === 'object') {
+                if (sp.f !== undefined || sp.t !== undefined) { f0 = +sp.f; f1 = +sp.t; }
+                else { f0 = +sp['0']; f1 = +sp['1']; }
+              }
+              if (isFinite(f0) && isFinite(f1) && f1 > f0) {
+                S.segs.push([f0, f1]);
               }
             }
           }
@@ -416,7 +425,18 @@
           // v126: the counted-coverage intervals + the unconsumed
           // join origin — the rebuild state must survive the same
           // kills the total does, or the next wake dedupes blind.
-          segs: S.segs.map(function (p) { return [p[0], p[1]]; }),
+          // v297 (SYNC-STILL-FAILING, proven on the owner's phone
+          // Oct 31, 2026): the spans persist as { f, t } MAPS, not
+          // [t0, t1] pairs. A list of lists is the one shape the
+          // cloud document store refuses outright ("called with
+          // invalid data. Nested arrays are not supported"), so
+          // every day record carrying a counted span made EVERY
+          // livemiles backup fail — deterministically, through
+          // three sync builds (293/295/296) whose test doubles
+          // never enforced that rule. begin() above still reads
+          // the old pair shape, so records already on phones and
+          // in the cloud keep their spans.
+          segs: S.segs.map(function (p) { return { f: p[0], t: p[1] }; }),
           joinFrom: S.joinFrom ? { time: S.joinFrom.time, latitude: S.joinFrom.latitude, longitude: S.joinFrom.longitude } : null
         };
       },
