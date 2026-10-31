@@ -249,6 +249,15 @@
     else if (parseFloat(rec.paid) > 0) paid += parseFloat(rec.paid);
     return invCycRound2(paid);
   }
+  /* v298 (INVOICE-BILLTO-BLANK, owner Oct 31, 2026): the Bill-to
+     an invoice falls back to when its own is blank — the saved
+     Contracting company + address from Preferences, composed the
+     same way the draft default composes them. '' when no company
+     is saved: nothing is ever invented. */
+  function invCycBillToFromPrefs(o) {
+    o = o || {};
+    return o.contractingCo ? (o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '')) : '';
+  }
   /* v146: THE DOCUMENT, composed from the record alone. This is
      the exact HTML printInvoice has printed since v122 (the
      owner's #1150 structure — header band, Bill-to block, the
@@ -265,8 +274,16 @@
      ONLY when the caller says the stores are the ISSUER's own
      (fromStores) — on the payer's phone those stores are the
      payer's, and rebuilding from them would print his facts on
-     the driver's document. */
-  function invSharedDocHtml(rec, truckNo, fromStores) {
+     the driver's document. v298: the Bill-to is an argument for
+     the same reason as the truck number — the issuer's print
+     door passes his saved Contracting company + address
+     (invCycBillToFromPrefs) and it is used ONLY when the
+     record's own bill-to is blank, so an already-issued blank
+     record (his #1154) re-prints corrected under its own
+     number; a payer's copy passes nothing and the record alone
+     speaks. A bill-to the record actually carries is never
+     overridden. */
+  function invSharedDocHtml(rec, truckNo, fromStores, billToFallback) {
     var bizName = (rec.company && rec.company.name) || '';
     var rows = '';
     (rec.revLines || []).forEach(function (l) {
@@ -294,7 +311,8 @@
     var genNote = invCycDocNote(rec.revLines || [], rec.dayHours, cardDays,
       { rate: rec.rate, taxRate: rec.taxRate, taxIncluded: rec.taxIncluded });
     var noteText = [genNote, String(rec.notes || '').trim()].filter(Boolean).join(' ');
-    var btParts = String(rec.billTo || '').split(',');
+    var btRaw = String(rec.billTo || '').trim() ? rec.billTo : (billToFallback || '');
+    var btParts = String(btRaw || '').split(',');
     var btName = (btParts.shift() || '').trim();
     var btAddr = btParts.join(',').trim();
     var netSub = rec.taxIncluded ? invCycRound2((Number(rec.sub) || 0) - (Number(rec.tax) || 0)) : (Number(rec.sub) || 0);
@@ -611,7 +629,9 @@
   }
   /* Verified issue + cycle rollover. x: {draft, revLines, sub, tax,
      total, pa, pb, today, now?, company, province, country, prefNo?,
-     taxIncluded?, duplicateDates?, setNextInvoiceNo?}.
+     taxIncluded?, duplicateDates?, setNextInvoiceNo?,
+     billToFallback? (v298: the saved contracting company +
+     address, used only when the draft's own Bill-to is blank)}.
      Returns {ok:true, rec, next, nextPrefNo} or
      {ok:false, stage, message}.
      On failure NOTHING is written that matters: the list is only
@@ -657,7 +677,15 @@
       no = invCycNextNo(list);
     }
     var rec = {
-      id: 'inv' + (x.now || Date.now()), no: no, date: x.today, draftDate: draft.date, billTo: draft.billTo,
+      id: 'inv' + (x.now || Date.now()), no: no, date: x.today, draftDate: draft.date,
+      /* v298 (INVOICE-BILLTO-BLANK): a blank draft Bill-to
+         resolves from the saved Contracting company + address
+         the caller passes (x.billToFallback) — the record
+         carries the resolved value, so every later print,
+         including a connected payer's copy, bills the company.
+         A Bill-to the draft actually carries is stamped
+         verbatim, never overridden. */
+      billTo: String(draft.billTo || '').trim() ? draft.billTo : (x.billToFallback || ''),
       pa: x.pa, pb: x.pb,
       revLines: x.revLines, items: (draft.items || []).slice(),
       taxRate: Number(draft.taxRate) || 0, taxIncluded: !!x.taxIncluded,
@@ -808,8 +836,10 @@
      The printed invoice must read like the owner's own hour sheet —
      the document he actually sent his boss (invoice #1151, Oct 15,
      2026): one line per day as "Oct 16: 11h", and a closing note
-     that spells out the tax-inclusive rate, the foreman+travel
-     doctrine, each day's haul card, and the period's total hours.
+     that spells out the tax-inclusive rate and the period's total
+     hours. (v298: the note no longer spells out the foreman+travel
+     doctrine or each day's haul card — the owner's Oct 31, 2026
+     order; see invCycDocNote.)
      Pure helpers; harness-pinned in tools/invoice-format-test.js. */
   /* Hours the way his sheet writes them: 11, 10.5, 124.5. */
   function invCycFmtH(x) {
@@ -867,13 +897,21 @@
     });
     return cards;
   }
-  /* The closing note, word-for-word in the shape of the sent #1151:
-     "Rate $29.00/hour, tax included (net rate $27.62/hour + 5% GST
-     of $1.38/hour). Hours are the foreman ticket hours for each day
-     plus 1 hour of travel per day worked. Oct 14: haul card #23177
-     (foreman 9.5h + 1h travel). … Total hours: 124.5."
-     Tax-inclusive invoices only; anything the facts don't support
-     (no rate, no travel, no cards) is simply not claimed. */
+  /* The closing note. v105 built it word-for-word in the shape
+     of the sent #1151 — rate line, the foreman+travel doctrine,
+     and EVERY day's haul card spelled out. v298
+     (INVOICE-NOTES-VERBOSE, owner Oct 31, 2026, on his #1154
+     print): "notes Dont have to be soooo detailed... Details
+     are left for multi day manifest." The note is SHORT now —
+     the rate line plus the period's total hours, nothing else:
+     no doctrine sentence, no per-day haul-card enumeration.
+     The card facts still ride the record (cardDays) — they
+     belong to the multi-day manifest (MANIFEST-MULTIDAY),
+     not to this note. Tax-inclusive invoices only; anything
+     the facts don't support (no rate, no hours) is simply not
+     claimed. The signature is unchanged: callers still pass
+     the lines and the card facts; the note just no longer
+     prints them. */
   function invCycDocNote(lines, dayHours, cards, opt) {
     opt = opt || {};
     if (!opt.taxIncluded) return '';
@@ -885,34 +923,6 @@
       parts.push('Rate $' + rate.toFixed(2) + '/hour, tax included (net rate $' + net.toFixed(2) +
         '/hour + ' + invCycFmtH(tr) + '% GST of $' + gst.toFixed(2) + '/hour).');
     }
-    cards = cards || {};
-    var tv = null, uniform = true, anyTravel = false;
-    Object.keys(cards).forEach(function (d) {
-      var t = parseFloat(cards[d].travel) || 0;
-      if (t > 0) {
-        anyTravel = true;
-        if (tv === null) tv = t; else if (tv !== t) uniform = false;
-      }
-    });
-    if (anyTravel) {
-      parts.push('Hours are the foreman ticket hours for each day plus ' +
-        (uniform ? invCycFmtH(tv) + (tv === 1 ? ' hour' : ' hours') : 'the travel hours shown') +
-        ' of travel per day worked.');
-    }
-    (lines || []).forEach(function (l) {
-      var c = cards[l.date];
-      if (!c || l.src !== 'dispatch' || !c.tickets.length) return;
-      if (c.tickets.length === 1) {
-        var t1 = c.tickets[0];
-        if (!t1.num) return;
-        parts.push(invCycDateShort(l.date) + ': haul card #' + t1.num + ' (foreman ' +
-          invCycFmtH(t1.foreman) + 'h' + (c.travel > 0 ? ' + ' + invCycFmtH(c.travel) + 'h travel' : '') + ').');
-      } else {
-        var seg = [];
-        c.tickets.forEach(function (t) { if (t.num) seg.push('haul card #' + t.num + ' (foreman ' + invCycFmtH(t.foreman) + 'h)'); });
-        if (seg.length) parts.push(invCycDateShort(l.date) + ': ' + seg.join(', ') + (c.travel > 0 ? ' + ' + invCycFmtH(c.travel) + 'h travel.' : '.'));
-      }
-    });
     var th = 0;
     Object.keys(dayHours || {}).forEach(function (d) { th += parseFloat(dayHours[d]) || 0; });
     if (th > 0) parts.push('Total hours: ' + invCycFmtH(th) + '.');
@@ -1183,7 +1193,17 @@
      "Ai trucking"). A genuinely different hand-typed Bill-to is
      never rewritten. */
   function invBillToHeal(draft, o) {
-    if (!draft || !o || !o.contractingCo || !draft.billTo) return draft;
+    if (!draft || !o || !o.contractingCo) return draft;
+    /* v298 (INVOICE-BILLTO-BLANK): a BLANK Bill-to is the most
+       untouched case of all — a draft born while the contracting
+       company wasn't in the onboarding slot kept '' forever
+       under the old guard, and the blank froze onto the issued
+       record (#1154). It takes the saved company + address like
+       any other untouched default. */
+    if (!String(draft.billTo || '').trim()) {
+      draft.billTo = o.contractingCo + (o.contractingAddr ? ', ' + o.contractingAddr : '');
+      return draft;
+    }
     if (draft.billTo === o.contractingCo) {
       if (o.contractingAddr) draft.billTo = o.contractingCo + ', ' + o.contractingAddr;
       return draft;
@@ -1453,6 +1473,7 @@
           today: App._today(),
           profileId: myPid, /* v242: this issue belongs to the active profile's book */
           prefNo: o.nextInvoiceNo || '', taxIncluded: taxIncluded,
+          billToFallback: invCycBillToFromPrefs(o), /* v298: blank draft Bill-to resolves from Preferences */
           duplicateDates: (revPlan && revPlan.duplicateDates) || [],
           /* v105: the facts the printed document is built from —
              winning hours per day, the period's haul cards, and
@@ -1597,11 +1618,15 @@
       /* v146: the document itself is composed by invSharedDocHtml
          (INV-CYCLE region) from the record — the same composer a
          connected payer's app calls on the shared copy, so his
-         print is this print. The issuer's two live fallbacks stay
-         here: the Preferences truck number, and the card-days
-         rebuild from HIS OWN stores (fromStores). */
+         print is this print. The issuer's live fallbacks stay
+         here: the Preferences truck number, the card-days
+         rebuild from HIS OWN stores (fromStores), and — v298
+         (INVOICE-BILLTO-BLANK) — the saved Contracting company
+         + address for a record whose own bill-to is blank, so
+         an invoice issued with a frozen blank (#1154) re-prints
+         corrected under its own number from this same door. */
       printDoc('Invoice ' + rec.no,
-        invSharedDocHtml(rec, rec.truckNo || o.truckNo || '', true));
+        invSharedDocHtml(rec, rec.truckNo || o.truckNo || '', true, invCycBillToFromPrefs(o)));
     }
 
 

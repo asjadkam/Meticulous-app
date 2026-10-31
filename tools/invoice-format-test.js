@@ -10,13 +10,21 @@
  *   Day lines in hour-sheet shape: "Oct 1: 10.5h" … "Oct 15: 11.5h"
  *   Subtotal $3,610.50 · Tax (5% GST, included in rate) $171.93 ·
  *   Total due $3,610.50
- *   Closing note, verbatim: "Rate $29.00/hour, tax included (net
- *   rate $27.62/hour + 5% GST of $1.38/hour). Hours are the foreman
- *   ticket hours for each day plus 1 hour of travel per day
- *   worked. Oct 14: haul card #23177 (foreman 9.5h + 1h travel).
- *   Oct 15: haul card #21314 (foreman 10.5h + 1h travel). Total
- *   hours: 124.5."
+ *   Closing note as sent in #1151, verbatim: "Rate $29.00/hour,
+ *   tax included (net rate $27.62/hour + 5% GST of $1.38/hour).
+ *   Hours are the foreman ticket hours for each day plus 1 hour
+ *   of travel per day worked. Oct 14: haul card #23177 (foreman
+ *   9.5h + 1h travel). Oct 15: haul card #21314 (foreman 10.5h +
+ *   1h travel). Total hours: 124.5."
  *   Page footer: "Invoice 1151"
+ *
+ * v298 PIN MOVE (owner, Oct 31, 2026 — INVOICE-NOTES-VERBOSE):
+ * the NOTE part of the v105 spec is superseded by his direct
+ * order on the #1154 print: "notes Dont have to be soooo
+ * detailed... Details are left for multi day manifest." The
+ * generated note is now SHORT — the rate line plus "Total
+ * hours: <n>." only (see tools/invoice-billto-notes-v298-test.js).
+ * Everything else in the #1151 spec above stands untouched.
  *
  * This suite runs the REAL INV-CYCLE region of modules/invoice.js
  * in a vm over the real store slice from js/app.js, feeds it the
@@ -96,10 +104,11 @@ const DSP_1_15 = [
   { id: 'dsp-1014', date: '2026-10-14', status: 'completed', jobSite: 'Aecon', tickets: [{ ticketNo: '23177', foremanHours: 9.5 }] },
   { id: 'dsp-1015', date: '2026-10-15', status: 'completed', jobSite: 'Aecon', tickets: [{ ticketNo: '21314', foremanHours: 10.5 }] }
 ];
+/* v298: the generated note under the owner's Oct 31, 2026 law —
+   the rate line + total hours ONLY (the #1151 note's per-day
+   haul-card enumeration moved to the multi-day manifest). */
 const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5% GST of $1.38/hour). ' +
-  'Hours are the foreman ticket hours for each day plus 1 hour of travel per day worked. ' +
-  'Oct 14: haul card #23177 (foreman 9.5h + 1h travel). ' +
-  'Oct 15: haul card #21314 (foreman 10.5h + 1h travel). Total hours: 124.5.';
+  'Total hours: 124.5.';
 
 /* ================= Oct 1–15 — reproduce #1151 ================= */
 (function () {
@@ -116,7 +125,8 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   deepEq('1151: cards found only for the two card days', Object.keys(cards).sort(), ['2026-10-14', '2026-10-15']);
   eq('1151: Oct 14 travel derived = 1h (10.5 paid − 9.5 foreman)', cards['2026-10-14'].travel, 1);
   const note = w.invCycDocNote(plan.lines, plan.dayHours, cards, { rate: 29, taxRate: 5, taxIncluded: true });
-  eq('1151: closing note is BYTE-FOR-BYTE the sent note', note, REF_NOTE_1151);
+  eq('1151: closing note is the v298 short note (rate line + total hours)', note, REF_NOTE_1151);
+  ok('1151: the note carries NO haul-card enumeration (v298)', note.indexOf('haul card') === -1 && note.indexOf('23177') === -1);
   const t = w.invCycTotals(3610.50, 5, true);
   eq('1151: subtotal / included GST / total due', t.sub + '/' + t.tax + '/' + t.total, '3610.5/171.93/3610.5');
 })();
@@ -141,10 +151,9 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   const cards = w.invCycCardDays(entries, dspList, plan.dayHours, '2026-10-16', '2026-10-31');
   eq('Oct 16–31: card #22729 on the day', cards['2026-10-16'].tickets[0].num, '22729');
   const note = w.invCycDocNote(plan.lines, plan.dayHours, cards, { rate: 29, taxRate: 5, taxIncluded: true });
-  eq('Oct 16–31: closing note in the sent shape', note,
+  eq('Oct 16–31: closing note in the v298 short shape', note,
     'Rate $29.00/hour, tax included (net rate $27.62/hour + 5% GST of $1.38/hour). ' +
-    'Hours are the foreman ticket hours for each day plus 1 hour of travel per day worked. ' +
-    'Oct 16: haul card #22729 (foreman 10h + 1h travel). Total hours: 11.');
+    'Total hours: 11.');
   const t = w.invCycTotals(319, 5, true);
   eq('Oct 16–31: totals — subtotal $319.00, GST inside $15.19, total due $319.00', t.sub + '/' + t.tax + '/' + t.total, '319/15.19/319');
 
@@ -183,9 +192,10 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
      the footer is now "Prepared by <business> · Invoice N ·
      Page 1" and the totals block's tax row is a GST row that
      prints the GST number. These two pins move DELIBERATELY
-     with that spec; the byte-for-byte closing NOTE above — the
-     part that was law — is untouched and still pinned. The
-     full v122 structure is pinned in paystub-auto-test.js. */
+     with that spec. (The closing NOTE's own pin moved later,
+     at v298, on the owner's Oct 31, 2026 order — see the
+     header.) The full v122 structure is pinned in
+     paystub-auto-test.js. */
   ok('print: page footer is the v122 Prepared-by line (name + number + page)',
     invSrc.indexOf("'<p class=\"muted foot\">Prepared by '") !== -1 &&
     invSrc.indexOf("' · Invoice ' + esc(rec.no) + ' · Page 1</p>'") !== -1);
@@ -345,8 +355,9 @@ const REF_NOTE_1151 = 'Rate $29.00/hour, tax included (net rate $27.62/hour + 5%
   eq('v134 render: Total due = hours x rate exactly', kvOf('Total due') && kvOf('Total due').b, '$3610.50');
   eq('v134 render: Paid amount honest $0.00', kvOf('Paid amount') && kvOf('Paid amount').b, '$0.00');
   eq('v134 render: Balance owing = Total due', kvOf('Balance owing') && kvOf('Balance owing').b, '$3610.50');
-  ok('v134 render: the byte-for-byte note survives the pipeline',
-    texts.some(function (x) { return x.indexOf('Oct 15: haul card #21314 (foreman 10.5h + 1h travel). Total hours: 124.5.') !== -1; }));
+  ok('v134 render: the v298 short note survives the pipeline',
+    texts.some(function (x) { return x.indexOf('Total hours: 124.5.') !== -1; }) &&
+    !texts.some(function (x) { return x.indexOf('haul card') !== -1; }));
 
   /* the built PDF: one table, pinned geometry, pinned stream x's */
   const pdf = M.buildPdf({ title: capTitle, lines: L });

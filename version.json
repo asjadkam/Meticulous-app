@@ -1,8 +1,8 @@
 {
   "version": 46,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v46.apk",
-  "webVersion": 297,
-  "notes": "v297: Sync fix — the live-miles backup was being refused by the cloud over one stored value shape (the counted driving spans were saved in a form the cloud cannot take, so EVERY backup failed while the sizes looked tiny). The spans now save in the cloud’s shape, and every backup is checked and made cloud-safe before it is sent, so no stored value can refuse a backup again. The Advanced screen’s detail block now names the exact stored value if anything is ever refused.",
+  "webVersion": 298,
+  "notes": "v298: Invoice fixes (owner, Oct 31, 2026, on his #1154 print) — (1) BILL-TO BLANK: the Bill-to block printed just a dash because a blank Bill-to froze at every door (draft default fills only at creation, the heal skipped blanks, issue stamped the blank verbatim). The invoice builder now resolves Bill-to from the saved Contracting company + address whenever the invoice's own bill-to is blank — at issue (the record carries it), in the draft heal, and at the print door, so invoice #1154 itself re-prints corrected under its own number from Issued invoices > print. A hand-typed Bill-to is never overridden. (2) NOTES TOO DETAILED: the generated closing note is SHORT now — the rate line plus Total hours only; the per-day haul-card detail belongs to the multi-day manifest. Invoice math unchanged (inclusive GST, proven vs #1154: ,253.71 total, 54.94 GST inside).",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "44ab4ec943b936607ddd95f572b132b0055622a3b49af99fdb6fef2b56e8075e",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "e8042bf72e6da019b204a39abb0058b6866be490f096a3fb663f55269c5804d5",
+    "index.html": "50a29d6f661cc8d692f74969be4b62b05d5c5713ca11ed2349a69fd374b394d5",
     "js/app.js": "016ef0984190619514ef14caf169157020f67cb350882ab3decbfa63eab65e11",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -44,7 +44,7 @@
     "modules/damage.js": "081b9ca74b9ccfeae35aa52573729bfc0b1ee74a7ec423b392094f4ab24fcab7",
     "modules/dispatch.js": "34a66a7ca9609b8fdbffd630683403d76128d67e94454546ebde181973024a6f",
     "modules/fuel.js": "74263b98814d8bf097be75c9f612f949ffc53e312246526a047ae168ad69f19d",
-    "modules/invoice.js": "05286222aad95b96365a4bfecb1107307b71965e2edb461b9d08c514298c8ab2",
+    "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "3b82425a8e8a4e11af9209b20af727240808aa82ee6dfcffc6328f0e972ea74b",
     "modules/navigation.js": "856e84d55fc6642180f208a4ce614e67e27e4399382153f43a0feba6760ff75b",
