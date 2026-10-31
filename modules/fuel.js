@@ -53,6 +53,12 @@
     rec.station = form.station;
     var odo = parseFloat(form.odo);
     if (odo > 0) rec.odo = odo; else delete rec.odo;
+    /* v293: every edit is a new VERSION of the same fill — the
+       stamp is what lets the sync merge keep this copy over a
+       stale device book that still holds the pre-edit values
+       (the id, when the record was born with one, rides the
+       field copy above untouched). */
+    rec.updAt = Date.now();
     return rec;
   }
   function saveFillsVerified(f) {
@@ -1057,6 +1063,15 @@
           return;
         }
         var rec = { date: formVals.date };
+        /* v293 (FUEL-EDIT-STOMPED): a fill is born with a STABLE
+           id and a version stamp. The id is the record's identity
+           for cloud sync (an edit preserves it — applyFillEdit
+           copies the original's fields), and updAt is the version
+           the sync merge arbitrates by, so the newest version of
+           a fill wins on every device and a stale book can never
+           resurrect its old field values. */
+        rec.id = 'fu' + Date.now().toString(36) + Math.floor(Math.random() * 1679616).toString(36);
+        rec.updAt = Date.now();
         rec.profileId = wpActiveId(); // v242: the truck that took this fuel
         if (fuReadTime) rec.time = fuReadTime;
         if (fuReadPrice) rec.pricePerLitre = fuReadPrice;

@@ -833,6 +833,69 @@
   }
   function syncCopyJson(key, arr) { return JSON.stringify(recordSyncCopy(key, arr)); }
 
+  /* v293 (SYNC-LIVE-MILES-NOT-PUSHING): the sync copy of a
+     telemetry value (livemiles / geoloads). The document carries
+     a rolling 14 days of day records; a livemiles record's
+     breadcrumb trail is the heavy part (the engine throttles
+     crumbs to one per 30 s / 50 m of driving — a long day still
+     runs past a thousand). Under the cap the value rides whole.
+     Over it, the trails are thinned EVENLY (first and last crumb
+     kept, the shape of the day preserved at coarser resolution)
+     on a deep copy — the local store always keeps the full
+     trail, and every fact the merges, the dashboards and the
+     manifest read (per-day totals, anchors, segs, counts,
+     corrections, pegs, events) rides intact at every rung. The
+     ladder sheds the oldest days' trails first at the harsh
+     rungs; the last rung drops trails entirely and keeps the
+     facts. Deterministic for a given value, so the pull can
+     compare sync copies and a shed cloud copy seals (the v289
+     A7 lesson) instead of re-pushing the whole history every
+     cycle. */
+  function thinCrumbs(crumbs, cap) {
+    if (!Array.isArray(crumbs) || crumbs.length <= cap) return crumbs;
+    if (cap <= 0) return [];
+    if (cap === 1) return [crumbs[0]];
+    var out = [], seen = {};
+    for (var i = 0; i < cap; i++) {
+      var idx = Math.round(i * (crumbs.length - 1) / (cap - 1));
+      if (!seen[idx]) { seen[idx] = 1; out.push(crumbs[idx]); }
+    }
+    return out;
+  }
+  function telemetrySyncCopy(key, val) {
+    if (!val || typeof val !== 'object' || !val.days || typeof val.days !== 'object') return val;
+    if (JSON.stringify(val).length <= MAX_DOC_BYTES) return val;
+    var dayKeys = Object.keys(val.days);
+    /* newest first, by the records' own updatedAt — the harsh
+       rungs shed the oldest days' trails before the newest. */
+    var newestFirst = dayKeys.slice().sort(function (a, b) {
+      var ra = val.days[a] || {}, rb = val.days[b] || {};
+      return (rb.updatedAt || 0) - (ra.updatedAt || 0);
+    });
+    function build(cap, keepDays) {
+      var c = JSON.parse(JSON.stringify(val));
+      newestFirst.forEach(function (dk, i) {
+        var rec = c.days[dk];
+        if (!rec || !Array.isArray(rec.crumbs)) return;
+        rec.crumbs = (i < keepDays) ? thinCrumbs(rec.crumbs, cap) : [];
+      });
+      return c;
+    }
+    var ladder = [
+      build(400, dayKeys.length),
+      build(120, dayKeys.length),
+      build(40, dayKeys.length),
+      build(40, 3),
+      build(24, 1),
+      build(0, 0)
+    ];
+    for (var i = 0; i < ladder.length; i++) {
+      if (JSON.stringify(ladder[i]).length <= MAX_DOC_BYTES) return ladder[i];
+    }
+    return ladder[ladder.length - 1]; // facts only; caller fails honestly if even this is over
+  }
+  function telemetryCopyJson(key, val) { return JSON.stringify(telemetrySyncCopy(key, val)); }
+
   /* v276 (SPARK-QUOTA): read the ONE cloud doc a record-list
      push merges against (its current array, or null). Before
      v276 the push loaded the WHOLE kv collection (~36 docs)
@@ -955,8 +1018,18 @@
     try { size = raw.length; } catch (e) {}
     /* v289: record-list keys never take this skip — they proceed
        to the read-merge-write below, which writes the sync copy
-       (recordSyncCopy) that fits the cap, or fails honestly. */
-    if (size > MAX_DOC_BYTES && !RECORD_LIST_KEYS[key]) {
+       (recordSyncCopy) that fits the cap, or fails honestly.
+       v293 (SYNC-LIVE-MILES-NOT-PUSHING, owner evidence Oct 31,
+       2026): TELEMETRY keys never take it either. The skip sealed
+       the key clean (km.s = km.t) while writing nothing, so once
+       the livemiles document — a rolling 14 days of day records,
+       each with its full breadcrumb trail — crossed the cap, every
+       push was silently skipped and the cloud copy froze at the
+       last state that fit (Oct 31: 0.1 km against the phone's
+       60.6 km) while every small key around it kept landing. The
+       telemetry branch below now writes a sync copy under the
+       cap (telemetrySyncCopy), or fails honestly. */
+    if (size > MAX_DOC_BYTES && !RECORD_LIST_KEYS[key] && !isTelemetryKey(key)) {
       try { console.warn('[cloudsync] skipping oversized key (kept locally):', key, size); } catch (e) {}
       km.s = km.t; // don't retry forever; local copy remains the truth
       delete S._keyFails[key]; // v136: handled by design — not a standing failure
@@ -1037,7 +1110,20 @@
         return done(false);
       };
       var tlSave = function (v) {
-        return FB.saveDoc(KV_COLLECTION, docId, { v: v }).then(function (res) {
+        /* v293: write the SYNC COPY (telemetrySyncCopy) — the
+           full merged value stays in the local store (the learn
+           above already wrote it there); the cloud copy carries
+           every fact the merges and dashboards read, with the
+           breadcrumb trails thinned only when the document
+           would exceed the cap. A copy that STILL exceeds it
+           fails honestly — the key stays dirty and the failure
+           is named — never the old silent seal. */
+        var copy = telemetrySyncCopy(key, v);
+        if (JSON.stringify(copy).length > MAX_DOC_BYTES) {
+          try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': the tracking history exceeds the cloud document size limit even with its map trail thinned' }); } catch (e) {}
+          return Promise.resolve(done(false));
+        }
+        return FB.saveDoc(KV_COLLECTION, docId, { v: copy }).then(function (res) {
           if (res === null) {
             try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
             return done(false);
@@ -1142,6 +1228,31 @@
     var c = (typeof rec.count === 'number' ? rec.count : 0) + (typeof rec.corr === 'number' ? rec.corr : 0);
     return Math.max(0, c);
   }
+  /* v293: same-lineage test for geoloads day records (see the
+     arbitration note in mergeTelemetryDays): the same machine
+     count, or the same counted-event trail (events / pegEvents
+     length + last stamp). A young fragment fails both — its
+     count is smaller and its trail is a short prefix — so the
+     v224 fragment protection is preserved. */
+  function geoTrailSig(rec) {
+    try {
+      var parts = [];
+      ['events', 'pegEvents'].forEach(function (f) {
+        var arr = rec && rec[f];
+        if (Array.isArray(arr) && arr.length) {
+          var last = arr[arr.length - 1];
+          parts.push(f + ':' + arr.length + ':' + (last && last.t !== undefined ? last.t : JSON.stringify(last)));
+        } else parts.push(f + ':0:');
+      });
+      return parts.join('|');
+    } catch (e) { return ''; }
+  }
+  function geoSameLineage(lr, cr) {
+    if (!lr || !cr) return false;
+    if (typeof lr.count === 'number' && typeof cr.count === 'number' && lr.count === cr.count) return true;
+    var ls = geoTrailSig(lr), cs = geoTrailSig(cr);
+    return !!ls && ls === cs && ls !== 'events:0:|pegEvents:0:';
+  }
   function mergeTelemetryDays(key, localV, cloudV) {
     var out = {}, k, seen = {};
     var a = (localV && localV.days) || {}, b = (cloudV && cloudV.days) || {};
@@ -1152,9 +1263,36 @@
       if (!lr) { out[k] = cr; continue; }
       if (!cr) { out[k] = lr; continue; }
       var lt = telemetryDayTotal(key, lr), ct = telemetryDayTotal(key, cr);
+      /* v293 (the correction half of SYNC-STOMP): for geoloads,
+         two records of the SAME lineage — the same machine count,
+         or the same event trail — differ only in the driver's
+         signed correction and later state, and a correction
+         legitimately moves the day's total DOWN (Oct 30, 2026:
+         19 counted with corr -2 = 17 closed, against an earlier
+         snapshot at corr +1 = 20 — the larger-total law below
+         kept the 20 in the cloud forever and re-taught it to
+         the phone on every pull). Same lineage arbitrates by
+         updatedAt: the later record is the day's truth. Counts
+         that DIFFER keep the v224 law (a fresh engine's young
+         fragment has a smaller count and must never beat the
+         full day), and livemiles totals only ever grow within
+         a day, so the totals law stands there untouched. */
+      if (key === 'geoloads' && geoSameLineage(lr, cr)) {
+        out[k] = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+        continue;
+      }
       if (ct > lt) out[k] = cr;
       else if (lt > ct) out[k] = lr;
-      else out[k] = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+      else {
+        /* v293: a totals tie prefers the crumb-RICHER record —
+           a shed cloud copy (telemetrySyncCopy) must never strip
+           the phone's full breadcrumb trail on a pull. Records
+           without crumbs (geoloads) fall through to the stamp. */
+        var lc = (lr.crumbs && lr.crumbs.length) || 0;
+        var cc = (cr.crumbs && cr.crumbs.length) || 0;
+        if (lc !== cc) out[k] = lc > cc ? lr : cr;
+        else out[k] = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+      }
     }
     /* the merged value rides the CLOUD shell (any top-level
        fields it carries) with the unioned day map; when the cloud
@@ -1213,6 +1351,12 @@
   function recordIdentity(key, rec) {
     if (!rec || typeof rec !== 'object') return null;
     if (key === 'pti_reports') return rec.id ? 'id:' + rec.id : null;
+    /* v293 (FUEL-EDIT-STOMPED): a fuel fill born under the new
+       save path carries a stable id that an edit preserves, so
+       its identity survives the edit — the fingerprint below
+       (which includes the very fields an edit rewrites) is only
+       for records born before ids. */
+    if (key === 'fuel_fills' && rec.id) return 'id:' + rec.id;
     if (key === 'rev_entries' && rec.dspId) return 'dsp:' + rec.dspId;
     var fields = (key === 'fuel_fills') ? ['date', 'time', 'litres', 'cost', 'station', 'odo']
       : (key === 'sessions') ? ['date', 'seconds', 'endedAt']
@@ -1249,15 +1393,77 @@
     if (rec.photo) n += 3;
     return n;
   }
-  function mergeRecordLists(key, localArr, cloudArr) {
+  /* v293 (FUEL-EDIT-STOMPED, owner evidence Oct 31, 2026): two
+     id-less copies of ONE fill. An edit rewrites litres / cost /
+     station — all fingerprint fields — so the edited copy and
+     its pre-edit twin carry different recordIdentity values and
+     the union below kept both, forever: the cloud showed the
+     corrected $235.82 / 93.6 L entry AND the stale $250 one as
+     two fills. Copies of one fill agree on the facts an ordinary
+     edit never moves: the date, and the odometer (an odometer
+     CHANGE between copies is a deliberate correction edit, and
+     those copies carry the updAt version stamp the new save
+     path writes). Times, when both copies carry one, must
+     agree. Records with ids never come here — identity already
+     matched them (or their ids genuinely differ). */
+  function fuelSameFill(a, b) {
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    if (a.id || b.id) return false;
+    if (!a.date || a.date !== b.date) return false;
+    var at = a.time || '', bt = b.time || '';
+    if (at && bt && at !== bt) return false;
+    var ao = parseFloat(a.odo) || 0, bo = parseFloat(b.odo) || 0;
+    if (ao > 0 && bo > 0 && ao !== bo && !(a.updAt || b.updAt)) return false;
+    if (!(ao > 0 || bo > 0) && !(at && bt)) return false; // nothing anchors them as one fill
+    return true;
+  }
+  /* v293: which of two copies of one fuel fill survives.
+     A shadow-doomed copy (this device deleted that identity on
+     purpose) yields to its sibling — without this, an edit
+     whose old identity sits in the shadow could be filtered
+     out whole when the stale copy happened to win on
+     completeness. Then the version stamp (updAt — the newest
+     version of the record wins), then completeness (the v241
+     law), then the local copy. */
+  function fuelCopyWins(cur, rec, isLocal, doomed, curId, recId) {
+    if (doomed) {
+      var cd = !!doomed[curId], rd = !!doomed[recId];
+      if (cd !== rd) return rd; // rec wins exactly when cur is the doomed one
+    }
+    var cu = +cur.updAt || 0, ru = +rec.updAt || 0;
+    if (cu !== ru) return ru > cu;
+    var cs = recordCompleteness('fuel_fills', cur), ns = recordCompleteness('fuel_fills', rec);
+    if (ns !== cs) return ns > cs;
+    return isLocal;
+  }
+  function mergeRecordLists(key, localArr, cloudArr, doomed) {
     var out = [], pos = {};
     function offer(rec, isLocal) {
       var id = recordIdentity(key, rec);
       if (id === null) { out.push(rec); return; }
-      if (!(id in pos)) { pos[id] = out.length; out.push(rec); return; }
-      var cur = out[pos[id]];
-      var cs = recordCompleteness(key, cur), ns = recordCompleteness(key, rec);
-      if (ns > cs || (isLocal && ns === cs)) out[pos[id]] = rec;
+      if (id in pos) {
+        var slot = pos[id];
+        if (key === 'fuel_fills') {
+          if (fuelCopyWins(out[slot], rec, isLocal, doomed, recordIdentity(key, out[slot]), id)) out[slot] = rec;
+        } else {
+          var cur = out[slot];
+          var cs = recordCompleteness(key, cur), ns = recordCompleteness(key, rec);
+          if (ns > cs || (isLocal && ns === cs)) out[slot] = rec;
+        }
+        return;
+      }
+      if (key === 'fuel_fills') {
+        for (var j = 0; j < out.length; j++) {
+          if (fuelSameFill(out[j], rec)) {
+            var oid = recordIdentity(key, out[j]);
+            if (fuelCopyWins(out[j], rec, isLocal, doomed, oid, id)) out[j] = rec;
+            pos[id] = j;
+            if (oid) pos[oid] = j;
+            return;
+          }
+        }
+      }
+      pos[id] = out.length; out.push(rec);
     }
     (cloudArr || []).forEach(function (r) { offer(r, false); });
     (localArr || []).forEach(function (r) { offer(r, true); });
@@ -1321,8 +1527,13 @@
     return del;
   }
   function mergeRecordLists3(key, localArr, cloudArr, shadowIds) {
-    var merged = mergeRecordLists(key, localArr, cloudArr);
+    /* v293: the pending-delete set is computed FIRST and handed
+       to the merge: a shadow-deleted identity that still has a
+       same-fill sibling in the union (the edit that replaced
+       it) yields to that sibling inside the merge, and the
+       filter below then removes only true deletions. */
     var del = pendingRecordDeletes(key, shadowIds, localArr, cloudArr);
+    var merged = mergeRecordLists(key, localArr, cloudArr, del);
     var any = false, dk;
     for (dk in del) { if (Object.prototype.hasOwnProperty.call(del, dk)) { any = true; break; } }
     if (!any) return merged;
@@ -1489,7 +1700,12 @@
               lsSetRaw(key, JSON.stringify(teleMerged));
               applied++;
             }
-            if (JSON.stringify(teleMerged) !== JSON.stringify(d.v)) {
+            /* v293: compare the SYNC COPY against the cloud doc —
+               a full-trail local value whose thinned copy IS the
+               cloud state once the push has landed; comparing the
+               full value would keep the key dirty forever and
+               re-push the whole history every cycle. */
+            if (telemetryCopyJson(key, teleMerged) !== JSON.stringify(d.v)) {
               /* the union holds days the cloud lacks — keep the
                  key dirty so the flush pushes the union UP. */
               meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
