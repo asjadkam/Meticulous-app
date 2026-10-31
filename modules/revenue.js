@@ -86,6 +86,14 @@
 
   function periodDays() {
     var p = S('period', '30');
+    if (p === 'learned') {
+      /* v302: the learned period's own length (15 for his
+         semi-monthly Nov 1–15); without bounds, the same honest
+         30 the custom fallback uses. */
+      var lb = learnedBounds();
+      if (lb) return pcDiff(lb.a, lb.b) + 1;
+      return 30;
+    }
     if (p === 'custom') {
       var a = S('customA', ''), b = S('customB', '');
       if (a && b && b >= a) {
@@ -99,6 +107,14 @@
   function inPeriod(dateStr) {
     if (!dateStr) return false;
     var p = S('period', '30');
+    if (p === 'learned') {
+      /* v302: the learned period's bounds, exactly — the label
+         and the sum are the same dates by construction. Without
+         bounds (the rhythm vanished), fall through to the
+         rolling fallback like an invalid Custom (v107 law). */
+      var lb = learnedBounds();
+      if (lb) return dateStr >= lb.a && dateStr <= lb.b;
+    }
     if (p === 'custom') {
       var a = S('customA', ''), b = S('customB', '');
       if (a && b && b >= a) return dateStr >= a && dateStr <= b;
@@ -110,7 +126,7 @@
          sum can never disagree again. */
     }
     var d = new Date(dateStr + 'T12:00:00'), now = new Date();
-    return (now - d) / 86400000 <= (p === 'custom' ? periodDays() : (parseInt(p, 10) || 30));
+    return (now - d) / 86400000 <= ((p === 'custom' || p === 'learned') ? periodDays() : (parseInt(p, 10) || 30));
   }
 
   /* ---- v38: one per-day aggregation feeds the period summary, the chart
@@ -426,6 +442,271 @@
     return { ym: ym, hours: hours, total: total, daysWorked: worked, avg: worked ? total / worked : 0, days: list, loads: loads };
   }
 
+  /* ================= PAYCYCLE-LEARN-BEGIN =================
+     v302 (REVENUE-LEARNS-PAY-CYCLE — owner, Oct 31, 2026 17:17
+     MDT, with his Revenue screen recording: "Revenue module
+     should learn by itself... I am obviously getting paid every
+     1st and 5th... That another ML you can boast about."): the
+     module LEARNS the driver's pay rhythm from his own invoicing
+     history — the issued + settled-outside invoice periods
+     (inv_list pa/pb) and his pay-stub periods (inv_stubs a/b) —
+     and frames the period view on it: Revenue opens on the
+     CURRENT learned period, past learned periods are one-tap
+     chips, a hand-picked custom range SNAPS to learned
+     boundaries, and the learned rule + the open period's
+     expected payday print in plain words. NOTHING is hard-coded:
+     semi-monthly is one candidate pattern among four
+     (semi-monthly / monthly / weekly / biweekly), learned only
+     when at least two DISTINCT periods follow it and they are a
+     strict majority of the distinct periods on record — a
+     weekly-paid driver learns weekly, and a sparse or split
+     history learns NOTHING, leaving the manual behaviour
+     exactly as it was. Duplicate issues of one period count
+     once; a stray record can neither teach nor veto the rhythm
+     the rest of the book follows. The rule is stored per work
+     profile (rev_paycycle_<profile>) and re-learned on every
+     render, so a newly issued invoice teaches it immediately.
+     Harness: tools/revenue-paycycle-v302-test.js runs this
+     region's learner against shaped histories. */
+  var PC_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var PC_DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function pcDim(y, m) {
+    var t = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (m === 2 && ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0)) return 29;
+    return t[m - 1];
+  }
+  function pcParse(s) {
+    if (typeof s !== 'string') return null;
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return null;
+    var y = +m[1], mo = +m[2], d = +m[3];
+    if (mo < 1 || mo > 12 || d < 1 || d > pcDim(y, mo)) return null;
+    return { y: y, m: mo, d: d };
+  }
+  function pcFmt(y, m, d) { return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2); }
+  function pcAdd(s, n) {
+    var p = pcParse(s); if (!p) return null;
+    var dt = new Date(Date.UTC(p.y, p.m - 1, p.d + n));
+    return pcFmt(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+  }
+  function pcDow(s) {
+    var p = pcParse(s); if (!p) return -1;
+    return new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
+  }
+  function pcDiff(a, b) {
+    var x = pcParse(a), y = pcParse(b);
+    if (!x || !y) return NaN;
+    return Math.round((Date.UTC(y.y, y.m - 1, y.d) - Date.UTC(x.y, x.m - 1, x.d)) / 86400000);
+  }
+  function pcSpanDays(sp) {
+    if (!sp || !pcParse(sp.a) || !pcParse(sp.b)) return -1;
+    return pcDiff(sp.a, sp.b) + 1;
+  }
+  /* One record's period span, validated: a real, forward,
+     invoice-sized range (2–62 days). A one-day test print or a
+     broken range teaches nothing and is dropped here. */
+  function pcSpanOf(a, b) {
+    if (!pcParse(a) || !pcParse(b) || b < a) return null;
+    var n = pcSpanDays({ a: a, b: b });
+    if (n < 2 || n > 62) return null;
+    return { a: a, b: b };
+  }
+  /* The DISTINCT period spans of a history: issued + settled
+     invoice records contribute pa/pb, pay stubs contribute a/b.
+     Duplicates of one period (his #1152/#1153) count once. */
+  function pcCollectSpans(invList, stubList) {
+    var seen = {}, out = [];
+    function take(a, b) {
+      var sp = pcSpanOf(a, b);
+      if (!sp) return;
+      var k = sp.a + '|' + sp.b;
+      if (seen[k]) return;
+      seen[k] = true; out.push(sp);
+    }
+    (invList || []).forEach(function (r) { if (r) take(r.pa, r.pb); });
+    (stubList || []).forEach(function (r) { if (r) take(r.a, r.b); });
+    out.sort(function (x, y) { return x.a < y.a ? -1 : x.a > y.a ? 1 : 0; });
+    return out;
+  }
+  function pcIsSemiSpan(sp) {
+    var a = pcParse(sp.a), b = pcParse(sp.b);
+    if (!a || !b || a.y !== b.y || a.m !== b.m) return false;
+    return (a.d === 1 && b.d === 15) || (a.d === 16 && b.d === pcDim(a.y, a.m));
+  }
+  function pcIsMonthSpan(sp) {
+    var a = pcParse(sp.a), b = pcParse(sp.b);
+    if (!a || !b || a.y !== b.y || a.m !== b.m) return false;
+    return a.d === 1 && b.d === pcDim(a.y, a.m);
+  }
+  /* THE LEARNER (pure). A pattern is learned when at least two
+     distinct periods follow it AND they form a strict majority
+     of the distinct periods on record. Returns the rule
+     ({kind, dow?, anchor?, n}) or null — null is a real answer:
+     too little history, or a history with no single rhythm. */
+  function learnPayCycle(spans) {
+    var seen = {}, distinct = [];
+    (spans || []).forEach(function (sp) {
+      var s = pcSpanOf(sp && sp.a, sp && sp.b);
+      if (!s) return;
+      var k = s.a + '|' + s.b;
+      if (!seen[k]) { seen[k] = true; distinct.push(s); }
+    });
+    if (distinct.length < 2) return null;
+    var total = distinct.length;
+    function wins(n) { return n >= 2 && n * 2 > total; }
+    var semi = 0, monthly = 0;
+    var wByDow = {}, wBest = 0, wPick = -1;
+    var biBest = 0, biPick = null;
+    distinct.forEach(function (sp) {
+      if (pcIsSemiSpan(sp)) semi++;
+      else if (pcIsMonthSpan(sp)) monthly++;
+      var len = pcSpanDays(sp);
+      if (len === 7) {
+        var d1 = pcDow(sp.a);
+        wByDow[d1] = (wByDow[d1] || 0) + 1;
+        if (wByDow[d1] > wBest) { wBest = wByDow[d1]; wPick = d1; }
+      }
+      if (len === 14) {
+        var c = 0;
+        distinct.forEach(function (o) {
+          if (pcSpanDays(o) === 14 && ((pcDiff(sp.a, o.a) % 14) + 14) % 14 === 0) c++;
+        });
+        if (c > biBest) { biBest = c; biPick = sp.a; }
+      }
+    });
+    if (wins(semi)) return { kind: 'semi', n: semi };
+    if (wins(monthly)) return { kind: 'monthly', n: monthly };
+    if (wins(wBest)) return { kind: 'weekly', dow: wPick, n: wBest };
+    if (wins(biBest)) return { kind: 'biweekly', dow: pcDow(biPick), anchor: biPick, n: biBest };
+    return null;
+  }
+  /* The learned period containing a date. */
+  function pcPeriodOf(rule, ds) {
+    var p = pcParse(ds);
+    if (!p || !rule) return null;
+    if (rule.kind === 'semi') {
+      return p.d <= 15 ? { a: pcFmt(p.y, p.m, 1), b: pcFmt(p.y, p.m, 15) }
+        : { a: pcFmt(p.y, p.m, 16), b: pcFmt(p.y, p.m, pcDim(p.y, p.m)) };
+    }
+    if (rule.kind === 'monthly') return { a: pcFmt(p.y, p.m, 1), b: pcFmt(p.y, p.m, pcDim(p.y, p.m)) };
+    if (rule.kind === 'weekly') {
+      var back = (pcDow(ds) - rule.dow + 7) % 7;
+      var a = pcAdd(ds, -back);
+      return { a: a, b: pcAdd(a, 6) };
+    }
+    if (rule.kind === 'biweekly') {
+      var k = Math.floor(pcDiff(rule.anchor, ds) / 14);
+      var a2 = pcAdd(rule.anchor, 14 * k);
+      return { a: a2, b: pcAdd(a2, 13) };
+    }
+    return null;
+  }
+  /* Current period first, then backwards — the chip list. */
+  function pcPeriodsBack(rule, ds, n) {
+    var out = [], cur = pcPeriodOf(rule, ds);
+    if (!cur) return out;
+    out.push(cur);
+    while (out.length < n) {
+      var prev = pcPeriodOf(rule, pcAdd(out[out.length - 1].a, -1));
+      if (!prev) break;
+      out.push(prev);
+    }
+    return out;
+  }
+  /* A hand-picked range snapped OUT to whole learned periods:
+     the start drops to its period's first day, the end rises to
+     its period's last day — the mis-tapped, month-flipped,
+     silently-46-day ranges from his recording cannot survive it. */
+  function pcSnapRange(rule, a, b) {
+    if (!rule || !pcParse(a) || !pcParse(b) || b < a) return null;
+    var pa = pcPeriodOf(rule, a), pb = pcPeriodOf(rule, b);
+    if (!pa || !pb) return null;
+    return { a: pa.a, b: pb.b };
+  }
+  /* The expected payday for a learned period: paydays recur on
+     the cycle's own grid, so it is the first grid payday on or
+     after the period's end — for semi-monthly the grid days are
+     the 1st and the 15th (his words: "getting paid every 1st
+     and 15th"); for the other rhythms the next period's first
+     day. Always an expectation, always printed with a "~". */
+  function pcPayday(rule, per) {
+    if (!rule || !per || !pcParse(per.b)) return null;
+    if (rule.kind === 'semi') {
+      var b = pcParse(per.b);
+      var cands = [pcFmt(b.y, b.m, 1), pcFmt(b.y, b.m, 15),
+        pcFmt(b.m === 12 ? b.y + 1 : b.y, b.m === 12 ? 1 : b.m + 1, 1)];
+      for (var i = 0; i < cands.length; i++) { if (cands[i] >= per.b) return cands[i]; }
+      return cands[2];
+    }
+    return pcAdd(per.b, 1);
+  }
+  function pcRuleWords(rule) {
+    if (!rule) return '';
+    if (rule.kind === 'semi') return 'you invoice on the 15th and month-end';
+    if (rule.kind === 'monthly') return 'you invoice once a month';
+    if (rule.kind === 'weekly') return 'you invoice every week (' + PC_DOW[rule.dow] + 's)';
+    if (rule.kind === 'biweekly') return 'you invoice every two weeks';
+    return '';
+  }
+  function pcShort(per) {
+    var a = pcParse(per && per.a), b = pcParse(per && per.b);
+    if (!a || !b) return '';
+    if (a.y === b.y && a.m === b.m) return PC_MON[a.m - 1] + ' ' + a.d + '–' + b.d;
+    return PC_MON[a.m - 1] + ' ' + a.d + '–' + PC_MON[b.m - 1] + ' ' + b.d;
+  }
+  function pcDateShort(s) {
+    var p = pcParse(s);
+    return p ? PC_MON[p.m - 1] + ' ' + p.d : String(s || '');
+  }
+  /* ---- the store-mediated half: sources, persistence, bounds ---- */
+  function payCycleSpans() {
+    var pid = wpActiveId();
+    var inv = (App._store.get('inv_list', []) || []).filter(function (r) { return r && wpIdOf(r) === pid; });
+    var stubs = App._store.get('inv_stubs', []) || [];
+    return pcCollectSpans(inv, stubs);
+  }
+  function ruleSig(rule) {
+    return rule ? rule.kind + '|' + (rule.dow == null ? '' : rule.dow) + '|' + (rule.anchor || '') : '';
+  }
+  /* Re-learn from the live history, persist the rule for the
+     active profile, and — the moment a rhythm is FIRST learned
+     (or the rhythm itself changes) — open the view on the
+     current learned period. A rhythm he already has never
+     re-seizes the view: his later chip picks stand. */
+  function refreshPayCycle() {
+    var rule = null;
+    try { rule = learnPayCycle(payCycleSpans()); } catch (e) { rule = null; }
+    var key = 'paycycle_' + wpActiveId();
+    var stored = S(key, null);
+    if (!rule) { if (stored) W(key, null); return null; }
+    if (!stored || stored.sig !== ruleSig(rule)) {
+      var rec = { kind: rule.kind, n: rule.n, sig: ruleSig(rule) };
+      if (rule.dow != null) rec.dow = rule.dow;
+      if (rule.anchor) rec.anchor = rule.anchor;
+      W(key, rec);
+      W('period', 'learned');
+      W('learnedOff', 0);
+    }
+    return rule;
+  }
+  /* The bounds the 'learned' period selection currently means:
+     offset 0 is LIVE (the rule's current period — it rolls
+     forward by itself as the calendar turns); a past chip's
+     bounds are stored verbatim. Null when there is nothing
+     honest to show — callers fall back, never guess. */
+  function learnedBounds() {
+    if (S('period', '30') !== 'learned') return null;
+    var rule = null;
+    try { rule = learnPayCycle(payCycleSpans()); } catch (e) { rule = null; }
+    var off = parseInt(S('learnedOff', 0), 10) || 0;
+    if (off === 0 && rule) { try { return pcPeriodOf(rule, App._today()); } catch (e2) {} }
+    var a = S('learnedA', ''), b = S('learnedB', '');
+    if (pcParse(a) && pcParse(b) && b >= a) return { a: a, b: b };
+    if (rule) { try { return pcPeriodOf(rule, App._today()); } catch (e3) {} }
+    return null;
+  }
+  /* ================= PAYCYCLE-LEARN-END ================= */
+
   /* ---- v38 (B2): paste-import of hours-sheet days ----
      Lines "YYYY-MM-DD,hours". Blank lines ignored; a header line (one that
      doesn't start with a date but mentions date/hours) is ignored. Every
@@ -526,6 +807,10 @@
     var endD;
     if (S('period', '30') === 'custom' && S('customB', '')) {
       endD = new Date(S('customB', '') + 'T12:00:00');
+    } else if (S('period', '30') === 'learned' && learnedBounds()) {
+      /* v302: the chart enumerates the learned period, ending
+         on its own last day — same law as Custom's customB. */
+      endD = new Date(learnedBounds().b + 'T12:00:00');
     } else {
       endD = new Date(n.getFullYear(), n.getMonth(), n.getDate(), 12);
     }
@@ -1301,6 +1586,7 @@
   }
 
   var lastImport = null; // v38: result of the latest paste-import, shown after re-render
+  var snapNote = ''; // v302: the last custom-range snap, named under the From/To inputs until the next pick
   var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
   var formView = null; // v201 REV-CLEAN: 'manual' | 'extras' — the form opened from the top tabs, or null for the Revenue face
   var asOpen = false; // v201 REV-CLEAN: the auto-start menu panel on the Revenue face (collapsed until its button is tapped)
@@ -1641,6 +1927,17 @@
        Returns { added, rejected: [{line, text, why}] } — bad lines are
        reported, never silently dropped. */
     importDays: function (text) { return importDays(text); },
+    /* v302 REVENUE-LEARNS-PAY-CYCLE: the learner's seam — the
+       pure functions plus the store-mediated refresh/bounds and
+       the period math they feed, exposed the way importDays is
+       so the harness drives the module's real code. */
+    _payCycle: {
+      learn: learnPayCycle, collectSpans: pcCollectSpans,
+      periodOf: pcPeriodOf, periodsBack: pcPeriodsBack,
+      snap: pcSnapRange, payday: pcPayday, words: pcRuleWords,
+      refresh: refreshPayCycle, bounds: learnedBounds,
+      summary: summary, inPeriod: inPeriod, periodDays: periodDays
+    },
     /* v116: the shell's back contract (owner recording, Oct 16
        2026: Back from a day detail kicked him OUT of Revenue, and
        re-entering landed back on the stale detail). back() unwinds
@@ -1663,6 +1960,11 @@
     },
     render: function (body) {
       lastBody = body;
+      /* v302: re-learn the pay cycle from the live invoice
+         history before anything reads the period — on the first
+         learn this also opens the view on the current learned
+         period, so the paint below is already framed on it. */
+      var pcRule = refreshPayCycle();
       /* v47: a tapped Month day shows its Day Details instead of the
          normal Revenue view (Back clears dayDetailDate). */
       if (dayDetailDate) { renderDayDetail(body); return; }
@@ -1704,13 +2006,38 @@
            — in a plain .row the six chips overflowed a phone-width
            screen and "Custom" sat half cut off at the right edge.
            Two rows of three now; every chip fully on screen. */
-        headHtml += '<label class="f">Pay period</label><div class="row rvchips">' +
-          PERIOD_OPTS.map(function (p) {
-            return '<button class="btn small ' + (period === p[0] ? 'primary' : 'ghost') + '" data-p="' + p[0] + '">' + p[1] + '</button>';
-          }).join('') + '</div>';
+        if (pcRule) {
+          /* v302 REVENUE-LEARNS-PAY-CYCLE: with a rhythm learned,
+             the chips ARE his periods — this one live, then the
+             past ones back (capped: no endless list), plus Custom.
+             The learned rule prints in plain words under them,
+             and a learned view names its expected payday. */
+          var pcPers = pcPeriodsBack(pcRule, App._today(), 4);
+          var pcOff = parseInt(S('learnedOff', 0), 10) || 0;
+          var pcSelA = S('learnedA', ''), pcSelB = S('learnedB', '');
+          headHtml += '<label class="f">Pay period</label><div class="row rvchips">' +
+            pcPers.map(function (per, i) {
+              var on = period === 'learned' && ((i === 0 && pcOff === 0) || (pcOff !== 0 && pcSelA === per.a && pcSelB === per.b));
+              return '<button class="btn small ' + (on ? 'primary' : 'ghost') + '" data-lp="' + i + '" data-a="' + per.a + '" data-b="' + per.b + '">' +
+                (i === 0 ? 'This period' : esc(pcShort(per))) + '</button>';
+            }).join('') +
+            '<button class="btn small ' + (period === 'custom' ? 'primary' : 'ghost') + '" data-p="custom">Custom</button></div>';
+          var pcLine = '<div class="note" style="margin-top:6px">🧠 Learned from your invoices: ' + esc(pcRuleWords(pcRule)) + '.';
+          if (period === 'learned') {
+            var pcBounds = learnedBounds();
+            if (pcBounds) pcLine += ' ' + esc(pcShort(pcBounds)) + ' · paid ~' + esc(pcDateShort(pcPayday(pcRule, pcBounds)));
+          }
+          headHtml += pcLine + '</div>';
+        } else {
+          headHtml += '<label class="f">Pay period</label><div class="row rvchips">' +
+            PERIOD_OPTS.map(function (p) {
+              return '<button class="btn small ' + (period === p[0] ? 'primary' : 'ghost') + '" data-p="' + p[0] + '">' + p[1] + '</button>';
+            }).join('') + '</div>';
+        }
         if (period === 'custom') {
           headHtml += '<div class="row" style="margin-top:8px"><div><label class="f">From</label><input type="date" id="rv_ca" value="' + esc(S('customA', '')) + '"></div>' +
-            '<div><label class="f">To</label><input type="date" id="rv_cb" value="' + esc(S('customB', '')) + '"></div></div>';
+            '<div><label class="f">To</label><input type="date" id="rv_cb" value="' + esc(S('customB', '')) + '"></div></div>' +
+            (snapNote ? '<div class="note" style="margin-top:6px">🧲 ' + esc(snapNote) + '</div>' : '');
         }
       }
       headHtml += '</div>';
@@ -1933,14 +2260,39 @@
       };
 
       body.querySelectorAll('[data-p]').forEach(function (b) {
-        b.onclick = function () { W('period', b.getAttribute('data-p')); api.render(body); };
+        b.onclick = function () { snapNote = ''; W('period', b.getAttribute('data-p')); api.render(body); };
+      });
+      /* v302: a learned-period chip — offset 0 stays LIVE (the
+         rule's current period, rolling forward by itself); a
+         past chip stores its bounds verbatim. */
+      body.querySelectorAll('[data-lp]').forEach(function (b) {
+        b.onclick = function () {
+          snapNote = '';
+          var off = parseInt(b.getAttribute('data-lp'), 10) || 0;
+          W('period', 'learned');
+          W('learnedOff', off);
+          if (off > 0) { W('learnedA', b.getAttribute('data-a')); W('learnedB', b.getAttribute('data-b')); }
+          api.render(body);
+        };
       });
       /* v164: Entries Show more / Show less */
       var rvMore = body.querySelector('#rv_more');
       if (rvMore) rvMore.onclick = function () { rvShowAll = !rvShowAll; api.render(body); };
       var ca = body.querySelector('#rv_ca'), cb = body.querySelector('#rv_cb');
-      if (ca) ca.onchange = function () { W('customA', ca.value); api.render(body); };
-      if (cb) cb.onchange = function () { W('customB', cb.value); api.render(body); };
+      /* v302: with a rhythm learned, a hand-picked range snaps
+         to whole learned periods the moment both ends are in —
+         and the re-render shows him the snapped range, named. */
+      function rvSnapCustom() {
+        if (!pcRule) return;
+        var a = S('customA', ''), b = S('customB', '');
+        var sn = pcSnapRange(pcRule, a, b);
+        if (sn && (sn.a !== a || sn.b !== b)) {
+          W('customA', sn.a); W('customB', sn.b);
+          snapNote = 'Snapped to your pay periods: ' + pcShort(sn) + '.';
+        }
+      }
+      if (ca) ca.onchange = function () { W('customA', ca.value); rvSnapCustom(); api.render(body); };
+      if (cb) cb.onchange = function () { W('customB', cb.value); rvSnapCustom(); api.render(body); };
 
       /* v201 REV-CLEAN: the top tabs open their form views; the
          auto-start button unfolds its panel right here (the
