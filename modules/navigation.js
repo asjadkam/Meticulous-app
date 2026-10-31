@@ -61,6 +61,10 @@
   var selId = { work: '', personal: '' };
   var pickQ = '';
   var addOpen = false;
+  /* v294 (PLACES-NO-EDIT-LOCATION): the detail's Advanced
+     section stays open across repaints for the place it was
+     opened on (the row-tap repaint must not slam it shut). */
+  var advOpenId = '';
 
   /* ================= NAV-BUILTIN-BEGIN =================
      v91: BUILT-IN PLACES ARE FAMOUS PUBLIC PLACES ONLY (owner,
@@ -483,6 +487,58 @@
       saveData(d);
       return true;
     },
+    /* v294 (PLACES-NO-EDIT-LOCATION, owner evidence Oct 31,
+       2026): a saved place's pin can MOVE. The detail offered
+       Navigate and Remove only, and the Add form takes a text
+       address — when a job site itself moved, the place could
+       not follow it. This is THE door for a deliberate
+       location change (learnCoords above is the opposite law:
+       a geocoder-learned pin never moves an existing one).
+       The SAME record is updated in place — id, name, type,
+       note and visit history ride through — and the write
+       stamps the record's updAt, the v293 version rule: the
+       newest version of a record is the one sync keeps, so a
+       re-pin wins over older copies instead of being stomped
+       by them. Coordinates arrive as numbers or as the typed
+       strings the Advanced fields hold; blanks and junk are
+       refused (Number('') === 0 would otherwise plant the
+       place in the ocean off Ghana). Returns the updated
+       record, or null when refused. */
+    setPlaceCoords: function (kind, id, lat, lng) {
+      if (kind !== 'work' && kind !== 'personal') return null;
+      if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
+      if (typeof lat === 'string' && !lat.trim()) return null;
+      if (typeof lng === 'string' && !lng.trim()) return null;
+      var la = Number(lat), ln = Number(lng);
+      if (!isFinite(la) || !isFinite(ln)) return null;
+      if (la < -90 || la > 90 || ln < -180 || ln > 180) return null;
+      var d = data(), list = (kind === 'work') ? d.work : d.personal, hit = null;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) { hit = list[i]; break; }
+      }
+      if (!hit) return null;
+      hit.lat = la; hit.lng = ln;
+      hit.updAt = Date.now();
+      saveData(d);
+      return hit;
+    },
+    /* v294: the one-tap half of the same door — the place takes
+       the device's CURRENT position, through the app's usual
+       fix cascade (MeticulousGeo.getCurrent: fresh cached fix,
+       native watcher, one retry, coarse web fix, last-known —
+       it resolves rather than rejecting, so no caller dead-ends
+       on location). Resolves true when the place moved, false
+       when no usable fix came back (the place is left exactly
+       where it was). */
+    repinPlace: function (kind, id) {
+      if (typeof window === 'undefined' || !window.MeticulousGeo ||
+          typeof MeticulousGeo.getCurrent !== 'function') return Promise.resolve(false);
+      return MeticulousGeo.getCurrent(10000).then(function (fix) {
+        if (!fix || fix.latitude === null || fix.latitude === undefined ||
+            fix.longitude === null || fix.longitude === undefined) return false;
+        return !!api.setPlaceCoords(kind, id, fix.latitude, fix.longitude);
+      }).catch(function () { return false; });
+    },
     /* v207 (CONNECT-PICK part 3): every place this driver could
        send a connection — built-ins + his work + personal
        favorites, names resolved the picker's way, duplicates
@@ -670,7 +726,20 @@
           '<div class="b">' + ((p.lat && p.lng) ? esc(p.lat + ', ' + p.lng) : esc(p.address || '')) + '</div>' +
           (kind === 'work' && e.src === 'fav' && p.visits ? '<div class="b">' + p.visits + ' visits' + (p.lastVisit ? ' · last ' + fmtWhen(p.lastVisit) : '') + '</div>' : '') +
           '<button class="btn primary big" id="nv_go" style="margin-top:8px">🧭 Navigate</button>' +
-          (e.src === 'fav' ? '<div class="row" style="margin-top:6px"><button class="btn small ghost" id="nv_remove">Remove this place</button></div>' : '');
+          (e.src === 'fav' ?
+            /* v294 (PLACES-NO-EDIT-LOCATION): the place's pin can
+               move — Re-pin where the truck stands, one tap; the
+               exact-coordinates fields live in Advanced, the
+               plumbing spot. Built-ins and recents get neither:
+               they are not the user's own record. */
+            '<div class="row" style="margin-top:6px"><button class="btn small" id="nv_repin">📍 Re-pin to my location</button>' +
+            '<button class="btn small ghost" id="nv_remove">Remove this place</button></div>' +
+            '<div class="row" style="margin-top:6px"><button class="btn small ghost" id="nv_advtoggle">⚙️ Advanced</button></div>' +
+            '<div id="nv_advwrap" style="display:' + (advOpenId === p.id ? 'block' : 'none') + ';margin-top:6px">' +
+            '<label class="f">Latitude</label><input id="nv_adv_lat" inputmode="decimal" value="' + (p.lat ? esc(String(p.lat)) : '') + '">' +
+            '<label class="f">Longitude</label><input id="nv_adv_lng" inputmode="decimal" value="' + (p.lng ? esc(String(p.lng)) : '') + '">' +
+            '<div class="row" style="margin-top:8px"><button class="btn primary small" id="nv_adv_save">Save location</button></div>' +
+            '<p class="note">Moves this place to exactly these coordinates.</p></div>' : '');
         detailEl.querySelector('#nv_go').onclick = function () { goNavigate(p, e.src === 'recent' ? (p.kind || kind) : kind); };
         var rm = detailEl.querySelector('#nv_remove');
         if (rm) rm.onclick = function () {
@@ -680,6 +749,28 @@
           else dd.personal = dd.personal.filter(function (f) { return f.id !== p.id; });
           saveData(dd);
           selId[kind] = '';
+          api.render(body);
+        };
+        var rp = detailEl.querySelector('#nv_repin');
+        if (rp) rp.onclick = function () {
+          api.repinPlace(kind, p.id).then(function (ok) {
+            if (!ok) { alert('Could not get your location right now. Check location is on, then try again.'); return; }
+            api.render(body);
+          });
+        };
+        var advT = detailEl.querySelector('#nv_advtoggle');
+        if (advT) advT.onclick = function () {
+          advOpenId = (advOpenId === p.id) ? '' : p.id;
+          var w = detailEl.querySelector('#nv_advwrap');
+          if (w) w.style.display = (advOpenId === p.id) ? 'block' : 'none';
+        };
+        var advS = detailEl.querySelector('#nv_adv_save');
+        if (advS) advS.onclick = function () {
+          var laEl = detailEl.querySelector('#nv_adv_lat');
+          var lnEl = detailEl.querySelector('#nv_adv_lng');
+          var saved = api.setPlaceCoords(kind, p.id, laEl ? laEl.value : '', lnEl ? lnEl.value : '');
+          if (!saved) { alert('Enter a valid latitude (−90 to 90) and longitude (−180 to 180).'); return; }
+          advOpenId = '';
           api.render(body);
         };
         /* v128: the panel takes its place AT THE TAP — directly

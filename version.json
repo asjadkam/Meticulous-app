@@ -1,8 +1,8 @@
 {
   "version": 46,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v46.apk",
-  "webVersion": 293,
-  "notes": "v293: a fuel edit can no longer be stomped by a stale copy (one fill, newest version wins on every device); live miles push to the cloud again all day (the tracking history no longer freezes at the size cap); a corrected load count lands instead of the day's highest count",
+  "webVersion": 294,
+  "notes": "v294: a saved place's pin can move — Places detail gains Re-pin to my location (one tap, the place takes your current GPS position) and an Advanced section with latitude/longitude fields that set a place's location exactly; the record keeps its name, type, notes and visit history, and the edit carries the newest version stamp so sync keeps it",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "e908b095cfc26271b632f91314be3c467d5387d38330dcc78b0a98bbcf839f6d",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "67da536f42d144a9c883a6c97451f84f0535965ee860a5db1d3be53e4749cf23",
+    "index.html": "9903978611b3f788ad2805253514256b9ac1f06665854fcf0c4d1d087acab8c7",
     "js/app.js": "016ef0984190619514ef14caf169157020f67cb350882ab3decbfa63eab65e11",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -47,7 +47,7 @@
     "modules/invoice.js": "05286222aad95b96365a4bfecb1107307b71965e2edb461b9d08c514298c8ab2",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "3b82425a8e8a4e11af9209b20af727240808aa82ee6dfcffc6328f0e972ea74b",
-    "modules/navigation.js": "901f589629400fee99975149ac9c5c88ae0c98340e69587751aa8d62d7fe5305",
+    "modules/navigation.js": "856e84d55fc6642180f208a4ce614e67e27e4399382153f43a0feba6760ff75b",
     "modules/navigator.js": "09f948e377df938e8a2d3ffb24ee1c10b5c0f2b0ea73522b900da3973506d8d4",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "fb3e5c2bb9b2bb35ac6c577010d7e6e0478dafe6450b2cbfe3f870454c980dcb",
