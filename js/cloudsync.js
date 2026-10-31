@@ -862,6 +862,43 @@
     }
     return out;
   }
+  /* v295 (SYNC-STILL-FAILING-ON-293 — the v293 verdict failed in
+     the owner's hands, Oct 31, 2026): two defects in the v293
+     copy, both reproduced in tools/sync-realfail-v295-test.js.
+     (1) The ladder thinned ONLY per-day crumbs — but the merged
+     value is built on the CLOUD value's shell (mergeTelemetryDays)
+     and day records ride wholesale, so any heavy bulk an older
+     app shape ever wrote — a top-level field beside `days`, a fat
+     non-fact array inside the day records — is preserved by every
+     merge and shed by NO rung: even the facts-only copy stayed
+     over the cap and the push failed honestly on EVERY cycle,
+     forever (the field signature exactly: fast, repeatable,
+     livemiles-only, cloud frozen, failure painted by name). Bulk
+     the sync layer never reads is now shed from the COPY before
+     the crumb ladder runs: top-level non-days fields, and per-day
+     array fields outside the key's fact set (livemiles: crumbs /
+     segs; geoloads: events / pegEvents / pegs), whose JSON
+     exceeds TELE_SHED_BYTES. The local store always keeps the
+     full value; every fact the merges, the dashboards and the
+     manifest read rides at every rung.
+     (2) The ladder built all six rungs EAGERLY — six full JSON
+     round-trip deep copies plus their serializations, computed
+     twice per cycle (pull comparison + push): ~34x the value's
+     own size in JSON traffic for a 2.8 MB value, all on the main
+     thread (the owner's screen froze and double-drew its labels
+     mid-sync). The copy is now built STRUCTURALLY (shallow
+     clones — the copy is only ever serialized, never mutated)
+     and the rungs are evaluated LAZILY, first fit wins; the
+     crumb ladder keeps v293's exact caps and stays deterministic
+     for a given value, so a shed cloud copy still seals. */
+  var TELE_FACT_ARRAYS = {
+    livemiles: { crumbs: 1, segs: 1 },
+    geoloads: { events: 1, pegEvents: 1, pegs: 1 }
+  };
+  var TELE_SHED_BYTES = 8192;
+  function teleFieldLen(v) {
+    try { var s = JSON.stringify(v); return s ? s.length : 0; } catch (e) { return 0; }
+  }
   function telemetrySyncCopy(key, val) {
     if (!val || typeof val !== 'object' || !val.days || typeof val.days !== 'object') return val;
     if (JSON.stringify(val).length <= MAX_DOC_BYTES) return val;
@@ -872,29 +909,77 @@
       var ra = val.days[a] || {}, rb = val.days[b] || {};
       return (rb.updatedAt || 0) - (ra.updatedAt || 0);
     });
+    /* The shed set is decided ONCE — it does not depend on the
+       rung: heavy non-fact bulk, per day record and at the shell.
+       Small fields always ride (cheap, and possibly meaningful
+       to a future shape). */
+    var factArrays = TELE_FACT_ARRAYS[key] || { crumbs: 1, segs: 1 };
+    var shedDay = {}, shedTop = {}, shedAny = false;
+    dayKeys.forEach(function (dk) {
+      var rec = val.days[dk];
+      if (!rec || typeof rec !== 'object') return;
+      for (var f in rec) {
+        if (!Object.prototype.hasOwnProperty.call(rec, f)) continue;
+        if (f === 'crumbs' || factArrays[f]) continue;
+        var fv = rec[f];
+        if (fv && typeof fv === 'object' && teleFieldLen(fv) > TELE_SHED_BYTES) {
+          (shedDay[dk] = shedDay[dk] || {})[f] = 1;
+          shedAny = true;
+        }
+      }
+    });
+    for (var tf in val) {
+      if (!Object.prototype.hasOwnProperty.call(val, tf)) continue;
+      if (tf === 'days') continue;
+      var tv = val[tf];
+      if (tv && typeof tv === 'object' && teleFieldLen(tv) > TELE_SHED_BYTES) { shedTop[tf] = 1; shedAny = true; }
+    }
     function build(cap, keepDays) {
-      var c = JSON.parse(JSON.stringify(val));
+      var nd = {};
       newestFirst.forEach(function (dk, i) {
-        var rec = c.days[dk];
-        if (!rec || !Array.isArray(rec.crumbs)) return;
-        rec.crumbs = (i < keepDays) ? thinCrumbs(rec.crumbs, cap) : [];
+        var rec = val.days[dk];
+        if (!rec || typeof rec !== 'object') { nd[dk] = rec; return; }
+        var shed = shedDay[dk], c = {};
+        for (var f in rec) {
+          if (!Object.prototype.hasOwnProperty.call(rec, f)) continue;
+          if (shed && shed[f]) continue;
+          if (f === 'crumbs' && Array.isArray(rec.crumbs)) {
+            c[f] = (i < keepDays)
+              ? (cap === null ? rec.crumbs.slice() : thinCrumbs(rec.crumbs, cap))
+              : [];
+          } else c[f] = rec[f];
+        }
+        nd[dk] = c;
       });
-      return c;
+      var out = {};
+      for (var f2 in val) {
+        if (!Object.prototype.hasOwnProperty.call(val, f2)) continue;
+        if (f2 === 'days' || shedTop[f2]) continue;
+        out[f2] = val[f2];
+      }
+      out.days = nd;
+      return out;
     }
-    var ladder = [
-      build(400, dayKeys.length),
-      build(120, dayKeys.length),
-      build(40, dayKeys.length),
-      build(40, 3),
-      build(24, 1),
-      build(0, 0)
-    ];
-    for (var i = 0; i < ladder.length; i++) {
-      if (JSON.stringify(ladder[i]).length <= MAX_DOC_BYTES) return ladder[i];
+    /* Rung 0 (bulk shed, trails whole) exists only when there is
+       bulk to shed — with none, it would be the value itself,
+       already known to be over the cap. */
+    var rungs = [];
+    if (shedAny) rungs.push([null, dayKeys.length]);
+    rungs.push([400, dayKeys.length], [120, dayKeys.length], [40, dayKeys.length],
+               [40, 3], [24, 1], [0, 0]);
+    var lastCopy = null;
+    for (var i = 0; i < rungs.length; i++) {
+      lastCopy = build(rungs[i][0], rungs[i][1]);
+      if (JSON.stringify(lastCopy).length <= MAX_DOC_BYTES) return lastCopy;
     }
-    return ladder[ladder.length - 1]; // facts only; caller fails honestly if even this is over
+    return lastCopy; // facts only; caller fails honestly if even this is over
   }
   function telemetryCopyJson(key, val) { return JSON.stringify(telemetrySyncCopy(key, val)); }
+  /* v295: a macrotask yield — the telemetry push awaits this
+     around its two heavy CPU steps (the merge, the copy build)
+     so a big sync never holds the main thread across frames:
+     the page keeps painting while the backup lands. */
+  function yieldFrame() { return new Promise(function (res) { setTimeout(res, 0); }); }
 
   /* v276 (SPARK-QUOTA): read the ONE cloud doc a record-list
      push merges against (its current array, or null). Before
@@ -1134,10 +1219,19 @@
       try {
         return loadCloudValue(key, docId).then(function (cloudVal) {
           if (!cloudVal || typeof cloudVal !== 'object' ||
-              !cloudVal.days || typeof cloudVal.days !== 'object') return tlSave(val);
-          var mg = mergeTelemetryDays(key, val, cloudVal);
-          if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
-          return tlSave(mg);
+              !cloudVal.days || typeof cloudVal.days !== 'object') {
+            return yieldFrame().then(function () { return tlSave(val); });
+          }
+          /* v295: yield around the merge and the copy build —
+             the sync's two heavy CPU steps — so the page keeps
+             painting while a big telemetry value backs up (with
+             the v293 ladder the owner's screen froze and its
+             labels double-drew for seconds per attempt). */
+          return yieldFrame().then(function () {
+            var mg = mergeTelemetryDays(key, val, cloudVal);
+            if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
+            return yieldFrame().then(function () { return tlSave(mg); });
+          });
         }).catch(tlPushFail);
       } catch (e) { return Promise.resolve(tlPushFail(e)); }
     }
