@@ -602,7 +602,8 @@ label.chk input{width:18px;height:18px;}
 .nv-drive.nv-pip .nv-drive-top,.nv-drive.nv-pip .nv-drive-inset,.nv-drive.nv-pip .nv-drive-bar,
 .nv-drive.nv-pip .nv-avatar-picker,.nv-drive.nv-pip .nv-drive-reroute,.nv-drive.nv-pip .nv-drive-speed,
 .nv-drive.nv-pip .nv-layers-btn,.nv-drive.nv-pip .nv-layers-panel,
-.nv-drive.nv-pip #nvd_recenter{display:none !important;}
+.nv-drive.nv-pip #nvd_recenter,.nv-drive.nv-pip .nv-drive-traffic,
+.nv-drive.nv-pip .nv-drive-offer{display:none !important;}
 /* v222 (PIP-LANDS-HOME): the IN-APP screen-in-screen. The dock is
    a fixed, click-through shell layer above the dashboard; the
    parked drive screen inside it shrinks to a floating window
@@ -620,6 +621,22 @@ label.chk input{width:18px;height:18px;}
   width:min(47vw,340px);height:auto;aspect-ratio:4/3;border-radius:16px;overflow:hidden;
   box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);
   pointer-events:auto;cursor:pointer;}
+/* v292 (PIP-MAP-COVERED-BY-DIRECTIONS; owner Oct 31, 2026 screen
+   recording): in the MINI the pip line was the base wrapping pill —
+   centered, 94% wide, the 47-char turn line wrapping ~4 deep at
+   his font scale, i.e. a black card covering most of a ~145px-tall
+   map. His PiP law: the map is never buried by text. In the mini
+   ONLY, the line becomes a slim single-line caption strip pinned
+   to the bottom edge (~17% of the mini's height); the map stays
+   clearly visible and the full wording is one tap away (the tap
+   reopens full navigation; the tray notification also carries
+   it). The SYSTEM PiP posture keeps the v273 wrapping pill
+   untouched — its window is system-sized and that law stands
+   there. */
+.nv-drive.nv-mini .nv-drive-pip-line{left:0;right:0;bottom:0;transform:none;
+  max-width:none;border-radius:0;font-size:11.5px;line-height:1.3;
+  padding:5px 10px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;text-align:center;}
 .nv-drive-map{width:100%;height:100%;background:#e9e2d0;} /* v260: warm sand under the vibrant palette while tiles load (was pale blue-grey #e8edf5) */
 /* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
    30px ▲ "arrow as you" was "something puny" — "the moving

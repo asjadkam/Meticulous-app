@@ -560,7 +560,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 45; // <- bump on every native (APK) release
+      var APK_VERSION = 46; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {
@@ -2358,6 +2358,19 @@
          time; its whole job is to adopt the record. ('pause' is
          the pre-v52 resolved word for the same signal.) */
       if (a === 'toggle' || a === 'loadPlus' || a === 'loadMinus' || a === 'pause') { collectSessionRecord(); return; }
+      /* v292 (BUBBLE-FLOAT-ABSENT): the drive bubble's return
+         word — nothing was performed natively (there is no
+         session to perform against); reopen the Navigator,
+         whose render restores a parked drive full-screen (a
+         live unparked drive is already its face). A stale word
+         with no live drive opens nothing. */
+      if (a === 'nav') {
+        try {
+          var navMod292 = window.Meticulous && Meticulous.modules && Meticulous.modules.navigator;
+          if (navMod292 && navMod292.hasLiveDrive && navMod292.hasLiveDrive() && window.App && App.openModule) App.openModule('navigator');
+        } catch (e) {}
+        return;
+      }
       /* 'start' reaches here from the face's activity action at
          idle — nothing was performed natively (a real start is
          this layer's own flow) — and 'stop' rides the same

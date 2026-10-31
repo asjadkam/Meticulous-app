@@ -2014,6 +2014,11 @@
        (its state + the floated drive screen are the driver's
        live navigation; killing them was never the ask). */
     keepAlive: function () { return !!(S && S.drive && S.parked); },
+    /* v292 (BUBBLE-FLOAT-ABSENT): the shell asks whether a drive
+       is live at all (parked or on screen) — the drive bubble's
+       'nav' return word only reopens the module while one is;
+       a stale word with no drive opens nothing. */
+    hasLiveDrive: function () { return !!(S && S.drive); },
     /* v286 (PIP-HOME): the shell asks whether the floated piece
        right now is the mini map itself — while it is, the tracker
        bubble face stands down even if a session starts mid-park
