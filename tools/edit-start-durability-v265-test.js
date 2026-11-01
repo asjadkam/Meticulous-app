@@ -344,7 +344,17 @@ const T_800 = msOf('2026-10-26', '08:00:00');     // the edited start
     };
     (opts.local || []).forEach(function (kv) { data['mt_' + kv[0]] = JSON.stringify(kv[1]); });
     if (opts.meta) data['mt___syncmeta'] = JSON.stringify(opts.meta);
-    const sb = { console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, Promise: Promise };
+    /* v303 repair (clock discipline, no behaviour change): Part B
+       originally ran cloudsync against the WALL clock. Web 303's
+       stale-shell pull rule legitimately reads the pull's `now`,
+       so an Oct 26 session judged in November is a 5-day-old
+       shell, not this morning's. Part B now runs on the suite's
+       own FakeDate — pinned to the scenario evening (Oct 26,
+       18:00, after every fixture stamp, same day as the fixture
+       sessions) inside makeWorldB below — exactly as Part A
+       always did. The fixtures' intent is unchanged. */
+    fakeNow = msOf('2026-10-26', '18:00:00');
+    const sb = { console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, Promise: Promise, Date: FakeDate };
     sb.window = sb;
     sb.localStorage = localStorage;
     sb.navigator = { onLine: true };

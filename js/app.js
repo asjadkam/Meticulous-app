@@ -728,6 +728,11 @@
        the engine already watches this session's key. */
     try {
       App.tracker = store.get('tracker', App.tracker);
+      /* v303 (PHANTOM-REVIVAL-OCT31): a tracker that arrived with
+         the sign-in pull gets the same stale-shell burial as at
+         boot, BEFORE the reattach below can re-arm the engines
+         and the native recording service for it. */
+      try { healStaleTracker(); } catch (e) {}
       if (App.tracker && (App.tracker.status === 'running' || App.tracker.status === 'paused')) {
         var rk2 = 's' + trackerSessionKeyMs();
         if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() !== rk2) LiveMiles.startDay(rk2, { resume: true });
@@ -758,6 +763,13 @@
             CloudSync.whenFirstPullDone(12000).then(function () {
               try {
                 App.tracker = store.get('tracker', App.tracker);
+                /* v303 (PHANTOM-REVIVAL-OCT31): same burial on
+                   the first-pull reload — the pull is what lands
+                   a restored session on a fresh install, and the
+                   cloudsync v303 rule refuses the stale ghost
+                   there; this covers a copy that was already
+                   local. */
+                try { healStaleTracker(); } catch (e) {}
                 if (App.tracker && (App.tracker.status === 'running' || App.tracker.status === 'paused')) {
                   if (window.LiveMiles && LiveMiles.reseedFromStore) LiveMiles.reseedFromStore();
                   if (window.GeoLoads && GeoLoads.reseedFromStore) GeoLoads.reseedFromStore();
@@ -2709,6 +2721,51 @@
     if (!t || t.status === 'idle') return trackerSessionStartMs();
     if (!t.sessionId) { t.sessionId = trackerSessionStartMs(); trackerSave(); }
     return t.sessionId;
+  }
+  /* v303 (PHANTOM-REVIVAL-OCT31): the stale-shell test — a live
+     session whose pinned start is on a PREVIOUS local day AND at
+     least 20 h old. A session can never legitimately be restored
+     across a day boundary in this app: days close the day they
+     start, and the autostart engine already treats a previous
+     day's still-running session as "not today's work"
+     (checkAutoStart's 'running-stale'). Both prongs are required:
+     a session started yesterday evening and checked this morning
+     is young and survives; anything that started today survives;
+     only the never-closed shell (Oct 30 08:00's plan auto-start,
+     painted at 35:09 elapsed on Oct 31 over a closed, verified
+     day) fails both. Mirrored in js/cloudsync.js
+     (staleSessionMs303). */
+  function staleTrackerStartMs(startMs, nowMs) {
+    if (!(startMs > 0) || !(nowMs > 0)) return false;
+    if (nowMs - startMs < 20 * 3600 * 1000) return false;
+    return todayStr(new Date(startMs)) !== todayStr(new Date(nowMs));
+  }
+  /* Discard a stale-shell session WITHOUT booking it. No
+     stopSessionAt ever runs on it — a stop would write a sessions
+     entry for the whole span and post "Auto from tracker" revenue
+     on the close day (the Oct 25 phantom booked $136.21 exactly
+     that way; this shell's span is ~35 h, ~$1,020, and its close
+     day is already closed and cloud-verified). The tracker resets
+     to idle carrying a discard marker (discardedSid) so the cloud
+     pull refuses the same ghost by identity even under a fresher
+     stamp (js/cloudsync.js v303), trackerSave syncs the idle
+     facts into the native session record + widget (the v271
+     ghost-branch principle), and the ghost's native recording
+     service is stopped. The sessions list and Revenue are never
+     touched. Returns true when a discard happened. */
+  function healStaleTracker() {
+    var t = App.tracker;
+    if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
+    var sid = Number(t.sessionId) || 0;
+    var startMs = sid > 0 ? sid : trackerSessionStartMs();
+    if (!staleTrackerStartMs(startMs, Date.now())) return false;
+    var ghostSid = startMs;
+    App.tracker = { status: 'idle', startTs: 0, elapsed: 0,
+      discardedSid: ghostSid, discardedAt: Date.now() };
+    trackerSave();
+    try { trackerPaint(); } catch (e) {}
+    try { if (window.ShiftTrack && ShiftTrack.sessionStopped) ShiftTrack.sessionStopped('s' + ghostSid); } catch (e) {}
+    return true;
   }
   function closeTrackerStartSheet() {
     el('trkStartSheet').classList.remove('open');
@@ -6231,6 +6288,13 @@
   function init() {
     App.onb = store.get('onboarding', {});
     App.tracker = store.get('tracker', { status: 'idle', startTs: 0, elapsed: 0 });
+    /* v303 (PHANTOM-REVIVAL-OCT31): bury a stale-shell session
+       restored from the store BEFORE the relaunch machinery folds
+       the closed time into its clock and re-arms the engines and
+       the native service for it (healStaleTracker). A live session
+       that is merely young or same-day is untouched and resumes
+       exactly as before. */
+    try { healStaleTracker(); } catch (e) {}
     if (App.tracker.status === 'running') { // v26: app was closed mid-shift — keep RUNNING, account for closed time
       App.tracker.elapsed += Math.floor((Date.now() - App.tracker.startTs) / 1000);
       App.tracker.startTs = Date.now();

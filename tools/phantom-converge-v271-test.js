@@ -301,7 +301,15 @@ function seedPhantomRecord(bridge, status) {
     };
     (opts.local || []).forEach(function (kv) { data['mt_' + kv[0]] = JSON.stringify(kv[1]); });
     if (opts.meta) data['mt___syncmeta'] = JSON.stringify(opts.meta);
-    const sb = { console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, Promise: Promise };
+    /* v303 repair (clock discipline, no behaviour change): Part B
+       originally ran cloudsync against the WALL clock. Web 303's
+       stale-shell rule legitimately reads the pull's `now`, so an
+       Oct 26 fixture judged in November is a 5-day-old shell, not
+       "today's session". Part B now runs on the suite's own
+       FakeDate — pinned to the screenshot moment below — exactly
+       as Part A always did. The fixtures' intent (Oct 26, same
+       day) is unchanged. */
+    const sb = { console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval, Promise: Promise, Date: FakeDate };
     sb.window = sb;
     sb.localStorage = localStorage;
     sb.navigator = { onLine: true };
@@ -330,6 +338,7 @@ function seedPhantomRecord(bridge, status) {
   }
   function settle() { return new Promise(function (r) { setTimeout(r, 400); }); }
   const closedEntry = { endedAt: new RealDate(T_800 + 36000 * 1000).toISOString(), seconds: 36000 };
+  fakeNow = T_1724;   /* v303: Part B is judged at the screenshot moment (Oct 26, 17:24) */
 
   {
     // B1: the Oct 26 shape — the phone closed today's session

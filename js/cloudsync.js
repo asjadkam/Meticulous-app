@@ -155,6 +155,24 @@
     if (raw === null || raw === undefined) return fallback;
     try { return JSON.parse(raw); } catch (e) { return fallback; }
   }
+  /* v303 (PHANTOM-REVIVAL-OCT31): the stale-shell test for a live
+     tracker copy — its pinned session start (sessionId, the v69
+     pin) is on a PREVIOUS local day AND at least 20 h old. A
+     session can never legitimately be restored across a day
+     boundary in this app (days close the day they start; the
+     autostart engine calls such a session 'running-stale' — not
+     today's work), so a live copy passing both prongs is a dead
+     echo, never work. Mirrored in js/app.js (staleTrackerStartMs).
+     Local-day compare via a yyyymmdd key built from local parts. */
+  function dayKey303(ms) {
+    var d303 = new Date(ms);
+    return d303.getFullYear() * 10000 + (d303.getMonth() + 1) * 100 + d303.getDate();
+  }
+  function staleSessionMs303(startMs, nowMs) {
+    if (!(startMs > 0) || !(nowMs > 0)) return false;
+    if (nowMs - startMs < 20 * 3600 * 1000) return false;
+    return dayKey303(startMs) < dayKey303(nowMs);
+  }
   function isSyncable(key) {
     return typeof key === 'string' && key.length > 0 && key.indexOf('__') !== 0;
   }
@@ -2520,6 +2538,54 @@
                 if (!tb271e || !tb271e.endedAt || !(Number(tb271e.seconds) > 0)) continue;
                 var tb271Start = Date.parse(tb271e.endedAt) - Number(tb271e.seconds) * 1000;
                 if (isFinite(tb271Start) && Math.abs(tb271Start - tb271Sid) <= 5000) {
+                  meta.keys[key] = { t: now, s: cloudTs };
+                  return;
+                }
+              }
+            }
+          }
+        }
+
+        /* v303 (PHANTOM-REVIVAL-OCT31): the tombstone above needs
+           a FINISHED twin in the local sessions list. A ghost that
+           was never stopped on any client (Oct 30 08:00's plan
+           auto-start: no stop ever ran on it, so no finished entry
+           exists anywhere) slips past that rule, and the generic
+           stamp game below could install its RUNNING cloud copy
+           over a deliberate idle — on Oct 31 at 19:09 the phone
+           painted "Working..." at 35:09 elapsed over a day that
+           had closed at 14:20 and been cloud-verified at 18:05.
+           Two identity proofs now bury such a copy without ever
+           installing it:
+           (a) DISCARD MARKER — this device already discarded that
+               very session (the local idle carries discardedSid
+               naming it, js/app.js healStaleTracker): the ghost
+               is dead by name, whatever stamp it arrives with.
+           (b) STALE SHELL — the copy's pinned start passes
+               staleSessionMs303 (previous local day AND >= 20 h
+               old): an echo, not work.
+           Either way the local value stands and the key stays
+           dirty ({ t: now, s: cloudTs } — the tombstone idiom) so
+           the flush pushes the local truth UP and the account
+           converges on it. A live copy naming the SAME session
+           as the local live tracker is untouched (same-session
+           edits arbitrate exactly as before), and a young or
+           same-day cloud session still installs exactly as
+           before (the v52 restore case). Fires only with a
+           parseable local tracker value present. */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var rv303Sid = Number(d.v.sessionId) || 0;
+          var rv303Live = d.v.status === 'running' || d.v.status === 'paused';
+          if (rv303Sid > 0 && rv303Live) {
+            var rv303Local = parseJson(raw, null);
+            if (rv303Local && typeof rv303Local === 'object' && !Array.isArray(rv303Local)) {
+              var rv303LocalSid = Number(rv303Local.sessionId) || 0;
+              var rv303LocalLive = rv303Local.status === 'running' || rv303Local.status === 'paused';
+              var rv303Same = rv303LocalLive && rv303LocalSid === rv303Sid;
+              if (!rv303Same) {
+                var rv303Discarded = Number(rv303Local.discardedSid) === rv303Sid;
+                if (rv303Discarded || staleSessionMs303(rv303Sid, now)) {
                   meta.keys[key] = { t: now, s: cloudTs };
                   return;
                 }
