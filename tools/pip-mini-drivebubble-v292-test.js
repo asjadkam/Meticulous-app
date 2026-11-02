@@ -245,9 +245,13 @@ check('model: drive bubble dismissed -> next leave raises nothing',
 console.log('Part 3 — ship pins');
 const vj = JSON.parse(read('version.json'));
 check('webVersion 292', vj.webVersion === 292, 'webVersion=' + vj.webVersion);
-check('native version 46', vj.version === 46, 'version=' + vj.version);
-check('apkUrl points at the v46 APK', typeof vj.apkUrl === 'string' && vj.apkUrl.indexOf('meticulous-v46.apk') >= 0);
-check('APK_VERSION 46 in js/app.js', /var APK_VERSION\s*=\s*46/.test(appJs));
+/* v313 (APK v66 RELEASE pointer): the native generation moved
+   46 -> 47; the three update-machinery pins below roll forward
+   with it. The webVersion-292 and gradle pins above/below are
+   this release's own ship pins and stay as they stand. */
+check('native version 47', vj.version === 47, 'version=' + vj.version);
+check('apkUrl points at the v47 APK', typeof vj.apkUrl === 'string' && vj.apkUrl.indexOf('meticulous-v47.apk') >= 0);
+check('APK_VERSION 47 in js/app.js', /var APK_VERSION\s*=\s*47/.test(appJs));
 const gradle = readNat('android/app/build.gradle');
 check('gradle versionCode 39', /versionCode\s+39/.test(gradle));
 check('gradle versionName 1.37', /versionName\s+"1\.37"/.test(gradle));
