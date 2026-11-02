@@ -17,7 +17,7 @@
         '<button class="btn small ' + (t === 'equipment' ? 'primary' : 'ghost') + '" data-tab="equipment">🚛 Equipment</button></div>';
 
       h += '<div class="card"><h3>＋ New report (' + (t === 'load' ? 'Load' : 'Equipment') + ')</h3>' +
-        '<label class="f">📷 Photo</label><input type="file" id="dg_img" accept="image/*" capture="environment"><div id="dg_prev"></div>' +
+        '<label class="f">📷 Photo</label><input type="file" id="dg_img" accept="image/*"><div id="dg_prev"></div>' +
         '<label class="f">What happened?</label><textarea id="dg_desc" placeholder="Describe the damage or incident…"></textarea>' +
         '<button class="btn primary" id="dg_add">Save report</button>' +
         '<p class="note">Timestamped automatically. Active dispatch attached if one is running.</p></div>';
