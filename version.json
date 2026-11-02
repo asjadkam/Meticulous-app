@@ -1,8 +1,8 @@
 {
   "version": 46,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v46.apk",
-  "webVersion": 304,
-  "notes": "v304: INCIDENT-PHOTO-PICKER (Asjad, Nov 2, 2026, urgent, mid-report): the Damage & Incident photo input carried capture=\"environment\", so Android opened the camera and never offered his existing photos. capture removed from modules/damage.js dg_img \u2014 the picker now offers gallery/files like a normal image input. No other change.",
+  "webVersion": 305,
+  "notes": "v305: INCIDENT-PHOTO-MULTI (Asjad, Nov 2, 2026, urgent follow-up to v304): the Damage & Incident photo input now takes MULTIPLE photos for one report - input carries multiple, the change handler reads every selected file into a photos array (photo kept as first image for compatibility), previews all, and the report list renders every attached photo with its download button. Cloud doc copy strips photos exactly as it already stripped photo. Nothing else changed.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",

@@ -17,7 +17,7 @@
         '<button class="btn small ' + (t === 'equipment' ? 'primary' : 'ghost') + '" data-tab="equipment">🚛 Equipment</button></div>';
 
       h += '<div class="card"><h3>＋ New report (' + (t === 'load' ? 'Load' : 'Equipment') + ')</h3>' +
-        '<label class="f">📷 Photo</label><input type="file" id="dg_img" accept="image/*"><div id="dg_prev"></div>' +
+        '<label class="f">📷 Photo</label><input type="file" id="dg_img" accept="image/*" multiple><div id="dg_prev"></div>' +
         '<label class="f">What happened?</label><textarea id="dg_desc" placeholder="Describe the damage or incident…"></textarea>' +
         '<button class="btn primary" id="dg_add">Save report</button>' +
         '<p class="note">Timestamped automatically. Active dispatch attached if one is running.</p></div>';
@@ -26,31 +26,43 @@
       h += '<div class="card"><h3>📁 ' + (t === 'load' ? 'Load' : 'Equipment') + ' reports</h3>' +
         (mine.length ? mine.slice().reverse().map(function (r) {
           return '<div class="listitem">' +
-            (r.photo ? '<img src="' + r.photo + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
-              (App._photoDl ? App._photoDl(r.photo, 'damage-' + (r.date || '')) : '') : '') +
+            ((r.photos && r.photos.length) ? r.photos.map(function (p) {
+              return '<img src="' + p + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
+                (App._photoDl ? App._photoDl(p, 'damage-' + (r.date || '')) : '');
+            }).join('') : (r.photo ? '<img src="' + r.photo + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
+              (App._photoDl ? App._photoDl(r.photo, 'damage-' + (r.date || '')) : '') : '')) +
             '<div class="a">' + esc(r.at) + '</div><div class="b">' + esc(r.desc) + (r.dispatch ? '<br>Dispatch: ' + esc(r.dispatch) : '') + '</div></div>';
         }).join('') : '<div class="empty">No reports yet.</div>') + '</div>';
 
       body.innerHTML = h;
-      var photoData = '';
+      var photoList = [];
       body.querySelectorAll('[data-tab]').forEach(function (b) {
         b.onclick = function () { W('tab', b.getAttribute('data-tab')); Meticulous.modules.damage.render(body); };
       });
       body.querySelector('#dg_img').onchange = function (ev) {
-        var f = ev.target.files[0]; if (!f) return;
-        var r = new FileReader();
-        r.onload = function () {
-          photoData = r.result;
-          body.querySelector('#dg_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">';
-        };
-        r.readAsDataURL(f);
+        var files = Array.prototype.slice.call(ev.target.files || []);
+        if (!files.length) return;
+        photoList = [];
+        var pending = files.length;
+        files.forEach(function (f, i) {
+          var r = new FileReader();
+          r.onload = function () {
+            photoList[i] = r.result;
+            if (--pending === 0) {
+              body.querySelector('#dg_prev').innerHTML = photoList.map(function (p) {
+                return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">';
+              }).join('');
+            }
+          };
+          r.readAsDataURL(f);
+        });
       };
       body.querySelector('#dg_add').onclick = function () {
         var desc = body.querySelector('#dg_desc').value.trim();
-        if (!desc && !photoData) { alert('Add a photo or a description.'); return; }
+        if (!desc && !photoList.length) { alert('Add a photo or a description.'); return; }
         var a = App._store.get('dsp_active', null);
         var r = reports();
-        var rec = { tab: t, desc: desc, photo: photoData, at: new Date().toLocaleString(), dispatch: a ? (a.pickup + ' → ' + a.dropoff) : '' };
+        var rec = { tab: t, desc: desc, photo: photoList[0] || '', photos: photoList.slice(), at: new Date().toLocaleString(), dispatch: a ? (a.pickup + ' → ' + a.dropoff) : '' };
         /* v243 (CONNECT-SENDDOC): a report is born with its real
            date and its v242 profile stamp, so the Connect share
            picker finds it under the profile it was filed on (the
@@ -59,7 +71,7 @@
         try { rec.date = App._today(); } catch (e) {}
         try { if (App.workProfiles) rec.profileId = App.workProfiles.activeId(); } catch (e) {}
         r.push(rec); W('reports', r);
-        if (window.FB && FB.saveDoc) { var c = Object.assign({}, rec); delete c.photo; FB.saveDoc('damage', 'd' + Date.now(), c); }
+        if (window.FB && FB.saveDoc) { var c = Object.assign({}, rec); delete c.photo; delete c.photos; FB.saveDoc('damage', 'd' + Date.now(), c); }
         Meticulous.modules.damage.render(body);
       };
     }
