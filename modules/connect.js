@@ -205,6 +205,27 @@
     shareableModules().forEach(function (m) { ok[m.key] = 1; });
     return (keys || []).filter(function (k) { return !!ok[k]; });
   }
+  /* v308 (EDITOR-MODULES-MISSING-PNL-MAINTENANCE, owner Nov 2,
+     2026): the connection EDITOR's tick list is the pipe's FULL
+     module vocabulary (all ten keys, ConnectLive.MODULES labels),
+     NOT the v207 shareable trim above. The v207 trim governs what
+     a NEW request/accept on a Driver account OFFERS — the modules
+     this account itself runs. The editor is a different door: it
+     sets what an EXISTING peer may SEE of the driver's shared
+     records, and the records doc carries maintenance + pnl
+     sections for any driver, gated on exactly these ticks
+     (CP.MODULE_KEYS / CP.modulesFor). Under the trim, a Driver
+     account's editor rendered only 8 rows and its Save silently
+     stripped the other two, so Maintenance and P&L could never
+     be granted on a Limited connection — the owner, setting up
+     Maria: "just add damage and pnl on the list." The editor
+     therefore renders and sanitizes against moduleList() whole. */
+  function editorModules() { return moduleList(); }
+  function sanitizeEditorTicks(keys) {
+    var ok = {};
+    editorModules().forEach(function (m) { ok[m.key] = 1; });
+    return (keys || []).filter(function (k) { return !!ok[k]; });
+  }
   function modulesOfThing(x) {
     try { if (window.ConnectLive && ConnectLive.modulesOf) return ConnectLive.modulesOf(x); } catch (e) {}
     if (!x || (x.kind !== 'limited' && x.kind !== 'once')) return null;
@@ -252,10 +273,10 @@
       '<span>' + esc(m.label) + '</span>' +
       '<span class="cn-modbox">' + (on ? '✓' : '') + '</span></button>';
   }
-  function moduleTicksHtml(attr, selected) {
+  function moduleTicksHtml(attr, selected, list) {
     var sel = selected || [];
     var h = '<div style="margin:4px 0 2px"><div class="note" style="font-weight:600">Tick exactly what they can see — nothing else crosses:</div>';
-    shareableModules().forEach(function (m) {
+    (list || shareableModules()).forEach(function (m) {
       h += modRowHtml(attr, m.key, false, m, sel.indexOf(m.key) !== -1);
     });
     return h + '</div>';
@@ -706,7 +727,7 @@
         (sel ? '● ' : '○ ') + KIND_NAMES[kk] + '</button>' +
         '<p class="note" style="margin:2px 0 0 4px' + (sel ? ';font-weight:600' : ';color:#999') + '">' + esc(KIND_LINES[kk]) + '</p>';
     });
-    if (k === 'limited') h += moduleTicksHtml('data-cn-editmod', uiEdit.modules || []);
+    if (k === 'limited') h += moduleTicksHtml('data-cn-editmod', uiEdit.modules || [], editorModules());
     h += '<div class="row" style="margin-top:10px">' +
       '<button class="btn ghost small" id="cn_edit_cancel">Cancel</button>' +
       '<button class="btn primary" id="cn_edit_save" style="flex:1">Save</button></div></div>';
@@ -1156,7 +1177,7 @@
         var CLc = live();
         if (!c || !c.uid || !CLc || !CLc.setKind) { uiEdit = null; rerender(); return; }
         var k = uiEdit.kind;
-        var mods = k === 'limited' ? sanitizeTicks(uiEdit.modules || []) : undefined;
+        var mods = k === 'limited' ? sanitizeEditorTicks(uiEdit.modules || []) : undefined;
         if (k === 'limited' && !(mods && mods.length)) mods = defaultTicks('limited', null);
         editSave.disabled = true;
         CLc.setKind(c.uid, k, k === 'once' ? kindToday() : undefined, mods).then(function () {

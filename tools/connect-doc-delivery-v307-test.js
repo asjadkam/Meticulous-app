@@ -593,6 +593,87 @@ console.log('— 1f: sendDoc end-to-end — write, land, dedupe, ticks —');
   pipeUsers.driver.store.set('con_hidden', []);
 }
 
+/* ================= (4) v308: the editor lists + saves all ten */
+console.log('— 4: EDITOR-MODULES-MISSING-PNL-MAINTENANCE — all 10 ticks reach the editor —');
+{
+  /* Maria on a DRIVER account (ONB): under the v207 trim her
+     editor showed only 8 rows and Save stripped the other two —
+     Maintenance + P&L could never be granted on Limited. */
+  const keyMatch = cpSrc.match(/CP\.MODULE_KEYS = \[([^\]]+)\]/);
+  const PIPE_KEYS = keyMatch ? Array.from(keyMatch[1].matchAll(/'([a-z]+)'/g)).map(function (m) { return m[1]; }) : [];
+  eq('4a statics: CP.MODULE_KEYS carries ten keys', PIPE_KEYS.length, 10);
+  const w = connectWorld({ con_list: [clone(MARIA)] });
+  w.api.render(w.body);
+  await ticks(6);
+  const editBtn = w.body.querySelectorAll('[data-cn-edit]')[0];
+  ok('4 the Edit access door is on her card', !!editBtn);
+  if (editBtn) {
+    editBtn.onclick();
+    await ticks(3);
+    const kindBtn = w.body.querySelectorAll('[data-cn-edit-kind="limited"]')[0];
+    if (kindBtn) { kindBtn.onclick(); await ticks(3); }
+    const tickKeys = w.body.querySelectorAll('[data-cn-editmod]').map(function (b) { return b.getAttribute('data-cn-editmod'); });
+    eq('4a the editor lists exactly the CP.MODULE_KEYS set (all 10)', tickKeys.slice().sort(), PIPE_KEYS.slice().sort());
+    const clMods = (w.CL && w.CL.MODULES) || [];
+    const lbl = (k) => { const m = clMods.filter(function (x) { return x.key === k; })[0]; return m ? m.label : ''; };
+    ok('4a the pnl tick carries a P&L label', lbl('pnl').indexOf('P&L') !== -1, lbl('pnl'));
+    ok('4a the maintenance tick carries the Maintenance label', lbl('maintenance') === 'Maintenance', lbl('maintenance'));
+    const hOpen = allHtml(w);
+    ok('4a the open editor paints the P&L + Maintenance rows',
+      hOpen.indexOf('P&amp;L') !== -1 && hOpen.indexOf('Maintenance') !== -1);
+    for (const k of ['pnl', 'maintenance']) {
+      const row = w.body.querySelectorAll('[data-cn-editmod="' + k + '"]')[0];
+      ok('4 the ' + k + ' row is tappable in the editor', !!row);
+      if (row) { row.onclick(); await ticks(2); }
+    }
+    const save = w.body.querySelector('#cn_edit_save');
+    ok('4 the editor Save renders', !!save);
+    if (save) {
+      save.onclick();
+      await ticks(6);
+      const entry = (w.store.get('con_list', []) || [])[0] || {};
+      eq('4b the save persisted kind=limited', entry.kind, 'limited');
+      ok('4b the save persisted pnl + maintenance on the con_list entry',
+        Array.isArray(entry.modules) && entry.modules.indexOf('pnl') !== -1 && entry.modules.indexOf('maintenance') !== -1,
+        JSON.stringify(entry.modules));
+      const h = allHtml(w);
+      ok('4d the card Can-see line names P&L and Maintenance',
+        h.indexOf('Can see:') !== -1 && h.indexOf('P&amp;L') !== -1 && h.indexOf('Maintenance') !== -1);
+      /* pipe side: the pipe reads the very entry the editor saved */
+      asUser(pipeUsers.driver);
+      const syncMaria = (e) => (pipeUsers.driver.store.get('con_list', []) || []).map(function (c) {
+        return c.uid === 'uid-maria' ? Object.assign({}, c, { kind: e.kind, modules: (e.modules || []).slice() }) : c;
+      });
+      pipeUsers.driver.store.set('con_list', syncMaria(entry));
+      const mods = CP().modulesFor('uid-maria') || [];
+      ok('4b CP.modulesFor returns pnl + maintenance from the saved entry',
+        mods.indexOf('pnl') !== -1 && mods.indexOf('maintenance') !== -1, JSON.stringify(mods));
+      ok('4c allowsModule(pnl) is true while ticked', CP().allowsModule('uid-maria', 'pnl') === true);
+      ok('4c allowsModule(maintenance) is true while ticked', CP().allowsModule('uid-maria', 'maintenance') === true);
+      /* untick pnl, save again: the grant closes, maintenance stays */
+      const editBtn2 = w.body.querySelectorAll('[data-cn-edit]')[0];
+      if (editBtn2) {
+        editBtn2.onclick();
+        await ticks(3);
+        const row = w.body.querySelectorAll('[data-cn-editmod="pnl"]')[0];
+        if (row) { row.onclick(); await ticks(2); }
+        const save2 = w.body.querySelector('#cn_edit_save');
+        if (save2) {
+          save2.onclick();
+          await ticks(6);
+          const e2 = (w.store.get('con_list', []) || [])[0] || {};
+          ok('4c the untick persisted (pnl gone, maintenance kept)',
+            Array.isArray(e2.modules) && e2.modules.indexOf('pnl') === -1 && e2.modules.indexOf('maintenance') !== -1,
+            JSON.stringify(e2.modules));
+          pipeUsers.driver.store.set('con_list', syncMaria(e2));
+          ok('4c allowsModule(pnl) is false after untick + save', CP().allowsModule('uid-maria', 'pnl') === false);
+          ok('4c allowsModule(maintenance) stays true', CP().allowsModule('uid-maria', 'maintenance') === true);
+        }
+      }
+    }
+  }
+}
+
 /* ================= statics: rules + surfaces ================= */
 console.log('— statics: rules gates + the receiver surface —');
 {
