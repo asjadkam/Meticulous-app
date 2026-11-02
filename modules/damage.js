@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var S = function (k, d) { return App._store.get('dmg_' + k, d); };
-  var W = function (k, v) { App._store.set('dmg_' + k, v); };
+  var W = function (k, v) { return App._store.set('dmg_' + k, v); };
   var esc = function (s) { return App._esc(s); };
 
   function reports() { return S('reports', []); }
@@ -47,12 +47,37 @@
         files.forEach(function (f, i) {
           var r = new FileReader();
           r.onload = function () {
-            photoList[i] = r.result;
-            if (--pending === 0) {
-              body.querySelector('#dg_prev').innerHTML = photoList.map(function (p) {
-                return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">';
-              }).join('');
-            }
+            /* v306: downscale before storing (house canvas pattern,
+               1280px / JPEG 0.8) — raw camera files overflow the
+               local store and the save silently dropped the report. */
+            var img = new Image();
+            img.onload = function () {
+              var max = 1280, w = img.width, h = img.height;
+              if (w > max || h > max) {
+                var sc = Math.min(max / w, max / h);
+                w = Math.round(w * sc); h = Math.round(h * sc);
+              }
+              try {
+                var c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                c.getContext('2d').drawImage(img, 0, 0, w, h);
+                photoList[i] = c.toDataURL('image/jpeg', 0.8);
+              } catch (e) { photoList[i] = r.result; }
+              if (--pending === 0) {
+                body.querySelector('#dg_prev').innerHTML = photoList.map(function (p) {
+                  return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">';
+                }).join('');
+              }
+            };
+            img.onerror = function () {
+              photoList[i] = r.result;
+              if (--pending === 0) {
+                body.querySelector('#dg_prev').innerHTML = photoList.map(function (p) {
+                  return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">';
+                }).join('');
+              }
+            };
+            img.src = r.result;
           };
           r.readAsDataURL(f);
         });
@@ -70,7 +95,8 @@
            reports keep working untouched). */
         try { rec.date = App._today(); } catch (e) {}
         try { if (App.workProfiles) rec.profileId = App.workProfiles.activeId(); } catch (e) {}
-        r.push(rec); W('reports', r);
+        r.push(rec);
+        if (!W('reports', r)) { alert('The report could NOT be saved on this phone — storage is full. Nothing was saved; try again with fewer photos.'); return; }
         if (window.FB && FB.saveDoc) { var c = Object.assign({}, rec); delete c.photo; delete c.photos; FB.saveDoc('damage', 'd' + Date.now(), c); }
         Meticulous.modules.damage.render(body);
       };

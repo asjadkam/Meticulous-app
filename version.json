@@ -1,8 +1,8 @@
 {
   "version": 46,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v46.apk",
-  "webVersion": 305,
-  "notes": "v305: INCIDENT-PHOTO-MULTI (Asjad, Nov 2, 2026, urgent follow-up to v304): the Damage & Incident photo input now takes MULTIPLE photos for one report - input carries multiple, the change handler reads every selected file into a photos array (photo kept as first image for compatibility), previews all, and the report list renders every attached photo with its download button. Cloud doc copy strips photos exactly as it already stripped photo. Nothing else changed.",
+  "webVersion": 306,
+  "notes": "v306: DAMAGE-SAVE-NOT-IN-HISTORY (Asjad, Nov 2, 2026): incident reports saved WITH photos never appeared in the history - the module stored raw full-size camera data URLs into the localStorage-backed store, the write overflowed quota, and App._store.set swallowed the failure (returned false, ignored). Fixes in modules/damage.js only: photos downscaled on pick (1280px, JPEG 0.8, house canvas pattern); the save now checks the store result and alerts plainly instead of silently dropping the report. Nothing else changed.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
