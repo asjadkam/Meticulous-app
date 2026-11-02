@@ -676,6 +676,35 @@ console.log('— 4: EDITOR-MODULES-MISSING-MAINTENANCE — Maintenance ticks, P&
   }
 }
 
+/* ================= (5) v309: the card dropdown is GONE ====== */
+console.log('— 5: CONNECT-KIND-DROPDOWN-FLICKER — one door: the editor —');
+{
+  /* Owner, Nov 2, 2026: the connection card's standalone kind
+     <select> "flickers away every time I touch it" (the Connect
+     screen's live repaints close it) and it duplicates the Edit
+     access editor's kind choices. v309 removes the control and
+     its handler; the Kind line stays read-only and the editor
+     remains the one door for kind changes. */
+  ok('5a statics: no card-level kind select survives in the module',
+    conSrc.indexOf('data-cn-kindchg') === -1);
+  const w = connectWorld({ con_list: [clone(MARIA)] });
+  w.api.render(w.body);
+  await ticks(6);
+  const h = allHtml(w);
+  ok('5a the rendered card carries NO kind dropdown',
+    w.body.querySelectorAll('[data-cn-kindchg]').length === 0 && h.indexOf('data-cn-kindchg') === -1);
+  ok('5c the Kind line still renders her current kind',
+    h.indexOf('Kind:') !== -1 && h.indexOf('Full access') !== -1);
+  const editBtn = w.body.querySelectorAll('[data-cn-edit]')[0];
+  ok('5b the Edit access door is still on her card', !!editBtn);
+  if (editBtn) {
+    editBtn.onclick();
+    await ticks(3);
+    const kinds = w.body.querySelectorAll('[data-cn-edit-kind]').map(function (b) { return b.getAttribute('data-cn-edit-kind'); });
+    eq('5b the editor still offers all three kinds', kinds.slice().sort(), ['all', 'limited', 'once']);
+  }
+}
+
 /* ================= statics: rules + surfaces ================= */
 console.log('— statics: rules gates + the receiver surface —');
 {

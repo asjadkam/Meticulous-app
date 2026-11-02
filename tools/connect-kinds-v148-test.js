@@ -643,7 +643,13 @@ async function connectPair(fromUser, toUser, kind, onceDate, acceptKind) {
   check('g: an All row reads Full access', html1.indexOf('Full access') !== -1);
   check('g: a Limited row names its kind', html1.indexOf('Connect limited') !== -1);
   check('g: an ended one-time row reads ended', html1.indexOf('One time connection') !== -1 && /ended/.test(html1));
-  check('g: rows carry the kind change control', html1.indexOf('data-cn-kindchg') !== -1);
+  // v309 (owner, Nov 2, 2026 — CONNECT-KIND-DROPDOWN-FLICKER):
+  // the row's standalone kind dropdown is REMOVED by his order
+  // (it flickered shut on every touch and duplicated the v307
+  // Edit access editor). The v148 expectation flips: no card
+  // carries the dropdown any more; kind changes live in the
+  // editor only.
+  check('g: rows carry NO kind dropdown (v309: the editor is the one door)', html1.indexOf('data-cn-kindchg') === -1);
   check('g: the honesty line now names the kinds', html1.indexOf('kind decides what crosses') !== -1 || html1.indexOf('kinds') !== -1);
   // the picker: a FRESH dispatcher (office face, nobody on his
   // books) searching the driver gets the three kinds with

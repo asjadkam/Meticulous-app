@@ -948,10 +948,16 @@
             (linked && c.status === 'declined' ? '<div class="b">Request declined</div>' : '') +
             /* v148: the KIND shows on every linked row, in plain
                words (All reads "Full access" — the owner's own
-               phrase). On a live connection either side can
-               change it right here: the change re-stamps the
-               pair (CL.setKind) and re-governs from that
-               moment. An ended one-time row reads ended, with
+               phrase). v309 (owner, Nov 2, 2026 —
+               CONNECT-KIND-DROPDOWN-FLICKER): the row's old
+               standalone kind dropdown is GONE — on his phone it
+               flickered away on every touch (the screen's live
+               repaints closed it), and since v307 it duplicated
+               the Edit access editor's kind choices. The kind
+               line here is read-only; the editor below is the
+               ONE door for kind changes (its Save re-stamps the
+               pair through CL.setKind and re-governs from that
+               moment). An ended one-time row reads ended, with
                its day; it is removed like any row. */
             (linked && c.status === 'connected'
               ? '<div class="b">Kind: <b>' + esc(KIND_ROW_LABEL[kindOfConn(c)]) + '</b>' +
@@ -960,7 +966,6 @@
                    what this connection can see, at a glance. */
                 ((kindOfConn(c) === 'limited' || kindOfConn(c) === 'once') && modulesOfThing(c)
                   ? '<div class="b">Can see: <b>' + esc(moduleNames(modulesOfThing(c))) + '</b></div>' : '') +
-                '<div class="row" style="margin-top:4px"><select data-cn-kindchg="' + i + '" aria-label="Connection kind">' + kindOptions(kindOfConn(c)) + '</select></div>' +
                 /* v307 (owner, Nov 2, 2026: "Right now there is no
                    way to edit what a limited connection does"): the
                    EDITOR door — kind + the module ticks in one
@@ -1112,23 +1117,10 @@
       var delNo = body.querySelector('#cn_del_no');
       if (delNo) delNo.onclick = function () { uiConfirmDel = -1; rerender(); };
 
-      /* v148: change a connection's kind from its own row — the
-         entry re-stamps at once, the pair doc carries it to the
-         other side (CL.setKind), and the pipe republishes so the
-         new kind governs from this moment. */
-      body.querySelectorAll('[data-cn-kindchg]').forEach(function (sel) {
-        sel.onchange = function () {
-          var c = conns()[+sel.getAttribute('data-cn-kindchg')];
-          var CLc = live();
-          if (!c || !c.uid || !CLc || !CLc.setKind) return;
-          var v = sel.value;
-          CLc.setKind(c.uid, v, v === 'once' ? kindToday() : undefined).then(function () {
-            try { if (window.ConnectPipe && ConnectPipe.publishAll) ConnectPipe.publishAll(); } catch (e) {}
-            uiFlash = 'Kind changed for ' + c.name + ' — ' + KIND_NAMES[v] + '.';
-            rerender();
-          });
-        };
-      });
+      /* v309: the v148 row-dropdown kind handler is removed
+         with its control — kind changes live ONLY in the Edit
+         access editor below (v307), whose Save carries them
+         through CL.setKind exactly as this handler did. */
 
       /* v307: the access EDITOR — open on the connection, flip
          kind/ticks in session state (the repaint renders the
