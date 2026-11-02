@@ -998,10 +998,21 @@
             h += '<div style="border-top:1px solid #e3e3e3;margin-top:10px;padding-top:8px">' +
               '<div style="font-weight:700;margin-bottom:6px">' + (isDsp ? '📋 Send a dispatch to ' : isDest ? '📍 Send a destination to ' : '📎 Send a document to ') + esc(c.name) + '</div>';
             if (!isDsp && !isDest) {
-              h += '<label class="f">Kind</label><select id="cn_ptype">' +
-                DOC_TYPES.map(function (t) {
-                  return '<option value="' + t + '"' + (uiPicker.type === t ? ' selected' : '') + '>' + TYPE_ICON[t] + ' ' + TYPE_LABEL[t] + '</option>';
-                }).join('') + '</select>';
+              /* v311 (SEND-DOC-KIND-PICKER-FLICKER, owner video
+                 Nov 2, 2026, 15:16): this Kind control was a
+                 native <select> — the same control family that
+                 flickered off the connection card (removed in
+                 v309) — and it flickers here too in his webview.
+                 The kinds are now in-page tappable rows, the
+                 radio shape the v307 editor uses for its kind
+                 choices (a full-width button, ● on the chosen
+                 one); the tapped row IS the kind the send
+                 packages. No native <select> in this form. */
+              h += '<label class="f">Kind</label>' + DOC_TYPES.map(function (t) {
+                var sel = uiPicker.type === t;
+                return '<button class="btn ' + (sel ? 'primary' : 'ghost') + ' small" data-cn-ptype="' + t + '" style="display:block;width:100%;text-align:left;margin-top:6px">' +
+                  (sel ? '● ' : '○ ') + TYPE_ICON[t] + ' ' + TYPE_LABEL[t] + '</button>';
+              }).join('');
             }
             var items = contentItems(uiPicker.type);
             if (!items.length) {
@@ -1215,11 +1226,15 @@
           rerender();
         };
       });
-      var pType = body.querySelector('#cn_ptype');
-      if (pType) pType.onchange = function () {
-        if (uiPicker) uiPicker.type = pType.value;
-        rerender();
-      };
+      /* v311: a tapped kind row sets the picker's type —
+         exactly what the old select's onchange did before it
+         was replaced by the rows above. */
+      body.querySelectorAll('[data-cn-ptype]').forEach(function (b) {
+        b.onclick = function () {
+          if (uiPicker) uiPicker.type = b.getAttribute('data-cn-ptype');
+          rerender();
+        };
+      });
       body.querySelectorAll('[data-pick]').forEach(function (b) {
         b.onclick = function () {
           if (!uiPicker) return;

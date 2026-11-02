@@ -248,10 +248,11 @@ async function openPicker(w, kind, quick) {
   btn.onclick();
   await ticks(3);
   if (kind) {
-    const sel = w.body.querySelector('#cn_ptype');
-    if (!sel) { ok('picker: the Kind select renders', false); return; }
-    sel.value = kind;
-    if (sel.onchange) sel.onchange();
+    /* v311: the Kind control is tappable rows now, not a
+       native select — tap the requested kind's row. */
+    const row = w.body.querySelectorAll('[data-cn-ptype="' + kind + '"]')[0];
+    if (!row) { ok('picker: the kind rows render', false); return; }
+    if (row.onclick) row.onclick();
     await ticks(3);
   }
 }
@@ -702,6 +703,102 @@ console.log('— 5: CONNECT-KIND-DROPDOWN-FLICKER — one door: the editor —')
     await ticks(3);
     const kinds = w.body.querySelectorAll('[data-cn-edit-kind]').map(function (b) { return b.getAttribute('data-cn-edit-kind'); });
     eq('5b the editor still offers all three kinds', kinds.slice().sort(), ['all', 'limited', 'once']);
+  }
+}
+
+/* ================= (6) v311: send-doc kind rows ============ */
+console.log('— 6: SEND-DOC-KIND-PICKER-FLICKER — the Kind select is tappable rows now —');
+{
+  /* Owner video, Nov 2, 2026, 15:16: the Send doc form's Kind
+     <select> flickers on his phone — the same native-control
+     family removed from the connection card in v309. v311
+     replaces it with in-page radio rows in the v307 editor's
+     shape; the tapped row is the kind the send packages, and
+     the default stays Damage photo (the old first option). */
+  ok('6a statics: the native Kind select is gone from the module',
+    conSrc.indexOf('id="cn_ptype"') === -1);
+  ok('6a statics: the kind rows exist in the module',
+    conSrc.indexOf('data-cn-ptype') !== -1);
+  const w = connectWorld({ con_list: [clone(DAVE)], dmg_reports: [clone(DMG_P1)], fuel_fills: [clone(FILL_A)] });
+  w.api.render(w.body);
+  await ticks(6);
+  const docBtn = w.body.querySelectorAll('[data-quick="doc"]')[0];
+  ok('6 the Send doc button is on the connection', !!docBtn);
+  if (docBtn) {
+    docBtn.onclick();
+    await ticks(3);
+    const h = allHtml(w);
+    const formStart = h.indexOf('Send a document to');
+    const formEnd = formStart === -1 ? -1 : h.indexOf('id="cn_pcancel"', formStart);
+    const form = (formStart !== -1 && formEnd !== -1) ? h.slice(formStart, formEnd) : '';
+    ok('6a the send-doc form renders', !!form);
+    ok('6a the rendered form contains NO <select>', !!form && form.indexOf('<select') === -1, form.slice(0, 160));
+    ok('6a no #cn_ptype control renders', w.body.querySelector('#cn_ptype') === null);
+    const rows = w.body.querySelectorAll('[data-cn-ptype]');
+    eq('6b one tappable row per kind', rows.length, 9);
+    eq('6b the rows are the nine kinds in the old select order',
+      rows.map(function (b) { return b.getAttribute('data-cn-ptype'); }),
+      ['damage', 'ticket', 'fuel', 'pti', 'odo', 'sticker', 'invoice', 'manifest', 'location']);
+    ok('6b Damage photo is the default selection (● on its row)',
+      form.indexOf('● 📸 Damage photo') !== -1);
+    ok('6b an unchosen kind is a quiet ○ row',
+      form.indexOf('○ ⛽ Fuel receipt') !== -1);
+    const dmgRow = rows.filter(function (b) { return b.getAttribute('data-cn-ptype') === 'damage'; })[0];
+    ok('6b the chosen row carries the selected (primary) styling',
+      !!dmgRow && (dmgRow.getAttribute('class') || '').indexOf('primary') !== -1,
+      dmgRow && dmgRow.getAttribute('class'));
+    eq('6b the default kind lists its items (the damage report)', w.body.querySelectorAll('[data-pick]').length, 1);
+    /* tap Fuel receipt: the selection moves, the list follows,
+       and the send packages the TAPPED kind */
+    const fuelRow = rows.filter(function (b) { return b.getAttribute('data-cn-ptype') === 'fuel'; })[0];
+    ok('6c the fuel row is tappable', !!(fuelRow && fuelRow.onclick));
+    if (fuelRow && fuelRow.onclick) {
+      fuelRow.onclick();
+      await ticks(3);
+      const h2 = allHtml(w);
+      ok('6c the tapped row is now the marked one (● moved to Fuel receipt)',
+        h2.indexOf('● ⛽ Fuel receipt') !== -1 && h2.indexOf('○ 📸 Damage photo') !== -1);
+      const fuelRow2 = w.body.querySelectorAll('[data-cn-ptype="fuel"]')[0];
+      ok('6c the fuel row now carries the selected styling',
+        !!fuelRow2 && (fuelRow2.getAttribute('class') || '').indexOf('primary') !== -1,
+        fuelRow2 && fuelRow2.getAttribute('class'));
+      const picks = w.body.querySelectorAll('[data-pick]');
+      eq('6c the item list switched to the tapped kind', picks.length, 1);
+      if (picks.length) {
+        picks[0].onclick();
+        await ticks(5);
+        eq('6c the send went out once', w.cap.sendDoc.length, 1);
+        const s = w.cap.sendDoc[0] || {};
+        ok('6c the send uses the TAPPED kind, not the default',
+          s.uid === 'uid-dave' && s.share && s.share.type === 'fuel', JSON.stringify(s));
+        ok('6c the fuel content rides the send',
+          !!(s.share && s.share.content && s.share.content.photo === 'data:image/jpeg;base64,FUELPHOTO'));
+      }
+      /* reopen and send the damage photo: the docshare flow
+         still sends end-to-end on the default kind */
+      const docBtn2 = w.body.querySelectorAll('[data-quick="doc"]')[0];
+      ok('6d the Send doc button is back after the send', !!docBtn2);
+      if (docBtn2) {
+        docBtn2.onclick();
+        await ticks(3);
+        const picks2 = w.body.querySelectorAll('[data-pick]');
+        eq('6d reopening defaults to Damage photo and lists the report', picks2.length, 1);
+        if (picks2.length) {
+          picks2[0].onclick();
+          await ticks(5);
+          eq('6d the damage docshare sent too', w.cap.sendDoc.length, 2);
+          const s2 = w.cap.sendDoc[1] || {};
+          ok('6d the second send is the damage share with its photo',
+            s2.share && s2.share.type === 'damage' && s2.share.content && s2.share.content.photo === 'data:image/jpeg;base64,POLEPHOTO',
+            JSON.stringify(s2));
+          const ob = w.store.get('con_outbox', []);
+          eq('6d History holds both sends', ob.length, 2);
+          ok('6d both entries are born sent:true',
+            ob.length === 2 && ob[0].sent === true && ob[1].sent === true && ob[0].type === 'fuel' && ob[1].type === 'damage',
+            JSON.stringify(ob.map(function (o) { return o.type + ':' + o.sent; })));
+        }
+      }
+    }
   }
 }
 

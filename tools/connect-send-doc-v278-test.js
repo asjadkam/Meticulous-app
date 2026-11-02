@@ -201,10 +201,11 @@ async function openPicker(w, kind, quick) {
   btn.onclick();
   await ticks(3);
   if (kind) {
-    const sel = w.body.querySelector('#cn_ptype');
-    if (!sel) { ok('picker: the Kind select renders', false); return; }
-    sel.value = kind;
-    if (sel.onchange) sel.onchange();
+    /* v311: the Kind control is tappable rows now, not a
+       native select — tap the requested kind's row. */
+    const row = w.body.querySelectorAll('[data-cn-ptype="' + kind + '"]')[0];
+    if (!row) { ok('picker: the kind rows render', false); return; }
+    if (row.onclick) row.onclick();
     await ticks(3);
   }
 }
