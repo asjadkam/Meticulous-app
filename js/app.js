@@ -2608,6 +2608,13 @@
     /* v216: while locked the hero shows the neutral face — the
        session keeps counting underneath, unpainted. */
     if (App._authLocked ? App._authLocked() : false) { paintLockedHero(); return; }
+    /* v314 (PHANTOM-SESSION-31H): re-test staleness on the tick's
+       own minute cadence (healStaleTrackerPeriodic throttles) —
+       a session that crosses into a previous-day start while
+       this page lives is buried HERE, unbooked, instead of the
+       hero sailing past midnight into a second day. On a discard
+       the hero simply repaints from the fresh idle below. */
+    try { healStaleTrackerPeriodic(); } catch (e) {}
     var t = App.tracker, sec = trackerElapsedSec();
     // v41: the hero quantity depends on the pay method (dynamic tracker);
     // for Hourly this renders exactly the same clock as before.
@@ -2752,7 +2759,22 @@
      (staleSessionMs303). */
   function staleTrackerStartMs(startMs, nowMs) {
     if (!(startMs > 0) || !(nowMs > 0)) return false;
-    if (nowMs - startMs < 20 * 3600 * 1000) return false;
+    /* v314 (PHANTOM-SESSION-31H): the day prong ALONE decides now.
+       The v303 shape ALSO demanded >= 20 h of age — a second
+       prong whose only work was sparing a previous-evening start
+       checked the next morning. That shape is not work in this
+       app: days close the day they start, the autostart engine
+       already calls a previous day's still-running session "not
+       today's work", and no flow books across midnight. The age
+       prong only bought phantoms time: the Nov 2 09:00 session
+       (his edited start, after the deleted 08:00 auto-start)
+       crossed into Nov 3 previous-day AND past 20 h while the
+       app process simply stayed alive — and healStaleTracker
+       was wired only at cold open / sign-in / first pull, so
+       nothing ever re-tested it; the hero painted 31:08:43 and
+       counting, and the widget — fed by the same session through
+       trackerSave's session-record sync — painted the identical
+       31:08:43. Mirrored in js/cloudsync.js (staleSessionMs303). */
     return todayStr(new Date(startMs)) !== todayStr(new Date(nowMs));
   }
   /* Discard a stale-shell session WITHOUT booking it. No
@@ -2781,6 +2803,29 @@
     try { trackerPaint(); } catch (e) {}
     try { if (window.ShiftTrack && ShiftTrack.sessionStopped) ShiftTrack.sessionStopped('s' + ghostSid); } catch (e) {}
     return true;
+  }
+  /* v314 (PHANTOM-SESSION-31H): the periodic re-test. Until now
+     healStaleTracker was wired ONLY at cold open (init), on the
+     sign-in restore and on the first-pull reload — three doors a
+     session crosses at most once, so a session that turned stale
+     WHILE the app stayed alive (his Nov 2 09:00 session painting
+     31:08:43 the next day, the app never cold-opened in between)
+     was never re-tested and sailed past midnight unchallenged.
+     This wrapper runs the same heal on the tracker's own minute
+     cadence (trackerTick below) and on every return to visible:
+     a discard decided here is the identical unbooked burial
+     (trackerSave inside the heal syncs the idle facts into the
+     native session record, so the widget's face stops with the
+     web session — one store path, both faces). Throttled to one
+     evaluation a minute; it answers true only when a discard
+     landed, so callers can repaint once. */
+  function healStaleTrackerPeriodic() {
+    var now = Date.now();
+    if (healStaleTrackerPeriodic._at && now - healStaleTrackerPeriodic._at < 60000) return false;
+    healStaleTrackerPeriodic._at = now;
+    var t = App.tracker;
+    if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
+    try { return healStaleTracker(); } catch (e) { return false; }
   }
   function closeTrackerStartSheet() {
     el('trkStartSheet').classList.remove('open');
@@ -6640,6 +6685,13 @@
       }
       // v27: when the app comes back, check whether the auto-start time arrived
       if (document.visibilityState === 'visible') {
+        /* v314 (PHANTOM-SESSION-31H): a return to visible is a
+           staleness re-test point of its own — the day may have
+           rolled over while the page sat hidden, and the burial
+           must land BEFORE the collects below can re-adopt the
+           native record for a session that is no longer today's
+           work (the heal also stops that record's service). */
+        try { healStaleTrackerPeriodic(); } catch (e10) {}
         /* v220: a widget button may have brought us here. */
         try { App.collectWidgetAction(); } catch (e6) {}
         /* v52: a PiP word stashed by an intent (stop / start),

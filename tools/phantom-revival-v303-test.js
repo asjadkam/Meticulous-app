@@ -245,8 +245,15 @@ const realSessions = [
       && store.writes.length === 0, 'writes=' + JSON.stringify(store.writes));
   }
 
-  console.log('\n— A3: a young previous-day session survives (the conservative prong) —');
+  console.log('\n— A3: SUPERSEDED by v314 — a young previous-day session is buried now —');
   {
+    /* v314 (PHANTOM-SESSION-31H) dropped the >= 20 h age prong:
+       previous local day alone decides, so the shape this block
+       pinned in v303 (Fri 22:00 start checked Sat 06:00, 8 h old)
+       is buried today. The full v314 law lives in
+       tools/phantom-session-v314-test.js (D4/D5/E1); this block
+       is kept and re-pinned so THIS suite stays the regression
+       record for the heal's boot behaviour. */
     fakeNow = T_SAT6;   /* Sat 06:00; the session started Fri 22:00 — 8 h old */
     const store = makeStore(), bridge = makeBridge();
     const w = makeWorld(store, bridge);
@@ -254,8 +261,8 @@ const realSessions = [
     w.App._sessRev = -1; w.App._lastStateAt = 0;
     const healed = w.healStaleTracker();
     await pump();
-    ok('A3: previous-day but only 8 h old — NOT buried', healed === false
-      && w.App.tracker.status === 'running' && Number(w.App.tracker.sessionId) === T_YEST22);
+    ok('A3: previous-day at ANY age is buried (v314 supersedes the 20 h prong)', healed === true
+      && w.App.tracker.status === 'idle' && Number(w.App.tracker.discardedSid) === T_YEST22);
   }
 
   console.log('\n— A4: the paused form of the ghost is buried too —');
@@ -416,8 +423,11 @@ const realSessions = [
       tk && tk.status === 'running' && Number(tk.sessionId) === T_TODAY8, 'tk=' + JSON.stringify(tk));
   }
   {
-    // B4: young previous-day cloud session — the stale test stays
-    // silent (8 h old) and the generic rules behave as before.
+    // B4: SUPERSEDED by v314 — a young previous-day cloud session
+    // (8 h old) is now REFUSED by the stale rule: with the 20 h
+    // prong gone, previous local day alone buries it. The full
+    // v314 law lives in tools/phantom-session-v314-test.js
+    // (E1/E2); re-pinned here per the same supersede precedent.
     fakeNow = T_SAT6;
     const w = makeWorldB({
       local: [['tracker', { status: 'idle', startTs: 0, elapsed: 0 }],
@@ -430,8 +440,8 @@ const realSessions = [
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle();
     const tk = w.get('tracker');
-    ok('B4: a young previous-day session still installs (no overreach)',
-      tk && tk.status === 'running' && Number(tk.sessionId) === T_YEST22, 'tk=' + JSON.stringify(tk));
+    ok('B4: a young previous-day session is REFUSED (v314 supersedes the 20 h prong)',
+      tk && tk.status === 'idle', 'tk=' + JSON.stringify(tk));
   }
   {
     // B5: the local live tracker IS the ghost (the phone-local

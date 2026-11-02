@@ -166,14 +166,19 @@
      autostart engine calls such a session 'running-stale' — not
      today's work), so a live copy passing both prongs is a dead
      echo, never work. Mirrored in js/app.js (staleTrackerStartMs).
-     Local-day compare via a yyyymmdd key built from local parts. */
+     Local-day compare via a yyyymmdd key built from local parts.
+     v314 (PHANTOM-SESSION-31H): the >= 20 h prong is DROPPED in
+     both mirrors — previous local day alone decides. The age
+     prong only bought a phantom time (the Nov 2 09:00 session
+     reached 31:08:43 the next day untouched, its heal wired
+     only at cold open while the app stayed alive); a previous-
+     day live copy is a dead echo at any age in this app. */
   function dayKey303(ms) {
     var d303 = new Date(ms);
     return d303.getFullYear() * 10000 + (d303.getMonth() + 1) * 100 + d303.getDate();
   }
   function staleSessionMs303(startMs, nowMs) {
     if (!(startMs > 0) || !(nowMs > 0)) return false;
-    if (nowMs - startMs < 20 * 3600 * 1000) return false;
     return dayKey303(startMs) < dayKey303(nowMs);
   }
   function isSyncable(key) {
