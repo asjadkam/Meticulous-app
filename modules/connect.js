@@ -205,22 +205,23 @@
     shareableModules().forEach(function (m) { ok[m.key] = 1; });
     return (keys || []).filter(function (k) { return !!ok[k]; });
   }
-  /* v308 (EDITOR-MODULES-MISSING-PNL-MAINTENANCE, owner Nov 2,
-     2026): the connection EDITOR's tick list is the pipe's FULL
-     module vocabulary (all ten keys, ConnectLive.MODULES labels),
-     NOT the v207 shareable trim above. The v207 trim governs what
-     a NEW request/accept on a Driver account OFFERS — the modules
-     this account itself runs. The editor is a different door: it
-     sets what an EXISTING peer may SEE of the driver's shared
-     records, and the records doc carries maintenance + pnl
-     sections for any driver, gated on exactly these ticks
-     (CP.MODULE_KEYS / CP.modulesFor). Under the trim, a Driver
-     account's editor rendered only 8 rows and its Save silently
-     stripped the other two, so Maintenance and P&L could never
-     be granted on a Limited connection — the owner, setting up
-     Maria: "just add damage and pnl on the list." The editor
-     therefore renders and sanitizes against moduleList() whole. */
-  function editorModules() { return moduleList(); }
+  /* v308 (EDITOR-MODULES-MISSING-MAINTENANCE, owner Nov 2, 2026):
+     the connection EDITOR's tick list is the module vocabulary
+     MINUS the v207 shareable trim's maintenance cut — but pnl
+     stays OUT, by the owner's correction the same day: "P&L is
+     not a module for a driver to share; I never asked to have
+     that shared." So the editor renders and sanitizes against
+     moduleList() with 'pnl' filtered out: Maintenance becomes
+     grantable on a Limited connection (the records doc carries a
+     maintenance section for any driver, gated on exactly this
+     tick — CP.modulesFor), while P&L never renders as a tick and
+     an editor save never writes it. The v207 trim above still
+     governs what a NEW request/accept on a Driver account offers.
+     (The pipe's internal 'pnl' key — CP.MODULE_KEYS, the P&L
+     crew gates — is untouched: this is the editor's surface only.) */
+  function editorModules() {
+    return moduleList().filter(function (m) { return m.key !== 'pnl'; });
+  }
   function sanitizeEditorTicks(keys) {
     var ok = {};
     editorModules().forEach(function (m) { ok[m.key] = 1; });
