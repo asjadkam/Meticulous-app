@@ -368,7 +368,9 @@ const dayDoc = (uid, date) => db._col('shareddays').get(uid + '_' + date);
      the boss's books can post his days as an expense at HIS
      rate (settled design, Oct 18, 2026 20:40 MDT). */
   keysEq('a: records doc carries facts only (exact key set)', rec,
-    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'pti', 'driverWage', 'updatedAt']);
+    /* v307: the doc gains 'damage' — the driver's damage &
+       incident facts ride like PTI's (owner, Nov 2, 2026). */
+    ['driver', 'driverName', 'driverBusiness', 'viewers', 'fuel', 'expenses', 'maintenance', 'pti', 'damage', 'driverWage', 'updatedAt']);
   eq('a: v163 — the driver\u2019s own wage rides the doc (29/hr, set on HIS side)',
     rec.driverWage, { payType: 'hourly', rate: 29 });
   eq('a: viewers = my CURRENT connections, both payers', rec.viewers, ['uid-boss', 'uid-payer2']);

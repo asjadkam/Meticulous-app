@@ -52,7 +52,10 @@
      (kept in step with CON_FAMILY there; __peer_wages is in the
      family too but starts '__', so it never syncs either way). */
   var CON_FAMILY_KEYS = { con_list: 1, con_hidden: 1, con_outbox: 1,
-    pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1 };
+    pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1,
+    /* v307: kept in step with app.js — the received-document
+       inbox + its seen book namespace per owner the same way */
+    doc_shares: 1, docshare_seen: 1 };
   var DEBOUNCE_MS = 2500;
   var TELEMETRY_PUSH_MIN_MS = 60000;    // v276: min gap between cloud writes of one telemetry key
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under

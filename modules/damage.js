@@ -8,9 +8,89 @@
   function reports() { return S('reports', []); }
   function tab() { return S('tab', 'load'); }
 
+  /* v307: the OFFICE surface (owner, Nov 2, 2026 — the PTI
+     module's v213 pattern, word for word in shape): office-only
+     users (owners, fleet managers, office staff who do NOT
+     drive) never file a damage report — their Damage screen is
+     the VIEWER for their connected drivers' reports, read from
+     the same sharedrecords doc the pipe publishes (rec.damage,
+     CP.sharedDamage) with the photo one tap away (its
+     sharedphotos rendition, CP.fetchPhoto). A peer sees a
+     driver's reports here only when Damage & Incident is in
+     his access — fetchRecords strips the section otherwise.
+     Read-only by construction — no buttons that file, edit or
+     send anything. */
+  function officeDmgRowHtml(uid, r) {
+    return '<div class="kv"><span>' + esc(r.date || '') +
+      (r.kind === 'load' ? ' · Load' : ' · Equipment') +
+      (r.dispatch ? ' · ' + esc(r.dispatch) : '') +
+      '</span><b></b></div>' +
+      '<div style="padding-left:14px;margin:1px 0;color:#555">' + esc(r.desc || '') + '</div>' +
+      (r.photoRef && r.photoKey
+        ? '<div style="margin:2px 0 4px"><button class="btn small ghost" data-dmgphoto="' + esc(uid) + ':' + esc(r.photoKey) + '">📸 Photo</button></div>' +
+          '<div id="dmg_photo_' + esc(uid) + '_' + esc(r.photoKey) + '"></div>'
+        : '');
+  }
+  function renderOfficeDamage(body) {
+    body.innerHTML =
+      '<div class="card"><h3>📸 Drivers\' damage & incident reports</h3>' +
+      '<p class="note" style="margin-top:0">You don\'t file these — a report is the driver\'s own. These are the reports your connected drivers filed and shared with you.</p>' +
+      '<div id="dmg_office_wrap"><p class="note">Loading…</p></div></div>';
+    var wrap = null;
+    try { wrap = body.querySelector('#dmg_office_wrap'); } catch (e) {}
+    if (!wrap) return;
+    if (!window.ConnectPipe || !ConnectPipe.fetchRecords) {
+      wrap.innerHTML = '<div class="empty">No damage reports shared with you yet.</div>';
+      return;
+    }
+    ConnectPipe.fetchRecords().then(function (out) {
+      var recs = (out && out.records) || {};
+      var uids = Object.keys(recs).filter(function (u) { return recs[u] && Array.isArray(recs[u].damage) && recs[u].damage.length; });
+      if (!uids.length) {
+        wrap.innerHTML = '<div class="empty">No damage reports shared with you yet. When a connected driver files one — and Damage &amp; Incident is ticked on your connection — it shows here.</div>';
+        return;
+      }
+      var h = '';
+      uids.forEach(function (uid) {
+        var rec = recs[uid];
+        var nm = rec.driverName || rec.driverBusiness || '';
+        if (!nm) { try { if (ConnectPipe.peerNames) nm = (ConnectPipe.peerNames(uid) || [])[0] || ''; } catch (e) {} }
+        h += '<div style="margin:10px 0 2px;font-weight:700">' + esc(nm || 'Driver') + '</div>';
+        rec.damage.forEach(function (r) { h += officeDmgRowHtml(uid, r); });
+      });
+      wrap.innerHTML = h;
+      /* the photo buttons: one tap fetches the rendition into
+         its slot (the P&L fuel-receipt pattern) */
+      wrap.querySelectorAll('[data-dmgphoto]').forEach(function (b) {
+        b.onclick = function () {
+          var parts = String(b.getAttribute('data-dmgphoto') || '').split(':');
+          var uid = parts[0], key = parts.slice(1).join(':');
+          var slot = null;
+          try { slot = wrap.querySelector('#dmg_photo_' + uid + '_' + key); } catch (e) {}
+          if (!slot || !window.ConnectPipe || !ConnectPipe.fetchPhoto) return;
+          b.disabled = true;
+          ConnectPipe.fetchPhoto(uid, key).then(function (url) {
+            slot.innerHTML = url
+              ? '<img src="' + url + '" style="width:100%;border-radius:8px;margin:4px 0 8px">'
+              : '<p class="note">That photo could not be loaded.</p>';
+            b.disabled = false;
+          }).catch(function () { b.disabled = false; });
+        };
+      });
+    }).catch(function () {
+      wrap.innerHTML = '<div class="empty">The reports could not be loaded — check your connection and reopen.</div>';
+    });
+  }
+
   Meticulous.modules.damage = {
     status: function () { return reports().length + ' on file'; },
     render: function (body) {
+      /* v307 (the PTI v213 pattern): an office-only user's
+         Damage screen is the viewer — their drivers' reports,
+         never the filing form. */
+      var roleNow = '';
+      try { roleNow = (App.userRole && App.userRole()) || ''; } catch (e) {}
+      if (roleNow === 'office') { renderOfficeDamage(body); return; }
       var t = tab();
       var h = '<div class="row" style="margin-bottom:4px">' +
         '<button class="btn small ' + (t === 'load' ? 'primary' : 'ghost') + '" data-tab="load">📦 Load</button>' +

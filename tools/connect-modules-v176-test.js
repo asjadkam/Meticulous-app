@@ -60,8 +60,10 @@ function loadWorld(seed) {
   const { CL } = loadWorld({});
   eq('a: module keys', CL.MODULE_KEYS,
     /* v207: 'navigation' joined the vocabulary (CONNECT-PICK
-       part 3 — destinations are shareable over Connect). */
-    ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'invoices', 'pnl']);
+       part 3 — destinations are shareable over Connect).
+       v307: 'damage' joined (owner, Nov 2, 2026 — Damage &
+       Incident is a tickable module like PTI). */
+    ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'damage', 'invoices', 'pnl']);
   eq('a: sanitize drops junk + dupes', CL.sanitizeModules(['fuel', 'bogus', 'fuel', 'pnl']), ['fuel', 'pnl']);
   eq('a: sanitize non-array', CL.sanitizeModules('fuel'), null);
   eq('a: sanitize empty array stays empty list', CL.sanitizeModules([]), []);

@@ -174,6 +174,7 @@
     { key: 'fuel', label: 'Fuel' }, { key: 'expenses', label: 'Expenses & receipts' },
     { key: 'navigation', label: 'Navigation' }, { key: 'maintenance', label: 'Maintenance' },
     { key: 'pti', label: 'PTI inspections' },
+    { key: 'damage', label: 'Damage & Incident' },
     { key: 'invoices', label: 'Invoices' }, { key: 'pnl', label: 'P&L money picture' }
   ];
   function moduleList() {
@@ -224,6 +225,7 @@
   }
   var uiModPick = null;     // v176: ticks in the send picker (session only)
   var uiModChoice = {};     // v176: reqId -> ticks chosen on an accept row
+  var uiEdit = null;        // v307: the connection EDITOR's state {conn, kind, modules} (session only)
   function defaultTicks(kind, proposed) {
     /* v207: a proposal can name modules this account does not
        have (a fleet manager proposing P&L to a driver) — the seed
@@ -546,6 +548,63 @@
     return W('outbox', o) !== false;
   }
 
+  /* ---- v307 (CONNECT-DOC-DELIVERY, owner Nov 2, 2026 — "Fix
+     it!"): documents really cross now. The pipe (js/connectpipe.js
+     sendDoc) carries a document share to a connected peer; the
+     outbox entry is the delivery's local twin — born sent:true
+     when the pick itself sends, or healed by flushOutbox below
+     when a queued entry's connection turns out to be live. The
+     shareId is the delivery's identity end to end: stamped once,
+     reused on every retry, deduped on by the receiver, so no
+     retry can ever deliver the same document twice. ---- */
+  var DOC_SEND_MAX_BYTES = 900000;   /* js/cloudsync.js MAX_DOC_BYTES — the Firestore-safe ceiling */
+  function newShareId() {
+    return 'ds' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  }
+  /* A document whose packaged content (a damage photo rides as
+     a data URL) cannot fit one Firestore doc is never offered
+     to the pipe — it stays queued with the reason on it. */
+  function docTooBig(content) {
+    if (!content) return false;
+    try { return JSON.stringify(content).length > DOC_SEND_MAX_BYTES; } catch (e) { return false; }
+  }
+  var uiFlushing = {};   // shareIds with a send in flight (this session only)
+  function flushOutbox(done) {
+    var CPx = null;
+    try { CPx = (window.ConnectPipe && ConnectPipe.sendDoc) ? ConnectPipe : null; } catch (e) {}
+    if (!CPx) return;
+    var ob = outbox(), dirty = false;
+    ob.forEach(function (o) {
+      if (!o || o.sent || DOC_TYPES.indexOf(o.type) === -1) return;
+      var c = null;
+      conns().forEach(function (x) { if (x && o.connId && x.id === o.connId) c = x; });
+      /* a manual (uid-less) or not-connected entry has nobody
+         to send to — it stays queued, untouched */
+      if (!c || !c.uid || c.status !== 'connected') return;
+      if (docTooBig(o.content)) {
+        if (!o.note) {
+          o.note = 'Too large to send — it stays on this device.';
+          dirty = true;
+        }
+        return;
+      }
+      if (!o.shareId) { o.shareId = newShareId(); dirty = true; }
+      if (uiFlushing[o.shareId]) return;
+      uiFlushing[o.shareId] = true;
+      var sid = o.shareId, uid = c.uid;
+      CPx.sendDoc(uid, {
+        type: o.type, label: o.label || '', content: o.content || null, shareId: sid
+      }).then(function (r) {
+        delete uiFlushing[sid];
+        if (r !== 'sent') return;
+        var cur = outbox(), hit = false;
+        cur.forEach(function (x) { if (x && x.shareId === sid && !x.sent) { x.sent = true; hit = true; } });
+        if (hit) { W('outbox', cur); if (done) done(); }
+      }).catch(function () { delete uiFlushing[sid]; });
+    });
+    if (dirty) W('outbox', ob);
+  }
+
   /* the history line's content summary (new shares); legacy stubs
      carry no content and simply show no summary */
   function contentSummary(o) {
@@ -626,6 +685,34 @@
      pairing preselects Limited — CL.defaultKindFor; a payer
      pairing preselects All), the chosen kind's one plain line,
      and the send that carries the choice. */
+  /* v307: the connection EDITOR — one place to change what a
+     connection is: its kind, and (for Limited) the exact module
+     ticks. The shape follows the kind picker above the results:
+     the three kinds as full-width choices with their one plain
+     line each, the tick rows when Limited, ONE primary Save at
+     the very bottom, a quiet Cancel beside it. Nothing is
+     written until Save — the ticks live in uiEdit (session
+     state) and render from it, so the tick he sees is the tick
+     that saves. */
+  function editHtml(c) {
+    if (!uiEdit) return '';
+    var k = uiEdit.kind;
+    var h = '<div style="border-top:1px solid #e3e3e3;margin-top:10px;padding-top:8px">' +
+      '<div style="font-weight:700;margin-bottom:2px">✏️ Edit access — ' + esc(c.name) + '</div>' +
+      '<p class="note" style="margin:2px 0 4px">What crosses to ' + esc(c.name) + ' from the moment you save.</p>';
+    ['all', 'limited', 'once'].forEach(function (kk) {
+      var sel = k === kk;
+      h += '<button class="btn ' + (sel ? 'primary' : 'ghost') + ' small" data-cn-edit-kind="' + kk + '" style="display:block;width:100%;text-align:left;margin-top:6px">' +
+        (sel ? '● ' : '○ ') + KIND_NAMES[kk] + '</button>' +
+        '<p class="note" style="margin:2px 0 0 4px' + (sel ? ';font-weight:600' : ';color:#999') + '">' + esc(KIND_LINES[kk]) + '</p>';
+    });
+    if (k === 'limited') h += moduleTicksHtml('data-cn-editmod', uiEdit.modules || []);
+    h += '<div class="row" style="margin-top:10px">' +
+      '<button class="btn ghost small" id="cn_edit_cancel">Cancel</button>' +
+      '<button class="btn primary" id="cn_edit_save" style="flex:1">Save</button></div></div>';
+    return h;
+  }
+
   function kindPickHtml() {
     if (!uiKindPick) return '';
     var p = uiKindPick.peer;
@@ -784,6 +871,29 @@
         }).join('') + '</div>';
       }
 
+      /* ============ CARD: Documents shared with you (v307) ============
+         What a document share lands (js/connectpipe.js sendDoc ->
+         pullInbox -> the doc_shares inbox): the packaged document
+         itself — a damage report with its text and its photo, a
+         receipt, an invoice, a manifest. Painting the card IS the
+         seen tick: the pipe advances the sender's receipt marks
+         from here (markDocSeen, one write per delivery, ever). */
+      var docShares = [];
+      try { docShares = App._store.get('doc_shares', []) || []; } catch (e) {}
+      if (docShares.length) {
+        h += '<div class="card"><h3>📎 Documents shared with you</h3>' + docShares.map(function (s) {
+          var dc = s.content || {};
+          var dsum = s.docType === 'damage' ? '' : contentSummary({ type: s.docType, content: s.content });
+          return '<div class="listitem"><div class="a">' + (TYPE_ICON[s.docType] || '📎') + ' ' + esc(s.label || TYPE_LABEL[s.docType] || 'Document') + '</div>' +
+            '<div class="b">From ' + esc(s.fromName || 'a connection') + ' · ' + esc(fmtTs(s.sentAt || s.at || Date.now())) + '</div>' +
+            (s.docType === 'damage' && (dc.desc || dc.title) ? '<div class="b" style="margin-top:4px">' + esc(dc.desc || dc.title) + '</div>' : '') +
+            (dsum ? '<div class="b">' + esc(dsum) + '</div>' : '') +
+            (dc.photo ? '<img src="' + dc.photo + '" alt="" style="max-width:100%;border-radius:8px;margin-top:6px">' : '') +
+            '</div>';
+        }).join('') + '</div>';
+        try { if (window.ConnectPipe && ConnectPipe.markDocSeen) ConnectPipe.markDocSeen(docShares); } catch (e) {}
+      }
+
       /* ============ CARD 1: Current connections ============ */
       h += '<div class="card"><h3>👥 Current connections (' + list.length + ')</h3>' +
         /* the sharing honesty: ONE quiet line, not a banner card.
@@ -828,7 +938,13 @@
                    what this connection can see, at a glance. */
                 ((kindOfConn(c) === 'limited' || kindOfConn(c) === 'once') && modulesOfThing(c)
                   ? '<div class="b">Can see: <b>' + esc(moduleNames(modulesOfThing(c))) + '</b></div>' : '') +
-                '<div class="row" style="margin-top:4px"><select data-cn-kindchg="' + i + '" aria-label="Connection kind">' + kindOptions(kindOfConn(c)) + '</select></div>'
+                '<div class="row" style="margin-top:4px"><select data-cn-kindchg="' + i + '" aria-label="Connection kind">' + kindOptions(kindOfConn(c)) + '</select></div>' +
+                /* v307 (owner, Nov 2, 2026: "Right now there is no
+                   way to edit what a limited connection does"): the
+                   EDITOR door — kind + the module ticks in one
+                   place, saved through CL.setKind onto the very
+                   fields the pipe reads. */
+                '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-cn-edit="' + i + '">✏️ Edit access</button></div>'
               : '') +
             (linked && c.status === 'ended'
               ? '<div class="b" style="color:#888">One time connection — ended' + (c.onceDate ? ' · ' + esc(c.onceDate) : '') + '</div>'
@@ -844,6 +960,10 @@
                   ? '<button class="btn small navy" data-quick="destination" data-i="' + i + '">📍 Send destination</button>' : '') +
                 '</div>'
               : '');
+          /* v307: the access editor lives ON the connection too */
+          if (uiEdit && uiEdit.conn === i && linked && c.status === 'connected') {
+            h += editHtml(c);
+          }
           /* the share picker lives ON the connection (v76) */
           if (uiPicker && uiPicker.conn === i) {
             var isDsp = uiPicker.type === 'dispatch';
@@ -988,6 +1108,68 @@
         };
       });
 
+      /* v307: the access EDITOR — open on the connection, flip
+         kind/ticks in session state (the repaint renders the
+         state), and Save carries it through CL.setKind: the
+         kind + ticked modules land on the con_list entry AND
+         the pair doc, the very fields CP.modulesFor /
+         CL.modulesOf read — so the pipe honors the edit from
+         the next publish, and the card's "Can see:" line reads
+         the new ticks back on the repaint. */
+      body.querySelectorAll('[data-cn-edit]').forEach(function (b) {
+        b.onclick = function () {
+          var i = +b.getAttribute('data-cn-edit');
+          var c = conns()[i];
+          if (!c) return;
+          if (uiEdit && uiEdit.conn === i) uiEdit = null;
+          else {
+            uiEdit = {
+              conn: i, kind: kindOfConn(c),
+              modules: modulesOfThing(c) || defaultTicks('limited', c.modules)
+            };
+          }
+          uiPicker = null; uiConfirmDel = -1;
+          rerender();
+        };
+      });
+      body.querySelectorAll('[data-cn-edit-kind]').forEach(function (ob) {
+        ob.onclick = function () {
+          if (!uiEdit) return;
+          uiEdit.kind = ob.getAttribute('data-cn-edit-kind');
+          if (uiEdit.kind === 'limited' && !(uiEdit.modules && uiEdit.modules.length)) {
+            uiEdit.modules = defaultTicks('limited', null);
+          }
+          rerender();
+        };
+      });
+      body.querySelectorAll('[data-cn-editmod]').forEach(function (rb) {
+        rb.onclick = function () {
+          if (!uiEdit) return;
+          uiEdit.modules = flipTick((uiEdit.modules || []).slice(), rb.getAttribute('data-cn-editmod'));
+          rerender();
+        };
+      });
+      var editSave = body.querySelector('#cn_edit_save');
+      if (editSave) editSave.onclick = function () {
+        if (!uiEdit) return;
+        var c = conns()[uiEdit.conn];
+        var CLc = live();
+        if (!c || !c.uid || !CLc || !CLc.setKind) { uiEdit = null; rerender(); return; }
+        var k = uiEdit.kind;
+        var mods = k === 'limited' ? sanitizeTicks(uiEdit.modules || []) : undefined;
+        if (k === 'limited' && !(mods && mods.length)) mods = defaultTicks('limited', null);
+        editSave.disabled = true;
+        CLc.setKind(c.uid, k, k === 'once' ? kindToday() : undefined, mods).then(function () {
+          try { if (window.ConnectPipe && ConnectPipe.publishAll) ConnectPipe.publishAll(); } catch (e) {}
+          uiFlash = 'Access updated for ' + c.name + ' — ' + KIND_NAMES[k] +
+            (k === 'limited' ? ' · Can see: ' + moduleNames(mods || []) : '') + '.';
+          uiEdit = null;
+          rerender();
+        });
+      };
+      var editCancel = body.querySelector('#cn_edit_cancel');
+      if (editCancel) editCancel.onclick = function () { uiEdit = null; rerender(); };
+
       /* per-connection share buttons open that connection's picker */
       body.querySelectorAll('[data-quick]').forEach(function (b) {
         b.onclick = function () {
@@ -1076,6 +1258,57 @@
                 uiFlash = 'Dispatch sent to ' + connName + ' ✓ — it lands in their Dispatch.';
               } else {
                 uiFlash = 'Could not send that dispatch — check your connection and try again. Nothing was sent.';
+              }
+              rerender();
+            });
+            return;
+          }
+          /* v307: a DOCUMENT picked for a CONNECTED connection
+             goes down the pipe like a dispatch — the History
+             entry is born Sent. Only a refused send (the pair
+             is gone, the write failed) falls back to the queue,
+             said honestly; a document too large to cross queues
+             with its reason stamped on it. Manual connections
+             keep the standing queue below — there is no account
+             to send to. */
+          if (item && c && DOC_TYPES.indexOf(uiPicker.type) !== -1 && c.uid && c.status === 'connected' &&
+              window.ConnectPipe && ConnectPipe.sendDoc) {
+            var dType = uiPicker.type, dIdx = uiPicker.conn, dItem = item;
+            var dName = c.name, dConnId = c.id || '', dUid = c.uid;
+            var dLabel = (TYPE_LABEL[dType] || 'Document') + ' — ' + dItem.label;
+            uiPicker = null;
+            if (docTooBig(dItem.content)) {
+              if (queueShare(dIdx, dType, dItem)) {
+                var obB = outbox(), lastB = obB[obB.length - 1];
+                if (lastB && !lastB.sent) {
+                  lastB.shareId = newShareId();
+                  lastB.note = 'Too large to send — it stays on this device.';
+                  W('outbox', obB);
+                }
+                uiFlash = 'That ' + (TYPE_LABEL[dType] || 'document').toLowerCase() + ' is too large to send — it stays queued on this device.';
+              }
+              rerender();
+              return;
+            }
+            var dSid = newShareId();
+            ConnectPipe.sendDoc(dUid, {
+              type: dType, label: dLabel, content: dItem.content || null, shareId: dSid
+            }).then(function (r) {
+              if (r === 'sent') {
+                var ob2 = outbox();
+                ob2.push({
+                  type: dType, label: dLabel,
+                  to: dName, connId: dConnId, refId: dItem.id,
+                  content: dItem.content || null, ts: Date.now(), note: '', sent: true, shareId: dSid
+                });
+                W('outbox', ob2);
+                uiFlash = (TYPE_LABEL[dType] || 'Document') + ' sent to ' + dName + ' ✓ — it lands in their Connect.';
+              } else {
+                if (queueShare(dIdx, dType, dItem)) {
+                  var ob3 = outbox(), last3 = ob3[ob3.length - 1];
+                  if (last3 && !last3.sent) { last3.shareId = dSid; W('outbox', ob3); }
+                  uiFlash = 'Couldn\u2019t send — queued for ' + dName + ' in History below.';
+                }
               }
               rerender();
             });
@@ -1368,6 +1601,18 @@
           }
         } catch (e) {}
       }
+      /* v307: the pipe inbox is pulled on THIS screen too — a
+         document share materializes into doc_shares here, not
+         only when Dispatch opens (pullInbox is throttled and
+         idempotent; a fresh landing repaints once so it shows).
+         And the outbox heals on every visit: a queued document
+         whose connection is live now crosses now. */
+      try {
+        if (window.ConnectPipe && ConnectPipe.pullInbox) {
+          ConnectPipe.pullInbox().then(function (n) { if (n > 0) rerender(); });
+        }
+      } catch (e) {}
+      try { flushOutbox(rerender); } catch (e) {}
     }
   };
 })();

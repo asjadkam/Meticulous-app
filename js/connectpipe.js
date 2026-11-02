@@ -202,8 +202,14 @@
      beyond the kind itself); 'limited' -> the ticked list, or
      the legacy preset ['dispatch','manifest'] when none was ever
      ticked (every pre-v176 pair). */
-  CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'invoices', 'pnl'];
-  CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'invoices', 'pnl'];
+  /* v307 (owner, Nov 2, 2026): 'damage' joins the tickable
+     modules — Damage & Incident crosses the shared-records way
+     (facts in the records doc, photo renditions in sharedphotos)
+     whenever a connection's access includes it, exactly like
+     PTI; nobody has to hand-send a report to a peer who already
+     has the module. */
+  CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'damage', 'invoices', 'pnl'];
+  CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'damage', 'invoices', 'pnl'];
   CP.modulesFor = function (uid) {
     var st = store();
     if (!st || !uid) return null;
@@ -644,6 +650,15 @@
     out.pti = unionBy(out.pti, existing.pti,
       function (p) { return [p && p.date, p && p.filedAt, p && p.kind].join('|'); },
       14, function (a, b) { return (parseFloat(b && b.filedAt) || 0) - (parseFloat(a && a.filedAt) || 0); });
+    /* v307: damage reports union the same way — keyed by the
+       report's own identity (date + filed-at text + what
+       happened), newest first, capped like PTI */
+    out.damage = unionBy(out.damage, existing.damage,
+      function (x) { return [x && x.date, x && x.at, x && x.desc].join('|'); },
+      14, function (a, b) {
+        return String((b && b.date) || '').localeCompare(String((a && a.date) || '')) ||
+          String((b && b.at) || '').localeCompare(String((a && a.at) || ''));
+      });
     /* maintenance: the block follows the HIGHER odometer
        reading; whichever block loses still fills the fields
        the winner lacks, and services union by their facts */
@@ -976,6 +991,87 @@
     });
   };
 
+  /* v307 (CONNECT-DOC-DELIVERY, owner Nov 2, 2026 — "Fix it!"):
+     DOCUMENT shares ride the pipe too. Until now the Connect
+     Send-doc picker really delivered only dispatches and
+     destinations; every document (damage report, ticket/fuel/
+     inspection/odometer/sticker photo, invoice, manifest,
+     location) fell through to the local outbox and sat at
+     "Queued — on this device" forever — no consumer ever sent
+     it (the Nov 2 light-pole report to Maria Lott is the proof
+     case: queued at 12:11, never delivered). A doc share is a
+     pipedispatches doc like any other — same collection, same
+     rules shape (created by the sender as 'sent'; only the
+     recipient advances delivered/seen; the six fields the
+     rules pin on update ride as ''), flagged kind 'docshare'
+     with the document's own type, label and packaged content.
+     shareId is the delivery's identity: the sender stamps it
+     once (the outbox entry carries it), retries reuse it, and
+     the receiver dedupes by it, so a re-send can never land
+     the same document twice. */
+  CP.newShareId = function () {
+    return 'ds' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  };
+
+  /* Send ONE document share to a connected peer. Resolves
+     'sent' | 'error' exactly like sendDispatch, over the same
+     live-pair gate: a peer removed since the share was queued
+     resolves 'error', and the share stays queued — it is never
+     claimed sent. */
+  CP.sendDoc = function (peerUid, share) {
+    var f = fb();
+    if (!f || !peerUid || peerUid === f.user.uid || !share || !share.type) return Promise.resolve('error');
+    return CP._pairLive(peerUid).then(function (live) {
+      if (!live) return 'error';
+      return CP._sendDocDoc(peerUid, share);
+    });
+  };
+  CP._sendDocDoc = function (peerUid, share) {
+    var f = fb();
+    if (!f || !peerUid || peerUid === f.user.uid || !share || !share.type) return Promise.resolve('error');
+    var me = { name: '', business: '' };
+    try { if (window.ConnectLive) me = ConnectLive.identity(); } catch (e) {}
+    var id = 'pd' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    var doc = {
+      from: f.user.uid, to: peerUid,
+      fromName: me.name || '', fromBusiness: me.business || '',
+      /* the dispatch fields the rules pin on receipt-mark
+         updates ride empty — a document is not a job */
+      jobSite: '', date: '', scheduledAt: '', equipment: '', material: '', notes: '',
+      kind: 'docshare',
+      docType: String(share.type || ''),
+      label: String(share.label || ''),
+      /* the packaged content, exactly as the picker built it
+         (clone drops undefined leaves Firestore would reject) */
+      content: share.content ? clone(share.content) : null,
+      shareId: String(share.shareId || '') || CP.newShareId(),
+      status: 'sent', sentAt: Date.now(), deliveredAt: 0, seenAt: 0
+    };
+    return f.db.collection('pipedispatches').doc(id).set(doc)
+      .then(function () { return 'sent'; })
+      .catch(function () { return 'error'; });
+  };
+
+  /* Blue ticks for DOCUMENT shares: the receiver's Connect
+     screen showed these shares. One write per delivery, ever
+     (docshare_seen persists the fact) — markSeen's pattern,
+     for the docshare inbox. */
+  CP.markDocSeen = function (shares) {
+    var f = fb(), st = store();
+    if (!f || !st) return;
+    var seen = st.get('docshare_seen', {}) || {};
+    var dirty = false;
+    (shares || []).forEach(function (s) {
+      if (!s || !s.pipeId || seen[s.pipeId]) return;
+      seen[s.pipeId] = 1; dirty = true;
+      try {
+        f.db.collection('pipedispatches').doc(s.pipeId)
+          .update({ status: 'seen', seenAt: Date.now() }).catch(function () {});
+      } catch (e) {}
+    });
+    if (dirty) st.set('docshare_seen', seen);
+  };
+
   function rowsOf(snap) {
     var a = [];
     snap.forEach(function (d) { var v = d.data() || {}; v.id = d.id; a.push(v); });
@@ -1026,6 +1122,31 @@
       var hiddenFrom = st.get('con_hidden', []) || [];
       fresh.forEach(function (d) {
         if (hiddenFrom.indexOf(d.from) !== -1) return;
+        /* v307: a DOCUMENT share lands in the doc_shares inbox
+           — never the dispatch list. Deduped by shareId (the
+           delivery's identity): a re-sent copy under a new pipe
+           id still lands once. Two ticks ride the doc: it has
+           landed in my app. */
+        if (d.kind === 'docshare') {
+          var sid = d.shareId || d.id;
+          var dshares = st.get('doc_shares', []) || [];
+          if (!dshares.some(function (x) { return x && (x.shareId === sid || x.pipeId === d.id); })) {
+            dshares.unshift({
+              pipeId: d.id, shareId: sid, docType: d.docType || 'doc',
+              label: d.label || '', content: d.content || null,
+              fromUid: d.from, fromName: d.fromName || '',
+              sentAt: d.sentAt || 0, at: Date.now()
+            });
+            st.set('doc_shares', dshares.slice(0, 50));
+          }
+          landed[d.id] = 'doc';
+          landedCount++;
+          try {
+            f.db.collection('pipedispatches').doc(d.id)
+              .update({ status: 'delivered', deliveredAt: Date.now() }).catch(function () {});
+          } catch (e) {}
+          return;
+        }
         /* v207: a DESTINATION share lands in the nav_shares
            inbox — never the dispatch list — and only when the
            pair allows 'navigation'. Not allowed: NOT landed, so
@@ -1486,6 +1607,55 @@
       });
   };
 
+  /* v307 (owner, Nov 2, 2026): my DAMAGE & INCIDENT reports as
+     shared facts — the PTI treatment, for the module the owner
+     named today: a connection whose access includes Damage
+     simply SEES the reports through the connection; no hand-
+     sending. Rides inside sharedrecords (the `damage` section)
+     with that doc's exact posture: named viewers only
+     (sharePeers), the readers' module strip in fetchRecords,
+     and the rules' viewers door. FACTS ONLY — date, the filed
+     timestamp text, what happened, the kind (load / equipment),
+     the dispatch reference the report itself carries; the
+     PHOTO crosses as a downscaled rendition in sharedphotos
+     (publishDamagePhotos), keyed like a fuel receipt's, and
+     only for viewers whose modules include damage. Newest 14 —
+     the store appends in filing order, so the tail is newest. */
+  CP._dmgDate = function (r) {
+    if (r && r.date) return String(r.date).slice(0, 10);
+    var at = String((r && r.at) || '');
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+    if (m) return m[1] + '-' + m[2] + '-' + m[3];
+    m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(at);
+    if (m) return m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
+    return '';
+  };
+  CP.dmgKey = function (r) {
+    if (!r) return '';
+    return 'dmg-' + [CP._dmgDate(r) || '', r.at || '', r.desc || '']
+      .join('_').replace(/[^a-zA-Z0-9]+/g, '-');
+  };
+  CP.sharedDamage = function () {
+    var st = store();
+    if (!st) return [];
+    /* v242 fence: a report filed under another profile never
+       rides the records doc (sharedPti's discipline). */
+    return (st.get('dmg_reports', []) || []).filter(Boolean)
+      .filter(function (r) { return wpIdOfRec(r) === 'p1'; })
+      .slice(-14).reverse()
+      .map(function (r) {
+        return {
+          date: CP._dmgDate(r),
+          at: String(r.at || ''),
+          desc: String(r.desc || ''),
+          kind: r.tab === 'load' ? 'load' : 'equipment',
+          dispatch: String(r.dispatch || ''),
+          photoRef: !!r.photo,
+          photoKey: r.photo ? CP.dmgKey(r) : null
+        };
+      });
+  };
+
   /* An issued invoice's paid total — the Invoice module's own
      rule (payments list + the paidAmount/paid fields), restated
      here so the shared summary never invents a status. */
@@ -1670,6 +1840,8 @@
       expenses: expenses,
       maintenance: CP.sharedMaintenance(),
       pti: CP.sharedPti(),
+      /* v307: my damage & incident reports (see sharedDamage) */
+      damage: CP.sharedDamage(),
       /* v163: my own wage rides the records doc (see sharedWage) —
          the boss's books price my days at MY rate, never his */
       driverWage: CP.sharedWage(),
@@ -1908,7 +2080,11 @@
            so a republish of unchanged facts still reports no
            write, exactly as the pre-merge discipline did */
         var wroteAny = (rs || []).some(function (r) { return !!r; });
-        return (doc.viewers.length ? CP.publishPhotos(doc) : CP.clearPhotoViewers())
+        return (doc.viewers.length
+          ? CP.publishPhotos(doc).then(function (a) {
+              return CP.publishDamagePhotos(doc).then(function (b) { return a || b; });
+            })
+          : CP.clearPhotoViewers())
           .then(function (ph) { return wroteAny || !!ph; });
       });
     });
@@ -1995,6 +2171,64 @@
     return Promise.all(jobs).then(function () { return photoWrites > 0; });
   };
 
+  /* v307: the DAMAGE PHOTOS — publishPhotos' discipline, for
+     the damage reports' pictures. One sharedphotos doc per
+     report (its own dmgKey), a downscaled rendition like a
+     receipt's, pruned by its owner when the report/photo goes
+     away. The viewers named are ONLY the peers whose access
+     includes damage — a photo never even names a viewer the
+     module was not ticked for (the facts section's strip is
+     reader-side; bytes get the stronger door). Reports the
+     preserve-merge kept (a rolled-back store) keep their
+     renditions too — the prune follows the published damage
+     section, exactly like fuel's. */
+  CP.publishDamagePhotos = function (recDoc) {
+    var f = fb(), st = store();
+    if (!f || !st || !recDoc) return Promise.resolve(false);
+    var viewers = (recDoc.viewers || []).filter(function (uid) { return CP.allowsModule(uid, 'damage'); });
+    if (!viewers.length) return Promise.resolve(false);
+    var reps = (st.get('dmg_reports', []) || []).filter(function (x) {
+      return x && x.photo && wpIdOfRec(x) === 'p1';
+    });
+    var currentKeys = {};
+    reps.forEach(function (r) { currentKeys[CP.dmgKey(r)] = true; });
+    (recDoc.damage || []).forEach(function (x) { if (x && x.photoKey) currentKeys[x.photoKey] = true; });
+    var viewersKey = viewers.slice().sort().join(',');
+    var jobs = reps.slice(-24).map(function (r) {
+      var key = CP.dmgKey(r);
+      var ck = 'dmg:' + key;
+      var guard = key + '|' + viewersKey + '|' + String(r.photo).length +
+        '|' + String(r.photo).slice(-24);
+      if (CP._photoCache[ck] === guard) return null;
+      CP._photoCache[ck] = guard;
+      return CP._rendition(r.photo).then(function (url) {
+        if (!url) { CP._photoCache[ck] = ''; return false; }
+        var doc = {
+          driver: f.user.uid, viewers: viewers.slice(),
+          dmgKey: key, date: CP._dmgDate(r), photo: url, updatedAt: Date.now()
+        };
+        return f.db.collection('sharedphotos').doc(f.user.uid + '_' + key).set(doc)
+          .then(function () { return true; })
+          .catch(function () { CP._photoCache[ck] = ''; return false; });
+      });
+    }).filter(Boolean);
+    var photoWrites = jobs.length;
+    jobs.push(f.db.collection('sharedphotos').where('driver', '==', f.user.uid).get()
+      .then(function (snap) {
+        var dels = [];
+        snap.forEach(function (d) {
+          var v = d.data() || {};
+          if (v.dmgKey && !currentKeys[v.dmgKey]) {
+            delete CP._photoCache['dmg:' + v.dmgKey];
+            dels.push(f.db.collection('sharedphotos').doc(d.id).delete().catch(function () {}));
+          }
+        });
+        return Promise.all(dels);
+      })
+      .catch(function () {}));
+    return Promise.all(jobs).then(function () { return photoWrites > 0; });
+  };
+
   /* When my LAST peer goes away, my receipt renditions must not
      keep naming viewers who can no longer see the records doc:
      empty their viewers lists too (the docs themselves stay —
@@ -2056,6 +2290,7 @@
                 if (!CP.allowsModule(p.uid, 'expenses')) delete rec.expenses;
                 if (!CP.allowsModule(p.uid, 'maintenance')) delete rec.maintenance;
                 if (!CP.allowsModule(p.uid, 'pti')) delete rec.pti;
+                if (!CP.allowsModule(p.uid, 'damage')) delete rec.damage;
                 if (!CP.allowsModule(p.uid, 'pnl')) delete rec.driverWage;
                 out.records[p.uid] = rec;
               }

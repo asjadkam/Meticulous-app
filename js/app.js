@@ -30,6 +30,9 @@
     /* v219: the Connect-family keys (see the note above). */
     _conFamily: { con_list: 1, con_hidden: 1, con_outbox: 1,
       pipe_landed: 1, pipe_seen: 1, nav_shares: 1, cp_hist_peers: 1,
+      /* v307: the received-document inbox + its seen book —
+         account data like nav_shares, namespaced the same way */
+      doc_shares: 1, docshare_seen: 1,
       __peer_wages: 1 },
     /* v219: adoption refusals, remembered per physical key for
        the page session — the sync meta's uid is re-stamped by

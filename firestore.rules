@@ -38,6 +38,11 @@ service cloud.firestore {
       return pairLimited(a, b)
         && !pairAllows(a, b, 'fuel') && !pairAllows(a, b, 'expenses')
         && !pairAllows(a, b, 'maintenance') && !pairAllows(a, b, 'pti')
+        // v307: Damage & Incident is a records module like PTI —
+        // a pair whose approver ticked it holds the records door
+        // open the same deliberate-grant way (the client strips
+        // every unticked section, damage included).
+        && !pairAllows(a, b, 'damage')
         && !pairAllows(a, b, 'invoices') && !pairAllows(a, b, 'pnl');
     }
     function pairLimitedNoBilling(a, b) {

@@ -276,6 +276,10 @@
     { key: 'navigation', label: 'Navigation' },
     { key: 'maintenance', label: 'Maintenance' },
     { key: 'pti', label: 'PTI inspections' },
+    /* v307 (owner, Nov 2, 2026): Damage & Incident is a tickable
+       module like PTI — a connection that includes it simply
+       sees the driver's reports through the shared records. */
+    { key: 'damage', label: 'Damage & Incident' },
     { key: 'invoices', label: 'Invoices' },
     { key: 'pnl', label: 'P&L money picture' }
   ];
