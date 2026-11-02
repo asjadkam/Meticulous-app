@@ -1,7 +1,7 @@
 {
   "version": 46,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v46.apk",
-  "webVersion": 309,
+  "webVersion": 310,
   "notes": "v307: CONNECT DOC DELIVERY + DAMAGE AS A MODULE + CONNECTION EDITOR (owner, Nov 2, 2026). (1) Send-doc really sends: documents picked for a live connected peer go over the Connect pipe (kind 'docshare') and land in the receiver's Connect as 'Documents shared with you' with sent/delivered/seen ticks; entries queued before this fix (e.g. the Nov 2 damage report to Maria) flush automatically when the Connect screen opens; oversize documents stay queued with the reason written on them. (2) Damage & Incident is now a tickable Limited module like PTI: a connection whose access includes it simply SEES the driver's reports — facts ride the shared records, the photo rides as a downscaled rendition named only for damage viewers, and the office Damage screen is a read-only viewer for connected drivers' reports. (3) Every live connection card gains 'Edit access': change the kind and (for Limited) tick exactly what the connection can see — Damage & Incident included — saved onto the same fields the pipe reads, with the card's Can-see line reading the new ticks back. Firestore rules: the records door now also opens for a pair whose approver ticked damage, the same deliberate-grant pattern as the other records modules; no rule loosened.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",

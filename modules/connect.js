@@ -1072,7 +1072,25 @@
       uiFlash = ''; // one-shot
 
       /* ---- wiring ---- */
-      var rerender = function () { Meticulous.modules.connect.render(body); };
+      /* v310 (NAV-DAMAGE-OPENS-WRONG-MODULE, owner video Nov 2
+         14:27 MDT): this closure is the funnel for the ASYNC
+         completions this render arms — refreshLive's reconcile
+         leg, pullInbox, flushOutbox's done — and it captures the
+         shell's ONE shared module body. Those completions can
+         land after the user has navigated to another module, and
+         the repaint then stamps Connect's DOM over that module's
+         screen under its own title (Damage & Incident wore Find
+         people / Requests / Current connections). The shell's
+         App._modKey is the truth of what is open: a completion
+         that lands while another module holds the body simply
+         does not paint — Connect re-reads everything on its next
+         real open anyway. A falsy key (dashboard, harness) keeps
+         the old behaviour: the module view is hidden then and
+         wiped on the next open. */
+      var rerender = function () {
+        try { var mk = window.App && App._modKey; if (mk && mk !== 'connect') return; } catch (e) {}
+        Meticulous.modules.connect.render(body);
+      };
       var addBtn = body.querySelector('#cn_add');
       if (addBtn) addBtn.onclick = function () { uiAdd = true; uiAddErr = ''; rerender(); };
       var cancelBtn = body.querySelector('#cn_cancel');
