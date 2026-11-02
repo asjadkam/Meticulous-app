@@ -179,7 +179,10 @@ const FORM_MARKERS = ['data-pti-ok=', 'id="pti_carrier"', 'id="pti_unit"', 'data
     renderSlice.indexOf("roleNow === 'office'") >= 0 &&
     renderSlice.indexOf("roleNow === 'office'") < renderSlice.indexOf('renderForm(body);'));
   ok('the office face carries PTI (cards + sidebar keep-list read the same list)',
-    /office: \['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti'\]/.test(appSrc));
+    /* v312: Damage joins the same list as the second sanctioned
+       viewer (owner, Nov 2, 2026) — PTI's place on the face is
+       unchanged; the pin follows the list's deliberate growth. */
+    /office: \['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage'\]/.test(appSrc));
   ok('driver/both face lists are untouched',
     appSrc.indexOf("driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']") >= 0 &&
     appSrc.indexOf("both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']") >= 0);

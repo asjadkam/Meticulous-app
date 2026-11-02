@@ -171,8 +171,12 @@ console.log('(b) office order — the boss five lead, Connect first (F4)');
     ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest']);
   /* v167: filtered, not kept — of this suite's 14 items the office
      sidebar keeps the five + dashboard/reminders/preferences/
-     subscription = 9 */
-  eq('office sidebar keeps the five + utilities only', off.length, 9);
+     subscription = 9.
+     v312 (owner, Nov 2, 2026): the Damage & Incident item now
+     survives the filter too — it is the office face's second
+     sanctioned viewer (the fleet manager's door to her
+     drivers' reports) — so the kept count is 10. */
+  eq('office sidebar keeps the five + utilities + the Damage viewer (v312)', off.length, 10);
   const drv = w.sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq('driver sidebar lead unchanged', drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch']);
 }

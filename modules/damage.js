@@ -14,22 +14,112 @@
      drive) never file a damage report — their Damage screen is
      the VIEWER for their connected drivers' reports, read from
      the same sharedrecords doc the pipe publishes (rec.damage,
-     CP.sharedDamage) with the photo one tap away (its
-     sharedphotos rendition, CP.fetchPhoto). A peer sees a
-     driver's reports here only when Damage & Incident is in
-     his access — fetchRecords strips the section otherwise.
+     CP.sharedDamage) with the photos in sharedphotos
+     renditions (CP.fetchPhoto). A peer sees a driver's
+     reports here only when Damage & Incident is in his
+     access — fetchRecords strips the section otherwise.
      Read-only by construction — no buttons that file, edit or
-     send anything. */
-  function officeDmgRowHtml(uid, r) {
-    return '<div class="kv"><span>' + esc(r.date || '') +
-      (r.kind === 'load' ? ' · Load' : ' · Equipment') +
-      (r.dispatch ? ' · ' + esc(r.dispatch) : '') +
-      '</span><b></b></div>' +
-      '<div style="padding-left:14px;margin:1px 0;color:#555">' + esc(r.desc || '') + '</div>' +
-      (r.photoRef && r.photoKey
-        ? '<div style="margin:2px 0 4px"><button class="btn small ghost" data-dmgphoto="' + esc(uid) + ':' + esc(r.photoKey) + '">📸 Photo</button></div>' +
-          '<div id="dmg_photo_' + esc(uid) + '_' + esc(r.photoKey) + '"></div>'
-        : '');
+     send anything.
+     v312 (owner, Nov 2, 2026, 15:26 — "She should be able to
+     just go to damage and incident module and see my report
+     there... So she doesn't have to go looking for it!"): the
+     v307 list was plain text rows — the report sat on the
+     page with no door into it, and its (single) photo hid
+     behind a small extra button. Now every shared report is
+     ONE clear full-width tappable card, and one tap opens
+     the FULL report — text, dispatch line, and ALL its
+     photos (the fact's photoKeys, v312 in the pipe), loaded
+     on open, no second hunt. The same list + open view also
+     rides the driver face (a driver who is connected to
+     other drivers sees their reports under his own), so no
+     connected user has to go looking anywhere else. */
+  function sharedEntries(recs) {
+    var out = [];
+    Object.keys(recs || {}).forEach(function (uid) {
+      var rec = recs[uid];
+      if (!rec || !Array.isArray(rec.damage)) return;
+      var nm = rec.driverName || rec.driverBusiness || '';
+      if (!nm) { try { if (window.ConnectPipe && ConnectPipe.peerNames) nm = (ConnectPipe.peerNames(uid) || [])[0] || ''; } catch (e) {} }
+      rec.damage.forEach(function (r) { out.push({ uid: uid, name: nm || 'Driver', rec: r }); });
+    });
+    return out;
+  }
+  function reportKeys(r) {
+    var keys = (Array.isArray(r.photoKeys) ? r.photoKeys : []).filter(Boolean);
+    if (!keys.length && r.photoKey) keys = [r.photoKey];
+    return keys;
+  }
+  function cleanDispatch(d) {
+    d = String(d || '');
+    return d && d.indexOf('undefined') === -1 ? d : '';
+  }
+  function sharedRowHtml(e, idx) {
+    var r = e.rec, keys = reportKeys(r), dsp = cleanDispatch(r.dispatch);
+    return '<button type="button" class="btn ghost" data-dmgopen="' + idx + '" ' +
+      'style="display:block;width:100%;text-align:left;margin:0 0 8px;padding:12px;height:auto;white-space:normal">' +
+      '<span style="display:block;font-weight:700">⚠️ Damage report from ' + esc(e.name) + ' — ' + esc(r.date || r.at || '') + '</span>' +
+      '<span style="display:block;color:#555;margin-top:2px">' +
+      (r.kind === 'load' ? 'Load' : 'Equipment') +
+      (dsp ? ' · ' + esc(dsp) : '') +
+      (keys.length ? ' · 📸 ' + keys.length + (keys.length === 1 ? ' photo' : ' photos') : '') +
+      '</span>' +
+      '<span style="display:block;color:#1a56db;font-weight:600;margin-top:4px">Tap to open ›</span></button>';
+  }
+  function openSharedReport(body, e) {
+    var r = e.rec, keys = reportKeys(r), dsp = cleanDispatch(r.dispatch);
+    var h = '<div class="card"><button class="btn small ghost" id="dmg_op_back">← Back</button>' +
+      '<h3 style="margin-top:10px">⚠️ Damage report</h3>' +
+      '<div class="kv"><span>From</span><b>' + esc(e.name) + '</b></div>' +
+      '<div class="kv"><span>Filed</span><b>' + esc(r.at || r.date || '') + '</b></div>' +
+      '<div class="kv"><span>Type</span><b>' + (r.kind === 'load' ? 'Load' : 'Equipment') + '</b></div>' +
+      (dsp ? '<div class="kv"><span>Dispatch</span><b>' + esc(dsp) + '</b></div>' : '') +
+      '<div style="margin:10px 0;color:#333;white-space:pre-wrap">' + esc(r.desc || '') + '</div>';
+    keys.forEach(function (key, i) {
+      h += '<div id="dmg_op_' + i + '"><p class="note">Loading photo ' + (i + 1) + ' of ' + keys.length + '…</p></div>';
+    });
+    if (!keys.length) h += '<p class="note">No photos were filed with this report.</p>';
+    h += '</div>';
+    body.innerHTML = h;
+    var back = null;
+    try { back = body.querySelector('#dmg_op_back'); } catch (err) {}
+    if (back) back.onclick = function () { Meticulous.modules.damage.render(body); };
+    if (!window.ConnectPipe || !ConnectPipe.fetchPhoto) return;
+    keys.forEach(function (key, i) {
+      var slot = null;
+      try { slot = body.querySelector('#dmg_op_' + i); } catch (err) {}
+      if (!slot) return;
+      ConnectPipe.fetchPhoto(e.uid, key).then(function (url) {
+        slot.innerHTML = url
+          ? '<img src="' + url + '" style="width:100%;border-radius:8px;margin:4px 0 8px">'
+          : '<p class="note">That photo could not be loaded.</p>';
+      }).catch(function () {
+        slot.innerHTML = '<p class="note">That photo could not be loaded.</p>';
+      });
+    });
+  }
+  function paintSharedInto(wrap, body, emptyHtml) {
+    if (!window.ConnectPipe || !ConnectPipe.fetchRecords) {
+      wrap.innerHTML = emptyHtml;
+      return;
+    }
+    ConnectPipe.fetchRecords().then(function (out) {
+      var entries = sharedEntries((out && out.records) || {});
+      if (!entries.length) { wrap.innerHTML = emptyHtml; return; }
+      var lastName = null, h = '';
+      entries.forEach(function (e, idx) {
+        if (e.name !== lastName) { h += '<div style="margin:10px 0 4px;font-weight:700">' + esc(e.name) + '</div>'; lastName = e.name; }
+        h += sharedRowHtml(e, idx);
+      });
+      wrap.innerHTML = h;
+      wrap.querySelectorAll('[data-dmgopen]').forEach(function (b) {
+        b.onclick = function () {
+          var e = entries[+b.getAttribute('data-dmgopen')];
+          if (e) openSharedReport(body, e);
+        };
+      });
+    }).catch(function () {
+      wrap.innerHTML = '<div class="empty">The reports could not be loaded — check your connection and reopen.</div>';
+    });
   }
   function renderOfficeDamage(body) {
     body.innerHTML =
@@ -39,51 +129,48 @@
     var wrap = null;
     try { wrap = body.querySelector('#dmg_office_wrap'); } catch (e) {}
     if (!wrap) return;
-    if (!window.ConnectPipe || !ConnectPipe.fetchRecords) {
-      wrap.innerHTML = '<div class="empty">No damage reports shared with you yet.</div>';
-      return;
-    }
+    paintSharedInto(wrap, body,
+      '<div class="empty">No damage reports shared with you yet. When a connected driver files one — and Damage &amp; Incident is ticked on your connection — it shows here.</div>');
+  }
+  /* the driver face's shared slot: the same list, quietly —
+     present only when a connected driver actually shared a
+     report with this user (nothing to hunt for, nothing to
+     hide behind). */
+  function paintSharedSlot(body) {
+    var slot = null;
+    try { slot = body.querySelector('#dmg_shared_slot'); } catch (e) {}
+    if (!slot) return;
+    if (!window.ConnectPipe || !ConnectPipe.fetchRecords) return;
     ConnectPipe.fetchRecords().then(function (out) {
-      var recs = (out && out.records) || {};
-      var uids = Object.keys(recs).filter(function (u) { return recs[u] && Array.isArray(recs[u].damage) && recs[u].damage.length; });
-      if (!uids.length) {
-        wrap.innerHTML = '<div class="empty">No damage reports shared with you yet. When a connected driver files one — and Damage &amp; Incident is ticked on your connection — it shows here.</div>';
-        return;
-      }
-      var h = '';
-      uids.forEach(function (uid) {
-        var rec = recs[uid];
-        var nm = rec.driverName || rec.driverBusiness || '';
-        if (!nm) { try { if (ConnectPipe.peerNames) nm = (ConnectPipe.peerNames(uid) || [])[0] || ''; } catch (e) {} }
-        h += '<div style="margin:10px 0 2px;font-weight:700">' + esc(nm || 'Driver') + '</div>';
-        rec.damage.forEach(function (r) { h += officeDmgRowHtml(uid, r); });
+      var entries = sharedEntries((out && out.records) || {});
+      if (!entries.length) { slot.innerHTML = ''; return; }
+      slot.innerHTML = '<div class="card"><h3>📸 Damage reports shared with you</h3><div id="dmg_shared_wrap"></div></div>';
+      var wrap = null;
+      try { wrap = slot.querySelector('#dmg_shared_wrap'); } catch (e) {}
+      if (!wrap) return;
+      var lastName = null, h = '';
+      entries.forEach(function (e, idx) {
+        if (e.name !== lastName) { h += '<div style="margin:10px 0 4px;font-weight:700">' + esc(e.name) + '</div>'; lastName = e.name; }
+        h += sharedRowHtml(e, idx);
       });
       wrap.innerHTML = h;
-      /* the photo buttons: one tap fetches the rendition into
-         its slot (the P&L fuel-receipt pattern) */
-      wrap.querySelectorAll('[data-dmgphoto]').forEach(function (b) {
+      wrap.querySelectorAll('[data-dmgopen]').forEach(function (b) {
         b.onclick = function () {
-          var parts = String(b.getAttribute('data-dmgphoto') || '').split(':');
-          var uid = parts[0], key = parts.slice(1).join(':');
-          var slot = null;
-          try { slot = wrap.querySelector('#dmg_photo_' + uid + '_' + key); } catch (e) {}
-          if (!slot || !window.ConnectPipe || !ConnectPipe.fetchPhoto) return;
-          b.disabled = true;
-          ConnectPipe.fetchPhoto(uid, key).then(function (url) {
-            slot.innerHTML = url
-              ? '<img src="' + url + '" style="width:100%;border-radius:8px;margin:4px 0 8px">'
-              : '<p class="note">That photo could not be loaded.</p>';
-            b.disabled = false;
-          }).catch(function () { b.disabled = false; });
+          var e = entries[+b.getAttribute('data-dmgopen')];
+          if (e) openSharedReport(body, e);
         };
       });
-    }).catch(function () {
-      wrap.innerHTML = '<div class="empty">The reports could not be loaded — check your connection and reopen.</div>';
-    });
+    }).catch(function () {});
   }
 
   Meticulous.modules.damage = {
-    status: function () { return reports().length + ' on file'; },
+    status: function () {
+      /* v312: the office face (which can now reach this
+         module — js/app.js) files nothing of its own; its
+         card previews the viewer it opens. */
+      try { if (App.userRole && App.userRole() === 'office') return 'Drivers\' reports'; } catch (e) {}
+      return reports().length + ' on file';
+    },
     render: function (body) {
       /* v307 (the PTI v213 pattern): an office-only user's
          Damage screen is the viewer — their drivers' reports,
@@ -114,7 +201,13 @@
             '<div class="a">' + esc(r.at) + '</div><div class="b">' + esc(r.desc) + (r.dispatch ? '<br>Dispatch: ' + esc(r.dispatch) : '') + '</div></div>';
         }).join('') : '<div class="empty">No reports yet.</div>') + '</div>';
 
+      /* v312: reports other connected drivers shared with
+         THIS user ride under his own — filled in async by
+         paintSharedSlot, present only when there are any. */
+      h += '<div id="dmg_shared_slot"></div>';
+
       body.innerHTML = h;
+      paintSharedSlot(body);
       var photoList = [];
       body.querySelectorAll('[data-tab]').forEach(function (b) {
         b.onclick = function () { W('tab', b.getAttribute('data-tab')); Meticulous.modules.damage.render(body); };

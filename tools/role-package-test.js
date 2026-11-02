@@ -155,8 +155,12 @@ function roleSandbox(store) {
      account utilities — driver modules never appear (supersedes
      the v76 'keeps every item' pin). */
   deepEq(off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest'], 'sidebar: office leads with the office five, connect first');
-  eq(off.length, 11, 'sidebar: office keeps the five + utilities only');
-  deepEq(off.slice().sort(), ['account', 'connect', 'dashboard', 'dispatch', 'feedback', 'invoice', 'logout', 'manifest', 'pnl', 'preferences', 'reminders', 'subscription'].filter(function (k) { return KEYS.indexOf(k) >= 0; }).sort(), 'sidebar: office set = five tools + utilities');
+  /* v312 (owner, Nov 2, 2026): Damage & Incident joins the
+     office keep-list as a sanctioned VIEWER (the fleet
+     manager's door to her drivers' reports) — the sidebar
+     set grows by exactly that one item. */
+  eq(off.length, 12, 'sidebar: office keeps the five + utilities + the Damage viewer (v312)');
+  deepEq(off.slice().sort(), ['account', 'connect', 'damage', 'dashboard', 'dispatch', 'feedback', 'invoice', 'logout', 'manifest', 'pnl', 'preferences', 'reminders', 'subscription'].filter(function (k) { return KEYS.indexOf(k) >= 0; }).sort(), 'sidebar: office set = five tools + utilities + Damage viewer (v312)');
   const drv = sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });
   deepEq(drv.slice(0, 3), ['dashboard', 'revenue', 'dispatch'], 'sidebar: driver leads with revenue/dispatch');
   eq(drv.length, 17, 'sidebar: driver keeps every item');

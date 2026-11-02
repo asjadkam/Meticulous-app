@@ -124,6 +124,7 @@
   var uiReqs = null;        // last requests load {incoming, outgoing} (v131)
   var uiKindPick = null;    // v148: {peer, kind} — the kind picker open under a search result
   var uiKindChoice = {};    // v148: reqId -> kind chosen on an accept row (session only)
+  var uiDocView = null;     // v312: shareId of the received document open in the full view (session only)
 
   function live() {
     try { return (window.ConnectLive && window.FB && FB.ready && FB.user) ? window.ConnectLive : null; }
@@ -411,10 +412,22 @@
         if (!d || wpIdOf(d) !== pidD) return;
         var dsD = dmgDate(d);
         if (pidD === 'p1' && dayFenced(dsD)) return;
+        /* v312: ALL the report's photos ride the package (the
+           v305 photos list; `photo` stays as the first for
+           older receivers), and so does the dispatch line —
+           v243/v307 packaged only the first photo and no
+           dispatch, so the receiver's full view could never
+           show either. A dispatch string carrying the known
+           "undefined" garbage (the parked driver-side defect)
+           is not packaged — the receiver never sees it. */
+        var dPhotos = (Array.isArray(d.photos) ? d.photos : []).filter(function (p) { return !!p; });
+        if (!dPhotos.length && d.photo) dPhotos = [d.photo];
+        var dDsp = String(d.dispatch || '');
+        if (dDsp.indexOf('undefined') !== -1) dDsp = '';
         out.push({
           id: d.id || ('g' + i),
           label: (dsD || d.at || '') + ' — ' + (d.desc || 'Damage report'),
-          content: { title: d.desc || 'Damage report', desc: d.desc || '', date: dsD, photo: d.photo || '' }
+          content: { title: d.desc || 'Damage report', desc: d.desc || '', date: dsD, dispatch: dDsp, photo: dPhotos[0] || '', photos: dPhotos }
         });
       });
     } else if (type === 'ticket') {
@@ -590,6 +603,34 @@
     if (!content) return false;
     try { return JSON.stringify(content).length > DOC_SEND_MAX_BYTES; } catch (e) { return false; }
   }
+  /* v312: the WIRE copy of a document. Content that fits
+     crosses exactly as packaged. Oversize content whose bulk
+     is photos (a multi-photo damage report is the real case)
+     is shrunk for the wire — every photo re-rendered through
+     the pipe's own rendition door (900px, the sharedphotos
+     discipline) — and if it STILL cannot fit, the first photo
+     crosses rather than none. Only content that cannot be
+     shrunk under the ceiling resolves null and keeps the
+     honest queued note. The stored outbox entry is never
+     rewritten — this shapes the copy that crosses, only. */
+  function prepWireContent(content) {
+    if (!content || !docTooBig(content)) return Promise.resolve(content || null);
+    var CPx = null;
+    try { CPx = (window.ConnectPipe && ConnectPipe._rendition) ? ConnectPipe : null; } catch (e) {}
+    if (!CPx) return Promise.resolve(null);
+    var photos = (Array.isArray(content.photos) ? content.photos : []).filter(function (p) { return !!p; });
+    if (!photos.length && content.photo) photos = [content.photo];
+    if (!photos.length) return Promise.resolve(null);
+    return Promise.all(photos.map(function (p) {
+      return CPx._rendition(p).catch(function () { return null; });
+    })).then(function (rs) {
+      if (rs.some(function (x) { return !x; })) return null;
+      var c2 = Object.assign({}, content, { photo: rs[0], photos: rs });
+      if (!docTooBig(c2)) return c2;
+      var c3 = Object.assign({}, content, { photo: rs[0], photos: [rs[0]] });
+      return docTooBig(c3) ? null : c3;
+    }).catch(function () { return null; });
+  }
   var uiFlushing = {};   // shareIds with a send in flight (this session only)
   function flushOutbox(done) {
     var CPx = null;
@@ -603,25 +644,33 @@
       /* a manual (uid-less) or not-connected entry has nobody
          to send to — it stays queued, untouched */
       if (!c || !c.uid || c.status !== 'connected') return;
-      if (docTooBig(o.content)) {
-        if (!o.note) {
-          o.note = 'Too large to send — it stays on this device.';
-          dirty = true;
-        }
-        return;
-      }
       if (!o.shareId) { o.shareId = newShareId(); dirty = true; }
       if (uiFlushing[o.shareId]) return;
       uiFlushing[o.shareId] = true;
       var sid = o.shareId, uid = c.uid;
-      CPx.sendDoc(uid, {
-        type: o.type, label: o.label || '', content: o.content || null, shareId: sid
-      }).then(function (r) {
-        delete uiFlushing[sid];
-        if (r !== 'sent') return;
-        var cur = outbox(), hit = false;
-        cur.forEach(function (x) { if (x && x.shareId === sid && !x.sent) { x.sent = true; hit = true; } });
-        if (hit) { W('outbox', cur); if (done) done(); }
+      /* v312: the send carries the WIRE copy (prepWireContent)
+         — identical to the package when it fits, photo-shrunk
+         when it does not; null keeps the entry queued with
+         the honest reason, exactly as v307's ceiling did. */
+      prepWireContent(o.content).then(function (wire) {
+        if (!wire) {
+          delete uiFlushing[sid];
+          var cur0 = outbox(), hit0 = false;
+          cur0.forEach(function (x) {
+            if (x && x.shareId === sid && !x.sent && !x.note) { x.note = 'Too large to send — it stays on this device.'; hit0 = true; }
+          });
+          if (hit0) W('outbox', cur0);
+          return;
+        }
+        return CPx.sendDoc(uid, {
+          type: o.type, label: o.label || '', content: wire, shareId: sid
+        }).then(function (r) {
+          delete uiFlushing[sid];
+          if (r !== 'sent') return;
+          var cur = outbox(), hit = false;
+          cur.forEach(function (x) { if (x && x.shareId === sid && !x.sent) { x.sent = true; hit = true; } });
+          if (hit) { W('outbox', cur); if (done) done(); }
+        });
       }).catch(function () { delete uiFlushing[sid]; });
     });
     if (dirty) W('outbox', ob);
@@ -650,6 +699,57 @@
   function fmtTs(ts) {
     var d = new Date(ts);
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /* ---- v312 (RECEIVER-SHARED-REPORT-NOT-OPENABLE, owner
+     Nov 2, 2026, 15:22–15:27 — "I do see it on the main page.
+     How do I open it?" / "So she doesn't have to go looking
+     for it!"): the received-document FULL VIEW. A doc_shares
+     entry's photos: the packaged list when the sender sent
+     one (v312 packaging), the single photo otherwise (every
+     pre-v312 share). The view shows the document ONCE, whole:
+     who/when, the complete text (never the label's embedded
+     copy of it again), the dispatch line when the package
+     carries one, and every photo full-width. Opening wires
+     the tap to the pipe's existing seen tick (markDocSeen —
+     the same one write the card paint already makes; this
+     call is its idempotent twin, never new plumbing). ---- */
+  function docPhotosOf(dc) {
+    dc = dc || {};
+    var list = (Array.isArray(dc.photos) ? dc.photos : []).filter(function (p) { return !!p; });
+    if (!list.length && dc.photo) list = [dc.photo];
+    return list;
+  }
+  function docViewHtml(s) {
+    var dc = s.content || {};
+    var photos = docPhotosOf(dc);
+    var text = dc.desc || dc.title || '';
+    var dsp = String(dc.dispatch || '');
+    if (dsp.indexOf('undefined') !== -1) dsp = '';
+    var sum = s.docType === 'damage' ? '' : contentSummary({ type: s.docType, content: s.content });
+    var h = '<div class="card"><button class="btn small ghost" id="cn_doc_back">← Back</button>' +
+      '<h3 style="margin-top:10px">' + (TYPE_ICON[s.docType] || '📎') + ' ' + esc(TYPE_LABEL[s.docType] || 'Document') + '</h3>' +
+      '<div class="b">From ' + esc(s.fromName || 'a connection') + ' · ' + esc(fmtTs(s.sentAt || s.at || Date.now())) + '</div>' +
+      (dc.date ? '<div class="kv" style="margin-top:8px"><span>Date</span><b>' + esc(dc.date) + '</b></div>' : '') +
+      (dsp ? '<div class="kv"><span>Dispatch</span><b>' + esc(dsp) + '</b></div>' : '') +
+      (text ? '<div style="margin:10px 0;color:#333;white-space:pre-wrap">' + esc(text) + '</div>' : '') +
+      (!text && sum ? '<div class="b" style="margin-top:6px">' + esc(sum) + '</div>' : '') +
+      (s.docType === 'manifest' && dc.text && dc.text !== text
+        ? '<div style="margin:10px 0;color:#333;white-space:pre-wrap">' + esc(dc.text) + '</div>' : '');
+    photos.forEach(function (p) {
+      h += '<img src="' + p + '" alt="" style="width:100%;border-radius:8px;margin:6px 0">';
+    });
+    if (s.docType === 'damage' && !photos.length) {
+      h += '<p class="note">No photo was attached to this report.</p>';
+    }
+    return h + '</div>';
+  }
+  function paintDocView(body, s) {
+    body.innerHTML = docViewHtml(s);
+    var back = null;
+    try { back = body.querySelector('#cn_doc_back'); } catch (e) {}
+    if (back) back.onclick = function () { uiDocView = null; Meticulous.modules.connect.render(body); };
+    try { if (window.ConnectPipe && ConnectPipe.markDocSeen) ConnectPipe.markDocSeen([s]); } catch (e) {}
   }
 
   /* ---- v131: live handshake rendering helpers ---- */
@@ -858,6 +958,21 @@
       return n ? cs : 'No connections yet';
     },
     render: function (body) {
+      /* v312: a received document is OPEN (uiDocView) — paint
+         its full view and nothing else. The async completions
+         that funnel through this render (the v310-guarded
+         rerender) repaint the document, never stomp it back
+         to the list; Back clears the state and the list
+         returns. A share that has left the inbox clears the
+         state with it. */
+      if (uiDocView) {
+        var dvShares = [];
+        try { dvShares = App._store.get('doc_shares', []) || []; } catch (e) {}
+        var dvHit = null;
+        dvShares.forEach(function (x) { if (x && (x.shareId === uiDocView || x.pipeId === uiDocView)) dvHit = x; });
+        if (dvHit) { paintDocView(body, dvHit); return; }
+        uiDocView = null;
+      }
       var list = conns(), ob = outbox();
       var CL = live();
 
@@ -903,15 +1018,27 @@
       var docShares = [];
       try { docShares = App._store.get('doc_shares', []) || []; } catch (e) {}
       if (docShares.length) {
-        h += '<div class="card"><h3>📎 Documents shared with you</h3>' + docShares.map(function (s) {
+        h += '<div class="card"><h3>📎 Documents shared with you</h3>' + docShares.map(function (s, si) {
           var dc = s.content || {};
           var dsum = s.docType === 'damage' ? '' : contentSummary({ type: s.docType, content: s.content });
-          return '<div class="listitem"><div class="a">' + (TYPE_ICON[s.docType] || '📎') + ' ' + esc(s.label || TYPE_LABEL[s.docType] || 'Document') + '</div>' +
+          var dphotos = docPhotosOf(dc);
+          /* v312: the WHOLE entry is the tap target — a
+             full-width button, not a dead list row (the
+             receiver's "How do I open it?" — there was no
+             door). One tap opens the full document view
+             (docViewHtml): the complete text shown once,
+             the dispatch line, and every photo. The card
+             itself keeps its preview lines + first photo. */
+          var dkey = s.shareId || s.pipeId || ('idx:' + si);
+          return '<button type="button" class="listitem" data-cn-docopen="' + esc(dkey) + '" ' +
+            'style="display:block;width:100%;text-align:left;background:none;border:none;padding:0;margin:0 0 10px;cursor:pointer">' +
+            '<div class="a">' + (TYPE_ICON[s.docType] || '📎') + ' ' + esc(s.label || TYPE_LABEL[s.docType] || 'Document') + '</div>' +
             '<div class="b">From ' + esc(s.fromName || 'a connection') + ' · ' + esc(fmtTs(s.sentAt || s.at || Date.now())) + '</div>' +
             (s.docType === 'damage' && (dc.desc || dc.title) ? '<div class="b" style="margin-top:4px">' + esc(dc.desc || dc.title) + '</div>' : '') +
             (dsum ? '<div class="b">' + esc(dsum) + '</div>' : '') +
             (dc.photo ? '<img src="' + dc.photo + '" alt="" style="max-width:100%;border-radius:8px;margin-top:6px">' : '') +
-            '</div>';
+            '<div class="b" style="color:#1a56db;font-weight:600;margin-top:4px">' +
+            (dphotos.length > 1 ? '📸 ' + dphotos.length + ' photos · ' : '') + 'Tap to open ›</div></button>';
         }).join('') + '</div>';
         try { if (window.ConnectPipe && ConnectPipe.markDocSeen) ConnectPipe.markDocSeen(docShares); } catch (e) {}
       }
@@ -1408,6 +1535,23 @@
           shares.splice(+b.getAttribute('data-cn-navdel'), 1);
           try { App._store.set('nav_shares', shares); } catch (e) {}
           rerender();
+        };
+      });
+      /* v312: a received document card IS the door — the tap
+         opens the full document view (paintDocView) and the
+         state rides uiDocView so the screen's own repaints
+         keep the document open (render's head branch). */
+      body.querySelectorAll('[data-cn-docopen]').forEach(function (b) {
+        b.onclick = function () {
+          var key = b.getAttribute('data-cn-docopen');
+          var shares = [];
+          try { shares = App._store.get('doc_shares', []) || []; } catch (e) {}
+          var s = null;
+          shares.forEach(function (x) { if (x && (x.shareId || x.pipeId) === key) s = x; });
+          if (!s && key && key.indexOf('idx:') === 0) s = shares[+key.slice(4)] || null;
+          if (!s) return;
+          uiDocView = s.shareId || s.pipeId || key;
+          paintDocView(body, s);
         };
       });
 

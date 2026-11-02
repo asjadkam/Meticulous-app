@@ -58,16 +58,20 @@ function roleWorld() {
      the v167 five-tools-only face: PTI joins as the sixth office
      tool, LAST, as a view-only surface (drivers' reports) — the
      form is role-gated in modules/pti.js (pti-role-split-v213). */
-  eq('A1 the office face: the five tools, Connect first, + PTI viewer last (v213)',
-    sb.roleModuleOrder('office'), ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti']);
+  /* v312 (owner, Nov 2, 2026) supersedes the tail again: Damage
+     & Incident joins as the second sanctioned viewer, last —
+     a fleet manager ticked for Damage must be able to open
+     the module her access points at (modules/damage.js). */
+  eq('A1 the office face: the five tools, Connect first, + PTI viewer (v213) + Damage viewer last (v312)',
+    sb.roleModuleOrder('office'), ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage']);
   const items = ['dashboard', 'revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti',
     'damage', 'manifest', 'invoice', 'connect', 'reminders', 'preferences', 'subscription', 'account', 'feedback', 'logout']
     .map(function (k) { return [k, '', k]; });
   const off = sb.roleSidebarOrder('office', items).map(function (i) { return i[0]; });
   eq('A2 the office sidebar leads with the five after the dashboard',
     off.slice(0, 6), ['dashboard', 'connect', 'dispatch', 'invoice', 'pnl', 'manifest']);
-  eq('A3 no driver module survives on the office face (PTI is the sanctioned viewer, v213)',
-    off.filter(function (k) { return ['revenue', 'fuel', 'maintenance', 'navigator', 'damage'].indexOf(k) >= 0; }), []);
+  eq('A3 no driver module survives on the office face (PTI + Damage are the sanctioned viewers, v213/v312)',
+    off.filter(function (k) { return ['revenue', 'fuel', 'maintenance', 'navigator'].indexOf(k) >= 0; }), []);
   eq('A4 the office sidebar keeps the account utilities',
     ['preferences', 'reminders', 'subscription', 'account', 'feedback', 'logout'].every(function (k) { return off.indexOf(k) >= 0; }), true);
   const drv = sb.roleSidebarOrder('driver', items).map(function (i) { return i[0]; });

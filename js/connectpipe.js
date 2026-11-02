@@ -1635,6 +1635,26 @@
     return 'dmg-' + [CP._dmgDate(r) || '', r.at || '', r.desc || '']
       .join('_').replace(/[^a-zA-Z0-9]+/g, '-');
   };
+  /* v312 (owner, Nov 2, 2026 — "She should be able to just go
+     to damage and incident module and see my report there"):
+     a report's photos are the v305 `photos` list when it
+     carries one (the first entry is the legacy `photo`), the
+     single `photo` otherwise. EVERY photo publishes — v307
+     crossed only the first, so a multi-photo report (the Nov 2
+     pole report re-filed with its pictures) would have shown
+     the receiver one picture of several. Key per photo: the
+     first keeps the v307 dmgKey (already-published docs and
+     the fact's photoKey stay valid); later photos suffix. */
+  CP.dmgPhotos = function (r) {
+    if (!r) return [];
+    var list = (Array.isArray(r.photos) ? r.photos : []).filter(function (p) { return !!p; });
+    if (!list.length && r.photo) list = [r.photo];
+    return list;
+  };
+  CP.dmgKeyAt = function (r, i) {
+    var base = CP.dmgKey(r);
+    return i > 0 ? base + '-p' + (i + 1) : base;
+  };
   CP.sharedDamage = function () {
     var st = store();
     if (!st) return [];
@@ -1644,14 +1664,16 @@
       .filter(function (r) { return wpIdOfRec(r) === 'p1'; })
       .slice(-14).reverse()
       .map(function (r) {
+        var keys = CP.dmgPhotos(r).map(function (p, i) { return CP.dmgKeyAt(r, i); });
         return {
           date: CP._dmgDate(r),
           at: String(r.at || ''),
           desc: String(r.desc || ''),
           kind: r.tab === 'load' ? 'load' : 'equipment',
           dispatch: String(r.dispatch || ''),
-          photoRef: !!r.photo,
-          photoKey: r.photo ? CP.dmgKey(r) : null
+          photoRef: keys.length > 0,
+          photoKey: keys.length ? keys[0] : null,
+          photoKeys: keys
         };
       });
   };
@@ -2173,7 +2195,8 @@
 
   /* v307: the DAMAGE PHOTOS — publishPhotos' discipline, for
      the damage reports' pictures. One sharedphotos doc per
-     report (its own dmgKey), a downscaled rendition like a
+     photo (v312: per photo, not per report — its own dmgKeyAt),
+     a downscaled rendition like a
      receipt's, pruned by its owner when the report/photo goes
      away. The viewers named are ONLY the peers whose access
      includes damage — a photo never even names a viewer the
@@ -2188,30 +2211,41 @@
     var viewers = (recDoc.viewers || []).filter(function (uid) { return CP.allowsModule(uid, 'damage'); });
     if (!viewers.length) return Promise.resolve(false);
     var reps = (st.get('dmg_reports', []) || []).filter(function (x) {
-      return x && x.photo && wpIdOfRec(x) === 'p1';
+      return x && CP.dmgPhotos(x).length && wpIdOfRec(x) === 'p1';
     });
     var currentKeys = {};
-    reps.forEach(function (r) { currentKeys[CP.dmgKey(r)] = true; });
-    (recDoc.damage || []).forEach(function (x) { if (x && x.photoKey) currentKeys[x.photoKey] = true; });
+    reps.forEach(function (r) {
+      CP.dmgPhotos(r).forEach(function (p, i) { currentKeys[CP.dmgKeyAt(r, i)] = true; });
+    });
+    (recDoc.damage || []).forEach(function (x) {
+      if (!x) return;
+      if (x.photoKey) currentKeys[x.photoKey] = true;
+      (Array.isArray(x.photoKeys) ? x.photoKeys : []).forEach(function (k) { if (k) currentKeys[k] = true; });
+    });
     var viewersKey = viewers.slice().sort().join(',');
-    var jobs = reps.slice(-24).map(function (r) {
-      var key = CP.dmgKey(r);
-      var ck = 'dmg:' + key;
-      var guard = key + '|' + viewersKey + '|' + String(r.photo).length +
-        '|' + String(r.photo).slice(-24);
-      if (CP._photoCache[ck] === guard) return null;
-      CP._photoCache[ck] = guard;
-      return CP._rendition(r.photo).then(function (url) {
-        if (!url) { CP._photoCache[ck] = ''; return false; }
-        var doc = {
-          driver: f.user.uid, viewers: viewers.slice(),
-          dmgKey: key, date: CP._dmgDate(r), photo: url, updatedAt: Date.now()
-        };
-        return f.db.collection('sharedphotos').doc(f.user.uid + '_' + key).set(doc)
-          .then(function () { return true; })
-          .catch(function () { CP._photoCache[ck] = ''; return false; });
+    /* v312: one job per PHOTO, not per report (dmgPhotos /
+       dmgKeyAt above) — every picture the driver filed crosses. */
+    var jobs = [];
+    reps.slice(-24).forEach(function (r) {
+      CP.dmgPhotos(r).forEach(function (photo, i) {
+        var key = CP.dmgKeyAt(r, i);
+        var ck = 'dmg:' + key;
+        var guard = key + '|' + viewersKey + '|' + String(photo).length +
+          '|' + String(photo).slice(-24);
+        if (CP._photoCache[ck] === guard) return;
+        CP._photoCache[ck] = guard;
+        jobs.push(CP._rendition(photo).then(function (url) {
+          if (!url) { CP._photoCache[ck] = ''; return false; }
+          var doc = {
+            driver: f.user.uid, viewers: viewers.slice(),
+            dmgKey: key, date: CP._dmgDate(r), photo: url, updatedAt: Date.now()
+          };
+          return f.db.collection('sharedphotos').doc(f.user.uid + '_' + key).set(doc)
+            .then(function () { return true; })
+            .catch(function () { CP._photoCache[ck] = ''; return false; });
+        }));
       });
-    }).filter(Boolean);
+    });
     var photoWrites = jobs.length;
     jobs.push(f.db.collection('sharedphotos').where('driver', '==', f.user.uid).get()
       .then(function (snap) {

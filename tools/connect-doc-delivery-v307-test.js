@@ -486,8 +486,8 @@ console.log('— 2: damage publishes as a module (facts + photo), strips per tic
     const dmg = recDoc.damage || [];
     eq('2a the damage section carries the two main-profile reports (the p2 report is fenced out)', dmg.length, 2);
     eq('2a newest first', dmg[0] && dmg[0].desc, 'Backed into a light pole');
-    eq('2a the fact carries facts only (exact key set)',
-      Object.keys(dmg[0] || {}).sort(), ['at', 'date', 'desc', 'dispatch', 'kind', 'photoKey', 'photoRef']);
+    eq('2a the fact carries facts only (exact key set; v312 adds photoKeys — every photo, not just the first)',
+      Object.keys(dmg[0] || {}).sort(), ['at', 'date', 'desc', 'dispatch', 'kind', 'photoKey', 'photoKeys', 'photoRef']);
     ok('2a the fact names its kind + dispatch reference',
       dmg[0].kind === 'equipment' && dmg[0].dispatch === 'Butterfly → Aecon');
     ok('2a the photo is a reference, never bytes', dmg[0].photoRef === true && !!dmg[0].photoKey && JSON.stringify(dmg[0]).indexOf('POLEPHOTO') === -1);
@@ -802,6 +802,206 @@ console.log('— 6: SEND-DOC-KIND-PICKER-FLICKER — the Kind select is tappable
   }
 }
 
+/* ================= (7) v312: BOTH receiver doors ============ */
+console.log('— 7: v312 — the Damage module door (primary) + the Connect document door —');
+{
+  /* Owner, Nov 2, 2026, 15:26–15:27: a Limited connection
+     ticked for Damage means the receiver JUST OPENS the
+     Damage & Incident module and sees the reports there —
+     and the Connect documents card is a working door too.
+     Neither door may leave her hunting. */
+
+  /* ---- 7a: the pipe publishes EVERY photo ---- */
+  const DMG_C = { tab: 'equipment', desc: 'Backed into a light pole at the site gate', photo: 'data:image/jpeg;base64,P1', photos: ['data:image/jpeg;base64,P1', 'data:image/jpeg;base64,P2', 'data:image/jpeg;base64,P3'], at: '11/2/2026, 11:16:05 AM', date: '2026-11-02', dispatch: 'Butterfly → Aecon', profileId: 'p1' };
+  asUser(pipeUsers.driver);
+  pipeUsers.driver.store.set('dmg_reports', [clone(DMG_C)]);
+  await CP().publishRecords();
+  const recDoc7 = db._col('sharedrecords').get('uid-driver');
+  /* the union-preserve keeps earlier reports published beside
+     it (section 2's pair) — pick THIS report's fact by its text */
+  const fact7 = recDoc7 && (recDoc7.damage || []).filter(function (x) { return x.desc === DMG_C.desc; })[0];
+  ok('7a the multi-photo report publishes as a fact', !!fact7);
+  if (fact7) {
+    eq('7a photoKeys carries EVERY photo key', (fact7.photoKeys || []).length, 3);
+    ok('7a photoKey still names the first photo', fact7.photoKey === fact7.photoKeys[0]);
+    const docs7 = fact7.photoKeys.map(function (k) { return db._col('sharedphotos').get('uid-driver_' + k); });
+    ok('7a a rendition doc exists per photo', docs7.every(Boolean));
+    ok('7a every rendition names ONLY damage viewers (boss + Dana; Maria unticked is not named)',
+      docs7.every(function (d) { return d && (d.viewers || []).slice().sort().join(',') === 'uid-boss,uid-dana'; }),
+      JSON.stringify(docs7.map(function (d) { return d && d.viewers; })));
+  }
+
+  /* ---- 7b/7c: the receiver's Damage module, rendered ---- */
+  function makeDmgEl(tag, attrs) {
+    const el = {
+      tagName: tag, _attrs: attrs || {}, _html: '', _pool: [], value: '', disabled: false,
+      textContent: '', style: {},
+      classList: { _s: new Set(),
+        add: function (c) { this._s.add(c); }, remove: function (c) { this._s.delete(c); },
+        toggle: function (c) {}, contains: function (c) { return this._s.has(c); } },
+      getAttribute: function (n) { return n in this._attrs ? this._attrs[n] : null; },
+      setAttribute: function (n, v) { this._attrs[n] = String(v); },
+      onclick: null, onchange: null,
+      querySelector: function (sel) {
+        if (sel.charAt(0) === '#') { const id = sel.slice(1); return el._pool.filter(function (e) { return e._attrs.id === id; })[0] || null; }
+        return null;
+      },
+      querySelectorAll: function (sel) {
+        const m = /^\[([a-zA-Z0-9-]+)(?:="([^"]*)")?\]$/.exec(sel);
+        if (!m) return [];
+        return el._pool.filter(function (e) {
+          if (!(m[1] in e._attrs)) return false;
+          return m[2] === undefined || e._attrs[m[1]] === m[2];
+        });
+      }
+    };
+    Object.defineProperty(el, 'innerHTML', {
+      configurable: true,
+      get: function () { return el._html; },
+      set: function (v) {
+        el._html = String(v); el._pool = [];
+        const re = /<(div|button|span|img|p|h3|a)\b([^>]*)>/g;
+        let m;
+        while ((m = re.exec(el._html))) {
+          const attrs = {}; const are = /([a-zA-Z][a-zA-Z0-9-]*)(?:="([^"]*)")?/g; let am;
+          while ((am = are.exec(m[2]))) attrs[am[1]] = am[2] === undefined ? '' : am[2];
+          el._pool.push(makeDmgEl(m[1], attrs));
+        }
+      }
+    });
+    return el;
+  }
+  function dmgHtml(body) {
+    return [body._html].concat(body._pool.map(function (e) { return e._html; })).join('\n');
+  }
+  vm.runInContext(dmgSrc, sb, { filename: 'modules/damage.js' });
+
+  /* the boss (Full access): the report is listed, opens whole */
+  asUser(pipeUsers.boss);
+  const bodyB = makeDmgEl('div', {});
+  sb.Meticulous.modules.damage.render(bodyB);
+  await ticks(8);
+  const wrapB = bodyB.querySelector('#dmg_office_wrap');
+  ok('7b the office viewer lists the shared report as a card',
+    !!wrapB && wrapB._html.indexOf('Damage report from') !== -1, wrapB && wrapB._html.slice(0, 160));
+  ok('7b the card says what tapping does', !!wrapB && wrapB._html.indexOf('Tap to open') !== -1);
+  ok('7b the multi-photo card counts its photos', !!wrapB && wrapB._html.indexOf('3 photos') !== -1);
+  const btnsB = wrapB ? wrapB.querySelectorAll('[data-dmgopen]') : [];
+  ok('7b the reports render as tappable cards', btnsB.length >= 1, 'got ' + btnsB.length);
+  /* tap the DMG_C card specifically — its index in the list is
+     its index in the records the viewer read */
+  const bOut7 = await CP().fetchRecords();
+  const bDmg7 = ((bOut7.records || {})['uid-driver'] || {}).damage || [];
+  const idxC = bDmg7.findIndex(function (x) { return x.desc === DMG_C.desc; });
+  ok('7b the receiver\'s records carry the report', idxC !== -1);
+  if (idxC !== -1 && btnsB[idxC]) {
+    btnsB[idxC].onclick();
+    await ticks(8);
+    const dh = dmgHtml(bodyB);
+    ok('7b the open view shows the full report text', dh.indexOf('Backed into a light pole at the site gate') !== -1);
+    ok('7b the open view shows the dispatch line', dh.indexOf('Butterfly → Aecon') !== -1);
+    eq('7b the open view loads ALL its photos', (dh.match(/RENDITION/g) || []).length, 3);
+    const backB = bodyB.querySelector('#dmg_op_back');
+    ok('7b the open view has its Back door', !!backB);
+    if (backB) {
+      backB.onclick();
+      await ticks(8);
+      const wrapB2 = bodyB.querySelector('#dmg_office_wrap');
+      ok('7b Back returns to the report list',
+        !!wrapB2 && wrapB2.querySelectorAll('[data-dmgopen]').length === btnsB.length);
+    }
+  }
+
+  /* Maria (Limited, damage NOT ticked): she does NOT see it */
+  asUser(pipeUsers.maria);
+  const bodyM = makeDmgEl('div', {});
+  sb.Meticulous.modules.damage.render(bodyM);
+  await ticks(8);
+  const wrapM = bodyM.querySelector('#dmg_office_wrap');
+  ok('7c an unticked receiver does NOT see the report',
+    !!wrapM && wrapM.querySelectorAll('[data-dmgopen]').length === 0 && wrapM._html.indexOf('light pole') === -1,
+    wrapM && wrapM._html.slice(0, 160));
+  ok('7c she gets the honest empty state',
+    !!wrapM && wrapM._html.indexOf('No damage reports shared with you yet') !== -1);
+
+  /* leave the pipe world as section 2 left it */
+  asUser(pipeUsers.driver);
+  pipeUsers.driver.store.set('dmg_reports', [clone(DMG_B), clone(DMG_A), clone(DMG_P2)]);
+  await CP().publishRecords();
+
+  /* ---- 7e: the Connect documents card is a door too ---- */
+  const share7 = {
+    pipeId: 'pd-1', shareId: 'ds-1', docType: 'damage',
+    label: 'Damage photo — 2026-11-02 — I was backing up at twin west',
+    content: { title: 'Damage report', desc: 'I was backing up at twin west. The pole came in my blind spot.', date: '2026-11-02', dispatch: 'Butterfly → Aecon', photo: 'data:image/jpeg;base64,P1', photos: ['data:image/jpeg;base64,P1', 'data:image/jpeg;base64,P2'] },
+    fromUid: 'uid-dave', fromName: 'Dave Cooper', sentAt: 1793662320000, at: 1793662320000
+  };
+  const w7 = connectWorld({ con_list: [clone(DAVE)], doc_shares: [share7] });
+  w7.api.render(w7.body);
+  await ticks(6);
+  const cards7 = w7.body.querySelectorAll('[data-cn-docopen]');
+  eq('7e the received document renders as a tappable card', cards7.length, 1);
+  const h7 = allHtml(w7);
+  ok('7e the card says what tapping does (and counts the photos)',
+    h7.indexOf('Tap to open') !== -1 && h7.indexOf('2 photos') !== -1);
+  if (cards7.length) {
+    cards7[0].onclick();
+    await ticks(3);
+    const dh7 = w7.body._html;
+    eq('7e the full view shows the report text ONCE (no label echo)',
+      dh7.split('I was backing up at twin west').length - 1, 1, dh7.slice(0, 300));
+    ok('7e the full view shows the dispatch line', dh7.indexOf('Butterfly → Aecon') !== -1);
+    ok('7e the full view shows ALL photos',
+      dh7.indexOf('data:image/jpeg;base64,P1') !== -1 && dh7.indexOf('data:image/jpeg;base64,P2') !== -1);
+    w7.api.render(w7.body);
+    await ticks(3);
+    ok('7e a screen repaint keeps the document open',
+      w7.body._html.indexOf('I was backing up at twin west') !== -1 &&
+      w7.body._html.indexOf('Documents shared with you') === -1);
+    const back7 = w7.body.querySelector('#cn_doc_back');
+    ok('7e the full view has its Back door', !!back7);
+    if (back7) {
+      back7.onclick();
+      await ticks(4);
+      eq('7e Back returns to the documents list', w7.body.querySelectorAll('[data-cn-docopen]').length, 1);
+    }
+  }
+
+  /* ---- 7f: the sender packages ALL photos + the dispatch -- */
+  const multi7 = { tab: 'equipment', desc: 'Multi photo report', photo: 'data:image/jpeg;base64,P1', photos: ['data:image/jpeg;base64,P1', 'data:image/jpeg;base64,P2', 'data:image/jpeg;base64,P3'], at: '11/2/2026, 9:00:00 AM', date: '2026-11-02', dispatch: 'Butterfly → Aecon', profileId: 'p1' };
+  const w7f = connectWorld({ con_list: [clone(DAVE)], dmg_reports: [multi7] });
+  await openPicker(w7f, 'damage');
+  const picks7 = w7f.body.querySelectorAll('[data-pick]');
+  eq('7f the multi-photo report is listed in the picker', picks7.length, 1);
+  if (picks7.length) {
+    picks7[0].onclick();
+    await ticks(5);
+    const s7 = w7f.cap.sendDoc[0] || {};
+    const c7 = (s7.share && s7.share.content) || {};
+    eq('7f the package carries ALL photos', (c7.photos || []).length, 3);
+    ok('7f the package keeps photo = the first photo', c7.photo === 'data:image/jpeg;base64,P1');
+    ok('7f the package carries the dispatch line', c7.dispatch === 'Butterfly → Aecon');
+  }
+
+  /* ---- 7g: an oversize photo doc crosses, shrunk for the wire */
+  const bigPhoto7 = 'data:image/jpeg;base64,' + 'A'.repeat(950000);
+  const big7 = Object.assign(clone(NOV2_ENTRY), {
+    content: { title: 'Big', desc: 'Big', date: '2026-11-02', photo: bigPhoto7, photos: [bigPhoto7] }
+  });
+  const w7g = connectWorld({ con_list: [clone(MARIA)], con_outbox: [big7] },
+    { _rendition: function () { return Promise.resolve('data:image/jpeg;base64,SMALL'); } });
+  w7g.api.render(w7g.body);
+  await ticks(10);
+  eq('7g an oversize PHOTO document now crosses, shrunk for the wire', w7g.cap.sendDoc.length, 1);
+  const s7g = w7g.cap.sendDoc[0] || {};
+  ok('7g the wire copy carries the rendition, not the raw photo',
+    !!(s7g.share && s7g.share.content && s7g.share.content.photo === 'data:image/jpeg;base64,SMALL'));
+  const ob7g = w7g.store.get('con_outbox', []);
+  ok('7g the entry is stamped sent:true', !!(ob7g[0] && ob7g[0].sent === true));
+  ok('7g the stored package keeps the original photo (only the wire copy shrank)',
+    !!(ob7g[0] && ob7g[0].content && ob7g[0].content.photo === bigPhoto7));
+}
+
 /* ================= statics: rules + surfaces ================= */
 console.log('— statics: rules gates + the receiver surface —');
 {
@@ -817,6 +1017,8 @@ console.log('— statics: rules gates + the receiver surface —');
     dmgSrc.indexOf('fetchRecords') !== -1 && dmgSrc.indexOf('fetchPhoto') !== -1);
   ok('surface: Connect renders the received doc shares',
     conSrc.indexOf('Documents shared with you') !== -1 && conSrc.indexOf('doc_shares') !== -1);
+  ok('surface: the office face has a door to the Damage module (v312 — the v307 viewer was unreachable)',
+    /office: \['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage'\]/.test(appSrc));
 }
 
 console.log('\nconnect-doc-delivery-v307: ' + pass + ' passed, ' + fail + ' failed');

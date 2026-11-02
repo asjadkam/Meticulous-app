@@ -1030,7 +1030,19 @@
        only (the module renders the drivers'-reports surface
        for this role; the filing form never exists for it). The
        five working tools keep their lead order; PTI rides last. */
-    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti'],
+    /* v312 (owner, Nov 2, 2026, 15:26 — "She should be able to
+       just go to damage and incident module and see my report
+       there"): DAMAGE joins the office face the same way PTI
+       did in v213 — as a VIEWER only (the module renders the
+       connected drivers' reports for this role; the filing
+       form never exists for it). v307 built that viewer but
+       never gave the office face a door to the module: the
+       order here is the dashboard grid AND (through the
+       office keep-list in roleSidebarOrder) the sidebar, so a
+       fleet manager whose connection ticks Damage & Incident
+       had literally no way to open the screen her access
+       points at. Damage rides last, after PTI. */
+    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage'],
     both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
