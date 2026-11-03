@@ -1,8 +1,8 @@
 {
-  "version": 47,
-  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v47.apk",
-  "webVersion": 314,
-  "notes": "v314 — PHANTOM-SESSION-31H: a live session whose pinned start is not today (device-local) is now a stale shell by the day prong alone (the v303 >= 20 h age prong is dropped in both mirrors, js/app.js staleTrackerStartMs + js/cloudsync.js staleSessionMs303), and the unbooked burial is re-tested while the app lives — healStaleTrackerPeriodic runs on trackerTick's minute cadence and at the head of the visibilitychange return-to-visible branch, before the session-record collects. Field shape closed: his Nov 2 09:00 session painted 31:08:43 the next day (widget identical, same record) because the heal was wired only at cold open / sign-in / first pull and the app never cold-opened in between. Widget coherence is web-side only: trackerSave syncs the idle facts into the native SessionRecord and sessionStopped stops its service — no native change. Harness: tools/phantom-session-v314-test.js 20/20; phantom-revival-v303 24/24 (A3/B4 re-pinned to the v314 law); connect-doc-delivery 150/150; nav-damage 26/26.",
+  "version": 48,
+  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk",
+  "webVersion": 315,
+  "notes": "v315 — APK v67 RELEASE pointer: APK_VERSION 47 -> 48 and version.json publishes the v67 APK (https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk, versionCode 42 / 1.40, sha256 d0d6c944bd8c93e6627c396d14d8d34089e4dbbeae4bf5d65b55b53d61ca1ae2; APK hosted on gh-pages; CI run 66 verified build). Native v67 carries the widget-freeze round-2 fix (new v67 layout ids force the launcher to re-inflate so the Chronometer exists on pre-v66 widgets; the running signature paints once a minute again) and the PiP round-2 fix (manual enterPictureInPictureMode attempt at leave beside auto-enter; pipDiag.manual in ShiftTrack.status()). Web layer unchanged since web 314 beyond this pointer and the js/app.js ?v=315 tag.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,8 +17,8 @@
     "css/style.css": "4b7db3f8bc63f7b5e070a1745e9980669cf840262c8b748d9895f9f111cddfe0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "0c74eaa69a5741fe16c842852275c99c4851699e03415598c754955e4dc328bb",
-    "js/app.js": "f94494564fee91607aff7d5d944c6d8bbd0358b8304cbab63960611c7e054d84",
+    "index.html": "5e2ff1ececb7664ab78e4ebca0f06e2f7d808f77096db44c78017b7fa4bf6701",
+    "js/app.js": "9c13eb45d49ac357bb64b8a83c2ec1aa2458c8318c32711a7e230788fdb5cca1",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "f6f5e5bef977607277d1f1724754ff149ec470878e5e1b1fcaca221d80587957",
