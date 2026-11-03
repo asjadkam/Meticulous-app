@@ -483,13 +483,26 @@
          (the LOOK TWICE rule: the response happens where he's
          looking, or takes him straight to it). */
       var flAll = fills();
+      /* v316 (FUEL-LIST-NOT-CHRONOLOGICAL, owner Nov 3, 2026): the
+         list used to render fills().slice().reverse() — reverse
+         SAVE order, not date order — so any fill that arrived out
+         of save order (cloud merge, a re-added fill) floated out of
+         place and the list was never chronological (his screenshot:
+         Oct 21 above Oct 30 above Oct 15). Now sorted by the fill's
+         OWN date, newest first; same-day fills keep the later-saved
+         one first. Rows still carry the fill's real index into
+         fills() so tap-to-view/edit is unchanged. */
+      var flSorted = flAll.map(function (f, i) { return { f: f, i: i }; }).sort(function (a, b) {
+        var da = a.f.date || '', db = b.f.date || '';
+        if (da !== db) return da < db ? 1 : -1;
+        return b.i - a.i;
+      });
       /* v177 (D6): latest 3 + Show more — the list scrolled
          unbroken back to June. Same pattern as Revenue Entries. */
-      var flRev = flAll.slice().reverse();
-      var flShown = fuShowAll ? flRev : flRev.slice(0, 3);
+      var flShown = fuShowAll ? flSorted : flSorted.slice(0, 3);
       h += '<div class="card"><h3>📒 Fill-ups</h3>' +
-        (flAll.length ? flShown.map(function (f, ri) {
-          var i = flAll.length - 1 - ri;
+        (flAll.length ? flShown.map(function (p) {
+          var f = p.f, i = p.i;
           return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
             '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
             '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + ' · tap to view or edit</div></div>';

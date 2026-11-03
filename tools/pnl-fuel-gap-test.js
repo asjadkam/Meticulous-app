@@ -178,8 +178,8 @@ const EXPENSES = [
     pnlSrc.includes("App._store.get('fuel_fills', [])") && fuelSrc.includes("App._store.get('fuel_' + k, d)"));
   ok('fuel.js writes fills through the verified single-array save (no append-mirror)',
     fuelSrc.includes('saveFillsVerified') && !/fuel_expenses/.test(fuelSrc.slice(fuelSrc.indexOf("querySelector('#fu_add')"), fuelSrc.indexOf("querySelector('#fx_add')"))));
-  ok('the Fill-ups list renders EVERY stored fill (stored order reversed, no month filter)',
-    fuelSrc.includes('flAll.slice().reverse()') && !/flAll\.filter/.test(fuelSrc));
+  ok('the Fill-ups list renders EVERY stored fill (date order newest-first, no month filter)',
+    fuelSrc.includes('flSorted') && /sort\(function \(a, b\)/.test(fuelSrc) && !/flAll\.filter/.test(fuelSrc));
   ok('no flow writes a fill AND an expense together (no legacy mirror in shipped code)',
     !/saveDoc\('fuel'[\s\S]{0,200}fuel_expenses/.test(fuelSrc + pnlSrc));
 })();

@@ -1,8 +1,8 @@
 {
   "version": 48,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk",
-  "webVersion": 315,
-  "notes": "v315 — APK v67 RELEASE pointer: APK_VERSION 47 -> 48 and version.json publishes the v67 APK (https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk, versionCode 42 / 1.40, sha256 d0d6c944bd8c93e6627c396d14d8d34089e4dbbeae4bf5d65b55b53d61ca1ae2; APK hosted on gh-pages; CI run 66 verified build). Native v67 carries the widget-freeze round-2 fix (new v67 layout ids force the launcher to re-inflate so the Chronometer exists on pre-v66 widgets; the running signature paints once a minute again) and the PiP round-2 fix (manual enterPictureInPictureMode attempt at leave beside auto-enter; pipDiag.manual in ShiftTrack.status()). Web layer unchanged since web 314 beyond this pointer and the js/app.js ?v=315 tag.",
+  "webVersion": 316,
+  "notes": "v316 \u2014 FUEL-LIST-NOT-CHRONOLOGICAL (owner, Nov 3, 2026): the Fill-ups list rendered fills in reverse SAVE order, so any fill arriving out of save order (cloud merge, re-added fill) floated out of place (his screenshot: Oct 21 above Oct 30 above Oct 15). modules/fuel.js now sorts the list by the fill's own date, newest first; same-day fills keep the later-saved one first; rows keep their real fills() index so tap-to-view/edit is unchanged. Gates: fuel-fill 25/25, fuel-list-stale-v289 14/14, fuel-history-recurrence-v272 16/16, fuel-trend 23/23, pnl-fuel-gap 13/13 (assertion updated to the new date-order spec), plus a comparator check on his screenshot's save-order pattern. fuel-tab-v202 keeps its 2 pre-existing stale-pin reds (identical on the pristine tree).",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "4b7db3f8bc63f7b5e070a1745e9980669cf840262c8b748d9895f9f111cddfe0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "5e2ff1ececb7664ab78e4ebca0f06e2f7d808f77096db44c78017b7fa4bf6701",
+    "index.html": "bf66b14ecaa4541c938bc776f0e4e17485c8bc2764c004f523bbe2d7e8309a6f",
     "js/app.js": "9c13eb45d49ac357bb64b8a83c2ec1aa2458c8318c32711a7e230788fdb5cca1",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -43,7 +43,7 @@
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "ed2aa20b4b8c075ef8d96503315d0b5790bb05b6a11f08674174fb64815b1bb5",
     "modules/dispatch.js": "1e3566f6b374ebed9aa48d45d7cfb64d132af079fde485365c9b6c229b93956d",
-    "modules/fuel.js": "74263b98814d8bf097be75c9f612f949ffc53e312246526a047ae168ad69f19d",
+    "modules/fuel.js": "d92b7c6fbd4c206b9c23b92e973432ac9afd6bffdd7282e6f31b76c4da3ad714",
     "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "b5683882257d6d415a79210c1423604f7af5fcfcb4a158a240f68be835a08c1e",
