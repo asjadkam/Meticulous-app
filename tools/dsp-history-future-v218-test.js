@@ -262,8 +262,8 @@ function histRegion(h) { const i = h.indexOf('📋 History'); return i === -1 ? 
     /* the named choice: same rows, same buttons, behaviour unchanged */
     check('(c) the Upcoming row keeps Start / Edit / Delete',
       up.indexOf('data-start') !== -1 && up.indexOf('data-edit') !== -1 && up.indexOf('data-del') !== -1);
-    check('(c) the future row\'s pin stays plainly marked, no Navigate offer (v172 untouched)',
-      up.indexOf('📍 Pin set') !== -1 && up.indexOf('data-nav') === -1);
+    check('(c) the future row\'s pin offers Navigate like any other row (v317 — the v172 day gate on row buttons removed on the owner\'s Nov 3, 2026 order)',
+      up.indexOf('data-nav') !== -1 && up.indexOf('📍 Pin set') === -1);
 
     /* (d) two future days → Upcoming ascending, nearest first */
     check('(d) Upcoming sorts nearest-date first (Oct 22 before Oct 23)',

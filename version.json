@@ -1,8 +1,8 @@
 {
   "version": 48,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk",
-  "webVersion": 316,
-  "notes": "v316 \u2014 FUEL-LIST-NOT-CHRONOLOGICAL (owner, Nov 3, 2026): the Fill-ups list rendered fills in reverse SAVE order, so any fill arriving out of save order (cloud merge, re-added fill) floated out of place (his screenshot: Oct 21 above Oct 30 above Oct 15). modules/fuel.js now sorts the list by the fill's own date, newest first; same-day fills keep the later-saved one first; rows keep their real fills() index so tap-to-view/edit is unchanged. Gates: fuel-fill 25/25, fuel-list-stale-v289 14/14, fuel-history-recurrence-v272 16/16, fuel-trend 23/23, pnl-fuel-gap 13/13 (assertion updated to the new date-order spec), plus a comparator check on his screenshot's save-order pattern. fuel-tab-v202 keeps its 2 pre-existing stale-pin reds (identical on the pristine tree).",
+  "webVersion": 317,
+  "notes": "v317 \u2014 DISPATCH-UPCOMING-NO-NAVIGATE (owner, Nov 3, 2026): tomorrow's dispatch (Aecon Trans, Calgary Airport) sat in the Upcoming card with only 'Pin set' \u2014 dspRowHtml gated row Navigate buttons behind dspNavDayOk (the v172 rule: a future dispatch's pin is not a navigate suggestion until its own day). On his direct order ('Make sure my dispatch suggests me to navigate there' / 'Fix it!'), the two conditions inside dspRowHtml (modules/dispatch.js) no longer read dspNavDayOk: a pinned row (data-nav) and a named-place row (data-navname) offer Navigate regardless of day; office faces still get the plain pin line. dspNavDayOk stays in the code and the dispatch FORM's pin line keeps its own futureDay gate, untouched. Gates: dispatch-ingest 217/217, dispatch-edit 82/82, queue-v172 8/8 (A1/A2/A3 assertions updated to the v317 spec \u2014 the form gate scenario still passes untouched), dsp-history-future-v218 and dsp-today-top-v197 behaviour assertions updated (their 2 stale version pins each are pre-existing, identical on the pristine tree), dispatch-close / dispatch-completed ?v= coherence assertions pass at 317. Pre-existing reds unchanged: dateline-v153 / siteless-v154 byte-identity fixtures + version pins, navpin-v150 / picker-v155 / multi-send stale pins \u2014 all identical on the pristine tree.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "4b7db3f8bc63f7b5e070a1745e9980669cf840262c8b748d9895f9f111cddfe0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "bf66b14ecaa4541c938bc776f0e4e17485c8bc2764c004f523bbe2d7e8309a6f",
+    "index.html": "a9eb89d6cf1f5a152bb7b55d2f877cc6751bbe35983cbd263df212545e2fef8c",
     "js/app.js": "9c13eb45d49ac357bb64b8a83c2ec1aa2458c8318c32711a7e230788fdb5cca1",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -42,7 +42,7 @@
     "modules/billing.js": "fe7ad30f17318a603dbb6a1aca961ba8d94a1b340346f343e63114b8e9bc0c53",
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "ed2aa20b4b8c075ef8d96503315d0b5790bb05b6a11f08674174fb64815b1bb5",
-    "modules/dispatch.js": "1e3566f6b374ebed9aa48d45d7cfb64d132af079fde485365c9b6c229b93956d",
+    "modules/dispatch.js": "19e8f597daec074d1c44f459b42b6e747781e8c534389bb2e279e4a523b34b8a",
     "modules/fuel.js": "d92b7c6fbd4c206b9c23b92e973432ac9afd6bffdd7282e6f31b76c4da3ad714",
     "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",

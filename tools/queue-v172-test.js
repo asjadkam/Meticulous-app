@@ -176,7 +176,9 @@ function makeWorld(opts) {
 }
 
 (async function main() {
-  /* ---- A: History — tomorrow's pin is not a suggestion tonight ---- */
+  /* ---- A: History — v317 (owner, Nov 3, 2026): row Navigate
+     buttons are no longer day-gated, so tomorrow's pin offers
+     Navigate tonight like today's and the past site's ---- */
   const w = makeWorld({ seed: function (s) {
     s.set('dsp_list', [
       rec('d-future', 'Simply Stone', '2026-10-19', 50.96851, -114.0334),
@@ -188,18 +190,18 @@ function makeWorld(opts) {
   w.sb.Meticulous.modules.dispatch.render(w.body);
   await flush();
   const html = w.body._html;
-  eq('A1 exactly two Navigate offers (today + past) — tomorrow\u2019s pin offers none',
-    w.body.querySelectorAll('[data-nav]').length, 2);
-  check('A2 tomorrow\u2019s record still shows, pin plainly marked',
-    html.indexOf('Simply Stone') !== -1 && html.indexOf('📍 Pin set') !== -1);
+  eq('A1 exactly three Navigate offers (today + past + tomorrow) — v317 removed the row day gate',
+    w.body.querySelectorAll('[data-nav]').length, 3);
+  check('A2 tomorrow\u2019s record still shows, and its pin offers Navigate (no plain Pin set line)',
+    html.indexOf('Simply Stone') !== -1 && html.indexOf('📍 Pin set') === -1);
   const names = [];
   for (const b of w.body.querySelectorAll('[data-nav]')) {
     b.click(); await flush();
     const pend = w.store.get('nav_pending', null);
     if (pend) names.push(pend.name);
   }
-  eq('A3 the two offers hand over today\u2019s and the past site — never tomorrow\u2019s',
-    names.sort(), ['Maple Ridge Pit', 'Today Yard']);
+  eq('A3 the three offers hand over today\u2019s, the past site, and tomorrow\u2019s (v317)',
+    names.sort(), ['Maple Ridge Pit', 'Simply Stone', 'Today Yard']);
 
   /* ---- B: the form — a future draft's pin line stays plain, and follows the date ---- */
   const draftFor = function (date) {

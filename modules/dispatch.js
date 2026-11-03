@@ -1782,18 +1782,25 @@
             /* v150: the pin's action is our Navigator (wired at
                render end via data-nav); an office face — which
                never drives — keeps a plain pin line, no button.
-               v172: a FUTURE dispatch's pin is not a navigate
+               v172: a FUTURE dispatch's pin was not a navigate
                suggestion yet (dspNavDayOk) — plain line until
-               its own day. */
-            (isOffice || !dspNavDayOk(d) ? ' · 📍 Pin set' :
+               its own day.
+               v317 (owner, Nov 3, 2026): row Navigate buttons are
+               no longer day-gated, on his direct order — a future
+               dispatch's row offers Navigate like any other.
+               dspNavDayOk itself stays in the code; the dispatch
+               FORM's pin line keeps its own futureDay gate. */
+            (isOffice ? ' · 📍 Pin set' :
               ' · <button type="button" class="btn small ghost" data-nav="' + i + '" style="padding:2px 8px">🧭 Navigate</button>') : '') +
           /* v220 (DSP-PIN-NAVIGATE): no pin, but the site NAMES a
              known place — the same one-tap Navigate, resolved at
-             tap time (data-navname). Same v172 day gate.
+             tap time (data-navname). (v317, owner Nov 3, 2026: the
+             v172 day gate on this row button is removed, same as
+             the pin button above.)
              v300: any destination text earns the row's button
              too (the tap falls back to the Navigator's search —
              see the data-navname handler). */
-          ((d.lat === null || d.lat === undefined) && !isOffice && dspNavDayOk(d) &&
+          ((d.lat === null || d.lat === undefined) && !isOffice &&
             (dspPlaceHit(d) || String(d.jobSite || d.pickup || d.dropoff || d.address || '').trim()) ?
             ' · <button type="button" class="btn small ghost" data-navname="' + i + '" style="padding:2px 8px">🧭 Navigate</button>' : '') +
           (d.material ? ' · ' + esc(d.material) : '') +

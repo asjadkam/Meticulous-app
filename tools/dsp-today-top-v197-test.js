@@ -248,8 +248,8 @@ function upcomingRegion(h) {
        v172's pin ruling itself is untouched. */
     check('the future dispatch stands in the Upcoming card, NOT in History (v218)',
       upcomingRegion(h).indexOf('Future Job') !== -1 && hist.indexOf('Future Job') === -1);
-    check('the future row\'s pin is plainly marked, no Navigate offer (v172)',
-      upcomingRegion(h).indexOf('📍 Pin set') !== -1);
+    check('the future row\'s pin offers Navigate (v317 — row buttons no longer day-gated, owner Nov 3, 2026)',
+      upcomingRegion(h).indexOf('data-nav') !== -1 && upcomingRegion(h).indexOf('📍 Pin set') === -1);
     check('History\'s first screen: the three newest past days (HIST-3 cap; future consumes no slot — v218)',
       hist.indexOf('Past Four') !== -1 && hist.indexOf('Past Three') !== -1 && hist.indexOf('Past Two') !== -1);
     check('older past days wait behind the full-history door',
