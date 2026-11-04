@@ -1,8 +1,8 @@
 {
-  "version": 50,
-  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v50.apk",
-  "webVersion": 321,
-  "notes": "v321 \u2014 Nov 4, 2026 repair pass (owner-ordered, built without the phone connection): (1) DISPATCH-NOTES-LABEL-COVERED \u2014 the Notes row on the Active dispatch card and the Completed face is now STACKED (label on its own line, note text below it in full), so the note text can never sit on top of the Notes label again; new .kv.stack presentation, no data change. (2) NAVIGATE-CHOOSE-PIN (owner, Nov 4 10:54 \u2014 'navigate to just the dump pin\u2026 Not go through the pick up') \u2014 when an active dispatch carries a dump pin, a second quiet '\ud83e\udded Dump only' button beside Navigate routes STRAIGHT to the dump pin from wherever the driver is; the pickup is never a waypoint on that route; the run-order Navigate is untouched. (3) NAVIGATE-GOES-ON-MANIFEST (owner, Nov 4 09:55 \u2014 'everytime I press navigate on there, make sures it goes on my manifest') \u2014 a dispatch Navigate that arrives as TEXT (no pin) now records its visit in nav_data.recent at the pin it resolves to inside the Navigator (Navigation.recordVisit, called at the go-now resolve beside learnCoords) \u2014 the same record a pin hand-off writes and the record the Manifest names the day's sites from; query-path navigations no longer vanish from the Manifest. APK pointer unchanged (generation 50 / v69). Verdicts owed in his hands: Notes label clear on the active card; Dump only button on a two-pin dispatch; a text-only dispatch Navigate showing on the Manifest.",
+  "version": 51,
+  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v51.apk",
+  "webVersion": 322,
+  "notes": "v322 \u2014 APK v70 RELEASE pointer \u2014 WIDGET FIX SET ONLY (owner verdict on v69, Nov 4, 2026, in his own hands: the home-screen widget still froze and showed 'Ready to work / 00:00:00' with the chronometer OFF while his session ran). Native v70 (generation 51, versionName 1.43, versionCode 45) carries ONLY the Nov 3 widget trace's four named repairs, all in the widget's native shell: (a) the paint signature carries the SECOND while a session runs whenever the last build did not arm the launcher Chronometer, so a text-clock face can no longer sit signature-identical while the session record advances (his face stuck at 00:00:51 while the app read 00:02:29); (b) patchGlanceMiles now matches any glance part ENDING in ' km', so the labelled 'Miles (live): N.N km' part the web publishes is actually replaced by the record's miles instead of standing stale; (c) the repaint chain's landed alarm tier (exact / inexact / none / off) is persisted on every arm and surfaced in ShiftTrack.status().widget as chainTier \u2014 a chain degraded to the Doze-deferred inexact tier is now visible in one Advanced read instead of silent; (d) WatchdogReceiver re-arms the repaint chain on every fire that finds the session record RUNNING or PAUSED, so one dropped chain shot can no longer stay dead for the rest of the session. NO PiP change in this build (the phone's PiP counters have not been read yet \u2014 no blind PiP churn), and no web-layer change beyond this pointer: APK_VERSION 50 -> 51; the www bundled in the v70 APK is this web 322 tree. INSTALL ONLY WHEN PARKED. Verdict owed in his hands: with a session running, the widget face must show the live status and a moving clock \u2014 not 'Ready to work / 00:00:00' \u2014 and the Advanced widget line (layout / chronometer / chain tier / face) is the evidence if it still fails.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,8 +17,8 @@
     "css/style.css": "0e007c31bba90e5a14d4eb3b7f0d2506d25030711c5cedf4a63eb20286f3fa4c",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "7ef956943b9ec57da3ba07c988f47a48a014d0fe921f82143e776a01a2f04b63",
-    "js/app.js": "b4f751a670a40a19c3a026fe3ba9d727cee0be2c2dde416d8cf67c9aea767178",
+    "index.html": "1924c8f4b1c0218e185ca04c4752558a2e04f2532b486f59101f0ba3b0fc8594",
+    "js/app.js": "4e7ab096d6b5b7925ab6314fb5005a80f0a7accd408ef7e91fac7020d0053fa7",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "f6f5e5bef977607277d1f1724754ff149ec470878e5e1b1fcaca221d80587957",
