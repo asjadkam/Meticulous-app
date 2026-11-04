@@ -252,10 +252,12 @@ check('webVersion 292', vj.webVersion === 292, 'webVersion=' + vj.webVersion);
    v315 (APK v67 RELEASE pointer): generation 47 -> 48, same
    three pins roll forward again.
    v318 (APK v68 RELEASE pointer): generation 48 -> 49, same
+   three pins roll forward again.
+   v320 (APK v69 RELEASE pointer): generation 49 -> 50, same
    three pins roll forward again. */
-check('native version 49', vj.version === 49, 'version=' + vj.version);
-check('apkUrl points at the v49 APK', typeof vj.apkUrl === 'string' && vj.apkUrl.indexOf('meticulous-v49.apk') >= 0);
-check('APK_VERSION 49 in js/app.js', /var APK_VERSION\s*=\s*49/.test(appJs));
+check('native version 50', vj.version === 50, 'version=' + vj.version);
+check('apkUrl points at the v50 APK', typeof vj.apkUrl === 'string' && vj.apkUrl.indexOf('meticulous-v50.apk') >= 0);
+check('APK_VERSION 50 in js/app.js', /var APK_VERSION\s*=\s*50/.test(appJs));
 const gradle = readNat('android/app/build.gradle');
 check('gradle versionCode 39', /versionCode\s+39/.test(gradle));
 check('gradle versionName 1.37', /versionName\s+"1\.37"/.test(gradle));

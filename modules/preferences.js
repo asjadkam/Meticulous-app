@@ -569,6 +569,18 @@
       h += '<div class="card"><h3>⚙️ Advanced</h3>' +
         '<button class="btn ghost" id="pf_checkupd" style="margin-top:14px;">Check for updates</button>' +
         '<p class="note" id="pf_updnote"></p>' +
+        /* v320 (PIP-FIRST-TIME-ONLY): the PiP entry ledger's one
+           quiet readout line — filled at render time from the
+           native shell's own counters (ShiftTrack.status()
+           .pipDiag) when the plugin answers; stays empty, so
+           renders nothing, on the plain website or an older APK
+           whose status carries no pipDiag. */
+        '<p class="note" id="pf_pipdiag"></p>' +
+        /* v320 (WIDGET-FREEZE trace addendum): the widget's own
+           build facts, from the SAME status() result (its widget
+           block) — one more quiet line in the same pattern; stays
+           empty unless the shell reports a real widget build. */
+        '<p class="note" id="pf_widgetdiag"></p>' +
         /* v54 (owner, Oct 14): Notifications row — plumbing a user
            doesn't click daily, so it lives here in Advanced, in the
            same pattern as the cloud-sync troubleshooting row below.
@@ -1218,6 +1230,39 @@
           if (notice) { n.textContent = '⚠️ ' + notice; return; }
           if (!n.textContent) n.textContent = 'App web version: v' + v.active + (v.inOtaCopy ? ' (updated copy)' : ' (installed copy)');
         });
+      } catch (e) {}
+      /* v320 (PIP-FIRST-TIME-ONLY): fill the PiP ledger line from
+         the shell's own counters. Feature-detected like every other
+         plugin read in this app: no plugin, no pipDiag, or a failed
+         read leaves the line empty — it renders nothing at all.
+         The widget build line below fills from the SAME status()
+         result (its widget block), under the same rule. */
+      try {
+        var STp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ShiftTrack;
+        if (STp && typeof STp.status === 'function') {
+          STp.status().then(function (r) {
+            if (!r) return;
+            var dg = r.pipDiag;
+            var n = body.querySelector('#pf_pipdiag');
+            if (n && dg) {
+              n.textContent = 'PiP: leaves ' + (dg.leaves || 0) +
+                ' · entries ' + (dg.entries || 0) +
+                ' · manual ' + (dg.manual || 0) +
+                ' · refusals ' + (dg.refusals || 0) +
+                ' · drive armed: ' + (dg.navDriving ? 'yes' : 'no');
+            }
+            var wg = r.widget;
+            var wn = body.querySelector('#pf_widgetdiag');
+            if (wn && wg && wg.buildAt) {
+              var bd = new Date(wg.buildAt), bh = bd.getHours(), bm = bd.getMinutes();
+              var ap = bh >= 12 ? 'PM' : 'AM'; bh = bh % 12; if (bh === 0) bh = 12;
+              wn.textContent = 'Widget: layout ' + (wg.buildLayout || '—') +
+                ' · chronometer ' + (wg.buildChrono ? 'on' : 'off') +
+                ' · built ' + bh + ':' + (bm < 10 ? '0' : '') + bm + ' ' + ap +
+                ' · face ' + (wg.faceSig || '—');
+            }
+          }, function () {});
+        }
       } catch (e) {}
       /* v32: manual sync retry. v107: no standing status readout
          (owner: Advanced shouldn't show the app's skeleton) — the
