@@ -560,7 +560,15 @@
       isFinite(parseFloat(a.lat)) && isFinite(parseFloat(a.lng));
     var hasText = !!(String((a && (a.jobSite || a.pickup || a.dropoff || a.address)) || '').trim());
     if (!hasPin && !hasText && !dspPlaceHit(a)) return '';
-    return '<button class="btn ghost small" id="dp_nav_active">🧭 Navigate</button>';
+    /* v321 (NAVIGATE-CHOOSE-PIN, owner, Nov 4, 2026 10:54): "what
+       if I want to navigate to just the dump pin… Not go through
+       the pick up" — when the record carries its own dump pin, a
+       second quiet button routes STRAIGHT there from wherever
+       the driver is; the run-order Navigate above is untouched. */
+    var hasDump = isFinite(parseFloat(a.dumpLat)) && isFinite(parseFloat(a.dumpLng)) &&
+      (parseFloat(a.dumpLat) !== 0 || parseFloat(a.dumpLng) !== 0);
+    return '<button class="btn ghost small" id="dp_nav_active">🧭 Navigate</button>' +
+      (hasDump ? ' <button class="btn ghost small" id="dp_nav_dump">🧭 Dump only</button>' : '');
   }
   function dspNavigatePin(lat, lng, name) {
     var la = parseFloat(lat), ln = parseFloat(lng);
@@ -1692,7 +1700,7 @@
           (a.material ? '<div class="kv"><span>Material</span><b>' + esc(a.material) + '</b></div>' : '') +
           (a.ticketNo ? '<div class="kv"><span>Ticket #</span><b>' + esc(a.ticketNo) + '</b></div>' : '') +
           (a.amount ? '<div class="kv"><span>Amount</span><b>$' + esc(a.amount) + '</b></div>' : '') +
-          (a.notes ? '<div class="kv"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
+          (a.notes ? '<div class="kv stack"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
           (isOffice ? '' : '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>') +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
             (App._photoDl ? App._photoDl(dspPhotoFor(a), 'ticket-' + (a.date || '')) : '') : '') +
@@ -1750,7 +1758,7 @@
           (face.ticketName ? '<div class="kv"><span>Name on ticket</span><b>' + esc(face.ticketName) + '</b></div>' : '') +
           (face.rateSource ? '<div class="kv"><span>Rate set by</span><b>' + esc(face.rateSource) + '</b></div>' : '') +
           (face.payer ? '<div class="kv"><span>Paid by</span><b>' + esc(face.payer) + '</b></div>' : '') +
-          (face.notes ? '<div class="kv"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
+          (face.notes ? '<div class="kv stack"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
           face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
             (App._photoDl ? App._photoDl(p, 'ticket-' + (face.date || '')) : ''); }).join('') +
           '<div class="row" style="margin-top:10px">' +
@@ -3766,6 +3774,15 @@
         var hit = dspPlaceHit(cur);
         if (hit) { dspNavigatePin(hit.lat, hit.lng, hit.label || cur.jobSite || cur.pickup || ''); return; }
         dspNavigateQuery(cur.jobSite || cur.pickup || cur.dropoff || cur.address || '');
+      };
+      /* v321 (NAVIGATE-CHOOSE-PIN): the Dump only tap — the dump
+         pin as the destination, direct from here; the pickup is
+         never a waypoint on this route. */
+      var navDumpBtn = body.querySelector('#dp_nav_dump');
+      if (navDumpBtn) navDumpBtn.onclick = function () {
+        var cur = active();
+        if (!cur) return;
+        dspNavigatePin(cur.dumpLat, cur.dumpLng, cur.dropoff || 'Dump site');
       };
       /* v129: a completed record's row View opens its face. */
       body.querySelectorAll('[data-view]').forEach(function (b) {

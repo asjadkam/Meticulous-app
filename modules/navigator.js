@@ -2814,6 +2814,14 @@
                 if (navLearn && navLearn.learnCoords && S.pendName) {
                   navLearn.learnCoords(S.pendName, Number(topRow.lat), Number(topRow.lon));
                 }
+                /* v321 (NAVIGATE-GOES-ON-MANIFEST): a dispatch
+                   Navigate that arrived as text records its visit
+                   HERE, at the pin it resolved to — the same
+                   nav_data.recent record a pin hand-off writes, so
+                   the destination lands on the day's Manifest. */
+                if (navLearn && navLearn.recordVisit && S.pendName) {
+                  navLearn.recordVisit(S.pendName, Number(topRow.lat), Number(topRow.lon));
+                }
               } catch (e) {}
               S.pendName = '';
               return;

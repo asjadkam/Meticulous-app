@@ -483,6 +483,19 @@
     navigateToPin: function (name, lat, lng) {
       goNavigate({ name: name || '', lat: lat, lng: lng }, 'work');
     },
+    /* v321 (NAVIGATE-GOES-ON-MANIFEST, owner, Nov 4, 2026 09:55 —
+       "everytime I press navigate on there, make sures it goes on
+       my manifest"): the recording half of the hand-off, callable
+       by the Navigator itself. A destination that arrived as a
+       dispatch text query resolves its pin inside the Navigator;
+       until now only the pin hand-off recorded the visit, so a
+       query-path navigation never landed in nav_data.recent —
+       the record the Manifest names the day's sites from. */
+    recordVisit: function (name, lat, lng) {
+      var la = parseFloat(lat), ln = parseFloat(lng);
+      if (!isFinite(la) || !isFinite(ln)) return false;
+      try { recordNav({ name: name || '', lat: la, lng: ln }, 'work'); return true; } catch (e) { return false; }
+    },
     /* v209 (NAV-2STEP): a saved place resolved from its address
        LEARNS its pin — the Navigator calls this when a place
        arriving by name (nav_pending, no coordinates) resolves
