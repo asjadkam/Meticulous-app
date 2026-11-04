@@ -563,7 +563,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 48; // <- bump on every native (APK) release
+      var APK_VERSION = 49; // <- bump on every native (APK) release
       fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (info) {

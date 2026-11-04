@@ -1,8 +1,8 @@
 {
-  "version": 48,
-  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v48.apk",
-  "webVersion": 317,
-  "notes": "v317 \u2014 DISPATCH-UPCOMING-NO-NAVIGATE (owner, Nov 3, 2026): tomorrow's dispatch (Aecon Trans, Calgary Airport) sat in the Upcoming card with only 'Pin set' \u2014 dspRowHtml gated row Navigate buttons behind dspNavDayOk (the v172 rule: a future dispatch's pin is not a navigate suggestion until its own day). On his direct order ('Make sure my dispatch suggests me to navigate there' / 'Fix it!'), the two conditions inside dspRowHtml (modules/dispatch.js) no longer read dspNavDayOk: a pinned row (data-nav) and a named-place row (data-navname) offer Navigate regardless of day; office faces still get the plain pin line. dspNavDayOk stays in the code and the dispatch FORM's pin line keeps its own futureDay gate, untouched. Gates: dispatch-ingest 217/217, dispatch-edit 82/82, queue-v172 8/8 (A1/A2/A3 assertions updated to the v317 spec \u2014 the form gate scenario still passes untouched), dsp-history-future-v218 and dsp-today-top-v197 behaviour assertions updated (their 2 stale version pins each are pre-existing, identical on the pristine tree), dispatch-close / dispatch-completed ?v= coherence assertions pass at 317. Pre-existing reds unchanged: dateline-v153 / siteless-v154 byte-identity fixtures + version pins, navpin-v150 / picker-v155 / multi-send stale pins \u2014 all identical on the pristine tree.",
+  "version": 49,
+  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v49.apk",
+  "webVersion": 318,
+  "notes": "v318 \u2014 APK v68 RELEASE pointer: APK_VERSION 48 -> 49 and version.json publishes the v68 APK (https://asjadkam.github.io/Meticulous-app/meticulous-v49.apk, versionCode 43 / 1.41, sha256 539e0ef70e930ad6271327a452d434a731f8d99b1f9a88502ee71e0170808c52; APK hosted on gh-pages; CI run 41750221629 verified build \u2014 aapt2 badging 1.41/vc43, dex-verified fix calls, bundled www byte-identical to web 317). Native v68 carries ONE fix, PIP-FIRST-TIME-ONLY (owner, Nov 3, 2026: 'Pip works on the first time the app opens but never opens after!'): the PiP params carrying setAutoEnterEnabled(true) were registered only at drive-arm time, so after the first PiP entry+exit no later Home press could auto-enter; v68 re-applies them on the return path \u2014 MainActivity.onPictureInPictureModeChanged's exit branch (while navDriving) and ShiftTrackPlugin.handleOnResume via the existing MainActivity.onDriveArmChanged route. Nothing else changed in native code. Web layer unchanged since web 317 beyond this pointer and the js/app.js ?v=318 tag. Pin moves: pip-mini-drivebubble-v292 release pins 48 -> 49 (native version / apkUrl / APK_VERSION, cited in place); its webVersion-292 and gradle pins were already stale-red, untouched. INSTALL ONLY WHEN PARKED. Verdict owed in his hands \u2014 the test that counts is the SECOND drive's Home press.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,8 +17,8 @@
     "css/style.css": "4b7db3f8bc63f7b5e070a1745e9980669cf840262c8b748d9895f9f111cddfe0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "a9eb89d6cf1f5a152bb7b55d2f877cc6751bbe35983cbd263df212545e2fef8c",
-    "js/app.js": "9c13eb45d49ac357bb64b8a83c2ec1aa2458c8318c32711a7e230788fdb5cca1",
+    "index.html": "1e649b0104b843be33f6674c625cb8d3e09ed6e95fef580f0f3bebb3711788de",
+    "js/app.js": "61c4fcaa5745d40eb11e883616f5a30fd452ca30f305e9ead193ee97c02824ee",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "f6f5e5bef977607277d1f1724754ff149ec470878e5e1b1fcaca221d80587957",
