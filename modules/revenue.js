@@ -1090,12 +1090,17 @@
       xtras.push({ index: i, type: x.type || 'other', amount: parseFloat(x.amount) || 0, note: x.note || '' });
     });
     var sessions = [];
-    (App._store.get('sessions', []) || []).forEach(function (s) {
+    (App._store.get('sessions', []) || []).forEach(function (s, sIdx) {
       if (!s || s.date !== ds) return;
       var endMs = s.endedAt ? Date.parse(s.endedAt) : null;
       if (!(endMs > 0)) endMs = null;
       var sec = parseFloat(s.seconds) || 0;
       sessions.push({
+        /* v319 (SESSION-RECORD-NO-DELETE): the record's position
+           in the raw sessions store rides along (the same index
+           convention entries/extras use) so the day detail's
+           session card can delete exactly this record. */
+        index: sIdx,
         startMs: (endMs !== null && sec > 0) ? endMs - sec * 1000 : null,
         endMs: endMs, seconds: sec,
         startOdo: parseFloat(s.startOdo) > 0 ? parseFloat(s.startOdo) : null,
@@ -1207,6 +1212,19 @@
   function saveExtrasVerified(list) {
     W('extras', list);
     var back = S('extras', null);
+    return JSON.stringify(back) === JSON.stringify(list);
+  }
+  /* v319 (SESSION-RECORD-NO-DELETE): sessions live under the
+     raw store key (no rev_ prefix, no profile scoping — the
+     same key dayDetailData reads). Writing through App._store.set
+     is the normal cloud-sync path: the sync wrapper stamps the
+     key dirty and schedules the push, and the record-list merge
+     honors the absence as a deliberate deletion, so a removed
+     session does not resurrect. Verified read-back, exactly as
+     saveExtrasVerified proves its write. */
+  function saveSessionsVerified(list) {
+    App._store.set('sessions', list);
+    var back = App._store.get('sessions', null);
     return JSON.stringify(back) === JSON.stringify(list);
   }
   /* DAY-DETAIL-END */
@@ -1415,6 +1433,11 @@
           if (s.odoKm !== null && s.odoKm !== undefined) rows += '<div class="kv"><span>Odometer distance</span><b>🛣 ' + (+s.odoKm.toFixed(1)) + ' km</b></div>';
           if (s.liveKm !== null) rows += '<div class="kv"><span>Live GPS distance</span><b>' + (+s.liveKm.toFixed(1)) + ' km</b></div>';
           if (s.milesStatus) rows += '<div class="kv"><span>Miles check</span><b>' + (s.milesStatus === 'confirmed' ? '✓ Matches odometer' : '⚠️ Differs from odometer') + '</b></div>';
+          /* v319 (SESSION-RECORD-NO-DELETE): the session record
+             gets the same Delete door the day's entries/extras
+             carry (hidden while an edit form is open, like
+             theirs), bound below through bindTwoTapDelete. */
+          if (!dayEdit) rows += '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rsdel="' + s.index + '">Delete</button></div>';
           return rows;
         }).join('') + '</div>';
     }
@@ -1465,6 +1488,21 @@
       if (xi < 0) { api.render(body); return; }
       var l = extrasAll(); l.splice(xi, 1);
       if (!saveExtrasVerified(l)) {
+        dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
+      } else { dayErr = ''; }
+      api.render(body);
+    });
+    /* v319 (SESSION-RECORD-NO-DELETE): remove ONLY the session
+       record — revenue entries are separate records and are
+       never touched here. The record at the rendered index must
+       still be this day's session; if the store moved since the
+       paint, delete nothing and repaint. */
+    bindTwoTapDelete(body, '[data-rsdel]', function (b) {
+      var idx = +b.getAttribute('data-rsdel');
+      var l = (App._store.get('sessions', []) || []).slice();
+      if (!(idx >= 0 && idx < l.length) || !l[idx] || l[idx].date !== ds) { api.render(body); return; }
+      l.splice(idx, 1);
+      if (!saveSessionsVerified(l)) {
         dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
       } else { dayErr = ''; }
       api.render(body);

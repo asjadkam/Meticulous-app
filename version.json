@@ -1,8 +1,8 @@
 {
   "version": 49,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v49.apk",
-  "webVersion": 318,
-  "notes": "v318 \u2014 APK v68 RELEASE pointer: APK_VERSION 48 -> 49 and version.json publishes the v68 APK (https://asjadkam.github.io/Meticulous-app/meticulous-v49.apk, versionCode 43 / 1.41, sha256 539e0ef70e930ad6271327a452d434a731f8d99b1f9a88502ee71e0170808c52; APK hosted on gh-pages; CI run 41750221629 verified build \u2014 aapt2 badging 1.41/vc43, dex-verified fix calls, bundled www byte-identical to web 317). Native v68 carries ONE fix, PIP-FIRST-TIME-ONLY (owner, Nov 3, 2026: 'Pip works on the first time the app opens but never opens after!'): the PiP params carrying setAutoEnterEnabled(true) were registered only at drive-arm time, so after the first PiP entry+exit no later Home press could auto-enter; v68 re-applies them on the return path \u2014 MainActivity.onPictureInPictureModeChanged's exit branch (while navDriving) and ShiftTrackPlugin.handleOnResume via the existing MainActivity.onDriveArmChanged route. Nothing else changed in native code. Web layer unchanged since web 317 beyond this pointer and the js/app.js ?v=318 tag. Pin moves: pip-mini-drivebubble-v292 release pins 48 -> 49 (native version / apkUrl / APK_VERSION, cited in place); its webVersion-292 and gradle pins were already stale-red, untouched. INSTALL ONLY WHEN PARKED. Verdict owed in his hands \u2014 the test that counts is the SECOND drive's Home press.",
+  "webVersion": 319,
+  "notes": "v319 \u2014 MANIFEST-DATE-0001 + SESSION-RECORD-NO-DELETE (owner, Nov 3, 2026): (1) The Manifest trusted its stored selected day forever; on the owner's phone mani_date held a corrupt year-1 value (\"0001-11-02\", later \"0001-10-24\" \u2014 the native date picker mangles it further on any touch), so the Manifest opened on year-1 days and showed no work. modules/manifest.js now validates every stored manifest date (mani_date, mani_from, mani_to): YYYY-MM-DD, a real calendar date, year 2020 through next year. A stored non-empty value that fails falls back to today AND is overwritten with today (self-heal), and the date onchange handlers store today instead of any value that fails validation. Absent/empty range ends keep the deliberate 'no dates picked' state (v211's honest empty note), untouched. (2) The Revenue day detail rendered the day's tracker-session card with no way to remove a session record \u2014 the owner's approved removal of today's phantom session (Nov 3, 9:00 AM to 5:44 PM, 0 km, 8.73 h; its $253.26 entry already deleted) was impossible in the app. The session card now carries the same two-tap Delete (Delete \u2192 Sure?) the day's entries/extras use, hidden while an edit form is open like theirs; the projection carries the record's raw sessions-store index, a tap-time guard re-checks the record at that index is still this day's session, and the verified write goes through App._store.set \u2014 the normal cloud-sync path, whose record-list merge honors the absence as a deliberate deletion so it cannot resurrect. Only the session record is removed; revenue entries are never touched. Nothing else changed. Gates: manifest suites 15 files + revenue suites 4 files + day-detail 33/33 + phantom-session-v314 20/20 run against the pristine web-318 tree first, then re-run in the final state: no functional assertion regressed anywhere. The consistent bump healed three stale ?v= pins (manifest-export 60/61 \u2192 61/61 green, manifest-jargon-peg 33/35 \u2192 34/35, manifest-names 15/17 \u2192 16/17); the remaining reds are fixed historical pins only (jargon-peg wants webVersion 299, names and multiday want 255 / the v211 build, toggles wants the app.js tag at webVersion \u2014 app.js untouched by this release, revenue-autoprice wants webVersion 188 / the revenue 199 pin). A targeted smoke over the shipped code passed 16/16 (corrupt 0001-11-02/0001-10-24 healed to today, valid dates kept, unset untouched, Feb-30 and far-future rejected, the phantom-session delete removes exactly that record and leaves entries and other days alone). Verdict owed in his hands: the Manifest opens on a real day, and the Nov 3 session record deletes from the day detail.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "4b7db3f8bc63f7b5e070a1745e9980669cf840262c8b748d9895f9f111cddfe0",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "1e649b0104b843be33f6674c625cb8d3e09ed6e95fef580f0f3bebb3711788de",
+    "index.html": "07e7b7c04581295b26bb73a4f9cf0527ad3a8d821cec4b63cf9a1bf854456e9d",
     "js/app.js": "61c4fcaa5745d40eb11e883616f5a30fd452ca30f305e9ead193ee97c02824ee",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -46,14 +46,14 @@
     "modules/fuel.js": "d92b7c6fbd4c206b9c23b92e973432ac9afd6bffdd7282e6f31b76c4da3ad714",
     "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
-    "modules/manifest.js": "b5683882257d6d415a79210c1423604f7af5fcfcb4a158a240f68be835a08c1e",
+    "modules/manifest.js": "1220c3302bf420e5cdb60dd54c41ca9dbcdce242fc617692f8c6f750b23f6aee",
     "modules/navigation.js": "6f9a3babf6287eec1cdcb2ac58ac960d7ffe6b6105ee9bca2d8c0dd724a758b3",
     "modules/navigator.js": "1a9c8c9c21e2e9f0064b96a80ef6a83be4bec79090c3bec6551e67b0ff72ce3e",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "16873a5ee0f89251d38d02dd3402a46d73aca18ad3af1ed88ac3bd7a9af8572f",
     "modules/pti.js": "09d2247b4edeb1ee53c304baa7e8de18e1ea44b3d334ae5cbc5720569e5dd382",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
-    "modules/revenue.js": "abb0f36eb68b70ed881e9006e9567b22ee292da0b88a58c63bd7988a25619412",
+    "modules/revenue.js": "b2b082d19174eda7fc9f04017b9973f15dc006865eb722e3b400422cc2fa56f4",
     "modules/subscription.js": "694b586116f2c9dcee3507042ce329493be928046132fef86d03b614f9990719",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

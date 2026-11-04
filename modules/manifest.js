@@ -35,7 +35,38 @@
      record (js/geoloads.js) — that is internal data for the
      future learned-site counter, not user-facing text. */
 
-  function dayStr() { return G('mani_date', App._today()); }
+  /* v319 (MANIFEST-DATE-0001): a stored manifest date is only
+     trusted when it is a real, sane calendar date. The owner's
+     phone held "0001-11-02" in mani_date (the native date picker
+     can hand back a mangled value, and the old dayStr trusted
+     the store forever), so the Manifest opened on year-1 days
+     and showed no work. A value is valid only as YYYY-MM-DD, a
+     date that actually exists, with a year from 2020 through
+     next year. A stored NON-EMPTY value that fails falls back
+     to today AND is overwritten with today (self-heal), so one
+     bad pick can never stick. Absent or empty keeps the
+     caller's default and is left as-is — for the range ends,
+     empty is the deliberate "no dates picked" state (v211's
+     honest empty note), not corruption. */
+  function maniDateOk(v) {
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    var p = v.split('-'), y = +p[0], m = +p[1], dd = +p[2];
+    if (y < 2020 || y > new Date().getFullYear() + 1) return false;
+    if (m < 1 || m > 12 || dd < 1 || dd > 31) return false;
+    var dt = new Date(y, m - 1, dd);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === dd;
+  }
+  function maniDate(key, unsetFallback) {
+    var v = G(key, null);
+    if (maniDateOk(v)) return v;
+    if (v) {
+      var t = App._today();
+      try { App._store.set(key, t); } catch (e) {}
+      return t;
+    }
+    return unsetFallback;
+  }
+  function dayStr() { return maniDate('mani_date', App._today()); }
 
   /* v75: session stamps are stored as ISO STRINGS (app.js
      stopSessionAt writes endedAt via toISOString), but collect()
@@ -1540,7 +1571,7 @@
          range shows every day in it and prints them as one
          document. The choice is remembered like the toggles. */
       var mnMode = G('mani_mode', 'day') === 'range' ? 'range' : 'day';
-      var mnFrom = G('mani_from', d), mnTo = G('mani_to', d);
+      var mnFrom = maniDate('mani_from', ''), mnTo = maniDate('mani_to', '');
       var rangeDays = mnMode === 'range' ? eachDayInRange(mnFrom, mnTo) : [];
       var h = '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';
       h += '<div class="row" style="gap:6px;margin:4px 0">' +
@@ -1758,7 +1789,9 @@
 
       body.innerHTML = h;
       body.querySelector('#mn_date').onchange = function (e) {
-        App._store.set('mani_date', e.target.value); Meticulous.modules.manifest.render(body);
+        /* v319: never store a date that fails maniDateOk — a
+           mangled picker value becomes today instead of sticking. */
+        App._store.set('mani_date', maniDateOk(e.target.value) ? e.target.value : App._today()); Meticulous.modules.manifest.render(body);
       };
       body.querySelectorAll('[data-tg]').forEach(function (cb) {
         cb.onchange = function () {
@@ -1827,9 +1860,9 @@
         };
       }
       var fromEl = body.querySelector('#mn_from');
-      if (fromEl) fromEl.onchange = function (e) { App._store.set('mani_from', e.target.value); Meticulous.modules.manifest.render(body); };
+      if (fromEl) fromEl.onchange = function (e) { App._store.set('mani_from', maniDateOk(e.target.value) ? e.target.value : App._today()); Meticulous.modules.manifest.render(body); };
       var toEl = body.querySelector('#mn_to');
-      if (toEl) toEl.onchange = function (e) { App._store.set('mani_to', e.target.value); Meticulous.modules.manifest.render(body); };
+      if (toEl) toEl.onchange = function (e) { App._store.set('mani_to', maniDateOk(e.target.value) ? e.target.value : App._today()); Meticulous.modules.manifest.render(body); };
       function rangeLines() {
         var lines = [{ k: 'title', a: 'MANIFEST — ' + mnFrom + ' → ' + mnTo }];
         rangeDays.forEach(function (rd) {
