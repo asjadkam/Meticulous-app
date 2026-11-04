@@ -730,35 +730,53 @@
            so a fence that recovers onto the truck judges this
            very fix inside it. */
         var fixT = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now();
-        if (before && before.armed && cen.dump) {
-          var dDumpC = haversineM(sm.lat, sm.lng, cen.dump.lat, cen.dump.lng);
-          var dLoadC = cen.load ? haversineM(sm.lat, sm.lng, cen.load.lat, cen.load.lng) : Infinity;
-          var recCandidate = dDumpC > PEG_FENCE_M && dDumpC <= RECOVERY_BAND_M &&
-            dDumpC <= dLoadC + TIE_BAND_M;
+        /* v323 (LOADS-DOUBLE-COUNTING / LOADS-SECOND-CYCLE-NOT-
+           COUNTING, Nov 4, 2026): the recovery is now symmetric —
+           it serves whichever role the cycle is WAITING for. The
+           v300 original served only the dump side (while carrying);
+           the load side had no recovery at all, so a pickup face
+           that moved outside the load fence starved the arm for
+           the rest of the day (proven in
+           tools/defects-nov4-v323-test.js S3: loading 95 m from
+           the load peg never armed, the cycle never counted —
+           Asjad's Nov 4 morning, cycles 2 and 3). The gates are
+           the v300 honesty gates, mirrored: the cluster must sit
+           nearer the WAITING role's centre than the other centre
+           (beyond the tie band), so a stop at the dump can never
+           drag the load centre, nor the reverse. */
+        var recRole = (before && before.armed) ? 'dump' : 'load';
+        var recCen = cen[recRole];
+        var recOther = cen[recRole === 'dump' ? 'load' : 'dump'];
+        if (rec && rec.role !== recRole) rec = null;
+        if (before && recCen) {
+          var dTgtC = haversineM(sm.lat, sm.lng, recCen.lat, recCen.lng);
+          var dOthC = recOther ? haversineM(sm.lat, sm.lng, recOther.lat, recOther.lng) : Infinity;
+          var recCandidate = dTgtC > PEG_FENCE_M && dTgtC <= RECOVERY_BAND_M &&
+            dTgtC <= dOthC + TIE_BAND_M;
           if (recCandidate) {
             if (!rec) {
-              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: 0 };
+              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: 0, role: recRole };
             } else if (haversineM(sm.lat, sm.lng, rec.lat, rec.lng) > RECOVERY_CLUSTER_M) {
-              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: rec.lastNudge };
+              rec = { lat: sm.lat, lng: sm.lng, since: fixT, lastNudge: rec.lastNudge, role: recRole };
             } else {
               rec.lat += (sm.lat - rec.lat) * 0.35;
               rec.lng += (sm.lng - rec.lng) * 0.35;
             }
             if (rec && (fixT - rec.since) >= PEG_DWELL_MS &&
                 (fixT - (rec.lastNudge || rec.since)) >= PEG_DWELL_MS &&
-                haversineM(rec.lat, rec.lng, cen.dump.lat, cen.dump.lng) <=
-                  (cen.load ? haversineM(rec.lat, rec.lng, cen.load.lat, cen.load.lng) : Infinity) + TIE_BAND_M) {
-              var rd = haversineM(cen.dump.lat, cen.dump.lng, rec.lat, rec.lng);
+                haversineM(rec.lat, rec.lng, recCen.lat, recCen.lng) <=
+                  (recOther ? haversineM(rec.lat, rec.lng, recOther.lat, recOther.lng) : Infinity) + TIE_BAND_M) {
+              var rd = haversineM(recCen.lat, recCen.lng, rec.lat, rec.lng);
               if (rd > 0) {
                 var rf = Math.min(DRIFT_STEP_M, rd) / rd;
-                cen.dump.lat += (rec.lat - cen.dump.lat) * rf;
-                cen.dump.lng += (rec.lng - cen.dump.lng) * rf;
+                recCen.lat += (rec.lat - recCen.lat) * rf;
+                recCen.lng += (rec.lng - recCen.lng) * rf;
                 if (site) {
-                  var rds = haversineM(site.lat, site.lng, cen.dump.lat, cen.dump.lng);
+                  var rds = haversineM(site.lat, site.lng, recCen.lat, recCen.lng);
                   if (rds > site.radiusM) {
                     var rg = site.radiusM / rds;
-                    cen.dump.lat = site.lat + (cen.dump.lat - site.lat) * rg;
-                    cen.dump.lng = site.lng + (cen.dump.lng - site.lng) * rg;
+                    recCen.lat = site.lat + (recCen.lat - site.lat) * rg;
+                    recCen.lng = site.lng + (recCen.lng - site.lng) * rg;
                   }
                 }
                 if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
@@ -766,11 +784,11 @@
                 rec.lastNudge = fixT;
               }
             }
-          } else if (dDumpC <= PEG_FENCE_M) {
+          } else if (dTgtC <= PEG_FENCE_M) {
             rec = null; /* inside the fence: recovery stands down */
           }
         } else {
-          rec = null; /* not carrying: no cluster may build */
+          rec = null; /* no waiting centre: no cluster may build */
         }
         var r = inner.ingest({
           latitude: sm.lat, longitude: sm.lng,
@@ -1936,6 +1954,19 @@
      life is newer than any pulled record's corr and survives a
      reseed (see GeoLoads.reseedFromStore). */
   var nudgedLive = false;
+  /* v323 (LOADS-DOUBLE-COUNTING, Nov 4, 2026): a +1 the driver
+     taps AT the tip, while the machine is carrying (armed) and
+     the truck is at the dump, marks the pending carry as
+     hand-counted. If the machine then confirms THAT SAME carry
+     (the dwell finally lands), the correction is retired as the
+     count lands — one physical load reads once, never twice
+     (proven in tools/defects-nov4-v323-test.js S6). If the truck
+     instead confirms back at the LOAD face first, the mark
+     clears and the tap stands as the count for the missed tip.
+     The flag rides the day record (rec.handCarry) so a mid-stop
+     app reload cannot resurrect the double. */
+  var handCarry = false;
+  var lastFeedZone = null;
 
   function persist(force) {
     if (!curDate) return;
@@ -1947,6 +1978,7 @@
     rec.sessionKey = sessionKey;
     rec.sites = curSites;
     rec.corr = corrNow;
+    rec.handCarry = handCarry ? 1 : 0; /* v323: see handCarry */
     /* v282: the day's pegs ride every persist (their source of
        truth), and a peg-keyed day is marked as one — the Manifest
        reads peg counts as the driver's declared sites, never as
@@ -1995,6 +2027,7 @@
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
     learner = null; learnMode = null; curLoad = null;
+    handCarry = false; /* v323: branches that restore corr re-read it */
     basePegEvents = [];
     patternSeedWasDump = false;
     shadowLearner = null;
@@ -2032,6 +2065,7 @@
          Manifest's story, it never restarts it. */
       basePegEvents = (!savedPeg && prevPegDay && Array.isArray(prevPegDay.pegEvents)) ? prevPegDay.pegEvents.slice() : [];
       corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
+      handCarry = !!(prevPegDay && prevPegDay.handCarry); /* v323 */
       counter = ENGINE.createPegCounter({ load: curSites.load, dump: curSites.dump });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
@@ -2252,6 +2286,7 @@
     baseCount = prev ? Math.max(0, (prev.count || 0) - savedCount) : 0;
     baseEvents = (!sameSession && prev && prev.events) ? prev.events.slice() : [];
     corrNow = prev ? (prev.corr || 0) : 0; // v220: the day's correction survives restarts
+    handCarry = !!(prev && prev.handCarry); /* v323 */
     counter = ENGINE.createGeoLoadCounter({ load: sites.load, dump: sites.dump });
     counter.begin(key, saved);
     if (learnMode === 'observe') {
@@ -2466,6 +2501,20 @@
         }
       }
     }
+    /* v323 (LOADS-DOUBLE-COUNTING): settle a hand-counted carry
+       against the machine's verdict for the SAME carry. The
+       machine confirming the carry retires the driver's +1 as
+       the count lands (corrNow -= 1: the load reads once). The
+       truck confirming back at the LOAD face first means the
+       tipped load was the machine's miss — the mark clears and
+       the tap stands. */
+    if (r && counter) {
+      if (handCarry) {
+        if (r.counted) { corrNow -= 1; handCarry = false; }
+        else if (r.zone === 'load' && lastFeedZone !== 'load') handCarry = false;
+      }
+      if (r.zone) lastFeedZone = r.zone;
+    }
     if (learner) {
       var lr = learner.ingest(fix);
       if (lr && learnMode === 'pattern' && lr.pair) onPatternPair(lr.pair);
@@ -2678,6 +2727,8 @@
       baseCount = 0;
       baseEvents = [];
       corrNow = 0;
+      handCarry = false; /* v323 */
+      lastFeedZone = null;
       nudgedLive = false;
     },
 
@@ -2856,6 +2907,16 @@
       if (!curDate || !watching) return null;
       nudgedLive = true; // v222: a live correction outranks a pulled record's older corr on reseed
       corrNow += (parseInt(delta, 10) || 0);
+      /* v323: a +1 tapped while carrying, with the truck at the
+         dump (within 120 m of the dump centre), marks the pending
+         carry hand-counted — see the handCarry note above. */
+      if ((parseInt(delta, 10) || 0) > 0 && counter && lastFixSeen &&
+          typeof counter.phase === 'function' && counter.phase() === 'to-dump') {
+        var hcCen = null;
+        try { var hcAll = counter.centres ? counter.centres() : null; hcCen = hcAll && hcAll.dump; } catch (e) {}
+        var hcPt = hcCen || (curSites && curSites.dump);
+        if (hcPt && ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, hcPt.lat, hcPt.lng) <= 120) handCarry = true;
+      }
       /* the buttons move the DISPLAYED count: it floors at 0, so
          the clamp lives in the correction itself — extra −1 taps
          at zero bank no invisible debt for +1 to repay first. */

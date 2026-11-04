@@ -1826,7 +1826,18 @@
     }
     return {
       status: idle ? 'idle' : t.status,
-      elapsed: trackerElapsedSec(),
+      /* v323 (TIMER-REANCHORED-MIDDAY, Nov 4, 2026): the native
+         record's clock is elapsedBase + (now - segStartMs) — the
+         record adds the live segment itself. This field therefore
+         carries the segment BASE (t.elapsed), never the total:
+         sending trackerElapsedSec() here made the record count
+         the current segment TWICE — proven in
+         tools/defects-nov4-v323-test.js T1: syncs at 10:00 and
+         12:00 on a 09:00 session left the record reading 21600 s
+         at noon for a true 10800 s, and a native pause froze the
+         inflated 24038 s for a true 13238 s, which adoption then
+         imported wholesale into the web tracker. */
+      elapsed: Math.max(0, Math.round(t.elapsed || 0)),
       startTs: (!idle && t.status === 'running') ? (t.startTs || 0) : 0,
       loads: loadsNumber(),
       loadsManual: (t.accum && t.accum.manualLoads) || 0,
@@ -1939,6 +1950,25 @@
     }
     if (typeof rec.rev === 'number') App._sessRev = rec.rev;
     if (changed) {
+      /* v323 (TIMER-REANCHORED-MIDDAY): the adopted day can never
+         be older than its own start. A record written before the
+         v323 facts fix (or by any mid-segment sync) carries an
+         elapsedBase that already includes the live segment, and
+         the flips above adopt it unchecked — the total can exceed
+         the session's wall-clock age, which is impossible. Clamp
+         before persisting: fold the excess out of the base, then
+         keep the segment start at or after session start + base,
+         so "counting from" can never precede the session's own
+         start. */
+      if (sessionActive() && t.sessionId) {
+        var ageCap = Math.floor((Date.now() - t.sessionId) / 1000);
+        if (ageCap >= 0 && trackerElapsedSec() > ageCap) {
+          var excess = trackerElapsedSec() - ageCap;
+          t.elapsed = Math.max(0, (t.elapsed || 0) - excess);
+          var minStart = t.sessionId + (t.elapsed || 0) * 1000;
+          if (t.startTs && t.startTs < minStart) t.startTs = minStart;
+        }
+      }
       /* Persist + repaint WITHOUT re-syncing: trackerSave's
          hook would echo the record straight back. The record
          already holds these facts (they came from it). */
