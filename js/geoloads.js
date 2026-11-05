@@ -845,6 +845,444 @@
     };
   }
 
+  /* ---- dump-VISIT counting (v324 — COUNT-BY-DUMP-VISIT +
+     SITE-EXTENT + REPEG, owner Nov 5, 2026) ----
+     The owner's new counting law, stated plainly on his Nov 5
+     drive: "Every time the truck visits the DUMP site, 1 load
+     should be counted. Why does it matter where the load is
+     being picked up from? Pickup site is just a bonus for the
+     system to know the entire loop." So this counter needs NO
+     load site at all: a confirmed ARRIVAL at the dump site —
+     after the previous visit has closed — counts one load. The
+     pickup site, when known, is passed as an "other": a dwell
+     there CLOSES the visit (he went and loaded; the next dump
+     arrival is a new load). A visit also closes when the truck
+     leaves the site's world entirely (a fix farther than
+     VISIT_SPAN_M from every site point) and — only when NO other
+     site is known — when he dwells at a foreign place reached
+     by road (the pit he loaded at is otherwise undiscoverable).
+     SITE-EXTENT (his amendment, same day): some dump sites are
+     MASSIVE — one tip face can be kilometres from another on
+     the same ground, so a tight fixed radius around one peg is
+     the wrong shape. The site here is a SET OF POINTS: the seed
+     plus every face the truck itself proves by stopping on the
+     site. Presence is VISIT_PRESENCE_M around any point. While
+     a visit stands counted, a stop-cluster at a NEW face within
+     VISIT_SPAN_M of the site extends the point set WITHOUT
+     counting again (one visit tips once — the box is empty
+     after the first tip), provided the path since leaving
+     presence stayed at site speeds (VISIT_SITE_SPEED_KMH) or
+     the stop is a full tip-grade dwell (LEARN_DWELL_MS): that
+     continuity is how the machine knows he never left the
+     ground. The same gates let a virgin face count as an
+     arrival on a later visit when a load site is known (the
+     pit is excluded by the others, so a long stop within span
+     can only be the site's own new face). Points ride the
+     snapshot, so the learned extent survives relaunches and
+     re-seeds exactly like the count does.
+     Discipline mirrors the house rules: bad fixes (accuracy,
+     stale, teleport) are ignored ENTIRELY — never fatal, never
+     building, never breaking; arrival needs a 45 s dwell with
+     the standard candidate grace, so drive-bys and fence-edge
+     jitter cannot count; one visit can never count twice.
+     API mirrors the other counters (begin/ingest/snapshot/
+     count/events/phase/zone/debug) so the glue, the persist
+     and the Advanced readout treat it identically. phase():
+     'at-dump' while present, 'to-load' while a counted visit
+     stands open, 'away' otherwise. */
+  var VISIT_PRESENCE_M = 250;   // presence radius around a site point
+  var VISIT_HALO_M = 100;       // beyond presence+halo the departure
+                                // clock runs; inside the halo the
+                                // state simply holds (edge jitter)
+  var VISIT_DEPART_MS = 60 * 1000; // sustained absence beyond the
+                                // halo = he has left the face
+  var VISIT_SPAN_M = 3500;      // a site point's reach: extent and
+                                // arrivals chain point-to-point, so
+                                // a site can grow kilometres long;
+                                // a fix beyond span of EVERY point
+                                // = he left the site's world
+  var VISIT_CLUSTER_M = 100;    // a "stop": fixes hold within this
+                                // of the cluster's running centroid
+  var VISIT_CLUSTER_DWELL_MS = 60 * 1000; // a stop that speaks
+  var VISIT_SITE_SPEED_KMH = 50; // the path between faces stayed at
+                                // site speeds = he never left the
+                                // ground (continuity of presence)
+  var VISIT_FACE_MIN_M = 500;   // a foreign dwell must sit at least
+                                // this far from every site point to
+                                // close a visit (fringe is the site)
+
+  function createDumpVisitCounter(cfg) {
+    var SEED = { lat: +cfg.dump.lat, lng: +cfg.dump.lng };
+    var OTHERS = [];
+    var CFG_LEARNED = (cfg && Array.isArray(cfg.learnedOthers))
+      ? cfg.learnedOthers.filter(isCoord).map(function (o) { return { lat: +o.lat, lng: +o.lng }; }) : [];
+    (cfg.others || []).forEach(function (o) {
+      if (isCoord(o)) OTHERS.push({ lat: +o.lat, lng: +o.lng });
+    });
+    var accMaxM = cfg.accMaxM || ACC_MAX_M;
+    var dwellMs = cfg.dwellMs || DWELL_MS;
+    var S = null;
+
+    function nearest(list, lat, lng) {
+      var best = Infinity;
+      for (var i = 0; i < list.length; i++) {
+        var d = haversineM(lat, lng, list[i].lat, list[i].lng);
+        if (d < best) best = d;
+      }
+      return best;
+    }
+    function phaseOf() {
+      if (!S) return 'away';
+      return S.present ? 'at-dump' : (S.visitCounted ? 'to-load' : 'away');
+    }
+    /* The accumulated-dwell candidate discipline of the standard
+       counter, in miniature: presence accumulates toward the bar;
+       a brief excursion (<= CAND_GRACE_MS) is subtracted, never
+       fatal; a longer one restarts the build. `inNow` is whether
+       THIS fix is inside the candidate's zone. Returns true on
+       the fix that crosses the bar. */
+    function candStep(c, inNow, t, barMs) {
+      if (inNow) {
+        if (!c) return { since: t, gapMs: 0, awaySince: null };
+        if (c.awaySince) { c.gapMs += t - c.awaySince; c.awaySince = null; }
+        if (t - c.since - c.gapMs >= barMs) return 'confirm';
+        return c;
+      }
+      if (!c) return null;
+      if (!c.awaySince) c.awaySince = t;
+      else if (t - c.awaySince > CAND_GRACE_MS) return null;
+      return c;
+    }
+
+    return {
+      /* marker the glue's correction logic duck-types on */
+      visitMode: true,
+      begin: function (key, saved) {
+        S = {
+          key: key, active: true, count: 0, events: [],
+          points: [{ lat: SEED.lat, lng: SEED.lng }],
+          auxPoints: [], othersLearned: CFG_LEARNED.slice(), pending: null,
+          present: false, visitCounted: false, closes: 0, everPresent: false,
+          cand: null, depSince: null, otherCand: null,
+          cluster: null, clusterStage: 0, excMaxKmh: 0,
+          lastT: 0, lastLat: null, lastLng: null,
+          lastNearM: Infinity, counted: false
+        };
+        if (saved && saved.sitesKey === key) {
+          if (typeof saved.count === 'number' && saved.count > 0) S.count = saved.count;
+          if (saved.events && saved.events.length) S.events = saved.events.slice();
+          if (Array.isArray(saved.points)) {
+            var pts = saved.points.filter(isCoord).map(function (p) {
+              return { lat: +p.lat, lng: +p.lng };
+            });
+            if (pts.length) S.points = pts;
+          }
+          if (Array.isArray(saved.auxPoints)) {
+            S.auxPoints = saved.auxPoints.filter(isCoord).map(function (p) {
+              return { lat: +p.lat, lng: +p.lng, aux: true };
+            });
+          }
+          if (Array.isArray(saved.othersLearned)) {
+            S.othersLearned = saved.othersLearned.filter(isCoord).map(function (p) {
+              return { lat: +p.lat, lng: +p.lng };
+            });
+          }
+          if (saved.pendingVisit && isCoord(saved.pendingVisit)) {
+            S.pending = { lat: +saved.pendingVisit.lat, lng: +saved.pendingVisit.lng, t: +saved.pendingVisit.t || 0 };
+            S.points.push({ lat: S.pending.lat, lng: S.pending.lng, pend: true });
+          }
+          S.present = !!saved.present;
+          S.everPresent = !!(saved.everPresent || saved.present);
+          S.visitCounted = !!saved.visitCounted;
+          if (typeof saved.closes === 'number') S.closes = saved.closes;
+          if (typeof saved.lastT === 'number') S.lastT = saved.lastT;
+        }
+        return S.key;
+      },
+      ingest: function (fix) {
+        if (!S || !S.active) return { accepted: false, why: 'inactive' };
+        S.counted = false;
+        if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) {
+          return { accepted: false, why: 'bad-fix' };
+        }
+        if (fix.accuracy !== null && fix.accuracy !== undefined && fix.accuracy > accMaxM) {
+          return { accepted: false, why: 'accuracy' };
+        }
+        var t = (typeof fix.time === 'number' && fix.time > 0) ? fix.time : 0;
+        if (!t) return { accepted: false, why: 'no-time' };
+        if (S.lastT && t <= S.lastT) return { accepted: false, why: 'stale' };
+        var spdKmh = 0;
+        if (S.lastLat !== null) {
+          var dJump = haversineM(S.lastLat, S.lastLng, fix.latitude, fix.longitude);
+          var dtH = (t - S.lastT) / 3600000;
+          if (dtH > 0) {
+            spdKmh = (dJump / 1000) / dtH;
+            if (spdKmh > MAX_SPEED_KMH) return { accepted: false, why: 'teleport' };
+          }
+        }
+        var lat = +fix.latitude, lng = +fix.longitude;
+        S.lastT = t; S.lastLat = lat; S.lastLng = lng;
+        var nearM = nearest(S.points, lat, lng);
+        var otherM = Math.min(nearest(OTHERS, lat, lng), nearest(S.othersLearned, lat, lng));
+        S.lastNearM = nearM;
+        var inSite = nearM <= VISIT_PRESENCE_M;
+        var atOther = otherM <= VISIT_PRESENCE_M;
+        /* excursion speed: accumulates whenever the truck is
+           OUTSIDE presence (not only after departure confirms —
+           on a fast drive the confirm lands on arrival and the
+           road-speed evidence would be lost, making every
+           road-reached stop look site-internal). */
+        if (!inSite && spdKmh > S.excMaxKmh) S.excMaxKmh = spdKmh;
+
+        /* far exit: beyond span of every site point — the visit
+           (counted or not) is over and the next arrival counts. */
+        if (nearM > VISIT_SPAN_M && S.visitCounted) {
+          S.visitCounted = false; S.closes++;
+        }
+
+        /* the stop-cluster: extent learning, virgin-face
+           arrivals, foreign-dwell closes. A cluster holds while
+           fixes stay within VISIT_CLUSTER_M of its running
+           centroid; leaving the circle starts a new one. */
+        var cl = S.cluster;
+        if (!cl) {
+          cl = S.cluster = { lat: lat, lng: lng, n: 1, since: t };
+          S.clusterStage = 0;
+        } else if (haversineM(lat, lng, cl.lat, cl.lng) <= VISIT_CLUSTER_M) {
+          cl.n++; cl.lat += (lat - cl.lat) / cl.n; cl.lng += (lng - cl.lng) / cl.n;
+        } else {
+          cl = S.cluster = { lat: lat, lng: lng, n: 1, since: t };
+          S.clusterStage = 0;
+        }
+        var clAge = t - cl.since;
+        /* two-stage decision: at the cluster dwell (60 s) the
+           site-internal (slow-path) cases resolve; at the LEARN
+           dwell (120 s — a tip's length) the road-reached cases
+           resolve. Under a steady fix stream the first look
+           always lands near 60 s, so a single look would never
+           see tip length. */
+        var clDue = (S.clusterStage === 0 && clAge >= VISIT_CLUSTER_DWELL_MS) ||
+                    (S.clusterStage === 1 && clAge >= LEARN_DWELL_MS);
+        if (S.clusterStage < 2 && clDue) {
+          var clNearM = nearest(S.points, cl.lat, cl.lng);
+          var clOtherM = Math.min(nearest(OTHERS, cl.lat, cl.lng), nearest(S.othersLearned, cl.lat, cl.lng));
+          var slowPath = S.excMaxKmh <= VISIT_SITE_SPEED_KMH;
+          var tipGrade = clAge >= LEARN_DWELL_MS;
+          var clFired = false;
+          if (clNearM > VISIT_PRESENCE_M && clOtherM > VISIT_PRESENCE_M) {
+            if (S.visitCounted && tipGrade && !OTHERS.length && !S.othersLearned.length &&
+                clNearM > VISIT_FACE_MIN_M) {
+              /* no load end is known and he stopped at tip
+                 length far off, by any road: that stop was the
+                 other end of the loop — the visit closes, and
+                 the place is LEARNED as an other end (later
+                 loadings there close by plain dwell). Judged
+                 BEFORE the extension below: a tip-length stop
+                 kilometres out is a loading, not site ground,
+                 however slowly he drove to it. */
+              S.visitCounted = false; S.closes++;
+              S.othersLearned.push({ lat: cl.lat, lng: cl.lng });
+              clFired = true;
+            } else if (S.visitCounted && clNearM <= VISIT_SPAN_M && slowPath) {
+              /* a new face of the SAME site, reached without
+                 leaving the ground: the site grows; the visit
+                 does NOT count again (one visit tips once). */
+              S.points.push({ lat: cl.lat, lng: cl.lng });
+              S.present = true; S.depSince = null; S.cand = null;
+              nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+              inSite = nearM <= VISIT_PRESENCE_M;
+              clFired = true;
+            } else if (S.visitCounted && !slowPath && tipGrade &&
+                       clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M) {
+              {
+                /* a tip-length road stop mid-visit (a fuel
+                   stop fits this shape as well as a face can):
+                   record the spot as a STANDBY point only. It
+                   proves nothing about this visit, but if a
+                   later visit ARRIVES there, it counts then —
+                   the face may have moved; the fuel station
+                   will simply never be arrived at loaded-first
+                   in the loop's rhythm. */
+                S.auxPoints.push({ lat: cl.lat, lng: cl.lng, aux: true });
+              }
+              clFired = true;
+            } else if (!S.visitCounted && !S.present && OTHERS.length &&
+                       (S.closes > 0 || S.everPresent) &&
+                       clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M &&
+                       (slowPath || tipGrade)) {
+              /* a virgin face of a DECLARED site on a fresh
+                 visit: the pit is excluded by the others, so a
+                 qualifying stop within span can only be the
+                 site's own new face. But a first dwell is not
+                 proof (the v220 law): a mid-leg rival stop has
+                 this exact shape. The stop becomes a PENDING
+                 visit — the point joins the site on probation,
+                 presence runs from it, and the count lands only
+                 when the loop COMPLETES (the close at the load
+                 end), credited at the stop's own time. If he
+                 instead tips at a known face, the pending stop
+                 was a scout and evaporates. Gated on the
+                 counter having SEEN the loop move today (a
+                 counted close or a presence at a known face): a
+                 stop already in progress when the counter armed
+                 — he was parked somewhere arbitrary when a
+                 dispatch re-pinned mid-day (Nov 5's swap) — must
+                 never read as an arrival. */
+              if (!S.pending) {
+                S.points.push({ lat: cl.lat, lng: cl.lng, pend: true });
+                S.pending = { lat: cl.lat, lng: cl.lng, t: t };
+              }
+              S.present = true; S.depSince = null; S.cand = null;
+              S.everPresent = true;
+              nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+              inSite = nearM <= VISIT_PRESENCE_M;
+              clFired = true;
+            }
+          }
+          S.clusterStage = clFired ? 2 : S.clusterStage + 1;
+        }
+
+        /* arrival: sustained presence at a known face while the
+           visit stands open counts the load. A standby (aux)
+           point counts as a face for ARRIVAL only while the
+           visit stands open — arriving there loaded promotes
+           it to a full site point. */
+        var atAux = !S.visitCounted &&
+          nearest(S.auxPoints, lat, lng) <= VISIT_PRESENCE_M;
+        if (!S.present) {
+          var step = candStep(S.cand, (inSite || atAux) && !atOther, t, dwellMs);
+          if (step === 'confirm') {
+            S.cand = null;
+            if (!inSite && atAux) {
+              var bi = -1, bd = Infinity;
+              for (var ai = 0; ai < S.auxPoints.length; ai++) {
+                var ad = haversineM(lat, lng, S.auxPoints[ai].lat, S.auxPoints[ai].lng);
+                if (ad < bd) { bd = ad; bi = ai; }
+              }
+              if (bi >= 0) {
+                var promoted = S.auxPoints.splice(bi, 1)[0];
+                S.points.push({ lat: promoted.lat, lng: promoted.lng });
+                nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+                inSite = nearM <= VISIT_PRESENCE_M;
+              }
+            }
+            S.present = true; S.depSince = null; S.excMaxKmh = 0;
+            S.everPresent = true;
+            if (S.pending) {
+              /* an arrival settles the pending stop: AT the
+                 pending face it confirms it (the point stays,
+                 proven); at a KNOWN face the pending stop was a
+                 scout — its point comes back off the site. */
+              var atPend = haversineM(lat, lng, S.pending.lat, S.pending.lng) <= VISIT_PRESENCE_M;
+              for (var ppi = S.points.length - 1; ppi >= 0; ppi--) {
+                if (!S.points[ppi].pend) continue;
+                if (atPend) delete S.points[ppi].pend;
+                else S.points.splice(ppi, 1);
+              }
+              S.pending = null;
+            }
+            if (!S.visitCounted) {
+              S.count++; S.visitCounted = true; S.counted = true;
+              S.events.push({ t: t, site: 'dump', n: S.count });
+            }
+          } else {
+            S.cand = step;
+          }
+        } else if (inSite) {
+          S.cand = null;
+        }
+
+        /* departure: sustained absence beyond the halo. Fixes in
+           the halo band hold the state (edge jitter at big
+           yards is normal). */
+        if (S.present) {
+          if (nearM > VISIT_PRESENCE_M + VISIT_HALO_M) {
+            if (!S.depSince) S.depSince = t;
+            else if (t - S.depSince >= VISIT_DEPART_MS) {
+              /* excMaxKmh is NOT reset here: the excursion's
+                 road speed is the evidence the cluster decision
+                 judges by (resetting it on departure-confirm
+                 made every road-reached stop look site-internal).
+                 It resets when presence is regained. */
+              S.present = false; S.depSince = null;
+            }
+          } else {
+            S.depSince = null;
+          }
+        }
+
+        /* the other end of the loop: a dwell at a known other
+           site closes the visit (he loaded; the next dump
+           arrival is a new load). */
+        var oStep = candStep(S.otherCand, atOther && !inSite, t, dwellMs);
+        if (oStep === 'confirm') {
+          S.otherCand = null;
+          if (S.pending) {
+            /* the loop completed: the pending stop WAS a tip
+               at the site's new face — it counts now, at its
+               own time, and its point is a proven face. */
+            S.count++;
+            S.events.push({ t: S.pending.t, site: 'dump', n: S.count });
+            S.counted = true;
+            for (var cpi = 0; cpi < S.points.length; cpi++) {
+              if (S.points[cpi].pend) delete S.points[cpi].pend;
+            }
+            S.pending = null;
+            S.closes++;
+          }
+          if (S.visitCounted) { S.visitCounted = false; S.closes++; }
+        } else {
+          S.otherCand = oStep;
+        }
+
+        return {
+          accepted: true, zone: inSite ? 'dump' : 'out',
+          confirmed: S.present ? 'dump' : 'out', phase: phaseOf(),
+          counted: S.counted, count: S.count
+        };
+      },
+      stop: function () { if (S) S.active = false; },
+      snapshot: function () {
+        if (!S) return null;
+        return {
+          sitesKey: S.key, count: S.count, events: S.events.slice(),
+          points: S.points.filter(function (p) { return !p.pend; }).map(function (p) { return { lat: p.lat, lng: p.lng }; }),
+          auxPoints: S.auxPoints.map(function (p) { return { lat: p.lat, lng: p.lng, aux: true }; }),
+          othersLearned: S.othersLearned.map(function (p) { return { lat: p.lat, lng: p.lng }; }),
+          pendingVisit: S.pending ? { lat: S.pending.lat, lng: S.pending.lng, t: S.pending.t } : null,
+          present: S.present, visitCounted: S.visitCounted,
+          closes: S.closes, everPresent: S.everPresent, lastT: S.lastT,
+          zone: S.present ? 'dump' : 'out', phase: phaseOf()
+        };
+      },
+      count: function () { return S ? S.count : 0; },
+      events: function () { return S ? S.events.slice() : []; },
+      phase: phaseOf,
+      zone: function () { return S && S.present ? 'dump' : 'out'; },
+      isActive: function () { return !!(S && S.active); },
+      /* the peg counter's duck-typed read (nudge/setPeg paths):
+         the dump centre is the seed; the load centre is the
+         first known other, when there is one. */
+      centres: function () {
+        return {
+          load: OTHERS.length ? { lat: OTHERS[0].lat, lng: OTHERS[0].lng } : null,
+          dump: { lat: SEED.lat, lng: SEED.lng }
+        };
+      },
+      debug: function () {
+        if (!S) return null;
+        return {
+          mode: 'dump-visit', zone: S.present ? 'dump' : 'out',
+          phase: phaseOf(), count: S.count,
+          points: S.points.length, present: S.present,
+          visitCounted: S.visitCounted, closes: S.closes,
+          nearestM: (S.lastNearM === Infinity) ? null : Math.round(S.lastNearM),
+          candSince: S.cand ? S.cand.since : null, lastT: S.lastT
+        };
+      }
+    };
+  }
+
   /* ---- dump-site learning (v68) ----
      Dump work almost never puts the dump location on the dispatch —
      the operator tells the driver verbally, ON SITE (owner, Oct 14).
@@ -1446,6 +1884,7 @@
     looksLikeAddress: looksLikeAddress,
     createGeoLoadCounter: createGeoLoadCounter,
     createPegCounter: createPegCounter,
+    createDumpVisitCounter: createDumpVisitCounter,
     createDumpLearner: createDumpLearner,
     createPatternLearner: createPatternLearner,
     RADIUS_M: RADIUS_M, DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
@@ -1456,6 +1895,12 @@
     INTRA_ACC_MAX_M: INTRA_ACC_MAX_M, INTRA_RADIUS_M: INTRA_RADIUS_M,
     PEG_WINDOW: PEG_WINDOW, PEG_DWELL_MS: PEG_DWELL_MS,
     PEG_FENCE_M: PEG_FENCE_M, DRIFT_STEP_M: DRIFT_STEP_M,
+    VISIT_PRESENCE_M: VISIT_PRESENCE_M, VISIT_HALO_M: VISIT_HALO_M,
+    VISIT_DEPART_MS: VISIT_DEPART_MS, VISIT_SPAN_M: VISIT_SPAN_M,
+    VISIT_CLUSTER_M: VISIT_CLUSTER_M,
+    VISIT_CLUSTER_DWELL_MS: VISIT_CLUSTER_DWELL_MS,
+    VISIT_SITE_SPEED_KMH: VISIT_SITE_SPEED_KMH,
+    VISIT_FACE_MIN_M: VISIT_FACE_MIN_M,
     TIE_BAND_M: TIE_BAND_M, TIE_MIN_DIST_M: TIE_MIN_DIST_M,
     CAND_GRACE_MS: CAND_GRACE_MS
   };
@@ -1785,20 +2230,23 @@
     var dump = { lat: cand.lat, lng: cand.lng, label: cand.label || 'Dump site', src: 'navigated' };
     curSites = { load: curLoad, dump: dump };
     var key = sitesKeyFor(curDispatchId, curLoad, dump);
-    counter = ENGINE.createGeoLoadCounter({ load: curLoad, dump: dump });
-    /* If the learner already watched the load visit AND the
-       departure, the truck is mid-loaded-leg right now: seed the
-       counter armed, or the first load of the day — the one he
-       is carrying — would be the one load it cannot count. (He
-       navigates when he LEAVES the pit, loaded; adoption on
-       that leg is the common case, not an edge.) */
-    var seed = null;
+    /* v324 (COUNT-BY-DUMP-VISIT): the navigated dump arms the
+       VISIT counter. The old cycle counter needed an "armed"
+       seed when the learner had already watched the loaded leg
+       (else the carried load could not count); the visit law
+       counts the ARRIVAL itself, leg or no leg, so the counter
+       simply begins open — his arrival at the place he himself
+       navigated to is the count. */
     var prevLearnSnap = learner ? learner.snapshot() : null;
-    if (prevLearnSnap && prevLearnSnap.legArmed) {
-      seed = { sitesKey: key, zone: 'out', phase: 'to-dump', armed: true, count: 0, events: [], lastT: prevLearnSnap.lastT || 0 };
-    }
-    counter.begin(key, seed);
-    navArmDone = !!seed;
+    counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [curLoad], learnedOthers: savedLearnedOthers() });
+    counter.begin(key, {
+      sitesKey: key, count: 0, events: [],
+      points: [{ lat: dump.lat, lng: dump.lng }],
+      present: false, visitCounted: false, closes: 0,
+      lastT: (prevLearnSnap && prevLearnSnap.lastT) || 0
+    });
+    visitSource = true;
+    navArmDone = true;
     learnMode = 'observe';
     /* The observe learner INHERITS the teach learner's leg state
        (it watched the load visit too) — a fresh begin would
@@ -1967,6 +2415,25 @@
      app reload cannot resurrect the double. */
   var handCarry = false;
   var lastFeedZone = null;
+  /* v324 (COUNT-BY-DUMP-VISIT): the live counter is the dump-
+     visit counter (ENGINE.createDumpVisitCounter) — the day
+     counts dump-site visits, not load->dump cycles. Set by
+     every branch that arms it; read by persist()/today() for
+     the record's countSource. taughtCloseBase is the visit
+     counter's closes count at the moment a teaching armed it —
+     the teaching locks when a close lands after it (the truck
+     completed the loop back at the load end). */
+  var visitSource = false; // v324: the day counts under the visit law (count-source label)
+  var taughtCloseBase = 0;
+
+  /* v324: places the visit counter LEARNED as the loop's other
+     end today (a tip-length foreign stop on a day with no known
+     load end) ride the day record, so a reconfigure re-arms with
+     them instead of relearning from zero. */
+  function savedLearnedOthers() {
+    var r = recordFor(curDate);
+    return (r && Array.isArray(r.visitOthers)) ? r.visitOthers : [];
+  }
 
   function persist(force) {
     if (!curDate) return;
@@ -1984,12 +2451,19 @@
        reads peg counts as the driver's declared sites, never as
        an inference the app made up. */
     rec.pegs = pegsNow;
-    if (pegArmed) rec.countSource = 'pegs';
+    /* v324: a visit-counted day says so — unless the visits are
+       counted off the driver's own pegs, which keep their v282
+       marking (the peg is still the authority for the site). */
+    if (visitSource) rec.countSource = 'dump-visit';
+    else if (pegArmed) rec.countSource = 'pegs';
     rec.updatedAt = now;
     if (counter) {
       rec.count = baseCount + counter.count();
       rec.events = baseEvents.concat(counter.events());
       rec.state = counter.snapshot();
+      if (rec.state && Array.isArray(rec.state.othersLearned) && rec.state.othersLearned.length) {
+        rec.visitOthers = rec.state.othersLearned;
+      }
       /* v284: on a peg day, the counted-event trail + the
          drifted centres ride the record too — the Manifest
          names where loading/dumping actually happened from
@@ -2029,6 +2503,8 @@
     learner = null; learnMode = null; curLoad = null;
     handCarry = false; /* v323: branches that restore corr re-read it */
     basePegEvents = [];
+    visitSource = false; /* v324 */
+    taughtCloseBase = 0; /* v324 */
     patternSeedWasDump = false;
     shadowLearner = null;
     taughtOutstanding = false; wasDumpSinceTeach = false;
@@ -2059,6 +2535,14 @@
       var savedPegCount = (savedPeg && typeof savedPeg.count === 'number') ? savedPeg.count : 0;
       baseCount = prevPegDay ? Math.max(0, (prevPegDay.count || 0) - savedPegCount) : 0;
       baseEvents = (!samePegSession && prevPegDay && prevPegDay.events) ? prevPegDay.events.slice() : [];
+      /* v324 (REPEG-RESETS-LOAD-COUNT): a MOVED peg within the
+         same session starts the counter fresh (its snapshot is
+         keyed to the old spots), so the day's event trail folds
+         into the base whole — a re-seed extends the day's story
+         and count, it never restarts either. */
+      if (samePegSession && !savedPeg && prevPegDay && prevPegDay.events) {
+        baseEvents = prevPegDay.events.slice();
+      }
       /* v284: when the counter will NOT restore the event trail
          from a snapshot (moved peg, new session), the day's
          trail so far becomes the base — a re-seed extends the
@@ -2066,11 +2550,87 @@
       basePegEvents = (!savedPeg && prevPegDay && Array.isArray(prevPegDay.pegEvents)) ? prevPegDay.pegEvents.slice() : [];
       corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
       handCarry = !!(prevPegDay && prevPegDay.handCarry); /* v323 */
+      /* v324 (COUNT-BY-DUMP-VISIT — scope note): a BOTH-PEGS day
+         keeps the peg cycle counter. Its contract is the owner's
+         own law from v282/v284 — seeds-not-fences centres that
+         follow the faces, the pegEvents trail the manifest's
+         place names ride on, same-site sub-spot identity — and
+         its banking already satisfies REPEG for pegs (the fold
+         above). The VISIT law governs every shape where the
+         cycle machine was the wrong tool: dispatch pins, a lone
+         peg of either kind, taught/learned dumps, proven pattern
+         pairs and navigated dumps. */
       counter = ENGINE.createPegCounter({ load: curSites.load, dump: curSites.dump });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
       persist(true);
       return true;
+    }
+    /* v324 (COUNT-BY-DUMP-VISIT): a LONE dump peg is a declared
+       dump site — counting arms on it alone (the pickup peg is
+       a bonus, never a requirement; Nov 5 his dump was pegged
+       at 9:40 and the pickup not until 11:40, and the morning
+       could not count). The dispatch's load pin, when there is
+       one, rides as the known other end. Restore discipline is
+       the peg branch's own: same key resumes, a moved peg banks
+       the day's whole count in the base. */
+    if (pegsNow.dump && !pegsNow.load) {
+      var loneDumpSites = d ? sitesFromDispatch(d) : { load: null, dump: null };
+      var loneLoad = loneDumpSites.load || null;
+      curSites = {
+        load: loneLoad ? { lat: loneLoad.lat, lng: loneLoad.lng, label: loneLoad.label || 'Load site', src: loneLoad.src || 'pin' } : null,
+        dump: { lat: pegsNow.dump.lat, lng: pegsNow.dump.lng, label: 'Dump peg', src: 'peg' }
+      };
+      curLoad = curSites.load;
+      var loneKey = sitesKeyFor('pegdump', curSites.load || curSites.dump, curSites.dump);
+      var prevLone = prevPegDay;
+      var sameLone = !!(prevLone && prevLone.sessionKey === sessionKey);
+      var savedLone = (sameLone && prevLone.state && prevLone.state.sitesKey === loneKey) ? prevLone.state : null;
+      var savedLoneCount = (savedLone && typeof savedLone.count === 'number') ? savedLone.count : 0;
+      baseCount = prevLone ? Math.max(0, (prevLone.count || 0) - savedLoneCount) : 0;
+      baseEvents = (prevLone && prevLone.events && (!sameLone || !savedLone)) ? prevLone.events.slice() : [];
+      corrNow = prevLone ? (prevLone.corr || 0) : 0;
+      handCarry = !!(prevLone && prevLone.handCarry); /* v323 */
+      counter = ENGINE.createDumpVisitCounter({
+        dump: curSites.dump,
+        others: curSites.load ? [curSites.load] : [],
+        learnedOthers: savedLearnedOthers()
+      });
+      counter.begin(loneKey, savedLone);
+      visitSource = true;
+      pegArmed = true;
+      persist(true);
+      return true;
+    }
+    /* v324: a LONE pickup peg with no dispatch to resolve a
+       dump from — the peg is the load site and the dump is
+       learned from the driving, exactly as a load-pin dispatch
+       teaches (onLearned arms the visit counter). With a
+       dispatch, the peg simply outranks its load pin below. */
+    if (pegsNow.load && !pegsNow.dump && !d) {
+      if (prevPegDay && prevPegDay.blocked === 'ambiguous-dump') {
+        counter = null; curSites = null;
+        return false;
+      }
+      curLoad = { lat: pegsNow.load.lat, lng: pegsNow.load.lng, label: 'Pickup peg', src: 'peg' };
+      learnMode = 'teach';
+      curSites = null;
+      learner = ENGINE.createDumpLearner({ load: curLoad, dump: null });
+      var prevLP = recordFor(curDate);
+      var sameLP = !!(prevLP && prevLP.sessionKey === sessionKey);
+      learner.begin(sameLP ? prevLP.learn : null);
+      shadowLearner = ENGINE.createPatternLearner({ home: homePlace(), anchor: { lat: curLoad.lat, lng: curLoad.lng } });
+      shadowLearner.begin(sameLP ? prevLP.patternShadow : null);
+      baseCount = (!sameLP && prevLP) ? (prevLP.count || 0) : 0;
+      baseEvents = (!sameLP && prevLP && prevLP.events) ? prevLP.events.slice() : [];
+      corrNow = prevLP ? (prevLP.corr || 0) : 0;
+      var recLP = prevLP || blankDay(curDate);
+      recLP.dispatchId = null; recLP.sessionKey = sessionKey;
+      recLP.sites = null; recLP.blocked = 'learning'; recLP.updatedAt = Date.now();
+      recLP.learn = learner.snapshot();
+      if (shadowLearner) recLP.patternShadow = shadowLearner.snapshot();
+      writeDay(recLP);
+      return false;
     }
     if (!d) { counter = null; curSites = null; return false; }
     var sites = sitesFromDispatch(d);
@@ -2080,6 +2640,12 @@
     if (!sites.load) {
       var named = placeByName(d.jobSite) || placeByName(d.pickup);
       if (named) sites.load = named;
+    }
+    /* v324: a lone pickup peg outranks the dispatch's own load
+       pin (the v282 law — the driver's tap is the authority);
+       the dump resolution below proceeds as usual. */
+    if (pegsNow.load && !pegsNow.dump) {
+      sites.load = { lat: pegsNow.load.lat, lng: pegsNow.load.lng, label: 'Pickup peg', src: 'peg' };
     }
     curLoad = sites.load || null;
     var why = blockedWhy(d, sites);
@@ -2119,6 +2685,55 @@
       else learnMode = 'teach';
     }
 
+    if (why === 'one-site' && !sites.load && sites.dump &&
+        !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump') &&
+        !(recordFor(curDate) && recordFor(curDate).patternPair)) {
+      /* v324 (COUNT-BY-DUMP-VISIT): a dispatch carrying only the
+         DUMP pin DECLARES the dump site — visit counting arms on
+         it alone. (v268 sent this shape to the pattern learner
+         because the cycle machine needed two sites; the visit
+         law does not. The labels cannot sit swapped here: the
+         record's own dump fields are the declaration.) No load
+         site is known, so the counter's foreign-dwell close is
+         the loop's other end. An already-ambiguous day stays
+         blocked, as everywhere else. A day that already PROVED
+         a pattern pair (the same-place shape, whose sub-spots
+         presence geometry cannot separate) is not this branch's:
+         it falls through to the pattern path's restore below. */
+      curSites = { load: null, dump: sites.dump };
+      curLoad = null;
+      var vKey = sitesKeyFor(d.id, sites.dump, sites.dump);
+      var prevV = recordFor(curDate);
+      var sameV = !!(prevV && prevV.sessionKey === sessionKey);
+      var savedV = (sameV && prevV.state && prevV.state.sitesKey === vKey) ? prevV.state : null;
+      var savedVCount = (savedV && typeof savedV.count === 'number') ? savedV.count : 0;
+      baseCount = prevV ? Math.max(0, (prevV.count || 0) - savedVCount) : 0;
+      baseEvents = (prevV && prevV.events && (!sameV || !savedV)) ? prevV.events.slice() : [];
+      corrNow = prevV ? (prevV.corr || 0) : 0;
+      handCarry = !!(prevV && prevV.handCarry); /* v323 */
+      counter = ENGINE.createDumpVisitCounter({ dump: sites.dump, others: [], learnedOthers: savedLearnedOthers() });
+      counter.begin(vKey, savedV);
+      visitSource = true;
+      /* v324: the pattern learner still watches, seeded on the
+         dump pin exactly as the pattern path seeds it — if the
+         day proves to be a SAME-PLACE job (load and tip inside
+         one place), its proven pair takes over through
+         armPatternPair (which keeps the cycle counter for a
+         dump-seeded pair: presence geometry cannot separate
+         sub-spots, the pair proof can). On a two-site day the
+         visit counter simply counts first and the pair, when it
+         proves, agrees with it. */
+      patternSeedWasDump = true;
+      learnMode = 'pattern';
+      learner = ENGINE.createPatternLearner({
+        home: homePlace(),
+        anchor: { lat: sites.dump.lat, lng: sites.dump.lng }
+      });
+      learner.begin(sameV && prevV ? prevV.pattern : null);
+      persist(true);
+      return true;
+    }
+
     if (why) {
       counter = null;
       /* v203 (LOADS-GPS-FIX): the dispatch is REAL but carries no
@@ -2138,24 +2753,16 @@
          INSIDE the one place (tight sub-spots, two proven cycles)
          or an outer candidate if the truck really runs to a
          second site. */
-      if ((why === 'no-site-coords' || why === 'sites-too-close' || (why === 'one-site' && !sites.load && sites.dump)) && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
-        /* v268 (LOAD-COUNT-ONEPIN-AUDIT): the one-site case above
-           is the DUMP-PIN-ONLY dispatch — a record carrying only
-           dumpLat/dumpLng (a Connect dispatch whose sender pinned
-           the drop, an OCR'd ticket with the dump's coordinates).
-           Until now it fell past every branch: no load pin means
-           no teach mode, so NO learner ever ran and the day sat
-           at blocked 'one-site' forever (proven zero in
-           tools/load-count-onepin-audit-v268-test.js A6/A10).
-           It joins the pattern path SEEDED on the one known
-           place, exactly as 'sites-too-close' seeds on its pin:
-           the learner reads the cycle off the driving, cycles
-           close at the seed, and the pair's load/dump labels may
-           sit swapped — the count is true either way (the
-           engine's direction honesty). The seed's provenance is
-           flagged so armPatternPair never writes the swapped
-           pair into the cross-day pair MEMORY (the memory is
-           keyed by load site; a dump site must not be filed as
+      if ((why === 'no-site-coords' || why === 'sites-too-close') && !(recordFor(curDate) && recordFor(curDate).blocked === 'ambiguous-dump')) {
+        /* v268 (LOAD-COUNT-ONEPIN-AUDIT): the one-site case that
+           used to join here was the DUMP-PIN-ONLY dispatch — as
+           of v324 it arms the dump-VISIT counter directly (see
+           the branch above configure's pattern path): the record
+           declares the dump, and the visit law needs nothing
+           else. What remains here is discovery for days with no
+           declared dump at all. (The v268 seed-provenance flag
+           below is kept for the pair memory's protection on any
+           legacy record that still restores through this path.)
            one). The day still restores same-day from its own
            patternPair, like every pattern day. */
         learnMode = 'pattern';
@@ -2281,14 +2888,35 @@
        whatever part of the record's count is NOT inside it. The
        old same-session zeroing lost the carried part: a session
        whose count included an earlier session's base read 0
-       after a relaunch (record 3, snapshot 0, base zeroed). */
-    var savedCount = (saved && typeof saved.count === 'number') ? saved.count : 0;
+       after a relaunch (record 3, snapshot 0, base zeroed).
+       v324 (REPEG-RESETS-LOAD-COUNT): the subtraction is now
+       gated on the snapshot's KEY matching the sites being
+       armed. begin() restores a snapshot only when its key
+       matches — so when the sites MOVED mid-session (his
+       Nov 5 role swap: the dispatch's pins changed under a
+       running session), the old code subtracted the snapshot's
+       count from the base AND the fresh counter started at
+       zero: the loads the session itself had counted vanished
+       from the day (his recording: 5 -> 0, then a climb as new
+       cycles landed). A key mismatch now banks the record's
+       WHOLE count in the base and folds the day's event trail
+       in with it — the count belongs to the day, not the pegs. */
+    var savedKeyMatch = !!(saved && saved.sitesKey === key);
+    var savedCount = (savedKeyMatch && typeof saved.count === 'number') ? saved.count : 0;
     baseCount = prev ? Math.max(0, (prev.count || 0) - savedCount) : 0;
     baseEvents = (!sameSession && prev && prev.events) ? prev.events.slice() : [];
+    if (sameSession && !savedKeyMatch && prev && prev.events) {
+      baseEvents = prev.events.slice();
+    }
     corrNow = prev ? (prev.corr || 0) : 0; // v220: the day's correction survives restarts
     handCarry = !!(prev && prev.handCarry); /* v323 */
-    counter = ENGINE.createGeoLoadCounter({ load: sites.load, dump: sites.dump });
+    /* v324 (COUNT-BY-DUMP-VISIT): with both sites resolved, the
+       day counts DUMP VISITS — the load site rides as the known
+       other end (a dwell there closes the visit), never as a
+       required half of a cycle. */
+    counter = ENGINE.createDumpVisitCounter({ dump: sites.dump, others: [sites.load], learnedOthers: savedLearnedOthers() });
     counter.begin(key, saved);
+    visitSource = true;
     if (learnMode === 'observe') {
       // Counting is armed from memory; the learner only watches for
       // a rival candidate to note on the day — never to apply.
@@ -2319,11 +2947,22 @@
        rememberPair waits until the truck closes the full cycle
        back at the load site (the lock in feedFix). */
     var key = sitesKeyFor(curDispatchId, curLoad, dump);
-    counter = ENGINE.createGeoLoadCounter({ load: curLoad, dump: dump });
+    /* v324 (COUNT-BY-DUMP-VISIT): the teaching cycle IS a dump
+       visit — the visit counter begins with it counted, the
+       truck present at the taught face, and the visit standing
+       open until it closes (the load-end dwell in feedFix,
+       which is also the v220 lock that earns the pair memory).
+       taughtCloseBase pins the closes count at this moment so
+       feedFix can tell the FIRST close after teaching. */
+    counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [curLoad], learnedOthers: savedLearnedOthers() });
     counter.begin(key, {
-      sitesKey: key, zone: 'dump', phase: 'at-dump', armed: false,
-      count: 1, events: [{ t: cand.t, site: 'dump', n: 1 }], lastT: cand.t
+      sitesKey: key, count: 1,
+      events: [{ t: cand.t, site: 'dump', n: 1 }],
+      points: [{ lat: dump.lat, lng: dump.lng }],
+      present: true, visitCounted: true, closes: 0, lastT: cand.t
     });
+    visitSource = true;
+    taughtCloseBase = 0;
     taughtOutstanding = true;
     wasDumpSinceTeach = true;
     var rec = recordFor(curDate) || blankDay(curDate);
@@ -2362,18 +3001,45 @@
       rememberPair(load, { lat: dump.lat, lng: dump.lng, label: '', learnedAt: Date.now() });
     }
     var key = sitesKeyFor(curDispatchId, load, dump);
-    counter = ENGINE.createGeoLoadCounter({
-      load: load, dump: dump,
-      radiusM: pair.intra ? ENGINE.INTRA_RADIUS_M : undefined
-    });
+    /* v324 (COUNT-BY-DUMP-VISIT): a proven OUTER pair continues
+       the day under the visit law — the pair's dump is the
+       visit counter's seed, its load the known other end, and
+       the proven cycles ride in as the counter's own count
+       (the truck stands at the load anchor as the second cycle
+       closes, so the visit stands open). Two shapes keep the
+       cycle counter, unchanged: INTRA pairs (sub-spots metres
+       apart inside one site — presence geometry cannot tell
+       them apart) and pairs whose seed was the DUMP pin (the
+       labels may sit swapped there; the cycle closes at the
+       seed either way, a visit counter would count the wrong
+       place's arrivals). */
+    var visitShape = !pair.intra && !patternSeedWasDump;
+    if (visitShape) {
+      counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [load], learnedOthers: savedLearnedOthers() });
+      visitSource = true;
+    } else {
+      counter = ENGINE.createGeoLoadCounter({
+        load: load, dump: dump,
+        radiusM: pair.intra ? ENGINE.INTRA_RADIUS_M : undefined
+      });
+    }
     if (credit) {
       var credits = pair.credits || 1;
       var evts = (pair.events && pair.events.length) ? pair.events
         : [{ t: pair.t || Date.now(), site: 'dump', n: 1 }];
-      counter.begin(key, {
-        sitesKey: key, zone: 'load', phase: 'at-load', armed: true,
-        count: credits, events: evts, lastT: pair.t || 0
-      });
+      if (visitShape) {
+        counter.begin(key, {
+          sitesKey: key, count: credits, events: evts,
+          points: [{ lat: dump.lat, lng: dump.lng }],
+          present: false, visitCounted: false, closes: 0,
+          lastT: pair.t || 0
+        });
+      } else {
+        counter.begin(key, {
+          sitesKey: key, zone: 'load', phase: 'at-load', armed: true,
+          count: credits, events: evts, lastT: pair.t || 0
+        });
+      }
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
     } else {
@@ -2475,29 +3141,43 @@
      pair is armed) and/or the learner (while it watches) — and act
      on the learner's verdicts. Returns the counter's ingest result
      when there is a counter, else the learner's. */
+  /* v220: the teaching is proven — lock the learner and only
+     NOW write the taught dump to the pair memory (onLearned
+     deliberately withholds it: a first dwell is not proof, the
+     completed loop back to the load end is). */
+  function lockTeaching() {
+    if (learner) learner.lock();
+    taughtOutstanding = false;
+    wasDumpSinceTeach = false;
+    if (curLoad && curSites && curSites.dump && curSites.dump.src === 'learned') {
+      var lrec = recordFor(curDate);
+      rememberPair(curLoad, {
+        lat: curSites.dump.lat, lng: curSites.dump.lng, label: '',
+        learnedAt: (lrec && lrec.learnedDump && lrec.learnedDump.learnedAt) || Date.now()
+      });
+    }
+  }
+
   function feedFix(fix) {
     var r = null;
     if (counter) {
       r = counter.ingest(fix);
       if (r.accepted && taughtOutstanding && learner) {
-        if (counter.zone() === 'dump') wasDumpSinceTeach = true;
+        if (counter.visitMode) {
+          /* v324: under the visit law there is no 'load' zone to
+             come back to — the proof is the visit's first CLOSE
+             after the teaching (the load-end dwell inside the
+             counter, a far exit, or the foreign dwell): the
+             truck left the taught place and the loop stands
+             completed. */
+          var csT = counter.snapshot();
+          if (csT && csT.closes > taughtCloseBase) lockTeaching();
+        }
+        else if (counter.zone() === 'dump') wasDumpSinceTeach = true;
         else if (wasDumpSinceTeach && counter.zone() === 'load') {
           // dumped, and now confirmed back at the load site: the
           // first cycle is complete — the teaching is proven.
-          learner.lock();
-          taughtOutstanding = false;
-          wasDumpSinceTeach = false;
-          /* v220: only NOW is a taught dump written to the pair
-             memory (onLearned deliberately withheld it) — the
-             full loaded cycle (pit -> place -> pit) completed,
-             so the place earned the memory. */
-          if (curLoad && curSites && curSites.dump && curSites.dump.src === 'learned') {
-            var lrec = recordFor(curDate);
-            rememberPair(curLoad, {
-              lat: curSites.dump.lat, lng: curSites.dump.lng, label: '',
-              learnedAt: (lrec && lrec.learnedDump && lrec.learnedDump.learnedAt) || Date.now()
-            });
-          }
+          lockTeaching();
         }
       }
     }
@@ -2721,6 +3401,8 @@
       curLoad = null;
       pegsNow = { load: null, dump: null };
       pegArmed = false;
+      visitSource = false; /* v324 */
+      taughtCloseBase = 0; /* v324 */
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
       navArmDone = false;
@@ -2828,7 +3510,8 @@
           out.corr = corrNow;
           out.sites = curSites || out.sites;
           out.blocked = null;
-          if (pegArmed) out.countSource = 'pegs'; // v282
+          if (visitSource) out.countSource = 'dump-visit'; // v324
+          else if (pegArmed) out.countSource = 'pegs'; // v282
         }
       }
       return out;
@@ -2916,6 +3599,22 @@
         try { var hcAll = counter.centres ? counter.centres() : null; hcCen = hcAll && hcAll.dump; } catch (e) {}
         var hcPt = hcCen || (curSites && curSites.dump);
         if (hcPt && ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, hcPt.lat, hcPt.lng) <= 120) handCarry = true;
+      }
+      /* v324: the same race under the visit law — a +1 tapped at
+         the tip while the visit counter is standing AT the dump
+         with the visit not yet counted (its arrival dwell has
+         not landed) marks the pending visit hand-counted; the
+         machine confirming that same arrival retires the
+         correction as the count lands (feedFix, v323 path). A
+         visit that already counted is not marked: a tap then is
+         a genuine correction for a different, missed load and
+         must stand. */
+      if ((parseInt(delta, 10) || 0) > 0 && counter && counter.visitMode && lastFixSeen &&
+          typeof counter.debug === 'function') {
+        var vDbg = null;
+        try { vDbg = counter.debug(); } catch (e) {}
+        if (vDbg && !vDbg.visitCounted && vDbg.nearestM !== null &&
+            vDbg.nearestM <= VISIT_PRESENCE_M) handCarry = true;
       }
       /* the buttons move the DISPLAYED count: it floors at 0, so
          the clamp lives in the correction itself — extra −1 taps
