@@ -101,6 +101,7 @@
      a quiet secondary action. */
   var detailFillIdx = null;
   var fxView = false; // v202 FUEL-TAB: the Other-expenses view is open (its tab on the face opens it)
+  var auditView = false; // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
   var detailDelArm = false;
   var fuShowAll = false; /* v177 (D6): Fill-ups shows the latest 3 until asked for more (the Entries pattern) */
   /* v118: receipt precision — litres carry 3 decimals, money 2.
@@ -322,8 +323,54 @@
   }
 
 
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — the COMPLETE history in date
+     order: every fill-up (the face list caps at the newest 3)
+     and every other expense, ready to go through at tax
+     season. A fill-up tap opens the same details view as the
+     face (receipt photos included); closing it lands back
+     here while the audit stands. */
+  function renderAuditView(body) {
+    fuelBody = body;
+    var flAll = fills();
+    var flSorted = flAll.map(function (f, i) { return { f: f, i: i }; }).sort(function (a, b) {
+      var da = a.f.date || '', db = b.f.date || '';
+      if (da !== db) return da < db ? 1 : -1;
+      return b.i - a.i;
+    });
+    var h = '<button class="btn small ghost" id="fu_audit_back" style="margin-bottom:10px">‹ Back</button>';
+    h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Fill-ups</h3>' +
+      '<p class="note" style="margin-top:0">Every fill-up on file, newest first — ' + flAll.length + ' record' + (flAll.length === 1 ? '' : 's') + '. Tap one to open it — its receipt photos are on the entry.</p>' +
+      (flAll.length ? flSorted.map(function (p) {
+        var f = p.f, i = p.i;
+        return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
+          '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+          '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + '</div></div>';
+      }).join('') : '<div class="empty">No fill-ups on file.</div>') + '</div>';
+    var exps = S('expenses', []);
+    h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Other expenses</h3>' +
+      '<p class="note" style="margin-top:0">Every other expense on file, newest first — ' + exps.length + ' record' + (exps.length === 1 ? '' : 's') + '.</p>' +
+      (exps.length ? exps.slice().reverse().map(function (x) {
+        return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
+      }).join('') : '<div class="empty">No other expenses on file.</div>') + '</div>';
+    body.innerHTML = h;
+    body.querySelector('#fu_audit_back').onclick = function () {
+      auditView = false;
+      Meticulous.modules.fuel.render(body);
+    };
+    body.querySelectorAll('[data-fuedit]').forEach(function (el) {
+      el.onclick = function () {
+        detailFillIdx = +el.getAttribute('data-fuedit');
+        detailDelArm = false; editErr = ''; saveNote = '';
+        Meticulous.modules.fuel.render(body);
+        try { if (body.scrollIntoView) body.scrollIntoView({ block: 'start' }); } catch (e) {}
+      };
+    });
+  }
+
   Meticulous.modules.fuel = {
     _fillPhotos: fillPhotos, /* v332: the one receipt-stack reader, exported for the suite */
+    _auditView: function () { return auditView; }, /* v340: exported for the suite */
     _masterOnSave: masterOnSave,
     _mpgTrend: mpgTrend,
     _econLegOk: econLegOk,
@@ -344,9 +391,18 @@
         if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
         return true;
       }
+      /* v340: Back from the Audit view returns to the face
+         (a fill opened FROM audit closes back into it — the
+         detail branch above re-renders, and render() lands on
+         the audit list while auditView stands). */
+      if (auditView) {
+        auditView = false;
+        if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
+        return true;
+      }
       return false;
     },
-    resetView: function () { editFillIdx = null; editErr = ''; detailFillIdx = null; detailDelArm = false; },
+    resetView: function () { editFillIdx = null; editErr = ''; detailFillIdx = null; detailDelArm = false; auditView = false; },
     /* v78: the card preview — the most recent fill-up (litres · $
        · when), the fact a driver glances for; the MPG trend stays
        inside the module where it always lived. */
@@ -438,6 +494,9 @@
          while it is open (Back returns). The details view above
          still wins when a fill-up is open. */
       if (fxView) { renderFxView(body); return; }
+      /* v340: the Audit view (complete history) — under the
+         details view, above the face. */
+      if (auditView) { renderAuditView(body); return; }
       /* v127: the trend card tells the truth about what it is.
          (c) HONESTY — under 3 legs there is no trend: the figure
          is the LAST LEG and is labelled as such (owner, Oct 17
@@ -552,7 +611,15 @@
          everything the page is for. */
       var fxTabHtml = '<div class="row" style="margin-bottom:10px">' +
         '<button class="btn small ghost" id="fx_tab">🧾 Other expenses ›</button></div>';
-      body.innerHTML = fxTabHtml + h;
+      /* v340: the Audit button sits at the very top of the
+         module, above the tab strip — the same place it sits
+         in every auditable module. */
+      var auditBtnHtml = '<button class="btn small ghost" id="fu_audit" style="margin-bottom:10px">🔎 Audit</button>';
+      body.innerHTML = auditBtnHtml + fxTabHtml + h;
+      body.querySelector('#fu_audit').onclick = function () {
+        auditView = true;
+        Meticulous.modules.fuel.render(body);
+      };
       body.querySelector('#fx_tab').onclick = function () {
         fxView = true;
         Meticulous.modules.fuel.render(body);

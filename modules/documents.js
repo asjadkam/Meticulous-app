@@ -188,7 +188,8 @@
   }
 
   /* ---------------- view state ---------------- */
-  var view = { mode: 'main', id: null };   // 'main' | 'doc' | 'insp'
+  var view = { mode: 'main', id: null };   // 'main' | 'doc' | 'insp' | 'audit'
+  var viewFrom = 'main';   // where a detail view returns to ('main' | 'audit')
   var delArm = false;
   var docsShowAll = false;
   var inspShowAll = false;
@@ -276,7 +277,7 @@
     var insps = inspections();
     var peers = connectedPeers();
     var canSend = (role === 'office' || role === 'both') && peers.length > 0;
-    var h = '';
+    var h = '<button class="btn small ghost" id="docs_audit_btn" style="margin-bottom:10px">🔎 Audit</button>';
 
     /* ---- Add a document ---- */
     h += '<div class="card"><h3 style="margin-top:0">＋ Add a document</h3>' +
@@ -354,6 +355,11 @@
   }
 
   function wireMain(body, canSend) {
+    var auditB = body.querySelector('#docs_audit_btn');
+    if (auditB) auditB.onclick = function () {
+      view = { mode: 'audit', id: null };
+      Meticulous.modules.documents.render(body);
+    };
     /* Add form */
     var camIn = body.querySelector('#docs_cam_in'), pickIn = body.querySelector('#docs_in');
     var camB = body.querySelector('#docs_cam'), pickB = body.querySelector('#docs_pick');
@@ -392,6 +398,7 @@
     if (inspMoreB) inspMoreB.onclick = function () { inspShowAll = !inspShowAll; Meticulous.modules.documents.render(body); };
     body.querySelectorAll('[data-doc-open]').forEach(function (elx) {
       elx.onclick = function () {
+        viewFrom = 'main';
         view = { mode: 'doc', id: elx.getAttribute('data-doc-open') };
         delArm = false;
         Meticulous.modules.documents.render(body);
@@ -399,6 +406,7 @@
     });
     body.querySelectorAll('[data-insp-open]').forEach(function (elx) {
       elx.onclick = function () {
+        viewFrom = 'main';
         view = { mode: 'insp', id: elx.getAttribute('data-insp-open') };
         Meticulous.modules.documents.render(body);
       };
@@ -463,7 +471,7 @@
       '<button class="btn ghost" id="docs_del" style="color:#c2410c">' + (delArm ? 'Tap again to delete this document' : '🗑 Delete document') + '</button></div></div>';
     body.innerHTML = h;
     body.querySelector('#docs_back').onclick = function () {
-      view = { mode: 'main', id: null }; delArm = false;
+      view = { mode: viewFrom === 'audit' ? 'audit' : 'main', id: null }; delArm = false;
       Meticulous.modules.documents.render(body);
     };
     var openB = body.querySelector('#docs_open_pdf');
@@ -471,7 +479,7 @@
     body.querySelector('#docs_del').onclick = function () {
       if (!delArm) { delArm = true; Meticulous.modules.documents.render(body); return; }
       delArm = false;
-      if (deleteDoc(d.id)) view = { mode: 'main', id: null };
+      if (deleteDoc(d.id)) view = { mode: viewFrom === 'audit' ? 'audit' : 'main', id: null };
       Meticulous.modules.documents.render(body);
     };
   }
@@ -490,9 +498,66 @@
       '<p class="note" style="margin-top:10px">This is the summary an officer sees in Inspection Mode. The full report lives in the PTI module.</p></div>';
     body.innerHTML = h;
     body.querySelector('#docs_back').onclick = function () {
+      view = { mode: viewFrom === 'audit' ? 'audit' : 'main', id: null };
+      Meticulous.modules.documents.render(body);
+    };
+  }
+
+  /* ---------------- v340: the Audit view ----------------
+     AUDIT-BUTTON-EVERY-MODULE (owner Nov 5, 2026 17:16 MST):
+     the COMPLETE history in date order — every document and
+     every inspection, uncapped (the face lists show the
+     newest 3; an auditor goes through ALL of them). A tap
+     opens the same detail / summary sheet as the face, and
+     Back from there returns here. */
+  function renderAudit(body) {
+    var role = roleNow();
+    /* the audit sorts by arrival explicitly — an auditor's
+       list must be date-true even if a store was ever written
+       out of order (the face rides the store's newest-first
+       invariant; the audit does not assume it). */
+    var docs = items().slice().sort(function (a, b) { return (b.addedAt || 0) - (a.addedAt || 0); });
+    var insps = inspections();
+    var h = '<button class="btn small ghost" id="docs_back" style="margin-bottom:10px">‹ Back</button>' +
+      '<div class="card"><h3 style="margin-top:0">🔎 Audit — Documents</h3>' +
+      '<p class="note" style="margin-top:0">Every document in the vault, newest first — ' + docs.length + ' on file.</p>' +
+      (docs.length ? docs.map(function (d) {
+        return '<div class="listitem" data-doc-open="' + esc(d.id) + '" style="cursor:pointer">' +
+          '<div class="a">' + (d.kind === 'pdf' ? '📄 ' : '🖼 ') + esc(d.name || 'Document') +
+          '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+          '<div class="b">' + esc(d.label || '') + ' · ' + esc(fmtDay(d.addedAt)) +
+          (d.sentBy ? ' · From ' + esc(d.sentBy) : '') + '</div></div>';
+      }).join('') : '<div class="empty">No documents on file.</div>') + '</div>';
+    if (role !== 'office') {
+      h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Inspections</h3>' +
+        '<p class="note" style="margin-top:0">Every inspection filed, newest first — ' + insps.length + ' on file.</p>' +
+        (insps.length ? insps.map(function (r) {
+          return '<div class="listitem" data-insp-open="' + esc(r.id) + '" style="cursor:pointer">' +
+            '<div class="a">' + esc(r.date || '') +
+            '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+            '<div class="b">' + esc(summaryLine(r)) + '</div></div>';
+        }).join('') : '<div class="empty">No inspections on file.</div>') + '</div>';
+    }
+    body.innerHTML = h;
+    body.querySelector('#docs_back').onclick = function () {
       view = { mode: 'main', id: null };
       Meticulous.modules.documents.render(body);
     };
+    body.querySelectorAll('[data-doc-open]').forEach(function (elx) {
+      elx.onclick = function () {
+        viewFrom = 'audit';
+        view = { mode: 'doc', id: elx.getAttribute('data-doc-open') };
+        delArm = false;
+        Meticulous.modules.documents.render(body);
+      };
+    });
+    body.querySelectorAll('[data-insp-open]').forEach(function (elx) {
+      elx.onclick = function () {
+        viewFrom = 'audit';
+        view = { mode: 'insp', id: elx.getAttribute('data-insp-open') };
+        Meticulous.modules.documents.render(body);
+      };
+    });
   }
 
   Meticulous.modules.documents = {
@@ -501,19 +566,25 @@
       return n ? n + ' document' + (n === 1 ? '' : 's') : 'No documents yet';
     },
     back: function () {
-      if (view.mode !== 'main') {
-        view = { mode: 'main', id: null }; delArm = false;
+      if (view.mode === 'doc' || view.mode === 'insp') {
+        view = { mode: viewFrom === 'audit' ? 'audit' : 'main', id: null }; delArm = false;
+        if (docsBody) Meticulous.modules.documents.render(docsBody);
+        return true;
+      }
+      if (view.mode === 'audit') {
+        view = { mode: 'main', id: null };
         if (docsBody) Meticulous.modules.documents.render(docsBody);
         return true;
       }
       return false;
     },
     resetView: function () {
-      view = { mode: 'main', id: null }; delArm = false;
+      view = { mode: 'main', id: null }; delArm = false; viewFrom = 'main';
       docsShowAll = false; inspShowAll = false;
     },
     render: function (body) {
       docsBody = body;
+      if (view.mode === 'audit') { renderAudit(body); return; }
       if (view.mode === 'doc' && view.id) {
         var d = null;
         items().forEach(function (x) { if (x && x.id === view.id) d = x; });
@@ -537,6 +608,7 @@
     _summaryParts: summaryParts,
     _summaryLine: summaryLine,
     _sendToPeer: sendToPeer,
-    _labels: LABELS
+    _labels: LABELS,
+    _viewMode: function () { return view.mode; }
   };
 })();

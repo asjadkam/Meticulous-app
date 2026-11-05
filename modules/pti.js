@@ -780,8 +780,62 @@
       '</div>';
 
     h += historyHtml(reps);
-    body.innerHTML = h;
+    /* v340 (AUDIT-BUTTON-EVERY-MODULE): the Audit button at
+       the very top of the module — the same place it sits in
+       every auditable module. */
+    body.innerHTML = '<button type="button" class="btn small ghost" id="pti_audit" style="margin-bottom:10px">🔎 Audit</button>' + h;
     wireForm(body);
+  }
+
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — EVERY filed inspection in date
+     order (the Past inspections card caps at the newest 3),
+     ready for a DOT safety audit. Rows carry the same facts
+     as the history list and open the same filed report. The
+     Send door is Inspection Mode's own (v327 dotSendPdf) —
+     reused, not rebuilt: the previous 14 days + today as one
+     PDF of summaries. */
+  function renderAudit(body) {
+    var reps = reports();
+    var sorted = reps.slice().sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+    var seenId = {}, seenFact = {}, list = [];
+    sorted.forEach(function (r) {
+      if (r.id) { if (seenId[r.id]) return; seenId[r.id] = 1; }
+      var fk = (r.date || '') + '|' + kindOf(r) + '|' + (r.filedAt || 0) + '|' + (r.odometer || '');
+      if (seenFact[fk]) return;
+      seenFact[fk] = 1;
+      list.push(r);
+    });
+    var h = '<button type="button" class="btn small ghost" id="pti_audit_back" style="margin-bottom:10px">‹ Back</button>' +
+      '<div class="card"><h3 style="margin-top:0">🔎 Audit — all inspections</h3>' +
+      '<p class="note" style="margin-top:0">Every inspection on file, newest first — ' + list.length + ' record' + (list.length === 1 ? '' : 's') + '. Tap one to open the filed report.</p>' +
+      '<button type="button" class="btn ghost" id="pti_audit_send" style="width:100%">📤 Send last 14 days + today (PDF)</button>' +
+      '<div id="pti_audit_send_note"></div></div>';
+    h += '<div class="card">' +
+      (list.length ? list.map(function (r) {
+        return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
+          '<div class="a">' + esc(r.date) + ' · ' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
+          '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
+          (isSigned(r) ? '' : ' <b style="color:#b91c1c">· Not signed</b>') +
+          (r.defects && r.defects.length ? '<br>' + r.defects.map(function (df) { return esc((df.severity === 'major' ? '⛔ ' : '') + df.item + ': ' + df.note); }).join('<br>') : '') +
+          '</div></div>';
+      }).join('') : '<div class="empty">No inspections on file.</div>') + '</div>';
+    body.innerHTML = h;
+    body.querySelector('#pti_audit_back').onclick = function () {
+      view = { mode: 'form', id: null };
+      Meticulous.modules.pti.render(body);
+    };
+    var sendB = body.querySelector('#pti_audit_send');
+    if (sendB) sendB.onclick = function () {
+      var note = body.querySelector('#pti_audit_send_note');
+      dotSendPdf(function (m) { if (note) note.innerHTML = '<p class="note" style="margin-top:6px">' + esc(m) + '</p>'; });
+    };
+    body.querySelectorAll('[data-pti-open]').forEach(function (elx) {
+      elx.onclick = function () {
+        view = { mode: 'report', id: elx.getAttribute('data-pti-open') };
+        Meticulous.modules.pti.render(body);
+      };
+    });
   }
 
   function historyHtml(reps) {
@@ -828,6 +882,12 @@
 
   function wireForm(body) {
     var d = draft();
+    /* v340: the Audit door at the top of the module. */
+    var auditB = body.querySelector('#pti_audit');
+    if (auditB) auditB.onclick = function () {
+      view = { mode: 'audit', id: null };
+      Meticulous.modules.pti.render(body);
+    };
     function bindText(id, key) {
       var elx = body.querySelector('#' + id);
       if (!elx) return;
@@ -1344,6 +1404,12 @@
         if (lastBody) Meticulous.modules.pti.render(lastBody);
         return true;
       }
+      /* v340: Back from the Audit view returns to the form. */
+      if (view.mode === 'audit') {
+        view = { mode: 'form', id: null, justFiled: false };
+        if (lastBody) Meticulous.modules.pti.render(lastBody);
+        return true;
+      }
       return false;
     },
     render: function (body) {
@@ -1363,6 +1429,9 @@
       /* Inspection Mode outranks every other view — while it is
          active the module can only ever paint the officer's list */
       if (dotActive()) { renderDot(body); return; }
+      /* v340: the Audit view — under Inspection Mode, above
+         the form. */
+      if (view.mode === 'audit') { renderAudit(body); return; }
       renderForm(body);
     },
     /* test hooks (the pnl _calc convention) */
@@ -1380,6 +1449,7 @@
     _dotActive: dotActive,
     _dotDays: dotDays,
     _dotSummaryText: dotSummaryText,
-    _compliance: compliance
+    _compliance: compliance,
+    _viewMode: function () { return view.mode; } /* v340: exported for the audit suite */
   };
 })();

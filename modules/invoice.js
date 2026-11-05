@@ -126,6 +126,7 @@
      resolved and BLOCKS issuing (stage 'duplicate'). */
   var INV_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var invBody = null; // v116: last render target, for the module's back() re-render
+  var invAudit = false; // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
   function invS(k, d) { return App._store.get('inv_' + k, d); }
   function invW(k, v) { return App._store.set('inv_' + k, v); }
 
@@ -1881,6 +1882,35 @@
         : 'Deductions entered manually. This stub is a record, not tax advice.') + '</p>');
   }
 
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — EVERY issued invoice in this book,
+     in date order, one line each (number, billed to, date,
+     total), ready to go through at tax season. Pay-stub
+     records derive from Revenue, whose own Audit covers
+     them — this list is the invoice book. */
+  function renderAuditInv(body) {
+    invBody = body;
+    var list = invoicesFor(wpActiveId()).slice().sort(function (a, b) {
+      var da = (a && a.date) || '', db = (b && b.date) || '';
+      return da < db ? 1 : (da > db ? -1 : 0);
+    });
+    function money(v) { var n = parseFloat(v); return isFinite(n) ? '$' + n.toFixed(2) : ''; }
+    body.innerHTML = '<button class="btn small ghost" id="iv_audit_back" style="margin-bottom:10px">‹ Back</button>' +
+      '<div class="card"><h3 style="margin-top:0">🔎 Audit — Invoices</h3>' +
+      '<p class="note" style="margin-top:0">Every issued invoice in this book, newest first — ' + list.length + ' record' + (list.length === 1 ? '' : 's') + '.</p>' +
+      (list.length ? list.map(function (r) {
+        var bits = [];
+        if (r.billTo) bits.push(String(r.billTo));
+        if (r.date) bits.push(String(r.date));
+        return '<div class="listitem"><div class="a">Invoice #' + esc(r.no != null ? r.no : '') + ' · ' + money(r.total) + '</div>' +
+          (bits.length ? '<div class="b">' + esc(bits.join(' · ')) + '</div>' : '') + '</div>';
+      }).join('') : '<div class="empty">No invoices issued yet.</div>') + '</div>';
+    body.querySelector('#iv_audit_back').onclick = function () {
+      invAudit = false;
+      Meticulous.modules.invoice.render(body);
+    };
+  }
+
   /* ---------------- main ---------------- */
   Meticulous.modules.invoice = {
     /* v116: shell back contract — the module's home mode is
@@ -1888,8 +1918,15 @@
        is a sub-view. Fresh entry returns to the home mode, and
        Back from the non-home mode returns there first instead of
        leaving the module. */
-    resetView: function () { W('mode', onb().employment === 'Payroll' ? 'paystub' : 'invoice'); },
+    _auditView: function () { return invAudit; }, /* v340: exported for the audit suite */
+    resetView: function () { invAudit = false; W('mode', onb().employment === 'Payroll' ? 'paystub' : 'invoice'); },
     back: function () {
+      /* v340: Back from the Audit view returns to the face. */
+      if (invAudit) {
+        invAudit = false;
+        if (invBody) Meticulous.modules.invoice.render(invBody);
+        return true;
+      }
       var home = onb().employment === 'Payroll' ? 'paystub' : 'invoice';
       if (S('mode', home) === home) return false;
       W('mode', home);
@@ -1932,6 +1969,9 @@
     },
     render: function (body) {
       invBody = body;
+      /* v340: the Audit view (complete history) stands above
+         the invoice / pay-stub faces. */
+      if (invAudit) { renderAuditInv(body); return; }
       var o = onb();
       /* v285 (PAY-STUB-MODULE-AUDIT, owner Oct 30, 2026 — his law,
          restated today: employment status decides the document,
@@ -1943,7 +1983,10 @@
          mode, so Back leaves the module as it should. */
       var mode = o.employment === 'Payroll' ? 'paystub' : 'invoice';
       W('mode', mode);
-      body.innerHTML = '<div id="iv_body"></div>';
+      /* v340: the Audit button at the very top of the module. */
+      body.innerHTML = '<button class="btn small ghost" id="iv_audit" style="margin-bottom:10px">🔎 Audit</button><div id="iv_body"></div>';
+      var auditB = body.querySelector('#iv_audit');
+      if (auditB) auditB.onclick = function () { invAudit = true; Meticulous.modules.invoice.render(body); };
       var inner = body.querySelector('#iv_body');
       if (mode === 'invoice') renderInvoice(inner); else renderPayroll(inner);
     }

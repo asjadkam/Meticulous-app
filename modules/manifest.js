@@ -1522,7 +1522,77 @@
     return out;
   }
 
+  var maniAudit = false; /* v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open */
+  var maniBody = null;
+
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — EVERY day carrying records, newest
+     first, one summary line per day (the v331 multi-day line:
+     total km, total hours, loads, fuel — the same facts a
+     tax-season pass goes through). A tap opens that day's
+     manifest itself. The day set = the union of the stores
+     the manifest reads: sessions, dispatches, revenue
+     entries, fuel fills. */
+  function renderAuditDays(body) {
+    maniBody = body;
+    var dateSet = {};
+    function add(ds) { if (ds && /^\d{4}-\d{2}-\d{2}$/.test(ds)) dateSet[ds] = 1; }
+    (G('sessions', []) || []).forEach(function (s) { if (s) add(s.date); });
+    (G('fuel_fills', []) || []).forEach(function (f) { if (f) add(f.date); });
+    (G('rev_entries', []) || []).forEach(function (r) { if (r) add(r.date); });
+    (G('dsp_list', []) || []).forEach(function (r) {
+      if (!r) return;
+      var raw = r.scheduledAt || r.date || '';
+      add(String(raw).slice(0, 10));
+    });
+    var dates = Object.keys(dateSet).sort().reverse();
+    function hrs(v) {
+      var n = parseFloat(v) || 0, hh = Math.floor(n), mm = Math.round((n - hh) * 60);
+      if (mm === 60) { hh += 1; mm = 0; }
+      return (hh ? hh + ' h ' : '') + mm + ' m';
+    }
+    var h = '<button class="btn small ghost" id="mn_audit_back" style="margin-bottom:10px">‹ Back</button>' +
+      '<div class="card"><h3 style="margin-top:0">🔎 Audit — Manifest days</h3>' +
+      '<p class="note" style="margin-top:0">Every day with records, newest first — ' + dates.length + ' day' + (dates.length === 1 ? '' : 's') + '. Tap a day to open its manifest.</p>' +
+      (dates.length ? dates.map(function (ds) {
+        var s = {};
+        try { s = daySummaryOf(collect(ds)) || {}; } catch (e) { s = {}; }
+        var parts = [];
+        parts.push((parseFloat(s.km) || 0).toFixed(1) + ' km');
+        parts.push(hrs(s.hours));
+        parts.push((s.loads || 0) + ' load' + (s.loads === 1 ? '' : 's'));
+        parts.push((parseFloat(s.fuelL) || 0).toFixed(1) + ' L fuel');
+        return '<div class="listitem" data-mn-day="' + ds + '" style="cursor:pointer">' +
+          '<div class="a">' + esc(ds) + '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+          '<div class="b">' + esc(parts.join(' · ')) + '</div></div>';
+      }).join('') : '<div class="empty">No days with records yet.</div>') + '</div>';
+    body.innerHTML = h;
+    body.querySelector('#mn_audit_back').onclick = function () {
+      maniAudit = false;
+      Meticulous.modules.manifest.render(body);
+    };
+    body.querySelectorAll('[data-mn-day]').forEach(function (el) {
+      el.onclick = function () {
+        var ds = el.getAttribute('data-mn-day');
+        App._store.set('mani_date', ds);
+        App._store.set('mani_mode', 'day');
+        maniAudit = false;
+        Meticulous.modules.manifest.render(body);
+      };
+    });
+  }
+
   Meticulous.modules.manifest = {
+    _auditOn: function () { return maniAudit; }, /* v340: exported for the audit suite */
+    back: function () {
+      if (maniAudit) {
+        maniAudit = false;
+        if (maniBody) Meticulous.modules.manifest.render(maniBody);
+        return true;
+      }
+      return false;
+    },
+    resetView: function () { maniAudit = false; },
     /* v146: the pipe's doors — Connect ships a connected payer the
        manifest DOCUMENT for the periods billed to him as these
        very lines (collect + docLines under the driver's own
@@ -1603,6 +1673,10 @@
       return 'Daily log · ' + dayStr();
     },
     render: function (body) {
+      maniBody = body;
+      /* v340: the Audit view (every recorded day) stands
+         above the day/range faces. */
+      if (maniAudit) { renderAuditDays(body); return; }
       var d = dayStr(), c = collect(d), t = toggles();
       /* v184: the custom period — the Manifest gains the From/To
          range the Revenue and P&L screens already carry (the
@@ -1612,7 +1686,9 @@
       var mnMode = G('mani_mode', 'day') === 'range' ? 'range' : 'day';
       var mnFrom = maniDate('mani_from', ''), mnTo = maniDate('mani_to', '');
       var rangeDays = mnMode === 'range' ? eachDayInRange(mnFrom, mnTo) : [];
-      var h = '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';
+      /* v340: the Audit button at the very top of the module. */
+      var h = '<button class="btn small ghost" id="mn_audit" style="margin-bottom:10px">🔎 Audit</button>' +
+        '<div class="card"><h3>📝 Manifest — <input type="date" id="mn_date" value="' + d + '" style="width:auto"></h3>';
       h += '<div class="row" style="gap:6px;margin:4px 0">' +
         '<button class="btn small ' + (mnMode === 'day' ? 'navy' : 'ghost') + '" id="mn_mode_day" style="flex:1">One day</button>' +
         '<button class="btn small ' + (mnMode === 'range' ? 'navy' : 'ghost') + '" id="mn_mode_range" style="flex:1">Date range</button></div>';
@@ -1837,6 +1913,8 @@
         '<div class="note" id="mn_msg"></div></div>';
 
       body.innerHTML = h;
+      var mnAuditB = body.querySelector('#mn_audit');
+      if (mnAuditB) mnAuditB.onclick = function () { maniAudit = true; Meticulous.modules.manifest.render(body); };
       body.querySelector('#mn_date').onchange = function (e) {
         /* v319: never store a date that fails maniDateOk — a
            mangled picker value becomes today instead of sticking. */

@@ -1241,6 +1241,50 @@
   function fmtClockTime(ms) {
     return new Date(ms).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
   }
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — the COMPLETE record history of
+     this book in date order: every revenue entry and every
+     extra, uncapped (the face's Entries list shows the newest
+     3), ready to go through at tax season. Amounts ride each
+     row; the two cards keep the module's own entry/extra
+     split. */
+  function renderAuditRev(body) {
+    var ents = entries().slice().sort(function (a, b) {
+      var da = (a && a.date) || '', db = (b && b.date) || '';
+      return da < db ? 1 : (da > db ? -1 : 0);
+    });
+    var xtra = extras().slice().sort(function (a, b) {
+      var da = (a && a.date) || '', db = (b && b.date) || '';
+      return da < db ? 1 : (da > db ? -1 : 0);
+    });
+    function money(v) { var n = parseFloat(v); return isFinite(n) ? '$' + n.toFixed(2) : ''; }
+    var h = '<button class="btn small ghost" id="rv_audit_back" style="margin-bottom:10px">‹ Back</button>';
+    h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Revenue entries</h3>' +
+      '<p class="note" style="margin-top:0">Every entry in this book, newest first — ' + ents.length + ' record' + (ents.length === 1 ? '' : 's') + '.</p>' +
+      (ents.length ? ents.map(function (e) {
+        var bits = [];
+        var hrs = parseFloat(e.hours);
+        if (isFinite(hrs) && hrs > 0) bits.push(hrs + ' h');
+        if (e.note) bits.push(String(e.note));
+        if (e.label) bits.push(String(e.label));
+        return '<div class="listitem"><div class="a">' + esc(e.date || '') + ' · ' + money(e.amount) + '</div>' +
+          (bits.length ? '<div class="b">' + esc(bits.join(' · ')) + '</div>' : '') + '</div>';
+      }).join('') : '<div class="empty">No entries on file.</div>') + '</div>';
+    h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Extras</h3>' +
+      '<p class="note" style="margin-top:0">Every extra in this book, newest first — ' + xtra.length + ' record' + (xtra.length === 1 ? '' : 's') + '.</p>' +
+      (xtra.length ? xtra.map(function (x) {
+        var bits = [];
+        if (x.type) bits.push(String(x.type));
+        if (x.note) bits.push(String(x.note));
+        return '<div class="listitem"><div class="a">' + esc(x.date || '') + ' · ' + money(x.amount) + '</div>' +
+          (bits.length ? '<div class="b">' + esc(bits.join(' · ')) + '</div>' : '') + '</div>';
+      }).join('') : '<div class="empty">No extras on file.</div>') + '</div>';
+    body.innerHTML = h;
+    body.querySelector('#rv_audit_back').onclick = function () {
+      auditView = false;
+      api.render(body);
+    };
+  }
   function renderDayDetail(body) {
     var ds = dayDetailDate;
     /* v152: the wage rate when THIS paint's hourly amount is
@@ -1627,6 +1671,7 @@
   var snapNote = ''; // v302: the last custom-range snap, named under the From/To inputs until the next pick
   var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
   var formView = null; // v201 REV-CLEAN: 'manual' | 'extras' — the form opened from the top tabs, or null for the Revenue face
+  var auditView = false; // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
   var asOpen = false; // v201 REV-CLEAN: the auto-start menu panel on the Revenue face (collapsed until its button is tapped)
   /* v75: the entry/extra being edited inside Day Details
      ({kind:'entry'|'extra', index} into the FULL stored list), the
@@ -1784,6 +1829,7 @@
        write). The amount is priced by the module's own payFor —
        no second math path. Self-contained on purpose: the
        money-truth harness extracts this function alone. */
+    _auditView: function () { return auditView; }, /* v340: exported for the audit suite */
     status: function () {
       var list = entries(), last = null;
       list.forEach(function (x) {
@@ -1987,6 +2033,12 @@
        period live in the store — those are the main view's own
        settings, not a sub-view, and stay.) */
     back: function () {
+      /* v340: Back from the Audit view returns to the face. */
+      if (auditView) {
+        auditView = false;
+        if (lastBody) api.render(lastBody);
+        return true;
+      }
       if (!dayDetailDate && !dayEdit) return false;
       dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
       dayDetailDate = null;
@@ -1995,9 +2047,13 @@
     },
     resetView: function () {
       dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
+      auditView = false;
     },
     render: function (body) {
       lastBody = body;
+      /* v340: the Audit view (complete history) stands above
+         the face and its sub-views. */
+      if (auditView) { renderAuditRev(body); return; }
       /* v302: re-learn the pay cycle from the live invoice
          history before anything reads the period — on the first
          learn this also opens the view on the current learned
@@ -2210,9 +2266,14 @@
          period view — then the header card + stats, the month
          blocks in the month view, and the Entries history last:
          the working face up top, the scrollable history below. */
-      body.innerHTML = tabsHtml + asPanelHtml +
+      /* v340: the Audit button at the very top of the module,
+         above the tabs strip — the same place it sits in
+         every auditable module. */
+      body.innerHTML = '<button class="btn small ghost" id="rv_audit" style="margin-bottom:10px">🔎 Audit</button>' + tabsHtml + asPanelHtml +
         (view === 'period' ? blockHtml : '') + headHtml +
         (view === 'month' ? blockHtml : '') + tailHtml;
+      var rvAuditB = body.querySelector('#rv_audit');
+      if (rvAuditB) rvAuditB.onclick = function () { auditView = true; api.render(body); };
       var chartEl = body.querySelector('#revChart');
       if (chartEl) {
         drawChart(chartEl);

@@ -7,6 +7,8 @@
 
   function reports() { return S('reports', []); }
   function tab() { return S('tab', 'load'); }
+  var auditOn = false;   // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
+  var dmgBody = null;
 
   /* v307: the OFFICE surface (owner, Nov 2, 2026 — the PTI
      module's v213 pattern, word for word in shape): office-only
@@ -163,7 +165,48 @@
     }).catch(function () {});
   }
 
+  /* v340 (AUDIT-BUTTON-EVERY-MODULE, owner Nov 5, 2026 17:16
+     MST): the Audit view — EVERY report on file, both kinds,
+     in date order (the face splits them behind the Load /
+     Equipment tabs). Rows are the face's own rows, photos
+     included, so an auditor sees exactly what was filed. */
+  function reportRowHtml(r) {
+    return '<div class="listitem">' +
+      ((r.photos && r.photos.length) ? r.photos.map(function (p) {
+        return '<img src="' + p + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
+          (App._photoDl ? App._photoDl(p, 'damage-' + (r.date || '')) : '');
+      }).join('') : (r.photo ? '<img src="' + r.photo + '" style="width:100%;border-radius:8px;margin-bottom:8px">' +
+        (App._photoDl ? App._photoDl(r.photo, 'damage-' + (r.date || '')) : '') : '')) +
+      '<div class="a">' + esc(r.at) + '</div><div class="b">' + esc(r.desc) + (r.dispatch ? '<br>Dispatch: ' + esc(r.dispatch) : '') + '</div></div>';
+  }
+  function renderAuditDamage(body) {
+    dmgBody = body;
+    var all = reports().map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) {
+      var da = a.r.date || '', db = b.r.date || '';
+      if (da !== db) return da < db ? 1 : -1;
+      return b.i - a.i;
+    });
+    body.innerHTML = '<button class="btn small ghost" id="dg_audit_back" style="margin-bottom:10px">‹ Back</button>' +
+      '<div class="card"><h3 style="margin-top:0">🔎 Audit — Damage & incident reports</h3>' +
+      '<p class="note" style="margin-top:0">Every report on file, newest first — ' + all.length + ' record' + (all.length === 1 ? '' : 's') + ', load and equipment together.</p>' +
+      (all.length ? all.map(function (p) { return reportRowHtml(p.r); }).join('') : '<div class="empty">No reports on file.</div>') + '</div>';
+    body.querySelector('#dg_audit_back').onclick = function () {
+      auditOn = false;
+      Meticulous.modules.damage.render(body);
+    };
+  }
+
   Meticulous.modules.damage = {
+    _auditOn: function () { return auditOn; }, /* v340: exported for the suite */
+    back: function () {
+      if (auditOn) {
+        auditOn = false;
+        if (dmgBody) Meticulous.modules.damage.render(dmgBody);
+        return true;
+      }
+      return false;
+    },
+    resetView: function () { auditOn = false; },
     status: function () {
       /* v312: the office face (which can now reach this
          module — js/app.js) files nothing of its own; its
@@ -178,8 +221,13 @@
       var roleNow = '';
       try { roleNow = (App.userRole && App.userRole()) || ''; } catch (e) {}
       if (roleNow === 'office') { renderOfficeDamage(body); return; }
+      dmgBody = body;
+      /* v340: the Audit view replaces the face while it stands. */
+      if (auditOn) { renderAuditDamage(body); return; }
       var t = tab();
-      var h = '<div class="row" style="margin-bottom:4px">' +
+      /* v340: the Audit button at the very top of the module. */
+      var h = '<button class="btn small ghost" id="dg_audit" style="margin-bottom:10px">🔎 Audit</button>' +
+        '<div class="row" style="margin-bottom:4px">' +
         '<button class="btn small ' + (t === 'load' ? 'primary' : 'ghost') + '" data-tab="load">📦 Load</button>' +
         '<button class="btn small ' + (t === 'equipment' ? 'primary' : 'ghost') + '" data-tab="equipment">🚛 Equipment</button></div>';
 
@@ -208,6 +256,8 @@
 
       body.innerHTML = h;
       paintSharedSlot(body);
+      var auditB = body.querySelector('#dg_audit');
+      if (auditB) auditB.onclick = function () { auditOn = true; Meticulous.modules.damage.render(body); };
       var photoList = [];
       body.querySelectorAll('[data-tab]').forEach(function (b) {
         b.onclick = function () { W('tab', b.getAttribute('data-tab')); Meticulous.modules.damage.render(body); };
