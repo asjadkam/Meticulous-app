@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 332,
-  "notes": "Fuel: a fill-up can now carry TWO receipts (or more). When the pump stops and you top up, tap 'Add another receipt' on the fill-up form — the second receipt's litres and cost add into the same entry and both photos stay on the one record. The entry's details page shows every receipt photo stacked.",
+  "webVersion": 333,
+  "notes": "Live miles on the drive TO work: the pre-session day watch (armed when a dispatch claims today) now revives itself when you come back to the app after the phone killed its location watch mid-drive — before, a watch that died on the way to work silently stopped counting and never restarted, so part of the drive never landed on the day. The session-start adoption of the morning leg is unchanged.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "ffe604ea57cad8cded30f0c77e5acc6966360052be6ed41f44ab79e8eff2a80a",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "53274df8a716df21708b4b40947c76dd7cfb110be29c7e2f3b22ca9f969f8666",
+    "index.html": "625288cee5c1527a0c1ae42f8304d5dafccbc7dd98e71fb0bb8c43124bdbe747",
     "js/app.js": "1733ea338ade5e2332e46cf12c58fc2b35911232aa364549ee3826dac1a606ad",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -29,7 +29,7 @@
     "js/geo.js": "c465b5956bfac79ec7e8837ce7fc14e5ed91a81ee9b1b4b5c7582522fcff6fc1",
     "js/geoloads.js": "d1e5c2b64265dea31926be8f2cb39ac0a6c085be309e95e9519400fd128e1a82",
     "js/i18n.js": "727a7533be4fb2c0fa8d676c55df64e1e53a3f460492942f8cefb8496148cf9b",
-    "js/miles.js": "7071ba82c15431dbe6160bc3d61cacb04ac5b8d79a5d3900a881476015e00dfa",
+    "js/miles.js": "0149df56c47239a8667fd0501d450fc8af3e09d0a38e11ff841a61ad7df129a8",
     "js/ota.js": "6c90a4c1ec4780d91f8696bcc734928123c2fbc1c72c9058d668ffa3fa3bad2f",
     "js/parkplace.js": "c32d7dabeb215f14b88b7154f4e0b8ad2582c62f1192141c5f7665c9b696cad6",
     "js/pdfexport.js": "e0f8dbba8f1fbfc820d995218c70569558489e20165c954cc6501f554c213dfa",
