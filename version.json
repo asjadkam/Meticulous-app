@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 328,
-  "notes": "v328 — PTI-HISTORY-UNDER-FORM (owner Nov 5, 2026 ~14:52, over a screenshot of the live PTI screen: 'This history should be underneath the inspection form… just like always — 3 under recent history and full list of requested'). The PTI screen now opens on the inspection FORM itself: the two report cards that used to paint ABOVE it — '✅ Today's inspection filed' and the '✍️ N inspection(s) not signed yet' prompt — are history, and they now land UNDER the form (after Sign & file, ahead of Past inspections), with their rows, badges and tap-to-open behaviour unchanged. The Past inspections list below keeps his standing pattern, untouched: newest 3 as recent history, the full list only behind 'Show more'. Screen order is now: Inspection form (Schedule 1 · Odometer · Checklist · Sign & file) → today's filed → unsigned prompt → DOT Inspection Mode door → Past inspections (3 + Show more). Proof: tools/pti-history-under-form-v328-test.js 18/18 (painted order asserted card by card; exactly 3 recent rows; Show more carries the rest); inspection-mode-v327 re-run 52/52; pti-history-cap-v290 24/24; pti-v162 failure set unchanged from baseline (one pre-existing version-pin failure). Web-only; reaches his phone by OTA on next full close + reopen. Verdict owed in his hands.",
+  "webVersion": 329,
+  "notes": "v329 — NAVIGATE-DISPATCH-PIN-NOT-USED (owner Nov 5, 2026 08:44, screen recording: Navigate on the active dispatch opened the Navigator's search screen — 'Aecon Trans — Calgary International Airport' in the Destination box, 'No places found' under it — though the dispatch's pin, 51.1252778, -113.9839531, was stored the evening before). Root cause: a dispatch lives as TWO stored copies — the list record and the active snapshot taken at activation — and different writers land on different copies (edit-save writes both; geocode-back, ingest and Connect merges can land on one). Every Navigate handler read exactly ONE copy's lat/lng before falling through to the text search, so the pin existed but not on the copy the tap consulted. v329 adds dspRecordPin, the one pin resolution for a dispatch record: the tapped copy's own pin first; if it has none, the same record (by id) in the other store; only when NO copy carries a pin do the place-name and text fallbacks run (the v300 always-land-somewhere law is untouched). All three Navigate surfaces resolve through it — the active card's Navigate, the history data-nav rows, and the data-navname rows — and the active card's button offer counts either copy's pin. Named choice: a pin present on the tapped copy always wins over the other copy's — the resolver fills a MISSING pin, it never second-guesses a present one. Proof: tools/navpin-crosscopy-v329-test.js 24/24, including the Nov 5 shape replayed exactly (pin on the list copy, pinless active snapshot → the tap hands over the pin, no query rides along); dispatch-autostart 73/73 and nav-places 85/85 green; dispatch-save / dispatch-edit green; the v150 navpin suite's only failures are its era-stale version pins. Web-only; OTA on next full close + reopen. Verdict owed in his hands on the next Navigate tap.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "0e007c31bba90e5a14d4eb3b7f0d2506d25030711c5cedf4a63eb20286f3fa4c",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "128f46d35a6fb524dee9ee19be557255cbaaecd4d1ba85bd26650478bb7d469c",
+    "index.html": "d9dbd037bf8059e1956dd0cc25fd592c29102a099c1cdfddb7faa03e0d85945c",
     "js/app.js": "1733ea338ade5e2332e46cf12c58fc2b35911232aa364549ee3826dac1a606ad",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -42,7 +42,7 @@
     "modules/billing.js": "fe7ad30f17318a603dbb6a1aca961ba8d94a1b340346f343e63114b8e9bc0c53",
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "ed2aa20b4b8c075ef8d96503315d0b5790bb05b6a11f08674174fb64815b1bb5",
-    "modules/dispatch.js": "eaa2f47c32a1760d693001f31487e935d427ef27dcb1570324a7fc34840b148c",
+    "modules/dispatch.js": "6369c9d50b587be27f5faf71fe3c92234c256ff4ccb0e50395d9e91c28c78f6e",
     "modules/fuel.js": "d92b7c6fbd4c206b9c23b92e973432ac9afd6bffdd7282e6f31b76c4da3ad714",
     "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
