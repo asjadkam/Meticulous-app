@@ -67,7 +67,7 @@
      reading of his Oct 22 model (module excluded, shares included). */
   var MODULE_MIN_TIER = {
     revenue: 'standard', dispatch: 'standard', navigator: 'standard',
-    fuel: 'standard', pti: 'standard', damage: 'standard',
+    fuel: 'standard', pti: 'standard', damage: 'standard', documents: 'standard',
     pnl: 'standard', maintenance: 'standard',       // + account-type gate below
     manifest: 'gold', invoice: 'gold',
     connect: 'premium'

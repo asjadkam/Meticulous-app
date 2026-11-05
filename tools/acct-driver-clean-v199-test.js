@@ -70,7 +70,7 @@ console.log('\n— v199: nothing underneath was deleted —');
 {
   ok('pnl module still registers', read('modules/pnl.js').indexOf("modules.pnl") !== -1 || read('modules/pnl.js').indexOf("'pnl'") !== -1);
   ok('maintenance module still registers', read('modules/maintenance.js').indexOf('maintenance') !== -1);
-  ok('role module orders untouched (driver order still lists the keys; the gates filter)', appSrc.indexOf("driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect']") !== -1);
+  ok('role module orders untouched (driver order still lists the keys; the gates filter)', appSrc.indexOf("driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'documents', 'pnl', 'invoice', 'connect']") !== -1);
 }
 
 console.log('\n— v199: ship pins —');

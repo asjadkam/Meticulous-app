@@ -1018,7 +1018,7 @@ console.log('— statics: rules gates + the receiver surface —');
   ok('surface: Connect renders the received doc shares',
     conSrc.indexOf('Documents shared with you') !== -1 && conSrc.indexOf('doc_shares') !== -1);
   ok('surface: the office face has a door to the Damage module (v312 — the v307 viewer was unreachable)',
-    /office: \['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage'\]/.test(appSrc));
+    /office: \['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage', 'documents'\]/.test(appSrc));
 }
 
 console.log('\nconnect-doc-delivery-v307: ' + pass + ' passed, ' + fail + ' failed');

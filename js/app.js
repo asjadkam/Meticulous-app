@@ -953,7 +953,7 @@
      Navigation module survives only as the merged module's
      places component (its file still loads; the Navigator's
      front face renders it). No card, no drawer entry, no meta. */
-  var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect'];
+  var MODULE_ORDER = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'documents', 'manifest', 'invoice', 'connect'];
   /* MODULE-TITLE-BEGIN — harness-extractable (store + pure JS). */
   var MODULE_META = {
     revenue:    { title: 'Revenue',           icon: '📊', tier: 'basic' },
@@ -964,6 +964,7 @@
     maintenance:{ title: 'Maintenance',       icon: '🔧', tier: 'basic' },
     pti:        { title: 'PTI', icon: '🔍', tier: 'basic' },
     damage:     { title: 'Damage & Incident', icon: '📸', tier: 'basic' },
+    documents:  { title: 'Documents', icon: '📁', tier: 'basic' },
     manifest:   { title: 'Manifest / Daily Log', icon: '📝', tier: 'pro' },
     invoice:    { title: 'Invoice',           icon: '🧾', tier: 'pro' },
     connect:    { title: 'Connect',           icon: '🤝', tier: 'premium' }
@@ -1013,7 +1014,7 @@
   var USER_ROLES = ['driver', 'both', 'office'];
   var USER_ROLE_DEFAULTS = { 'Driver': 'driver', 'Owner-Operator': 'both', 'Fleet Manager': 'office' };
   var ROLE_MODULE_ORDER = {
-    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'pnl', 'invoice', 'connect'],
+    driver: ['revenue', 'dispatch', 'fuel', 'maintenance', 'pti', 'manifest', 'navigator', 'damage', 'documents', 'pnl', 'invoice', 'connect'],
     /* v76 (F4, boss QA Oct 14): the office home leads with the boss's
        five tools IN BLUEPRINT ORDER — Connect first (his #1: his
        connection to his drivers), then Dispatch, Invoice, Maintenance,
@@ -1042,8 +1043,8 @@
        fleet manager whose connection ticks Damage & Incident
        had literally no way to open the screen her access
        points at. Damage rides last, after PTI. */
-    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage'],
-    both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect']
+    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage', 'documents'],
+    both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'documents', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
      other sidebar item keeps its current place after them. Nothing is

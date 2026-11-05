@@ -129,7 +129,9 @@ function roleSandbox(store) {
   /* v162: 'pti' (Pre-Trip Inspection) joins the DRIVER faces —
      driver + both carry eleven modules; the office set stays the
      ten above (no PTI card on the office face, owner Oct 18). */
-  const ALL_DRIVE = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'manifest', 'invoice', 'connect'];
+  /* v339 (DOCUMENT-VAULT, owner Nov 5, 2026): 'documents' joins
+     every face after 'damage' — driver + both carry twelve. */
+  const ALL_DRIVE = ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'documents', 'manifest', 'invoice', 'connect'];
   deepEq(sb.roleModuleOrder('both'), ALL_DRIVE, 'dashboard: both = the merged order (one Navigator door, no Navigation)');
   /* v76 (F4): superseded Oct 14, 2026 by the owner's Connect Phase-2
      blueprint — the office home leads with the boss's five tools,
@@ -138,13 +140,17 @@ function roleSandbox(store) {
      MDT): the office face carries ONLY the five office tools —
      Connect, Dispatch, Invoice, P&L, Manifest; the driver
      modules are removed from the office face entirely. */
-  const OFFICE_FIVE = ['connect', 'dispatch', 'invoice', 'pnl', 'manifest'];
-  deepEq(sb.roleModuleOrder('office'), OFFICE_FIVE, 'dashboard: office = ONLY the five office tools, connect first');
+  /* v213/v312/v339 SUPERSEDE the five-only set: PTI joined the
+     office face as a viewer (v213), Damage the same way (v312),
+     and Documents joins as the owner's send door (v339) — the
+     five working tools still lead, Connect first. */
+  const OFFICE_FIVE = ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage', 'documents'];
+  deepEq(sb.roleModuleOrder('office'), OFFICE_FIVE, 'dashboard: office = the office tools, connect first (v213/v312/v339 viewers + send door ride last)');
   eq(sb.roleModuleOrder('driver')[0], 'revenue', 'dashboard: driver leads with revenue (tracker feeds it)');
   ['driver', 'both', 'office'].forEach(function (r) {
     const ord = sb.roleModuleOrder(r);
-    const want = (r === 'office') ? OFFICE_FIVE : ALL_DRIVE; // v167: office = the five only
-    eq(ord.length, want.length, 'dashboard ' + r + ': ' + want.length + ' modules present (v119 merge: Navigation folded into Navigator; v162: PTI on driver faces; v167: office keeps only its five)');
+    const want = (r === 'office') ? OFFICE_FIVE : ALL_DRIVE; // v167 set, grown by v213/v312/v339
+    eq(ord.length, want.length, 'dashboard ' + r + ': ' + want.length + ' modules present (v119 merge: Navigation folded into Navigator; v162: PTI on driver faces; v167: office set; v339: Documents everywhere)');
     deepEq(ord.slice().sort(), want.slice().sort(), 'dashboard ' + r + ': the role’s module set');
   });
 

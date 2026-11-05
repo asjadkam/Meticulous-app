@@ -1250,18 +1250,55 @@
      span: closed-session seconds plus the live hours figure —
      the same facts the day blocks show. Miles keep the v184
      basis (live km, days that have it). */
+  /* v331 (MULTI-DAY-MANIFEST-SUMMARY, owner Nov 5, 2026 ~12:39):
+     ONE day as its summary — the only four facts a multi-day
+     manifest may carry per day: total km, total hours, loads,
+     fuel filled (litres). No odometer readings, no start/end
+     times, no GPS marks, no pay — the amendment's exact list.
+     Hours and km keep the v211 basis (session span + live
+     hours; live km on days that have it); fuel is the day's
+     fills' litres summed. sumCollected below reads through
+     this, so the reducer's math lives in exactly one place. */
+  function daySummaryOf(rc) {
+    if (!rc) return { km: 0, hours: 0, loads: 0, fuelL: 0 };
+    var secs = 0;
+    (rc.sessions || []).forEach(function (s) { secs += (s && s.seconds) || 0; });
+    var fuelL = 0;
+    (rc.fills || []).forEach(function (x) { fuelL += parseFloat(x && x.litres) || 0; });
+    return {
+      km: rc.liveKmAny ? (rc.liveKm || 0) : 0,
+      hours: secs / 3600 + ((rc.live && rc.live.hours) || 0),
+      loads: rc.loads || 0,
+      fuelL: fuelL
+    };
+  }
   function sumCollected(list) {
-    var earned = 0, loads = 0, km = 0, hours = 0;
+    var earned = 0, loads = 0, km = 0, hours = 0, fuelL = 0;
     (list || []).forEach(function (rc) {
       if (!rc) return;
       earned += rc.earned || 0;
-      loads += rc.loads || 0;
-      km += rc.liveKmAny ? (rc.liveKm || 0) : 0;
-      var secs = 0;
-      (rc.sessions || []).forEach(function (s) { secs += (s && s.seconds) || 0; });
-      hours += secs / 3600 + ((rc.live && rc.live.hours) || 0);
+      var s = daySummaryOf(rc);
+      loads += s.loads;
+      km += s.km;
+      hours += s.hours;
+      fuelL += s.fuelL;
     });
-    return { earned: earned, loads: loads, km: km, hours: hours };
+    return { earned: earned, loads: loads, km: km, hours: hours, fuelL: fuelL };
+  }
+  /* The summary's own formatting — one decimal, the house style
+     of the v211 period line. */
+  function fmtKm1(km) { return (Math.round((km || 0) * 10) / 10).toFixed(1) + ' km'; }
+  function fmtH1(hours) { return (Math.round((hours || 0) * 10) / 10).toFixed(1) + ' h'; }
+  function fmtL1(litres) { return (Math.round((litres || 0) * 10) / 10).toFixed(1) + ' L'; }
+  function fmtDayLabel(ds) {
+    var p = String(ds || '').split('-');
+    if (p.length !== 3) return String(ds || '');
+    var dt = new Date(+p[0], +p[1] - 1, +p[2]);
+    try { return dt.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }); }
+    catch (e) { return String(ds); }
+  }
+  function daySummaryText(s) {
+    return fmtKm1(s.km) + ' · ' + fmtH1(s.hours) + ' · ' + s.loads + (s.loads === 1 ? ' load' : ' loads') + ' · ' + fmtL1(s.fuelL) + ' fuel';
   }
   function rangeTotals(days) {
     return sumCollected((days || []).map(function (rd) { return collect(rd); }));
@@ -1493,6 +1530,8 @@
        never a rebuild from the payer's stores. */
     _collectDay: collect,
     _docLines: docLines,
+    _daySummaryOf: daySummaryOf, /* v331: the multi-day summary's per-day facts, exported for the suite */
+    _rangeTotals: rangeTotals, /* v331: the same reducer the range faces total with */
     _trailStops: trailStops,
     _dropHomeStops: dropHomeStops, /* v190: the home-stop filter, exported for the suite */
     _placeNameFor: placeNameFor, /* v204: the stop-name resolver, exported for the suite */
@@ -1752,15 +1791,25 @@
         rangeDays.forEach(function (rd) {
           var rc = collect(rd);
           rcs.push(rc);
-          /* v211: the day's FULL block (dayBodyHtml — the same
-             facts the single-day manifest shows), headed by its
-             date. The v184 one-line summary rows are gone: a
-             period manifest reads like the daily ones stacked. */
-          h += '<h3>' + esc(rd) + '</h3>' + dayBodyHtml(rd, rc, t);
+          /* v331 (MULTI-DAY-MANIFEST-SUMMARY): one compact line
+             per day — date, total km, total hours, loads, fuel.
+             The v211 stacked FULL day blocks are retired on the
+             owner's Nov 5, 2026 word: a multi-day manifest is a
+             SUMMARY, not the daily manifests stretched; a month
+             of lines fits one page. Nothing else rides the line:
+             no odometer, no start/end times, no GPS, no pay. */
+          h += '<div class="kv"><span>' + esc(fmtDayLabel(rd)) + '</span><b>' + esc(daySummaryText(daySummaryOf(rc))) + '</b></div>';
         });
         if (rangeDays.length) {
           var rtS = sumCollected(rcs);
-          h += '<div class="kv"><span><b>Period total</b></span><b>$' + rtS.earned.toFixed(2) + ' · ' + rtS.loads + ' loads · ' + (Math.round(rtS.km * 10) / 10).toFixed(1) + ' km · ' + (Math.round(rtS.hours * 10) / 10).toFixed(1) + ' h</b></div>';
+          /* Page 2's totals, previewed the same way: total
+             hours, total fuel, total loads — NO km (the owner
+             did not ask for a range km total; it is left off,
+             named, not silently added) and NO pay. */
+          h += '<h3>Period total</h3>' +
+            '<div class="kv"><span>Total hours</span><b>' + fmtH1(rtS.hours) + '</b></div>' +
+            '<div class="kv"><span>Total fuel</span><b>' + fmtL1(rtS.fuelL) + '</b></div>' +
+            '<div class="kv"><span>Total loads</span><b>' + rtS.loads + '</b></div>';
         }
         h += '</div>';
       } else {
@@ -1864,21 +1913,30 @@
       var toEl = body.querySelector('#mn_to');
       if (toEl) toEl.onchange = function (e) { App._store.set('mani_to', maniDateOk(e.target.value) ? e.target.value : App._today()); Meticulous.modules.manifest.render(body); };
       function rangeLines() {
+        /* v331 (MULTI-DAY-MANIFEST-SUMMARY): the printed range
+           document IS the summary — page 1: the title + one line
+           per day (date · km · hours · loads · fuel litres);
+           page 2 (a real break, MetPdf 'pb'): the range totals —
+           total hours, total fuel, total loads ONLY. Total km
+           for the range is NOT on it (not specified by the
+           owner — left off, named in the queue log), and no pay
+           figure appears anywhere. The single-day document
+           (docLines) is untouched. Totals come from rangeTotals,
+           the same reducer the preview totals with. */
         var lines = [{ k: 'title', a: 'MANIFEST — ' + mnFrom + ' → ' + mnTo }];
-        rangeDays.forEach(function (rd) {
-          docLines(rd, collect(rd), t).forEach(function (ln) { lines.push(ln); });
-        });
-        /* v211: the period totals close the document — computed
-           by rangeTotals, the same reducer the screen preview
-           totals with, hours included. */
-        if (rangeDays.length) {
-          var rtP = rangeTotals(rangeDays);
-          lines.push({ k: 'h', a: 'PERIOD TOTAL' });
-          lines.push({ k: 'kv', a: 'Total Earned Income', b: '$' + rtP.earned.toFixed(2) });
-          lines.push({ k: 'kv', a: 'Loads', b: '' + rtP.loads });
-          lines.push({ k: 'kv', a: 'Miles (live)', b: (Math.round(rtP.km * 10) / 10).toFixed(1) + ' km' });
-          lines.push({ k: 'kv', a: 'Hours', b: (Math.round(rtP.hours * 10) / 10).toFixed(1) + ' h' });
+        if (!rangeDays.length) {
+          lines.push({ k: 'note', a: 'No days in this range.' });
+          return lines;
         }
+        rangeDays.forEach(function (rd) {
+          lines.push({ k: 'kv', a: fmtDayLabel(rd), b: daySummaryText(daySummaryOf(collect(rd))) });
+        });
+        var rtP = rangeTotals(rangeDays);
+        lines.push({ k: 'pb' });
+        lines.push({ k: 'h', a: 'PERIOD TOTAL' });
+        lines.push({ k: 'kv', a: 'Total hours', b: fmtH1(rtP.hours) });
+        lines.push({ k: 'kv', a: 'Total fuel', b: fmtL1(rtP.fuelL) });
+        lines.push({ k: 'kv', a: 'Total loads', b: '' + rtP.loads });
         return lines;
       }
       body.querySelector('#mn_print').onclick = function () {

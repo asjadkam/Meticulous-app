@@ -1207,7 +1207,20 @@
     onVisible: function () {
       wakeHold.visible();
       paintWake();
-      if (!dayKey || !sessionRunning()) return;
+      /* v333 (LIVE-MILES-TO-WORK): the revival used to require a
+         running session — so the PRE-SESSION day watch (the
+         date-keyed watch App.armDayMiles arms for the drive TO
+         work) had no revival at all: if the OS killed the geo
+         watch mid-drive (phone in a pocket, app backgrounded),
+         the leg silently stopped accruing and nothing ever
+         restarted it; armDayMiles' re-arm even early-returned
+         on the stale watching flag. The date-keyed watch now
+         gets the same dead-watch revival a session gets.
+         Post-close accrual is untouched: its key is a session
+         key, never a 'd' key, and its stillness lifecycle is
+         its own. */
+      var dayWatchLive = !postClose && !!dayKey && String(dayKey).charAt(0) === 'd';
+      if (!dayKey || (!sessionRunning() && !dayWatchLive)) return;
       var g = geoApi();
       var dead = watchLooksDead({
         dayActive: true,

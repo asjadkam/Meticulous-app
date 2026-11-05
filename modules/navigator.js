@@ -1213,6 +1213,30 @@
     return [lat, lng];
   }
 
+  /* v330 (NAV-MAP-FIRST-DROP-PIN-OPEN-SENT-PINS, owner Nov 5,
+     2026 ~12:50): the pin inside a SENT Maps link. A full Google
+     Maps link carries its pin three ways: a plain "lat, lng"
+     pair (the @51.1,-114.0 view centre, ll=, q=), percent-escaped
+     (%2C for the comma), or the data-segment form !3d<lat>!4d<lng>
+     (the place's own coordinates — the most exact of the three,
+     so it is read after the plain pair only when no pair exists;
+     a pair in the URL is the view centre, which for a shared
+     place link sits ON the place). parseLatLngText's own
+     contract is untouched — this wrapper is only for link text. */
+  function sentPinCoords(text) {
+    var direct = parseLatLngText(text);
+    if (direct) return direct;
+    if (!text) return null;
+    var s = String(text);
+    try { s = decodeURIComponent(s); } catch (e) {}
+    var m = s.match(/!3d(-?\d{1,2}\.\d+)[^!]*!4d(-?\d{1,3}\.\d+)/);
+    if (m) {
+      var la = Number(m[1]), ln = Number(m[2]);
+      if (isFinite(la) && isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180) return [la, ln];
+    }
+    return parseLatLngText(s);
+  }
+
   /* v103: the v93 turn-by-turn HANDOFF (its link builder + the
      timed cascade) is DELETED outright — owner ruling, Oct 16,
      2026: navigation never leaves the app. There is deliberately
@@ -1466,6 +1490,120 @@
     }
     _covLiftMemo[key] = out;
     return out;
+  }
+
+  /* v335 (NAV-GPS-STEPPING-NOT-SMOOTH): the glide's aim point.
+     Between fixes (~1 Hz) the truck keeps moving; an aim frozen
+     at the last fix makes the camera ease-burst then wait — the
+     visible STEP. The aim advances along the heading by the
+     distance the truck covers in the fix's age plus a small
+     lead, both capped, so a live stream glides continuously
+     and a dead stream stops advancing (age cap) instead of
+     sailing off. A stopped truck or a missing heading aims at
+     itself. */
+  function glideAim(pos, headingDeg, speedMps, ageMs) {
+    if (!pos) return pos;
+    var v = (typeof speedMps === 'number' && isFinite(speedMps) && speedMps > 0) ? speedMps : 0;
+    if (!v || headingDeg === null || headingDeg === undefined || !isFinite(headingDeg)) return pos;
+    var age = (typeof ageMs === 'number' && isFinite(ageMs) && ageMs > 0) ? Math.min(ageMs, 2500) : 0;
+    var adv = Math.min(v * (age / 1000 + 1.2), 45);
+    if (!(adv > 0)) return pos;
+    var rad = headingDeg * Math.PI / 180;
+    var kx = 111320 * Math.cos(pos[0] * Math.PI / 180), ky = 110540;
+    return [pos[0] + (Math.cos(rad) * adv) / ky, pos[1] + (Math.sin(rad) * adv) / kx];
+  }
+
+  /* v336 (NAV-TRUCK-POINTING-WRONG-WAY): which heading may the
+     truck believe? A GPS course is honest at speed and noise
+     at a crawl — below ~3 m/s it jitters, freezes, and can sit
+     flipped against travel for whole minutes of traffic, and
+     the old onPos took it RAW at any speed, dragging the whole
+     heading-up map (and the truck's pointing) with it. The
+     movement-derived bearing has the opposite profile: needs
+     10 m of travel, then it IS the direction of travel. Rule:
+     at speed, the GPS course wins; crawling, a derived bearing
+     (when the fix actually moved) wins over the course; with
+     neither, the last believed heading stands — a stationary
+     truck does not change where it points. Cold start takes
+     whatever exists. Returns the heading to believe, or the
+     previous one unchanged. */
+  function pickHeading(prev, gps, speedMps, derived) {
+    var g = (typeof gps === 'number' && isFinite(gps)) ? ((gps % 360) + 360) % 360 : null;
+    var d = (typeof derived === 'number' && isFinite(derived)) ? ((derived % 360) + 360) % 360 : null;
+    var v = (typeof speedMps === 'number' && isFinite(speedMps)) ? speedMps : null;
+    if (v !== null && v >= 3 && g !== null) return g;
+    if (d !== null) return d;
+    if (prev === null || prev === undefined) return g;
+    if (v !== null && v < 3) return prev;
+    return g !== null ? g : prev;
+  }
+
+  /* v337 (NAV-ETA): the parked-at-the-site arrival shape. The
+     standing triggers (≤30 m of route left on the line, or
+     <40 m to the pin in the final stretch) can never fire at a
+     yard or a big site: the truck leaves the drawn line at the
+     gate, its along-route projection freezes with ~100+ m
+     "left", and it parks well over 40 m from the pin — on his
+     Nov 4 tape he sat parked AT the airport site while the bar
+     still read "140 m left, 8 min". Arrival also speaks when
+     the truck is essentially stopped within a modest radius
+     of the pin with little route left, SUSTAINED (the caller
+     owns the dwell) — the highway pass-by of Oct 17 fails every
+     gate (moving fast, kilometres left), so it stays safe. */
+  function parkedArrivalOk(distToPinM, leftAlongM, speedMps) {
+    if (!(distToPinM <= 150) || !(leftAlongM <= 300)) return false;
+    return speedMps === null || speedMps === undefined || !isFinite(speedMps) || speedMps < 0.5;
+  }
+  /* v337 (NAV-ETA): the displayed ETA may not teleport. The
+     tick's estimate switches wholesale between estimators
+     (plan/pace blend, a live provider answer, back again), and
+     every switch used to move the arrival clock by minutes in
+     one tick (his Stoney Trail jump: 8:50 -> 8:54 while the
+     distance fell). etaSlew moves the SHOWN minutes toward
+     the computed target at a bounded rate — 0.1 min per second
+     of real time, floored so a slow tick still converges,
+     capped so a long stall doesn't lurch on return. */
+  function etaSlew(shownMin, targetMin, elapsedMs) {
+    if (shownMin === null || shownMin === undefined || !isFinite(shownMin)) return targetMin;
+    if (targetMin === null || targetMin === undefined || !isFinite(targetMin)) return shownMin;
+    var step = Math.min(Math.max((elapsedMs || 0) * 0.0001, 0.02), 2);
+    var d = targetMin - shownMin;
+    if (Math.abs(d) <= step) return targetMin;
+    return shownMin + (d > 0 ? step : -step);
+  }
+
+  /* v338 (NAV-SPEED-MISREADS): the speed-limit judge, lifted
+     out of the Overpass callback so it can be tested. The
+     v300 semantics, unchanged: among the returned ways with a
+     parseable maxspeed, a way whose NAME matches the road the
+     plan says the truck is on wins (nearest such way); else
+     the way whose line passes nearest the truck, but only if
+     that is <= 20 m; else null — unknown, never a borrowed
+     number. (pointSegM + parseMaxspeed ride along in NAVPURE
+     already / below.) */
+  function pickLimitAnswer(elements, pos, roadWanted) {
+    var v = null;
+    if (!elements || !elements.length || !pos) return null;
+    var named = null, nearest = null, nearestD = Infinity;
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var parsed = parseMaxspeed(el.tags && el.tags.maxspeed);
+      if (!parsed) continue;
+      var d = Infinity, g = el.geometry || [];
+      for (var gi = 0; gi + 1 < g.length; gi++) {
+        var sd = pointSegM(pos, [g[gi].lat, g[gi].lon], [g[gi + 1].lat, g[gi + 1].lon]).dist;
+        if (sd < d) d = sd;
+      }
+      if (g.length === 1) d = haversineM(pos, [g[0].lat, g[0].lon]);
+      if (d < nearestD) { nearestD = d; nearest = parsed; }
+      var nm = String((el.tags && el.tags.name) || '').toLowerCase();
+      if (roadWanted && nm && (roadWanted.indexOf(nm) >= 0 || nm.indexOf(roadWanted.split(' / ')[0]) >= 0) && d < 40) {
+        if (!named || d < named.d) named = { v: parsed, d: d };
+      }
+    }
+    if (named) v = named.v;
+    else if (nearest !== null && nearestD <= 20) v = nearest;
+    return v;
   }
 
   /* ================= NAVPURE-END ================= */
@@ -2232,6 +2370,8 @@
     },
     resetView: function () { nvFace = 'places'; },
 
+    /* v330 test hook: the sent-pin link parser (pure). */
+    _sentPinCoords: sentPinCoords,
     render: function (body) {
       nvBody = body;
       /* v220: hear the shell's PiP changes (once) — applyPipFace
@@ -2399,7 +2539,17 @@
         '<button class="btn small ghost" id="nv_mute" style="flex:1">' + (settings.muted ? '🔇 Sound: off' : '🔊 Sound: on') + '</button>' +
         '</div></div>';
 
-      h += '<div class="nv-sheet">';
+      /* v330 (NAV-MAP-FIRST): the Navigator opens ON THE MAP —
+         like Google Maps, the map is the screen and the sheet
+         starts COLLAPSED to one slim handle, so opening the
+         module is a map with a banner, not a search-box page.
+         The handle expands the same sheet (Destination, places,
+         Directions) unchanged; setting a destination — a search
+         pick, a map tap, a hand-off, a sent pin — expands it on
+         its own (see paintSheet / setDest). */
+      h += '<div class="nv-sheet nv-sheet-collapsed" id="nv_sheet">' +
+        '<button type="button" class="btn ghost" id="nv_sheet_toggle" style="width:100%;text-align:left">📍 Destination, places &amp; directions — tap to open ▾</button>' +
+        '<div id="nv_sheet_body">';
       /* v104: ▶ Drive is pinned at the TOP of the sheet — the
          first thing in it, above the Destination card and its
          recents. Owner's Oct 16 video: the route computed, but
@@ -2420,6 +2570,13 @@
         '<div class="row"><input id="nv_q" placeholder="e.g. Foothills Industrial Park, Calgary" style="flex:1">' +
         '<button class="btn navy" id="nv_search">Search</button></div>' +
         '<div id="nv_results"></div>' +
+        /* v330: the SENT-PIN door — foremen and other drivers text
+           Google Maps links; paste one here and the Navigator
+           goes to its pin (see openSentPin). */
+        '<label class="f">Sent a pin in a text? Paste the Maps link</label>' +
+        '<div class="row"><input id="nv_link" placeholder="Paste the Maps link here" style="flex:1">' +
+        '<button class="btn navy" id="nv_link_open">Open pin</button></div>' +
+        '<div id="nv_link_note"></div>' +
         /* v103 door 1: the SAME search-first picker as Navigation
            (the Navigation module's shared component — recents-only
            by default, the full list only as filter matches). The
@@ -2443,7 +2600,7 @@
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
-      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div>';
+      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div></div>';
 
       /* v101 DRIVE SCREEN — a dedicated full-screen mode (fixed
          overlay; rendered hidden with the module so teardown is the
@@ -2551,7 +2708,12 @@
            A bar whose arrival stack only exists after a
            successful tick is a bar that can show nothing. */
         '<div class="nv-drive-eta"><div class="nv-drive-eta-main" id="nvd_eta_main">--:--</div>' +
-        '<div class="nv-drive-eta-sub" id="nvd_eta_sub">Getting your arrival time…</div></div>' +
+        '<div class="nv-drive-eta-sub" id="nvd_eta_sub">Getting your arrival time…</div>' +
+        /* v334 (LIVE-MILES-ON-NAV-SCREEN): the day's live miles,
+           a quiet third line in the ETA stack — painted by the
+           drive tick from LiveMiles.currentKm; hidden until the
+           miles engine has a true figure (never a fake zero). */
+        '<div class="nv-drive-miles hidden" id="nvd_miles"></div></div>' +
         '<button class="btn ghost nv-mute' + (settings.muted ? ' muted' : '') + '" id="nvd_mute" aria-pressed="' + (settings.muted ? 'true' : 'false') + '" aria-label="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '" title="' + (settings.muted ? 'Unmute voice guidance' : 'Mute voice guidance') + '">' + muteIcon(settings.muted) + '</button>' +
         '<button class="btn ghost" id="nvd_gear" aria-label="Navigator settings">⚙️</button>' +
         '<button class="btn primary" id="nvd_exit">End drive</button>' +
@@ -2559,6 +2721,22 @@
       body.innerHTML = h;
 
       var note = function (t) { var n = body.querySelector('#nv_note'); if (n) n.textContent = t || ''; };
+      /* v330 (NAV-MAP-FIRST): the sheet's open state. It starts
+         COLLAPSED (the markup carries the class) so the map owns
+         the opening screen; paintSheet is the one painter of the
+         state — the handle's words, the class, and the map's
+         size pass (the mapzone changes height with the sheet, so
+         Leaflet must be told, the settle pass's own lesson). */
+      var sheetOpen = false;
+      function paintSheet() {
+        var sh = body.querySelector('#nv_sheet');
+        if (sh) sh.className = 'nv-sheet' + (sheetOpen ? '' : ' nv-sheet-collapsed');
+        var tg = body.querySelector('#nv_sheet_toggle');
+        if (tg) tg.textContent = sheetOpen
+          ? '📍 Destination, places & directions — tap to fold ▴'
+          : '📍 Destination, places & directions — tap to open ▾';
+        if (S && S.map) setTimeout(function () { try { S.map.invalidateSize(); } catch (e) {} }, 80);
+      }
       var banner = function (main, sub) {
         var b = body.querySelector('#nv_banner'); if (!b) return;
         b.querySelector('.nv-banner-main').textContent = main;
@@ -2621,6 +2799,12 @@
       function setDest(latlng, label, goNow) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
+        /* v330: a destination existing is what the sheet is FOR —
+           setting one (search pick, map tap, hand-off, sent pin)
+           unfolds the sheet so Route / Drive / Directions are in
+           reach; the map-first opening only governs the
+           nothing-set-yet state. */
+        if (!sheetOpen) { sheetOpen = true; paintSheet(); }
         if (S.map) {
           if (S.destMarker) S.destMarker.setLatLng(latlng);
           else S.destMarker = L.marker(latlng).addTo(S.map);
@@ -2696,6 +2880,62 @@
       }
 
       var searchBtn = body.querySelector('#nv_search');
+      /* v330 (NAV-MAP-FIRST): the sheet handle — one tap folds or
+         unfolds the sheet under the map. */
+      var sheetToggle = body.querySelector('#nv_sheet_toggle');
+      if (sheetToggle) sheetToggle.onclick = function () { sheetOpen = !sheetOpen; paintSheet(); };
+      /* v330 (OPEN-SENT-PINS): the sent-pin door. A pasted Maps
+         link lands its pin as the destination, three ways:
+         (1) the pin is IN the pasted text (a full Maps link, a
+         !3d/!4d data link, or bare coordinates) — routed at once;
+         (2) a SHORT link (maps.app.goo.gl…) — followed once; the
+         address it lands on carries the pin the same way;
+         (3) no pin anywhere — the words ride the normal place
+         search, the v300 always-land-somewhere philosophy. A
+         short link the app cannot follow (the WebView's CORS
+         rules are the usual cause) gets plain words and the
+         one-step workaround, never a silent dead end. The visit
+         is recorded like every other navigation (the Manifest
+         law) through Navigation.recordVisit. */
+      function landSentPin(coords) {
+        setDest(coords, 'Sent pin', true);
+        if (S.map) S.map.setView(S.dest, 14);
+        try {
+          var nvm = Meticulous.modules.navigation;
+          if (nvm && nvm.recordVisit) nvm.recordVisit('Sent pin', coords[0], coords[1]);
+        } catch (e) {}
+      }
+      function openSentPin() {
+        var inp = body.querySelector('#nv_link');
+        var txt = inp ? String(inp.value || '').trim() : '';
+        var nt = body.querySelector('#nv_link_note');
+        var say = function (t) { if (nt) nt.innerHTML = t ? '<p class="note" style="margin-top:6px">' + esc(t) + '</p>' : ''; };
+        if (!txt) { say('Paste the Maps link first — the one from the text message.'); return; }
+        var coords = sentPinCoords(txt);
+        if (coords) { say(''); landSentPin(coords); return; }
+        if (/goo\.gl|g\.page|maps\.app/i.test(txt) || /^https?:\/\//i.test(txt)) {
+          var url = /^https?:\/\//i.test(txt) ? txt : 'https://' + txt;
+          say('Opening the link…');
+          if (typeof fetch !== 'function') {
+            say('That short link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
+            return;
+          }
+          fetch(url, { redirect: 'follow' }).then(function (r) {
+            var c2 = sentPinCoords((r && r.url) || '');
+            if (c2) { say(''); landSentPin(c2); }
+            else say('That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
+          }).catch(function () {
+            say('That short link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
+          });
+          return;
+        }
+        var q = body.querySelector('#nv_q');
+        if (q && searchBtn) { q.value = txt; say('No pin in that — searching for it as a place instead.'); searchBtn.onclick(); }
+      }
+      var linkOpenBtn = body.querySelector('#nv_link_open');
+      if (linkOpenBtn) linkOpenBtn.onclick = openSentPin;
+      var linkInp = body.querySelector('#nv_link');
+      if (linkInp) linkInp.addEventListener('keydown', function (e) { if (e && e.key === 'Enter') openSentPin(); });
       /* v183: ALL saved places (work + personal), read through
          the Navigation module's shared picker data — the search
          consults this list BEFORE any geocoder (see the handler
@@ -3062,13 +3302,17 @@
         var prevPos = S.pos;
         S.pos = [lat, lon];
         paceSample(prevPos, S.pos); /* v280: live pace window */
-        if (heading !== null && heading !== undefined && isFinite(heading)) S.heading = heading;
-        /* v124: no heading from the GPS stream (some devices never
-           send one) — derive it from the movement itself once the
-           fix has travelled ≥10 m, so heading-up still engages.
-           A shorter hop is jitter, not a direction: keep the last
-           real heading, exactly as the stationary rule does. */
-        else if (prevPos && haversineM(prevPos, S.pos) >= 10) S.heading = bearingDeg(prevPos, S.pos);
+        /* v336 (NAV-TRUCK-POINTING-WRONG-WAY): the heading is
+           picked by pickHeading (NAVPURE) — the GPS course is
+           believed at speed; at a crawl the movement-derived
+           bearing (v124's ≥10 m derivation) outranks it, and a
+           crawling course with no real movement changes nothing.
+           The old raw take let a flipped low-speed course drag
+           the truck's pointing against travel. */
+        var derivedH = (prevPos && haversineM(prevPos, S.pos) >= 10) ? bearingDeg(prevPos, S.pos) : null;
+        var spdNow = (speed !== null && speed !== undefined && isFinite(speed)) ? speed : S.speed;
+        var pickedH = pickHeading(S.heading, (heading !== null && heading !== undefined && isFinite(heading)) ? heading : null, spdNow, derivedH);
+        if (pickedH !== null && pickedH !== undefined) S.heading = pickedH;
         if (speed !== null && speed !== undefined && isFinite(speed)) S.speed = speed;
         /* v104: before the settle pass, the position is recorded
            but NOT painted (the gate in the map init paints it
@@ -3679,7 +3923,16 @@
         var leftAlongM = S.plan.totalKm * 1000 - pr.along;
         var atDoor = pr.dist <= 60 && leftAlongM <= 30;
         var atPin = dDest < 40 && leftAlongM <= 250;
-        if (atDoor || atPin) {
+        /* v337 (NAV-ETA): the parked-at-the-site shape — the
+           dwell lives here (20 s of parkedArrivalOk on THIS
+           plan); any break (rolling again, a new plan, leaving
+           the radius) restarts the spell. */
+        var parkedOk = parkedArrivalOk(dDest, leftAlongM, S.speed);
+        if (parkedOk) {
+          if (S.parkSpellPlan !== S.plan || !S.parkSpellAt) { S.parkSpellPlan = S.plan; S.parkSpellAt = Date.now(); }
+        } else { S.parkSpellAt = 0; S.parkSpellPlan = null; }
+        var parkedArr = parkedOk && !!S.parkSpellAt && (Date.now() - S.parkSpellAt >= 20000);
+        if (atDoor || atPin || parkedArr) {
           S.arrived = true;
           var last = S.plan.maneuvers[S.plan.maneuvers.length - 1];
           banner('You have arrived', S.destLabel || '');
@@ -4057,6 +4310,15 @@
         if (S.limitFetchedAt && now - S.limitFetchedAt < 30000) return;
         if (S.limitPos && haversineM(S.limitPos, S.pos) < 150) return;
         S.limitFetchedAt = now; S.limitPos = S.pos;
+        /* v338 (NAV-SPEED-MISREADS): every query carries a
+           sequence — only the LATEST issued query may paint.
+           Two overlapping Overpass answers (a slow one and the
+           next) used to resolve in arrival order, so an older
+           road's limit could overwrite the current one (his
+           badge disagreed with itself between orientations —
+           70 in portrait, 60 in landscape, same road). */
+        var mySeq = (S.limitSeq = (S.limitSeq || 0) + 1);
+        var queryPos = S.pos;
         var lat = S.pos[0], lon = S.pos[1];
         /* v300 (NAV-SPEED-LIMIT-WRONG): the old query asked for
            tags only and took the FIRST parseable maxspeed within
@@ -4076,29 +4338,21 @@
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (!S) return;
-            var v = null;
-            if (j && j.elements && j.elements.length) {
-              var pos = [lat, lon], named = null, nearest = null, nearestD = Infinity;
-              for (var i = 0; i < j.elements.length; i++) {
-                var el = j.elements[i];
-                var parsed = parseMaxspeed(el.tags && el.tags.maxspeed);
-                if (!parsed) continue;
-                var d = Infinity, g = el.geometry || [];
-                for (var gi = 0; gi + 1 < g.length; gi++) {
-                  var sd = pointSegM(pos, [g[gi].lat, g[gi].lon], [g[gi + 1].lat, g[gi + 1].lon]).dist;
-                  if (sd < d) d = sd;
-                }
-                if (g.length === 1) d = haversineM(pos, [g[0].lat, g[0].lon]);
-                if (d < nearestD) { nearestD = d; nearest = parsed; }
-                var nm = String((el.tags && el.tags.name) || '').toLowerCase();
-                if (roadWanted && nm && (roadWanted.indexOf(nm) >= 0 || nm.indexOf(roadWanted.split(' / ')[0]) >= 0) && d < 40) {
-                  if (!named || d < named.d) named = { v: parsed, d: d };
-                }
-              }
-              if (named) v = named.v;
-              else if (nearest !== null && nearestD <= 20) v = nearest;
+            /* v338: a superseded query never paints, and an
+               answer that lands after the truck has moved on
+               (>75 m from the query point — at highway speed a
+               slow Overpass answer is a different road ago) is
+               discarded, with the throttle softened so a fresh
+               query follows in ~10 s instead of painting a
+               stale road's limit for the whole leg (his 60 on
+               Stoney Trail, posted 100, for minutes). */
+            if (mySeq !== S.limitSeq) return;
+            if (S.pos && queryPos && haversineM(queryPos, S.pos) > 75) {
+              S.limitFetchedAt = Date.now() - 20000;
+              S.limitPos = S.pos;
+              return;
             }
-            S.limitKmh = v;
+            S.limitKmh = pickLimitAnswer(j && j.elements, [lat, lon], roadWanted);
             paintSpeedOverlay();
           })
           .catch(function () {});
@@ -4107,6 +4361,11 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
+        /* v338 (NAV-SPEED-MISREADS): a new drive never opens
+           wearing the PREVIOUS drive's speed limit — the badge
+           starts unknown and the first fetch of this drive
+           speaks for this road. */
+        S.limitKmh = null; S.limitPos = null; S.limitFetchedAt = 0;
         S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null, trayKey: '' };
         /* v212: arm the shell's drive bridges — PiP on leave,
            tray readout updates from the tick. Inert off-shell. */
@@ -4858,19 +5117,48 @@
             if (emEl) emEl.style.color = sev ? sevHex : '';
           }
         } catch (e) {}
+        /* v337 (NAV-ETA): the SHOWN eta is slew-limited
+           (NAVPURE etaSlew) so an estimator switch can drift
+           the arrival clock but never teleport it; a new plan
+           resets the limiter. The severity colour and traffic
+           text above keep the raw computed value — they are
+           facts about the road, not the display. */
+        var shownEtaMin = liveEtaMin;
+        if (S.drive) {
+          if (S.drive.etaPlan !== S.plan) { S.drive.etaPlan = S.plan; S.drive.etaShownMin = null; S.drive.etaShownAt = 0; }
+          var etaNowMs = Date.now();
+          shownEtaMin = etaSlew(S.drive.etaShownMin, liveEtaMin, S.drive.etaShownAt ? (etaNowMs - S.drive.etaShownAt) : 1000);
+          S.drive.etaShownMin = shownEtaMin;
+          S.drive.etaShownAt = etaNowMs;
+        }
         var etaMain = body.querySelector('#nvd_eta_main');
-        driveTextKeep(etaMain, 'etaMain', fmtClock(new Date(Date.now() + liveEtaMin * 60000)));
+        driveTextKeep(etaMain, 'etaMain', fmtClock(new Date(Date.now() + shownEtaMin * 60000)));
         var etaSub = body.querySelector('#nvd_eta_sub');
         /* v177 (F4): the speedometer overlay reads the GPS
            stream's own speed (m/s -> km/h), through the cached
            writer like every other drive-chrome text. */
         var spdEl = body.querySelector('#nvd_speed');
         if (spdEl && S.settings.showSpeed) driveText(spdEl, 'speed', (S.speed !== null && S.speed !== undefined && isFinite(S.speed)) ? String(Math.max(0, Math.round(S.speed * 3.6))) : '–');
-        driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(liveEtaMin) + ' · ' + fmtDist(dp.leftM) + ' left' + trafficStateTxt +
+        driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(shownEtaMin) + ' · ' + fmtDist(dp.leftM) + ' left' + trafficStateTxt +
           /* v107: the bar shows the destination's first segment
              only — a full address would crowd the line (the CSS
              ellipsizes the sub-line; the main line never wraps). */
           (S.destLabel ? ' · to ' + S.destLabel.split(',')[0] : ''));
+        /* v334 (LIVE-MILES-ON-NAV-SCREEN): the day's live miles
+           on the drive bar — the tracker total (LiveMiles.
+           currentKm, the v41 reader: null before the first fix,
+           and null means the line hides — no data is not 0 km). */
+        var milesEl = body.querySelector('#nvd_miles');
+        if (milesEl) {
+          var dayKm = null;
+          try { if (window.LiveMiles && typeof LiveMiles.currentKm === 'function') dayKm = LiveMiles.currentKm(); } catch (e) { dayKm = null; }
+          if (typeof dayKm === 'number' && isFinite(dayKm)) {
+            milesEl.classList.remove('hidden');
+            driveText(milesEl, 'milesToday', '🛣 ' + dayKm.toFixed(1) + ' km today');
+          } else {
+            milesEl.classList.add('hidden');
+          }
+        }
         /* v212 (TRAY READOUT — Stage E): the same next-turn
            facts, mirrored to the notification tray through the
            shell bridge, so they stay readable while the app is
@@ -5342,21 +5630,22 @@
                centring on the truck itself would walk the
                marker up off its anchor between ticks. */
             var tgt = followTarget() || S.pos;
-            /* v300 (NAV-MAP-STEP-MOTION): bounded extrapolation.
-               Fixes land ~1 Hz; easing toward the LAST fix means
-               the view always chases where the truck WAS — the
-               hop-then-wait stepping on his tape (at 91 km/h a
-               fix is 25 m of road). The glide now aims at where
-               the truck will be ~1.2 s ahead at its measured
-               speed, along the applied heading, capped at 30 m —
-               the camera leads gently instead of lurching from
-               fix to fix, and a stopped truck (speed ~0) aims at
-               itself exactly as before. */
-            var exM = Math.min((S.speed || 0) * 1.2, 30);
-            if (exM > 1 && tgt && S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) {
-              var hRad = S.drive.headingApplied * Math.PI / 180;
-              var kxE = 111320 * Math.cos(tgt[0] * Math.PI / 180), kyE = 110540;
-              tgt = [tgt[0] + (Math.cos(hRad) * exM) / kyE, tgt[1] + (Math.sin(hRad) * exM) / kxE];
+            /* v335 (NAV-GPS-STEPPING-NOT-SMOOTH) supersedes the
+               v300 fixed-lead extrapolation: the aim is the
+               truck's position advanced by glideAim — the fix's
+               AGE at the truck's measured speed, plus the 1.2 s
+               lead, capped — so the aim keeps moving BETWEEN
+               fixes instead of freezing at the last one (the
+               ease-burst-then-wait step on his tape). The follow
+               target rides the same advance vector, so the lift
+               compensation geometry is untouched. */
+            if (tgt && S.pos) {
+              var aimH = (S.drive.headingApplied !== null && S.drive.headingApplied !== undefined)
+                ? S.drive.headingApplied : S.heading;
+              var aimP = glideAim(S.pos, aimH, S.speed, Date.now() - (S.lastFixAt || Date.now()));
+              if (aimP && aimP !== S.pos) {
+                tgt = [tgt[0] + (aimP[0] - S.pos[0]), tgt[1] + (aimP[1] - S.pos[1])];
+              }
             }
             if (ctr) {
               var gap = haversineM([ctr.lat, ctr.lng], tgt);
@@ -5369,6 +5658,15 @@
             }
           }
         } catch (e) {}
+        /* v335: while the truck is genuinely moving on a LIVE
+           stream, the glide keeps breathing between fixes —
+           the aim advances with the fix's age (glideAim), so
+           letting the loop die when the gap closes is exactly
+           what made the steps. A parked truck, a free-look hold,
+           or a stream gone quiet (>3 s — the watchdog's country)
+           lets it die exactly as before. */
+        if (!moving && S.drive && !S.driveFree && (S.speed || 0) > 1 &&
+            S.lastFixAt && (Date.now() - S.lastFixAt < 3000)) moving = true;
         if (moving && typeof requestAnimationFrame === 'function') {
           S.drive.animId = requestAnimationFrame(driveAnim);
         }

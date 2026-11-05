@@ -341,37 +341,110 @@
   var dotErr = '';
   var lastOdoNote = '';   // the filing moment's odometer-commit note (confirmation line only, never stored on the report)
 
-  /* ---------------- v165: DOT INSPECTION MODE ----------------
-     The officer-facing locked view (owner, Oct 18, 2026 21:48
-     MDT; the model is the Motive roadside view from his own
-     screenshots): hand the phone over and the officer sees the
-     filed PTIs from the LAST 14 DAYS ONLY — nothing else. The
+  /* ---------------- INSPECTION MODE ----------------
+     v165 (owner, Oct 18, 2026): the officer-facing view, modelled
+     on the Motive roadside view from his own screenshots — hand
+     the phone over and the officer sees filed PTIs ONLY. The
      state persists in the store (pti_dot) so a repaint or a
      restart cannot slip out of it, and the SHELL honors it:
      App.openModule / App.showDashboard route everything back
-     here while it is active. Leaving takes the driver's PIN
-     (set the first time he enters); the hash is a screen lock,
-     not a vault — a light FNV-1a, never the PIN itself. */
+     here while it is active (_dotActive).
+     v327 (INSPECTION-MODE-14-DAY, owner Nov 5, 2026 — named
+     mid-inspection at a real roadside stop, then specified from
+     his Motive screen recording, then amended twice in minutes):
+       - the window is the PREVIOUS 14 DAYS + TODAY (15 day
+         sheets; the v165 window was today + 13 back);
+       - the officer flow is one full-page SUMMARY sheet per
+         day, swiped day to day in one go: date, pre/post, time,
+         odometer, ONE result line (all items OK, or the defects
+         named), signed — never the item-by-item checklist
+         (Meticulous is not an ELD; no HOS pages exist or are
+         invented here);
+       - a Send option hands over the same 15 days of summaries
+         as one PDF through the app's own MetPdf door;
+       - AMENDMENT 2 (his words: "inspection mode doesn't need
+         a driver to put in a pin... Nobody does that"): the
+         v165 PIN gate is REMOVED entirely — Begin Inspection is
+         one tap, Exit is one tap, no code anywhere. A stored
+         pinHash from the v165 days is simply never read again. */
   function dotState() {
     var s = S('dot', null);
-    return (s && typeof s === 'object') ? s : { active: false, pinHash: '' };
+    return (s && typeof s === 'object') ? s : { active: false };
   }
   function dotActive() { return !!dotState().active; }
-  function pinHash(pin) {
-    var h = 0x811c9dc5;
-    var s = 'pti-dot:' + String(pin || '');
-    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
-    return 'h' + h.toString(16);
+  function dayStrOf(d) {
+    function z(n) { return ('0' + n).slice(-2); }
+    return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
   }
-  /* The officer's window: filed reports from the last 14 days
-     (today + the 13 before), newest first. */
+  /* The officer's days: today first, then the 14 days before —
+     15 sheets whether or not a day carries an inspection (a day
+     with none says so on its own sheet). */
+  function dotDays() {
+    var out = [];
+    for (var i = 0; i < 15; i++) {
+      var d = new Date(Date.now() - i * 86400000);
+      out.push({
+        ds: dayStrOf(d),
+        label: d.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }),
+        today: i === 0
+      });
+    }
+    return out;
+  }
+  /* Filed reports inside the window (today + the 14 before),
+     newest first. */
   function dotReports() {
-    var cut = Date.now() - 13 * 86400000;
+    var cut = Date.now() - 14 * 86400000;
     var startDay = new Date(cut);
     startDay = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate()).getTime();
     return reports()
       .filter(function (r) { return (r.filedAt || 0) >= startDay; })
       .sort(function (a, b) { return (b.filedAt || 0) - (a.filedAt || 0); });
+  }
+  /* ONE inspection as its summary — the amendment's exact list:
+     pre/post, time, odometer, one result line, signed. (The
+     date rides the sheet's own heading.) */
+  function dotSummaryText(r) {
+    var t = '';
+    try { t = new Date(r.filedAt).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+    var result;
+    if (r.result === 'pass' || !r.defects || !r.defects.length) {
+      result = 'All items OK';
+    } else {
+      result = 'Defects: ' + r.defects.map(function (d) {
+        return String(d.item || 'Item') + ' (' + (d.severity === 'major' ? 'major' : 'minor') + ')';
+      }).join(', ');
+    }
+    return kindLabel(r) + ' · ' + t +
+      ' · Odometer ' + (r.odometer ? Number(r.odometer).toLocaleString('en-CA') + ' km' : '—') +
+      ' · ' + result +
+      ' · ' + (isSigned(r) ? 'Signed' : 'NOT signed');
+  }
+  /* The Send door: the same 15 days of summaries as one PDF,
+     through MetPdf — the app's one document-out door (native:
+     saved to Documents; browser: a download), from where the
+     driver hands the officer his copy. */
+  function dotSendPdf(say) {
+    if (!(window.MetPdf && typeof MetPdf.savePdf === 'function')) {
+      say('PDF tools are still loading — close and reopen the app, then try again.');
+      return;
+    }
+    var days = dotDays();
+    var byDate = {};
+    dotReports().forEach(function (r) { (byDate[r.date] = byDate[r.date] || []).push(r); });
+    var lines = [{ k: 'title', a: 'VEHICLE INSPECTION REPORTS — PREVIOUS 14 DAYS + TODAY' },
+      { k: 'note', a: 'Summary per inspection: date, pre/post, time, odometer, result, signed. Meticulous — Meticulous Technologies.' }];
+    days.forEach(function (dy) {
+      lines.push({ k: 'rule' });
+      lines.push({ k: 'h', a: dy.label + (dy.today ? ' (today)' : '') });
+      var list = (byDate[dy.ds] || []).slice().sort(function (a, b) { return (a.filedAt || 0) - (b.filedAt || 0); });
+      if (!list.length) lines.push({ k: 'note', a: 'No inspection filed this day.' });
+      list.forEach(function (r) { lines.push({ k: 'note', a: dotSummaryText(r) }); });
+    });
+    say('Making your PDF…');
+    MetPdf.savePdf({ title: 'Vehicle Inspections — previous 14 days + today', lines: lines }, 'inspections-previous-14-days.pdf').then(
+      function (res) { say(res && res.message ? res.message : 'PDF saved.'); },
+      function () { say('The PDF could not be saved. Try again.'); });
   }
   /* Compliance counts for the dashboard badge: unsigned reports,
      and days in the last 14 (before today) with no PRE-trip on
@@ -397,34 +470,59 @@
     return { unsigned: unsigned, gaps: gaps };
   }
 
+  /* The officer flow (v327): a header, ONE full-page summary
+     sheet for the selected day, a day pager (arrows + swipe),
+     a Send door, and the driver's one-tap Exit. Nothing here
+     opens a full checklist — summaries only, per the amendment. */
+  var dotDayIdx = 0;
   function renderDot(body) {
-    var list = dotReports();
+    var days = dotDays();
+    if (dotDayIdx < 0) dotDayIdx = 0;
+    if (dotDayIdx > days.length - 1) dotDayIdx = days.length - 1;
+    var dy = days[dotDayIdx];
+    var list = dotReports().filter(function (r) { return r.date === dy.ds; })
+      .sort(function (a, b) { return (a.filedAt || 0) - (b.filedAt || 0); });
     var h = '<div class="card" style="border:2px solid var(--navy)"><h3 style="margin-top:0">🛂 Vehicle Inspection Reports</h3>' +
-      '<p class="note" style="margin-top:0">For the inspecting officer: this driver’s filed pre-trip and post-trip inspections from the last 14 days. Tap a report to view it in full.</p>' +
+      '<p class="note" style="margin-top:0">For the inspecting officer: this driver’s filed pre-trip and post-trip inspections — previous 14 days + today, one summary page per day. Swipe, or use the arrows, to move day to day.</p>' +
+      '<button type="button" class="btn ghost" id="pti_dot_send" style="width:100%">📤 Send these 14 days + today (PDF)</button>' +
+      '<div id="pti_dot_send_note"></div></div>';
+    h += '<div class="card" id="pti_dot_sheet">' +
+      '<div style="font-size:19px;font-weight:800">' + esc(dy.label) + (dy.today ? ' · Today' : '') + '</div>' +
+      '<p class="note" style="margin:2px 0 10px">Day ' + (dotDayIdx + 1) + ' of ' + days.length + '</p>' +
       (list.length ? list.map(function (r) {
-        return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer">' +
-          '<div class="a">' + esc(r.date) + ' · ' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + (r.unit ? ' · Unit ' + esc(r.unit) : '') + '</div>' +
-          '<div class="b">' + (r.odometer ? 'Odometer ' + Number(r.odometer).toLocaleString('en-CA') + ' km · ' : '') + resultBadge(r) +
-          (isSigned(r) ? '' : ' · <b style="color:#b91c1c">Not signed</b>') + '</div></div>';
-      }).join('') : '<div class="empty">No inspections filed in the last 14 days.</div>') +
-      '</div>';
-    h += '<div class="card"><h3 style="margin-top:0">🔒 Driver only</h3>' +
-      '<label class="f">Your PIN</label>' +
-      '<input id="pti_dot_pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">' +
-      (dotErr ? '<div style="color:#c2410c;font-weight:600;margin:8px 0">⚠️ ' + esc(dotErr) + '</div>' : '') +
-      '<button type="button" class="btn primary" id="pti_dot_exit" style="width:100%">Unlock &amp; exit Inspection Mode</button>' +
-      '<p class="note">The rest of the app stays locked until the driver unlocks it.</p></div>';
+        return '<div class="listitem"><div class="a">' + esc(kindLabel(r)) + '</div>' +
+          '<div class="b">' + esc(dotSummaryText(r).split(' · ').slice(1).join(' · ')) + '</div></div>';
+      }).join('') : '<div class="empty">No inspection filed this day.</div>') +
+      '<div style="display:flex;gap:8px;margin-top:12px">' +
+      '<button type="button" class="btn secondary" id="pti_dot_newer" style="flex:1' + (dotDayIdx === 0 ? ';opacity:.45' : '') + '"' + (dotDayIdx === 0 ? ' disabled' : '') + '>‹ Newer day</button>' +
+      '<button type="button" class="btn secondary" id="pti_dot_older" style="flex:1' + (dotDayIdx === days.length - 1 ? ';opacity:.45' : '') + '"' + (dotDayIdx === days.length - 1 ? ' disabled' : '') + '>Older day ›</button>' +
+      '</div></div>';
+    h += '<div class="card"><button type="button" class="btn primary" id="pti_dot_exit" style="width:100%">Exit Inspection Mode</button>' +
+      '<p class="note">Driver: tap Exit when the officer hands the phone back. The rest of the app stays behind this view until then.</p></div>';
     body.innerHTML = h;
-    body.querySelectorAll('[data-pti-open]').forEach(function (row) {
-      row.onclick = function () { view = { mode: 'report', id: row.getAttribute('data-pti-open'), fromDot: true }; Meticulous.modules.pti.render(body); };
-    });
+    var sendB = body.querySelector('#pti_dot_send');
+    if (sendB) sendB.onclick = function () {
+      var note = body.querySelector('#pti_dot_send_note');
+      dotSendPdf(function (m) { if (note) note.innerHTML = '<p class="note" style="margin-top:6px">' + esc(m) + '</p>'; });
+    };
+    var nw = body.querySelector('#pti_dot_newer');
+    if (nw) nw.onclick = function () { if (dotDayIdx > 0) { dotDayIdx--; renderDot(body); } };
+    var ol = body.querySelector('#pti_dot_older');
+    if (ol) ol.onclick = function () { if (dotDayIdx < days.length - 1) { dotDayIdx++; renderDot(body); } };
+    var sheet = body.querySelector('#pti_dot_sheet');
+    if (sheet) {
+      var tx = null;
+      sheet.addEventListener('touchstart', function (e) { tx = e.touches && e.touches[0] ? e.touches[0].clientX : null; }, { passive: true });
+      sheet.addEventListener('touchend', function (e) {
+        if (tx === null || !e.changedTouches || !e.changedTouches[0]) return;
+        var dx = e.changedTouches[0].clientX - tx; tx = null;
+        if (dx < -40 && dotDayIdx < days.length - 1) { dotDayIdx++; renderDot(body); }
+        else if (dx > 40 && dotDayIdx > 0) { dotDayIdx--; renderDot(body); }
+      }, { passive: true });
+    }
     var ex = body.querySelector('#pti_dot_exit');
     if (ex) ex.onclick = function () {
-      var pinEl = body.querySelector('#pti_dot_pin');
-      var pin = pinEl ? String(pinEl.value || '') : '';
       var st = dotState();
-      if (!pin || pinHash(pin) !== st.pinHash) { dotErr = 'That PIN doesn’t match — the app stays locked.'; renderDot(body); return; }
-      dotErr = '';
       st.active = false; W('dot', st);
       view = { mode: 'form', id: null };
       Meticulous.modules.pti.render(body);
@@ -588,11 +686,22 @@
     var comp = compliance();
 
     var h = '';
+    /* v328 (PTI-HISTORY-UNDER-FORM, owner Nov 5, 2026 ~14:52):
+       "This history should be underneath the inspection form…
+       just like always — 3 under recent history and full list
+       of requested." The two report cards below (unsigned prompt,
+       today's filed) are HISTORY — they used to paint ABOVE the
+       form, so the screen opened on old reports instead of the
+       inspection he came to file. They now build into statusH
+       and land UNDER the form (after Sign & file), ahead of the
+       Past inspections list, which keeps his standing pattern:
+       newest 3, the full list only behind "Show more". */
+    var statusH = '';
     /* v165: unsigned reports keep asking to be signed until they
        are — the prompt lives here AND on the dashboard badge. */
     var unsignedReps = reps.filter(function (r) { return !isSigned(r); });
     if (unsignedReps.length) {
-      h += '<div class="card" style="border:2px solid #f59e0b;background:#fffbeb"><h3 style="margin-top:0">✍️ ' +
+      statusH += '<div class="card" style="border:2px solid #f59e0b;background:#fffbeb"><h3 style="margin-top:0">✍️ ' +
         unsignedReps.length + ' inspection' + (unsignedReps.length === 1 ? ' is' : 's are') + ' not signed yet</h3>' +
         unsignedReps.slice(0, 5).map(function (r) {
           return '<div class="listitem" data-pti-open="' + esc(r.id) + '" style="cursor:pointer"><div class="a">' +
@@ -600,7 +709,7 @@
         }).join('') + '</div>';
     }
     if (todays.length) {
-      h += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><h3 style="margin-top:0">✅ Today’s inspection' + (todays.length === 1 ? ' is' : 's are') + ' filed</h3>' +
+      statusH += '<div class="card" style="border:2px solid #16a34a;background:#f0fdf4"><h3 style="margin-top:0">✅ Today’s inspection' + (todays.length === 1 ? ' is' : 's are') + ' filed</h3>' +
         todays.map(function (r) {
           return '<div class="kv"><span>' + esc(kindLabel(r)) + ' · ' + esc(fmtWhen(r.filedAt)) + '</span><b>' + (r.odometer ? Number(r.odometer).toLocaleString('en-CA') + ' km' : '') + '</b></div>' +
             '<div style="margin:6px 0">' + resultBadge(r) + (isSigned(r) ? '' : ' <b style="color:#b91c1c">· Not signed</b>') + '</div>';
@@ -653,24 +762,20 @@
       '<button type="button" class="btn primary" id="pti_file" style="width:100%">✍️ Sign &amp; file inspection</button>' +
       '<p class="note">Filed with the real time you tap — an inspection is never backdated. A copy reaches your connected boss/dispatcher by itself.</p></div>';
 
-    /* v165: the DOT Inspection Mode door — the officer gets the
-       last 14 days and nothing else; the driver gets back in
-       with his PIN. First entry sets the PIN. */
-    var dot = dotState();
+    /* v328: the history cards land here — under the form. */
+    h += statusH;
+
+    /* v327 (INSPECTION-MODE-14-DAY): the Inspection Mode door in
+       Motive's shape, per the owner's Nov 5, 2026 spec — one tap
+       on Begin Inspection and hand the phone over; NO PIN
+       anywhere (amendment 2 struck the v165 gate). The Send door
+       beside it hands over the same 15 days of summaries as a
+       PDF for an officer who wants a copy. */
     h += '<div class="card"><h3 style="margin-top:0">🛂 DOT Inspection Mode</h3>' +
-      '<p class="note" style="margin-top:0">Hand the phone to an officer: they see only your filed inspections from the last 14 days. The rest of the app stays locked until you unlock it with your PIN.</p>' +
-      (dot.pinHash
-        ? '<button type="button" class="btn navy" id="pti_dot_enter" style="width:100%">🛂 Enter Inspection Mode</button>'
-        : /* v177 (D8, owner Oct 20, 2026 — his words: "What's this
-             pin?"): the field itself must say it in one look —
-             YOU pick this number now; it locks everything else
-             while the officer looks; you type it to get back in. */
-          '<p class="note" style="margin:0 0 6px"><b>Pick a PIN you will remember.</b> When an officer checks your inspections, this PIN locks the rest of the app — the officer sees only your last 14 days of PTIs. When he hands the phone back, you type this same PIN to unlock the app.</p>' +
-          '<label class="f">Your new PIN (4+ numbers)</label>' +
-          '<input id="pti_dot_newpin" type="password" inputmode="numeric" autocomplete="off" placeholder="Type a PIN you choose">' +
-          '<input id="pti_dot_newpin2" type="password" inputmode="numeric" autocomplete="off" placeholder="Type the same PIN again" style="margin-top:6px">' +
-          '<div id="pti_dot_seterr"></div>' +
-          '<button type="button" class="btn navy" id="pti_dot_set" style="width:100%;margin-top:8px">Set PIN &amp; enter Inspection Mode</button>') +
+      '<p class="note" style="margin-top:0">Inspect logs for previous 14 days + today — tap “Begin Inspection” and hand your phone to the officer. They swipe through one summary page per day; the rest of the app stays behind that view.</p>' +
+      '<button type="button" class="btn primary" id="pti_dot_enter" style="width:100%">🛂 Begin Inspection</button>' +
+      '<button type="button" class="btn ghost" id="pti_dot_send_entry" style="width:100%;margin-top:8px">📤 Send last 14 days + today (PDF)</button>' +
+      '<div id="pti_dot_send_entry_note"></div>' +
       (comp.gaps ? '<p class="note" style="margin-top:8px">⚠️ ' + comp.gaps + ' day' + (comp.gaps === 1 ? '' : 's') + ' in the last 14 had no pre-trip inspection on file.</p>' : '') +
       '</div>';
 
@@ -800,24 +905,19 @@
       };
     });
 
-    /* v165: DOT Inspection Mode doors */
+    /* v327: Inspection Mode doors — Begin is one tap (no PIN,
+       amendment 2); Send builds the 15-day summary PDF. */
     var dotEnter = body.querySelector('#pti_dot_enter');
     if (dotEnter) dotEnter.onclick = function () {
-      var st = dotState(); st.active = true; W('dot', st); dotErr = '';
+      var st = dotState(); st.active = true; W('dot', st);
+      dotDayIdx = 0;
       view = { mode: 'dot', id: null };
       Meticulous.modules.pti.render(body);
     };
-    var dotSet = body.querySelector('#pti_dot_set');
-    if (dotSet) dotSet.onclick = function () {
-      var p1 = body.querySelector('#pti_dot_newpin'), p2 = body.querySelector('#pti_dot_newpin2');
-      var e1 = body.querySelector('#pti_dot_seterr');
-      var a = p1 ? String(p1.value || '') : '', b2 = p2 ? String(p2.value || '') : '';
-      function bad(m) { if (e1) e1.innerHTML = '<div style="color:#c2410c;font-weight:600;margin-top:6px">⚠️ ' + m + '</div>'; }
-      if (!/^\d{4,}$/.test(a)) { bad('The PIN needs at least 4 numbers.'); return; }
-      if (a !== b2) { bad('The two PINs don’t match — try again.'); return; }
-      W('dot', { active: true, pinHash: pinHash(a) });
-      dotErr = ''; view = { mode: 'dot', id: null };
-      Meticulous.modules.pti.render(body);
+    var dotSendEntry = body.querySelector('#pti_dot_send_entry');
+    if (dotSendEntry) dotSendEntry.onclick = function () {
+      var note = body.querySelector('#pti_dot_send_entry_note');
+      dotSendPdf(function (m) { if (note) note.innerHTML = '<p class="note" style="margin-top:6px">' + esc(m) + '</p>'; });
     };
 
     var allOk = body.querySelector('#pti_allok');
@@ -1278,7 +1378,8 @@
     _filedFor: filedFor,
     _dotReports: dotReports,
     _dotActive: dotActive,
-    _pinHash: pinHash,
+    _dotDays: dotDays,
+    _dotSummaryText: dotSummaryText,
     _compliance: compliance
   };
 })();

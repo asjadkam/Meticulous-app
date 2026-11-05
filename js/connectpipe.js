@@ -1139,6 +1139,32 @@
             });
             st.set('doc_shares', dshares.slice(0, 50));
           }
+          /* v339 (DOCUMENT-VAULT, owner Nov 5, 2026 17:12 MST):
+             a VAULT document — an owner / fleet manager sending
+             a driver his renewed ownership, insurance, anything
+             — ALSO files itself into the driver's Documents
+             vault (docs_items, modules/documents.js): stored,
+             marked with who sent it and when it arrived, beside
+             every older version (a send never overwrites).
+             Deduped by shareId like the inbox above, so a
+             re-send under a new pipe id still lands once. The
+             driver does nothing — receive and store only. */
+          if (d.docType === 'vaultdoc' && d.content && d.content.data) {
+            var vitems = st.get('docs_items', []) || [];
+            if (!vitems.some(function (x) { return x && x.shareId === sid; })) {
+              vitems.unshift({
+                id: 'doc_' + sid, shareId: sid,
+                label: String(d.content.label || d.label || 'Document'),
+                name: String(d.content.name || d.label || 'Document'),
+                kind: d.content.kind === 'pdf' ? 'pdf' : 'image',
+                data: String(d.content.data),
+                addedAt: Date.now(),
+                sentBy: d.fromName || '', fromUid: d.from || '',
+                sentAt: d.sentAt || 0
+              });
+              st.set('docs_items', vitems);
+            }
+          }
           landed[d.id] = 'doc';
           landedCount++;
           try {

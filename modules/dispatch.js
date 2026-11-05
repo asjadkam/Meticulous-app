@@ -532,6 +532,47 @@
     } catch (e) {}
     return null;
   }
+  /* v329 (NAVIGATE-DISPATCH-PIN-NOT-USED, owner Nov 5, 2026
+     08:44, screen recording): his tap on Navigate on the ACTIVE
+     dispatch landed on the Navigator's search screen — the job
+     -site name in the box, "No places found" under it — though
+     the dispatch's pin (51.1252778, -113.9839531) was stored the
+     evening before. The structural gap: a dispatch lives as TWO
+     stored copies (the list record and the S('active') snapshot
+     taken at activation), different subsystems write different
+     copies (edit-save writes both; geocode-back, ingest and
+     Connect merges can land on one), and every Navigate handler
+     read exactly ONE copy's lat/lng before falling through to
+     the text search. The pin existed — just not on the copy the
+     tap consulted. dspRecordPin is now THE pin resolution for a
+     dispatch record: the record's own pin first; if it has
+     none, the same record (by id) in the OTHER store; only when
+     no copy carries a pin does the caller fall on to the
+     place-name and text fallbacks. A pin present on the tapped
+     copy always wins over the other copy's — the resolver fills
+     a MISSING pin, it never second-guesses a present one. */
+  function dspRecordPin(d) {
+    function pinOf(r) {
+      if (!r || r.lat === null || r.lat === undefined || r.lng === null || r.lng === undefined) return null;
+      var la = parseFloat(r.lat), ln = parseFloat(r.lng);
+      if (!isFinite(la) || !isFinite(ln)) return null;
+      if (la === 0 && ln === 0) return null;
+      return { lat: la, lng: ln };
+    }
+    var own = pinOf(d);
+    if (own) return own;
+    if (d && d.id) {
+      try {
+        var l = list();
+        for (var i = 0; i < l.length; i++) {
+          if (l[i] && l[i].id === d.id && l[i] !== d) { var p1 = pinOf(l[i]); if (p1) return p1; }
+        }
+        var a = active();
+        if (a && a.id === d.id && a !== d) { var p2 = pinOf(a); if (p2) return p2; }
+      } catch (e) {}
+    }
+    return null;
+  }
   /* v300: the last-resort hand-off — the record's own site text
      rides into the Navigator as its search (nav_pending query:
      saved places by name first, then the geocoder), so a tap on
@@ -556,8 +597,7 @@
      neither way, and the card simply had no Navigate at all. */
   function dspActiveNavBtn(a, isOffice) {
     if (!a || isOffice) return '';
-    var hasPin = a.lat !== null && a.lat !== undefined && a.lng !== null && a.lng !== undefined &&
-      isFinite(parseFloat(a.lat)) && isFinite(parseFloat(a.lng));
+    var hasPin = !!dspRecordPin(a);   /* v329: either stored copy's pin counts */
     var hasText = !!(String((a && (a.jobSite || a.pickup || a.dropoff || a.address)) || '').trim());
     if (!hasPin && !hasText && !dspPlaceHit(a)) return '';
     /* v321 (NAVIGATE-CHOOSE-PIN, owner, Nov 4, 2026 10:54): "what
@@ -3744,7 +3784,11 @@
       body.querySelectorAll('[data-nav]').forEach(function (b) {
         b.onclick = function () {
           var d = list()[+b.getAttribute('data-nav')];
-          if (d) dspNavigatePin(d.lat, d.lng, d.jobSite || d.pickup || '');
+          if (!d) return;
+          /* v329: resolve through dspRecordPin (the other stored
+             copy may be the one carrying the pin). */
+          var pn = dspRecordPin(d);
+          if (pn) dspNavigatePin(pn.lat, pn.lng, d.jobSite || d.pickup || '');
         };
       });
       /* v220: a known-place name's Navigate — resolved fresh at
@@ -3753,6 +3797,12 @@
         b.onclick = function () {
           var d = list()[+b.getAttribute('data-navname')];
           if (!d) return;
+          /* v329: a pin on EITHER stored copy outranks the
+             place-name and text fallbacks — the row painted the
+             name button from its own copy, which may be the
+             pinless one. */
+          var pn = dspRecordPin(d);
+          if (pn) { dspNavigatePin(pn.lat, pn.lng, d.jobSite || d.pickup || ''); return; }
           var hit = dspPlaceHit(d);
           if (hit) { dspNavigatePin(hit.lat, hit.lng, hit.label || d.jobSite || d.pickup || ''); return; }
           /* v300: no known place — the text itself navigates. */
@@ -3767,10 +3817,13 @@
       if (navActiveBtn) navActiveBtn.onclick = function () {
         var cur = active();
         if (!cur) return;
-        if (cur.lat !== null && cur.lat !== undefined && isFinite(parseFloat(cur.lat))) {
-          dspNavigatePin(cur.lat, cur.lng, cur.jobSite || cur.pickup || '');
-          return;
-        }
+        /* v329: the pin resolution is dspRecordPin — the active
+           snapshot may be the pinless copy while the list record
+           carries the pin (the Nov 5 recording's shape). A pin
+           on either copy routes straight to the pin; the search
+           screen is only for a dispatch with no pin anywhere. */
+        var pn = dspRecordPin(cur);
+        if (pn) { dspNavigatePin(pn.lat, pn.lng, cur.jobSite || cur.pickup || ''); return; }
         var hit = dspPlaceHit(cur);
         if (hit) { dspNavigatePin(hit.lat, hit.lng, hit.label || cur.jobSite || cur.pickup || ''); return; }
         dspNavigateQuery(cur.jobSite || cur.pickup || cur.dropoff || cur.address || '');

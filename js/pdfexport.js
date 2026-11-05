@@ -254,6 +254,7 @@
     for (var i = 0; i < lines.length; i++) {
       var ln = lines[i] || {};
       var st = STYLES[ln.k] || STYLES.p;
+      if (ln.k === 'pb') { newPage(); continue; }   /* v331: an explicit page break (the multi-day manifest's totals page) */
       if (ln.k === 'gap') { y -= 8; if (y < BOTTOM) newPage(); continue; }
       if (ln.k === 'rule') {
         need(12);

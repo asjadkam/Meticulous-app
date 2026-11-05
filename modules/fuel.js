@@ -61,6 +61,26 @@
     rec.updAt = Date.now();
     return rec;
   }
+  /* v332 (FUEL-MULTI-RECEIPT, owner Nov 4, 2026 at the pump):
+     ONE fill can carry SEVERAL receipt photos — the pump stops,
+     he tops up, a second receipt prints for the same fill.
+     The record keeps `photo` as the first receipt (every older
+     reader keeps working) and `photos` as the full stack when
+     there is more than one. fillPhotos is the one reader:
+     the stack when present, else the single photo, else a
+     stray photo2 a hand-entered record may carry. */
+  function fillPhotos(rec) {
+    var out = [];
+    function push(u) { if (u && out.indexOf(u) === -1) out.push(u); }
+    if (rec) {
+      /* photo leads — it IS the first receipt, and photos[0]
+         must mirror it; the stack's other entries follow. */
+      push(rec.photo);
+      if (Array.isArray(rec.photos)) rec.photos.forEach(push);
+      push(rec.photo2);
+    }
+    return out;
+  }
   function saveFillsVerified(f) {
     W('fills', f);
     var back = S('fills', null);
@@ -303,6 +323,7 @@
 
 
   Meticulous.modules.fuel = {
+    _fillPhotos: fillPhotos, /* v332: the one receipt-stack reader, exported for the suite */
     _masterOnSave: masterOnSave,
     _mpgTrend: mpgTrend,
     _econLegOk: econLegOk,
@@ -377,9 +398,13 @@
             (dRec.type ? kv('Fuel type', dRec.type) : '') +
             (dRec.fuelType ? kv('Fuel type', dRec.fuelType) : '') +
             (dRec.note ? kv('Note', dRec.note) : '') +
-            (dRec.photo
-              ? '<img id="fu_det_photo" src="' + dRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">' +
-                (App._photoDl ? App._photoDl(dRec.photo, 'fuel-receipt-' + (dRec.date || '')) : '')
+            /* v332: EVERY receipt photo on the entry shows,
+               stacked — a two-receipt fill shows both. */
+            (fillPhotos(dRec).length
+              ? fillPhotos(dRec).map(function (p, pi) {
+                  return '<img ' + (pi === 0 ? 'id="fu_det_photo" ' : '') + 'src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">' +
+                    (App._photoDl ? App._photoDl(p, 'fuel-receipt-' + (dRec.date || '') + (fillPhotos(dRec).length > 1 ? '-' + (pi + 1) : '')) : '');
+                }).join('')
               : '<div class="empty" style="margin-top:10px">No photo for this entry</div>') +
             '<div class="row" style="margin-top:12px">' +
             '<button class="btn ghost" id="fu_det_edit" style="flex:1">✏️ Edit</button>' +
@@ -468,6 +493,16 @@
         '<input type="file" id="fu_img_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<input type="file" id="fu_img" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
         '<div id="fu_prev"></div>' +
+        /* v332 (FUEL-MULTI-RECEIPT): the second-receipt door —
+           its litres and cost ADD into this entry's totals and
+           its photo stacks onto the same record. */
+        '<div id="fu_prev_extra"></div>' +
+        '<div style="display:flex;gap:10px;margin:8px 0;">' +
+        '<button type="button" class="btn secondary" id="fu_add2" style="flex:1;">➕ Add another receipt</button>' +
+        '<button type="button" class="btn secondary" id="fu_add2_file" style="flex:1;">📁 Add from file</button></div>' +
+        '<input type="file" id="fu_img2_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<input type="file" id="fu_img2" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div class="note">Two receipts for one fill — the pump stopped and you topped up? Add the second receipt here: its litres and cost join the totals above, and both photos stay on this one entry.</div>' +
         '<div id="fu_read" style="font-size:14px;margin-top:8px;"></div>' +
         '<div id="fu_err" style="font-size:14px;margin:8px 0">' + (editErr ? '<span style="color:#c2410c;font-weight:600">⚠️ ' + esc(editErr) + '</span>' : '') + '</div>' +
         '<button class="btn primary" id="fu_add">' + (editRec ? '💾 Save changes' : 'Save fill-up') + '</button>' +
@@ -542,6 +577,18 @@
           var pv = body.querySelector('#fu_prev');
           if (pv) pv.innerHTML = '<img src="' + editRec.photo + '" style="width:100%;border-radius:10px;margin-top:10px">';
         }
+        /* v332: an edit opens holding the entry's EXTRA receipt
+           photos too — they show stacked under the first and
+           ride the save untouched unless more are added. */
+        var editExtras = fillPhotos(editRec).slice(1);
+        if (editExtras.length) {
+          fuExtraPhotos = editExtras;
+          var px = body.querySelector('#fu_prev_extra');
+          if (px) px.innerHTML = editExtras.map(function (p, pi) {
+            return '<div class="note" style="margin-top:8px">Receipt ' + (pi + 2) + ' on this entry:</div>' +
+              '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:4px">';
+          }).join('');
+        }
       }
       /* v118: a row tap opens the DETAILS view for the entry
          (read-only first) — Edit lives there now, not as the
@@ -612,6 +659,18 @@
          photo entry?... The picture I took yesterday?"). Save now
          attaches it — see the save handler. */
       var fuPhoto = '';
+      /* v332 (FUEL-MULTI-RECEIPT): the ADDED receipts' photos
+         for this form session (receipt 2, 3, …) — saved onto
+         the record's `photos` stack beside fuPhoto. */
+      var fuExtraPhotos = [];
+      function fuPaintExtras() {
+        var px = body.querySelector('#fu_prev_extra');
+        if (!px) return;
+        px.innerHTML = fuExtraPhotos.map(function (p, pi) {
+          return '<div class="note" style="margin-top:8px">Receipt ' + (pi + 2) + ' on this entry:</div>' +
+            '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:4px">';
+        }).join('');
+      }
       /* v142: per-photo race record for the receipt read — the
          cloud read starts at capture (PowerRead.beginEarly) and
          races the local read; litres/cost remember what the LOCAL
@@ -736,6 +795,52 @@
       }
       fuCamInput.onchange = fuHandlePhoto;
       fuPickInput.onchange = fuHandlePhoto;
+
+      /* v332 (FUEL-MULTI-RECEIPT): the added-receipt wiring. A
+         second (or third) receipt's photo is read with the same
+         engine; its litres and cost ADD into the form's totals
+         (receipt precision, fields marked touched so nothing
+         overwrites them after), and the photo joins
+         fuExtraPhotos for the record's stack. A photo whose
+         numbers can't be read still stacks — the driver adds
+         its numbers by hand, told so in plain words. */
+      var fuCam2Input = body.querySelector('#fu_img2_cam');
+      var fuPick2Input = body.querySelector('#fu_img2');
+      var fuAdd2Btn = body.querySelector('#fu_add2');
+      var fuAdd2FileBtn = body.querySelector('#fu_add2_file');
+      if (fuAdd2Btn && fuCam2Input) fuAdd2Btn.onclick = function () { fuCam2Input.click(); };
+      if (fuAdd2FileBtn && fuPick2Input) fuAdd2FileBtn.onclick = function () { fuPick2Input.click(); };
+      function fuHandleExtra(ev) {
+        var file = ev.target.files && ev.target.files[0]; if (!file) return;
+        if (!window.TicketOCR || !TicketOCR.fileToOCRImage || !TicketOCR.parseFuelReceipt || !TicketOCR.recognizeWithRotation) {
+          fuSetRead('<span style="color:#e67e22">Photo reader not ready — that receipt was not added.</span>');
+          return;
+        }
+        fuSetRead('📖 Reading the added receipt…');
+        TicketOCR.fileToOCRImage(file, function (ocrUrl) {
+          if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — it was NOT added.</span>'); return; }
+          fuExtraPhotos.push(ocrUrl);
+          fuPaintExtras();
+          TicketOCR.recognizeWithRotation(ocrUrl, function () {}).then(function (text) {
+            var parsed = null;
+            try { parsed = TicketOCR.parseFuelReceipt(text || ''); } catch (e) {}
+            var addL = parsed && parsed.litres ? (parseFloat(fuRoundL(parsed.litres)) || 0) : 0;
+            var addC = parsed && parsed.cost ? (parseFloat(fuRoundC(parsed.cost)) || 0) : 0;
+            if (addL > 0 || addC > 0) {
+              var lEl = body.querySelector('#fu_l'), cEl = body.querySelector('#fu_cost');
+              if (lEl && addL > 0) { lEl.value = fuRoundL((parseFloat(lEl.value) || 0) + addL); try { lEl.setAttribute('data-touched', '1'); } catch (e) {} }
+              if (cEl && addC > 0) { cEl.value = fuRoundC((parseFloat(cEl.value) || 0) + addC); try { cEl.setAttribute('data-touched', '1'); } catch (e) {} }
+              fuSetRead('➕ Receipt added: <b>+' + (+addL.toFixed(3)) + ' L · +$' + addC.toFixed(2) + '</b> — the totals above now include it. Check them before saving.');
+            } else {
+              fuSetRead('➕ Receipt photo added to this entry — its numbers couldn\'t be read, so add its litres and cost into the totals by hand if this fill needs them.');
+            }
+          }, function () {
+            fuSetRead('➕ Receipt photo added to this entry — its numbers couldn\'t be read, so add its litres and cost into the totals by hand if this fill needs them.');
+          });
+        });
+      }
+      if (fuCam2Input) fuCam2Input.onchange = fuHandleExtra;
+      if (fuPick2Input) fuPick2Input.onchange = fuHandleExtra;
 
       /* v59: generic power-read consumer — cloud transcription fed
          through the existing receipt parser. Fill-only; the form's
@@ -1041,6 +1146,17 @@
              no new photo → applyFillEdit already kept the old one. */
           var freshPhoto = !!(fuPhoto && fuPhoto !== updated.photo);
           if (freshPhoto) updated.photo = fuPhoto;
+          /* v332 (FUEL-MULTI-RECEIPT): the stack merges — the
+             entry's own photos are the base (a fresh primary
+             replaces the first), this session's added receipts
+             append, and photo always mirrors the stack's head. */
+          var mergedStack = fillPhotos(f[editFillIdx]);
+          if (freshPhoto) {
+            if (mergedStack.length) mergedStack[0] = fuPhoto; else mergedStack.push(fuPhoto);
+          }
+          fuExtraPhotos.forEach(function (u) { if (mergedStack.indexOf(u) === -1) mergedStack.push(u); });
+          if (mergedStack.length) updated.photo = mergedStack[0];
+          if (mergedStack.length > 1) updated.photos = mergedStack; else delete updated.photos;
           f[editFillIdx] = updated;
           var editPhotoDropped = false;
           if (!saveFillsVerified(f)) {
@@ -1050,6 +1166,7 @@
             var editRetry = false;
             if (freshPhoto) {
               if (prevPhoto) updated.photo = prevPhoto; else delete updated.photo;
+              delete updated.photos;
               editPhotoDropped = true;
               editRetry = saveFillsVerified(f);
             }
@@ -1112,6 +1229,14 @@
            fuPhoto) — the details page and the edit form read
            rec.photo, which no save path ever wrote before v127. */
         if (fuPhoto) rec.photo = fuPhoto;
+        /* v332 (FUEL-MULTI-RECEIPT): the full stack rides too —
+           photo stays the first receipt; photos carries them
+           all when there is more than one. */
+        var newStack = fillPhotos({ photo: fuPhoto || null, photos: fuExtraPhotos });
+        if (newStack.length) {
+          rec.photo = newStack[0];
+          if (newStack.length > 1) rec.photos = newStack;
+        }
         f.push(rec);
         /* v75: the add path is verified too — a failed write used to
            look exactly like a saved fill-up. */
@@ -1122,7 +1247,7 @@
              entry always saves; the photo is kept only when it
              fits, and the drop is said once (saveNote below). */
           var addRetry = false;
-          if (rec.photo) { delete rec.photo; photoDropped = true; addRetry = saveFillsVerified(f); }
+          if (rec.photo) { delete rec.photo; delete rec.photos; photoDropped = true; addRetry = saveFillsVerified(f); }
           if (!addRetry) {
             showErr('That fill-up did NOT save — the app storage on your phone looks full, or the write failed. Your entry is still in the form — free up some phone space and tap “Save fill-up” again.');
             return;

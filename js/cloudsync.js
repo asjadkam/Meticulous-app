@@ -1010,7 +1010,13 @@
     pti_reports: ['photo'],
     dmg_reports: ['photo'],
     rev_entries: ['photo'],
-    rev_extras: ['photo']
+    rev_extras: ['photo'],
+    /* v339 (DOCUMENT-VAULT): the document's file bytes ride
+       `data` — the fuel law verbatim: the facts (label, name,
+       kind, sender, dates) always cross; the bytes shed from
+       the sync copy only when the whole vault book outgrows
+       one cloud doc, and stay in the local store. */
+    docs_items: ['data']
   };
   function recordSyncCopy(key, arr) {
     var fields = RECORD_PHOTO_FIELDS[key];
@@ -2024,10 +2030,15 @@
      deliberate deletion only when the record was part of the
      last cloud state this device verified. The different-
      account guard stands unchanged. */
-  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1 };
+  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1, docs_items: 1 };
   function recordIdentity(key, rec) {
     if (!rec || typeof rec !== 'object') return null;
     if (key === 'pti_reports') return rec.id ? 'id:' + rec.id : null;
+    /* v339 (DOCUMENT-VAULT): a vault document's id is its
+       identity — its own adds carry one, and a received
+       document's id is built from its Connect shareId, so the
+       union can never double-file a document. */
+    if (key === 'docs_items') return rec.id ? 'id:' + rec.id : null;
     /* v293 (FUEL-EDIT-STOMPED): a fuel fill born under the new
        save path carries a stable id that an edit preserves, so
        its identity survives the edit — the fingerprint below
