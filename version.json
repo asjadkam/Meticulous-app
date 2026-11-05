@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 327,
-  "notes": "v327 — TWO releases in one push. (A) POINTER for native generation 52 (APK v71, versionName 1.44 / versionCode 46), the native half of WIDGET-FROZEN-AGAIN (web half = web 325): SessionRecord.syncFromWeb gains the re-anchor gate — a non-forced sync for the same session, both sides live, carrying a bank of at most 60 s while starting its segment LATER than the segment the record counts from, is refused (applied=false) when the record's own derivation is >5 min ahead; the caller's adoption converges the stale web lifetime onto the record. APK_VERSION in js/app.js bumped 51 -> 52; the v71 APK bundles this tree byte-identical. (B) INSPECTION-MODE-14-DAY (owner Nov 5, 2026, named mid-inspection at a real roadside stop, specified from his Motive screen recording, amended twice): the PTI module's DOT Inspection Mode is rebuilt in Motive's shape. The entry card reads 'Inspect logs for previous 14 days + today — tap Begin Inspection and hand your phone to the officer', with ONE primary Begin Inspection button and a quiet Send door (the same 15 days of summaries as one PDF through MetPdf). Begin opens the officer flow: one full-page SUMMARY sheet per day for the previous 14 days + today (15 sheets; a day with no inspection says so on its own sheet), moved day to day by swipe or arrows — each inspection shown as date-sheet + pre/post + time + odometer + ONE result line (All items OK, or the defects named with severity) + signed. Never the item-by-item checklist; no HOS pages (not an ELD). AMENDMENT 2 (his words: 'inspection mode doesn't need a driver to put in a pin... Nobody does that'): the v165 PIN gate is REMOVED entirely — Begin is one tap, Exit is one tap, no code anywhere; a stored pinHash from the v165 days is never read again. The window widens from today+13 to today+14 per his 'previous 14 days + today'. Proof: tools/inspection-mode-v327-test.js 52/52 (window, summary lines, pager incl. clamping, one-tap in/out, Send lines, PIN absence); neighbouring PTI suites' failure sets identical to the pre-change baseline. Still owed in his hands: the widget clock tracking the in-app timer from the true day start (v71), and a roadside run of the new Inspection Mode.",
+  "webVersion": 328,
+  "notes": "v328 — PTI-HISTORY-UNDER-FORM (owner Nov 5, 2026 ~14:52, over a screenshot of the live PTI screen: 'This history should be underneath the inspection form… just like always — 3 under recent history and full list of requested'). The PTI screen now opens on the inspection FORM itself: the two report cards that used to paint ABOVE it — '✅ Today's inspection filed' and the '✍️ N inspection(s) not signed yet' prompt — are history, and they now land UNDER the form (after Sign & file, ahead of Past inspections), with their rows, badges and tap-to-open behaviour unchanged. The Past inspections list below keeps his standing pattern, untouched: newest 3 as recent history, the full list only behind 'Show more'. Screen order is now: Inspection form (Schedule 1 · Odometer · Checklist · Sign & file) → today's filed → unsigned prompt → DOT Inspection Mode door → Past inspections (3 + Show more). Proof: tools/pti-history-under-form-v328-test.js 18/18 (painted order asserted card by card; exactly 3 recent rows; Show more carries the rest); inspection-mode-v327 re-run 52/52; pti-history-cap-v290 24/24; pti-v162 failure set unchanged from baseline (one pre-existing version-pin failure). Web-only; reaches his phone by OTA on next full close + reopen. Verdict owed in his hands.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "0e007c31bba90e5a14d4eb3b7f0d2506d25030711c5cedf4a63eb20286f3fa4c",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "b26c9c4806df82a76814f12c0233144c603edd8ab6768f530f7d21abe38c24ee",
+    "index.html": "128f46d35a6fb524dee9ee19be557255cbaaecd4d1ba85bd26650478bb7d469c",
     "js/app.js": "1733ea338ade5e2332e46cf12c58fc2b35911232aa364549ee3826dac1a606ad",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -51,7 +51,7 @@
     "modules/navigator.js": "918104152989238573cac865db5efbbb633c0aead1433ce4b7b166f7aa828e20",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "b229b4798d23beca3da49c0f0f33317a78580243276ae16991f78be59de1f8da",
-    "modules/pti.js": "09cb86ae81b6912a92357d34c76d0e4b7ed6340f87a2654ce183d48f01de391a",
+    "modules/pti.js": "9d3125eb9e46c4e21d2aa9538e31ecd2d187af379c253bfaeba84392658f90de",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
     "modules/revenue.js": "b2b082d19174eda7fc9f04017b9973f15dc006865eb722e3b400422cc2fa56f4",
     "modules/subscription.js": "694b586116f2c9dcee3507042ce329493be928046132fef86d03b614f9990719",
