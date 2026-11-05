@@ -2041,6 +2041,53 @@
            That shape is left alone here. */
         if (Math.abs(recStart - locStart) > 3000 && (t.status === 'paused' || recStart < locStart)) {
           try { syncSessionRecord(); } catch (e) {}
+        } else if (t.status === 'running' && recStart - locStart > 3000) {
+          /* v325 (WIDGET-FROZEN-AGAIN, Nov 5, 2026): the running
+             pair the v265 step could not see — the record counts
+             from a LATER start than this layer's live session, so
+             every face the record feeds (the widget above all)
+             shows a young fraction of the day while the loads and
+             miles, which live in their own day stores, keep
+             advancing (Nov 5, in his hands: the widget painted
+             00:38:19 at 13:05 on a 09:00 session — the record had
+             been re-anchored to a 12:26 segment with nothing
+             banked before it). Two writers can leave the record
+             behind on a running pair, and they heal opposite
+             ways:
+               - src 'native' with the newer stamp: a face tap
+                 folded AND resumed the record between this
+                 layer's collects (both flips landed while the
+                 page slept). The record's clock is the true one
+                 — the pause really happened — so this layer
+                 ADOPTS the record's clock, exactly as the status
+                 flips above adopt its status; syncing over it
+                 would hand the day back its paused span.
+               - anything else (the record's last writer was a
+                 web sync or the arm's seed): the record missed
+                 this layer's clock, and this layer is
+                 authoritative — the v265 invariant — so heal
+                 with a re-sync, the branch above's medicine.
+             A record that merely lags by an uncollapsed
+             mid-segment sync cannot reach here: its derivation
+             equals this layer's, so recStart sits within the
+             tolerance of locStart. The native half of this
+             contract (SessionRecord's re-anchor gate, v71)
+             refuses the re-anchoring sync at the bridge, so a
+             record reaches this branch only through a writer
+             the gate cannot see — and is healed here instead. */
+          if (stateNewer && rec.src === 'native') {
+            t.elapsed = Math.max(0, rec.elapsedBase || 0);
+            t.startTs = rec.segStartMs || now;
+            /* Persist + repaint WITHOUT re-syncing — the same
+               reasoning as the status flips above: the record
+               already holds these facts (they came from it). */
+            store.set('tracker', App.tracker);
+            try { trackerPaint(); } catch (e) {}
+            try { paintBubble(trackerElapsedSec()); } catch (e) {}
+            try { pushWidgetState(lastBubbleFacts()); } catch (e) {}
+          } else {
+            try { syncSessionRecord(); } catch (e) {}
+          }
         }
       }
     }
