@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 331,
-  "notes": "Multi-day manifest is now a SUMMARY (owner's spec): in Date range mode each day is ONE line — that day's total km, total hours, loads and fuel filled — no odometer, no start/end times, no GPS marks, no pay; a month of lines fits one page. Page 2 of the printed document is the range summary alone: total hours, total fuel, total loads. The single-day manifest is unchanged.",
+  "webVersion": 332,
+  "notes": "Fuel: a fill-up can now carry TWO receipts (or more). When the pump stops and you top up, tap 'Add another receipt' on the fill-up form — the second receipt's litres and cost add into the same entry and both photos stay on the one record. The entry's details page shows every receipt photo stacked.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "ffe604ea57cad8cded30f0c77e5acc6966360052be6ed41f44ab79e8eff2a80a",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "5718c6989412bcfcc38156e6bfe246221bfa5905e76d559babecbc9b68c7b9ee",
+    "index.html": "53274df8a716df21708b4b40947c76dd7cfb110be29c7e2f3b22ca9f969f8666",
     "js/app.js": "1733ea338ade5e2332e46cf12c58fc2b35911232aa364549ee3826dac1a606ad",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -43,7 +43,7 @@
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "ed2aa20b4b8c075ef8d96503315d0b5790bb05b6a11f08674174fb64815b1bb5",
     "modules/dispatch.js": "6369c9d50b587be27f5faf71fe3c92234c256ff4ccb0e50395d9e91c28c78f6e",
-    "modules/fuel.js": "d92b7c6fbd4c206b9c23b92e973432ac9afd6bffdd7282e6f31b76c4da3ad714",
+    "modules/fuel.js": "322b9787ce535aac10cac829dcd0dda3dff1848ef0a0220bf6a52833501fad48",
     "modules/invoice.js": "6718699a1f1a616fea5188441d40732c1ac736e3818b3a949dd102e3e780730c",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "dcd15f5dd3255a399c5b4011032cbe94a3d757c76f762d88b424958c8285661c",
