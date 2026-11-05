@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 337,
-  "notes": "Navigator ETA + arrival: (1) arrival is now declared when you are parked at the site — stopped within about 150 m of the pin with little route left for 20 seconds ends the drive properly, instead of leaving '140 m left' on screen while you sit at the destination. (2) The arrival time no longer jumps by minutes in one step when the traffic estimate changes source — it drifts to the new figure over a few seconds.",
+  "webVersion": 338,
+  "notes": "Navigator speed-limit badge repairs: an answer is never painted if a newer lookup has already been sent, a slow answer that arrives after you have driven on is thrown away instead of showing the previous road's limit, and a new drive starts with no limit shown rather than the last drive's. The limit itself still comes only from the road under the truck — never a guessed number.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "9f2dc31b20079115b95196b5bd1cbb3c5f3c24a5e6e4c7be49fd2a200c48f4b4",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "8a59f32371517948ed63d55f58dfb3d11b7293bf639e987f5b63cc499d985b51",
+    "index.html": "e5aa644ccb5c9bb505c9354223cc87c27ad768987f3335ac0ef1ef72f2c55cd2",
     "js/app.js": "1733ea338ade5e2332e46cf12c58fc2b35911232aa364549ee3826dac1a606ad",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -48,7 +48,7 @@
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "dcd15f5dd3255a399c5b4011032cbe94a3d757c76f762d88b424958c8285661c",
     "modules/navigation.js": "4b712571749b3a2ecb9454f602ddc2b534832aed667dacf07ab7087d5c1b3942",
-    "modules/navigator.js": "9ea570b6efba5e306efab52f265e98f34e13fb2b057ed133118f59ffb8e55753",
+    "modules/navigator.js": "0d88b35151831b93a60c9c33ee777b9a3305c40e25c0f8b7b5ae3cbbc86556d6",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "b229b4798d23beca3da49c0f0f33317a78580243276ae16991f78be59de1f8da",
     "modules/pti.js": "9d3125eb9e46c4e21d2aa9538e31ecd2d187af379c253bfaeba84392658f90de",
