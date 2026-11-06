@@ -1846,7 +1846,22 @@
      INSIDE this module: render sees the pending destination and
      opens the drive face — the v104 auto-enter rules inside the
      drive face are unchanged. */
-  var nvFace = 'places';
+  /* v343 (NAV-MAP-FIRST-NOT-IN-HANDS + NAV-MAP-CORNERS-LAYOUT,
+     owner Nov 5, 2026 22:37 — screenshot verdict: the module
+     still opened on the old list page, NO map): the FRONT face
+     is now the MAP face ('drive' — the plan/Drive screen whose
+     base is the full-screen planning map). The 'places' face
+     (the old Navigation list page: tabs, picker, favorites,
+     built-ins, Yard pick) is a sub-view reached from the map's
+     own "Manage places" door; everything it offered — the
+     Work/Personal switch, the place search, recent/saved
+     places — ALSO lives on the map itself as corner overlays
+     (see the nv-map-top stack in render). nvKind is the map
+     overlays' Work/Personal switch state; it drives the
+     overlay places panel AND the sheet picker, so the two
+     pickers can never disagree about which tab is showing. */
+  var nvFace = 'drive';
+  var nvKind = 'work';
   var nvBody = null;
 
   /* v220 (PIP-REDESIGN, owner spec verbatim): in picture-in-
@@ -2290,7 +2305,13 @@
        places face, Back on the places face exits the module.
        resetView lands fresh entry on the front face — unless a
        pending destination is waiting, which render promotes to
-       the drive face (the in-module hand-off). */
+       the drive face (the in-module hand-off).
+       v343: the staircase is re-based on the MAP face — fresh
+       entry lands on the map (resetView → 'drive'), Back at the
+       map root EXITS the module (it no longer demotes to the
+       places list — that demotion was the "opens on a list"
+       trap), and Back on the places face returns to the MAP,
+       the places face being a sub-view off the map now. */
     /* v222 (PIP-LANDS-HOME): the shell asks before tearing this
        module down — a parked live drive holds the module open
        (its state + the floated drive screen are the driver's
@@ -2362,13 +2383,21 @@
            consumed and the driver STAYS on the drive — doing
            nothing visible beats silently killing navigation. */
         if (S && S.drive) return true;
-        nvFace = 'places';
+        /* v343: the map IS the module root — Back here exits to
+           the dashboard (return false) instead of demoting to
+           the places list page. */
+        return false;
+      }
+      if (nvFace === 'places') {
+        /* v343: places is a sub-view off the map — Back returns
+           to the map face. */
+        nvFace = 'drive';
         if (nvBody) api.render(nvBody);
         return true;
       }
       return false;
     },
-    resetView: function () { nvFace = 'places'; },
+    resetView: function () { nvFace = 'drive'; },
 
     /* v330 test hook: the sent-pin link parser (pure). */
     _sentPinCoords: sentPinCoords,
@@ -2525,6 +2554,34 @@
         '<div id="nv_settings" class="nv-settings hidden"></div>' +
         '<div class="nv-mapzone">' +
         '<div id="nv_map" class="nv-map"></div>' +
+        /* v343 (NAV-MAP-CORNERS-LAYOUT, owner Nov 5, 2026 22:37:
+           "find clever ways to tuck everything that is on this
+           page around the corners"): everything the old list page
+           held now lives ON the map as a top-edge stack — (1) the
+           place SEARCH bar (one input; typing filters the saved
+           places of the current kind live, Search runs the free-
+           text/address flow), (2) the WORK/PERSONAL switch as two
+           compact pills beside the Places door, (3) the PLACES
+           panel (recent/saved places for the current kind) that
+           drops from that stack and folds away, its foot carrying
+           "Manage places" — the old list page itself, kept whole
+           (Add favorite, Yard pick, place detail) as a sub-view.
+           The map's centre stays clear; the banner tucks to the
+           bottom edge above the mode row (see style.css). */
+        '<div class="nv-map-top">' +
+        '<div class="nv-mapsearch"><input id="nv_map_q" placeholder="Search places or an address…" style="flex:1">' +
+        '<button class="btn navy" id="nv_map_go">Search</button></div>' +
+        '<div class="nv-kindrow">' +
+        '<button class="btn small ' + (nvKind === 'work' ? 'navy' : 'ghost') + '" id="nv_kind_work">⭐ Work</button>' +
+        '<button class="btn small ' + (nvKind === 'personal' ? 'navy' : 'ghost') + '" id="nv_kind_personal">🏠 Personal</button>' +
+        '<button class="btn small ghost" id="nv_places_btn" style="margin-left:auto">📍 Places ▾</button>' +
+        '</div></div>' +
+        '<div id="nv_places_panel" class="nv-places-panel hidden">' +
+        '<div id="nv_map_results"></div>' +
+        '<div class="row" style="margin-top:6px">' +
+        '<button class="btn small ghost hidden" id="nv_map_addr" style="flex:1">Search as address →</button>' +
+        '<button class="btn small ghost" id="nv_map_manage" style="flex:1">Manage places</button>' +
+        '</div></div>' +
         '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
         '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
         /* v103: Truck/Car + Follow + Sound demoted to ONE small
@@ -3104,7 +3161,9 @@
       function paintNvPlaces() {
         var box = body.querySelector('#nv_presults');
         if (!box || !navPicker) return;
-        var res = navPicker.pickerEntries('work', nvPickQ);
+        /* v343: the sheet picker follows the map's Work/Personal
+           switch (nvKind) — one switch state for both pickers. */
+        var res = navPicker.pickerEntries(nvKind, nvPickQ);
         if (!res.rows.length) {
           box.innerHTML = '<div class="empty">' +
             (nvPickQ.trim() ? 'No place matches that.' : 'Places you go to will show here — type to find any place.') + '</div>';
@@ -3114,7 +3173,7 @@
           res.rows.map(function (e) { return navPicker.pickerRowHTML(e, ''); }).join('');
         box.querySelectorAll('[data-pid]').forEach(function (b) {
           b.onclick = function () {
-            var e = navPicker.pickerFind('work', b.getAttribute('data-pid'));
+            var e = navPicker.pickerFind(nvKind, b.getAttribute('data-pid'));
             if (!e) return;
             var p = e.place;
             /* v107 — THE TAP RULE (owner, Oct 16 20:13): "When I
@@ -3145,6 +3204,153 @@
         pqEl.addEventListener('input', function () { nvPickQ = pqEl.value; paintNvPlaces(); });
       }
       paintNvPlaces();
+
+      /* v343 (NAV-MAP-CORNERS-LAYOUT): the map overlays' wiring.
+         The top-edge stack painted into .nv-mapzone above: the
+         search bar, the Work/Personal pills, the Places door and
+         its panel. The panel paints through the SAME shared
+         picker as every other door (pickerEntries / pickerRowHTML
+         / pickerFind, kind = nvKind): recents when the search box
+         is empty, filter matches while typing. A row tap obeys
+         the v107 tap rule exactly as the sheet picker's does —
+         the place's resolved name lands in the search boxes; a
+         pinned place sets the destination from its pin; an
+         address-only place hands its address to the destination
+         search. Picking from a picker never records a visit by
+         itself (the standing behaviour of the sheet picker —
+         visits are recorded by the hand-off doors: nav_pending,
+         the sent-pin door, the search path's pending resolution),
+         so a Personal pick can never log a work visit. */
+      var nvMapQ = '';
+      var placesPanelOpen = false;
+      function paintPlacesPanel() {
+        var panel = body.querySelector('#nv_places_panel');
+        if (panel && panel.classList) {
+          if (placesPanelOpen) panel.classList.remove('hidden');
+          else panel.classList.add('hidden');
+        }
+        var pb = body.querySelector('#nv_places_btn');
+        if (pb) pb.textContent = placesPanelOpen ? '📍 Places ▴' : '📍 Places ▾';
+        var addrBtn = body.querySelector('#nv_map_addr');
+        if (addrBtn && addrBtn.classList) {
+          if (nvMapQ.trim()) addrBtn.classList.remove('hidden');
+          else addrBtn.classList.add('hidden');
+        }
+        var box = body.querySelector('#nv_map_results');
+        if (!box || !placesPanelOpen) return;
+        if (!navPicker) { box.innerHTML = '<div class="empty">Places are unavailable right now.</div>'; return; }
+        var res = navPicker.pickerEntries(nvKind, nvMapQ);
+        if (!res.rows.length) {
+          box.innerHTML = '<div class="empty">' +
+            (nvMapQ.trim() ? 'No place matches that — try Search as address below.' : 'Places you go to will show here — type to find any place.') + '</div>';
+          return;
+        }
+        box.innerHTML = (res.recents ? '<p class="note" style="margin:2px 0 0">🕘 Recent places</p>' : '') +
+          res.rows.map(function (e) { return navPicker.pickerRowHTML(e, ''); }).join('');
+        box.querySelectorAll('[data-pid]').forEach(function (b) {
+          b.onclick = function () {
+            var e = navPicker.pickerFind(nvKind, b.getAttribute('data-pid'));
+            if (!e) return;
+            var p = e.place;
+            var pName = (navPicker.displayPlaceName ? navPicker.displayPlaceName(p) : p.name);
+            var mq = body.querySelector('#nv_map_q');
+            var q = body.querySelector('#nv_q');
+            if (p.lat && p.lng) {
+              if (mq) mq.value = pName;
+              if (q) q.value = pName;
+              placesPanelOpen = false;
+              paintPlacesPanel();
+              setDest([p.lat, p.lng], pName);
+              if (S.map) S.map.setView(S.dest, 14);
+            } else if (p.address) {
+              if (q && searchBtn) {
+                q.value = p.address;
+                placesPanelOpen = false;
+                paintPlacesPanel();
+                searchBtn.onclick();
+              }
+            }
+          };
+        });
+      }
+      function paintKindPills() {
+        var w = body.querySelector('#nv_kind_work');
+        var pe = body.querySelector('#nv_kind_personal');
+        if (w) w.className = 'btn small ' + (nvKind === 'work' ? 'navy' : 'ghost');
+        if (pe) pe.className = 'btn small ' + (nvKind === 'personal' ? 'navy' : 'ghost');
+      }
+      function setNvKind(k) {
+        if (k !== 'work' && k !== 'personal') return;
+        nvKind = k;
+        paintKindPills();
+        paintPlacesPanel();
+        paintNvPlaces();
+      }
+      var kindWorkBtn = body.querySelector('#nv_kind_work');
+      if (kindWorkBtn) kindWorkBtn.onclick = function () { setNvKind('work'); };
+      var kindPersBtn = body.querySelector('#nv_kind_personal');
+      if (kindPersBtn) kindPersBtn.onclick = function () { setNvKind('personal'); };
+      var placesBtn = body.querySelector('#nv_places_btn');
+      if (placesBtn) placesBtn.onclick = function () { placesPanelOpen = !placesPanelOpen; paintPlacesPanel(); };
+      var mapQEl = body.querySelector('#nv_map_q');
+      if (mapQEl && typeof mapQEl.addEventListener === 'function') {
+        mapQEl.addEventListener('input', function () {
+          nvMapQ = mapQEl.value;
+          if (nvMapQ.trim() && !placesPanelOpen) placesPanelOpen = true;
+          paintPlacesPanel();
+        });
+        mapQEl.addEventListener('keydown', function (e) {
+          if (e && e.key === 'Enter') {
+            var g = body.querySelector('#nv_map_go');
+            if (g && typeof g.onclick === 'function') g.onclick();
+          }
+        });
+      }
+      var mapGoBtn = body.querySelector('#nv_map_go');
+      if (mapGoBtn) mapGoBtn.onclick = function () {
+        /* The map search bar's one action: a saved place wins
+           (the panel's matches — one tap picks); free text runs
+           the destination search flow (saved-places-first, then
+           the geocoder) through the sheet's own search door. */
+        var v = mapQEl ? String(mapQEl.value || '').trim() : '';
+        nvMapQ = mapQEl ? String(mapQEl.value || '') : '';
+        if (!v) { placesPanelOpen = true; paintPlacesPanel(); return; }
+        var res2 = navPicker ? navPicker.pickerEntries(nvKind, v) : { rows: [] };
+        if (res2.rows.length) { placesPanelOpen = true; paintPlacesPanel(); return; }
+        var q2 = body.querySelector('#nv_q');
+        if (q2 && searchBtn) {
+          q2.value = v;
+          placesPanelOpen = false;
+          paintPlacesPanel();
+          searchBtn.onclick();
+        }
+      };
+      var mapAddrBtn = body.querySelector('#nv_map_addr');
+      if (mapAddrBtn) mapAddrBtn.onclick = function () {
+        var v = nvMapQ.trim();
+        var q3 = body.querySelector('#nv_q');
+        if (v && q3 && searchBtn) {
+          q3.value = v;
+          placesPanelOpen = false;
+          paintPlacesPanel();
+          searchBtn.onclick();
+        }
+      };
+      var mapManageBtn = body.querySelector('#nv_map_manage');
+      if (mapManageBtn) mapManageBtn.onclick = function () {
+        /* The old list page, kept whole as the places sub-view:
+           Add favorite, Yard pick, place detail (Navigate /
+           Re-pin / Remove / Advanced) and Recent destinations
+           live there; it opens on the same tab the map switch
+           shows, and its Back returns here to the map. */
+        try {
+          var navModM = window.Meticulous && Meticulous.modules.navigation;
+          if (navModM && navModM.setTab) navModM.setTab(nvKind);
+        } catch (e) {}
+        nvFace = 'places';
+        api.render(nvBody);
+      };
+      paintPlacesPanel();
 
       /* v87: a place picked in Navigation arrives as a one-shot
          pending destination (owner: places live in ONE field there

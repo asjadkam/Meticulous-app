@@ -472,6 +472,12 @@
     pickerRowHTML: pickerRowHTML,
     pickerFind: pickerFind,
     displayPlaceName: displayPlaceName, /* v118: hosts resolve a place's answerable name through here */
+    /* v343: the Navigator's map switch opens this face on the
+       SAME tab (its "Manage places" door) — additive setter;
+       the tab state itself stays module-private as before. */
+    setTab: function (kind) {
+      if (kind === 'work' || kind === 'personal') { tab = kind; pickQ = ''; }
+    },
     /* v150: THE hand-off, callable by other modules — a dispatch
        pin (owner, Oct 17, 2026 22:02 MDT: "Why does this pin take
        me to google maps still.. When our navigator is up and
