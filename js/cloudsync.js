@@ -2112,11 +2112,27 @@
      out whole when the stale copy happened to win on
      completeness. Then the version stamp (updAt — the newest
      version of the record wins), then completeness (the v241
-     law), then the local copy. */
+     law), then the local copy.
+     v349 (EDIT-SAVE-PHOTO-DELETES-ENTRY, owner evidence Nov 5,
+     23:23): the doomed branch below returned `rd` — whether the
+     CANDIDATE is doomed — while its own inline comment states
+     the law as `cd` (the candidate wins exactly when the
+     INCUMBENT is the doomed one). The sentence the comment
+     feared came true by the branch itself: an id-less fill
+     edited so its fingerprint moved (the receipt OCR supplying
+     a time the record never carried) pairs its clean edited
+     copy (candidate) against the stale cloud copy (incumbent,
+     identity in the shadow); the inverted return kept the
+     doomed incumbent in the slot, and mergeRecordLists3's
+     filter then deleted it as a deliberate deletion — the
+     record was gone from list, Audit and cloud on the first
+     merge after its own save (Oct 14 + Oct 15 fills, twice).
+     The return is now the comment's law. A true delete has no
+     sibling to pair with, so the filter still removes it. */
   function fuelCopyWins(cur, rec, isLocal, doomed, curId, recId) {
     if (doomed) {
       var cd = !!doomed[curId], rd = !!doomed[recId];
-      if (cd !== rd) return rd; // rec wins exactly when cur is the doomed one
+      if (cd !== rd) return cd; // rec wins exactly when cur is the doomed one
     }
     var cu = +cur.updAt || 0, ru = +rec.updAt || 0;
     if (cu !== ru) return ru > cu;
