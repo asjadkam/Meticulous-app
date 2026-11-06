@@ -796,16 +796,23 @@
         return f || { value: String(kpl), unit: 'km/L' };
       }
       var lastLeg = trend.length ? econDisp(trend[trend.length - 1].mpg) : null;
-      var h = '<div class="card"><h3>⛽ Fuel trend</h3>' +
+      /* v351 (FUEL-TREND-CARD-TRIM-AND-DEMOTE, owner Nov 5,
+         23:23): "I don't need 7 entries of fuel trends... I need
+         2 or 3 at max..... And that's good to see but not
+         essential.... So this shouldn't be the first thing I see
+         on this page." The legs list caps at the last 3, and the
+         card itself is appended AFTER the Fill-ups list below
+         (trendCardHtml) — the page opens on the fill-ups. */
+      var trendCardHtml = '<div class="card"><h3>⛽ Fuel trend</h3>' +
         (trend.length
           ? '<div class="center" style="font-size:24px;font-weight:800;color:var(--navy)">' + lastLeg.value + ' <small style="font-size:13px">' + lastLeg.unit + '</small></div>' +
             (trend.length >= 3
-              ? '<div class="note center">Last ' + trend.length + ' legs</div>'
+              ? '<div class="note center">' + (trend.length > 3 ? 'Last 3 of ' + trend.length + ' legs' : 'Last 3 legs') + '</div>'
               : '<div class="note center">Last leg — a trend needs 3 legs; you have ' + trend.length + ' so far</div>') +
-            trend.slice(-8).map(function (t) { var d = econDisp(t.mpg); return '<div class="kv"><span>' + esc(t.date) + '</span><b>' + d.value + ' ' + d.unit + '</b></div>'; }).join('')
+            trend.slice(-3).map(function (t) { var d = econDisp(t.mpg); return '<div class="kv"><span>' + esc(t.date) + '</span><b>' + d.value + ' ' + d.unit + '</b></div>'; }).join('')
           : '<div class="empty">Add 2+ fill-ups with odometer readings to see your fuel economy.</div>') + '</div>';
 
-      h += '<div class="card" id="fu_form_card"><h3>' + (editRec ? '✏️ Edit fill-up' : '＋ Fuel-up') + '</h3>' +
+      var h = '<div class="card" id="fu_form_card"><h3>' + (editRec ? '✏️ Edit fill-up' : '＋ Fuel-up') + '</h3>' +
         (editRec ? '<div class="note" style="margin-bottom:8px">You\'re editing the fill-up from ' + esc(editRec.date || '') + ' — “Save changes” updates that same entry, it does not add a new one.</div>' : '') +
         (saveNote ? '<p class="note" style="color:var(--navy);font-weight:600">' + esc(saveNote) + '</p>' : '') +
         '<label class="f">Date</label><input type="date" id="fu_date" value="' + App._today() + '">' +
@@ -889,6 +896,10 @@
           ? '<button class="btn ghost" id="fu_more" style="width:100%;margin-top:8px">' +
             (fuShowAll ? 'Show less' : 'Show more — ' + (flAll.length - 3) + ' more fill-up' + (flAll.length - 3 === 1 ? '' : 's')) + '</button>'
           : '') + '</div>';
+
+      /* v351: the trend card rides LAST on the face — below the
+         fill-ups it summarises (see trendCardHtml above). */
+      h += trendCardHtml;
 
       /* v202 FUEL-TAB: the face's top strip — one small tab for
          Other expenses (the Revenue-tab pattern, v201), above
