@@ -98,6 +98,157 @@
   }
   /* FUEL-OPEN-END */
 
+  /* v350 (PHOTO-GRAFT — EXPENSE-RECEIPTS-STILL-DONT-OPEN-IN-HANDS
+     + FUEL-RECEIPTS-MOSTLY-MISSING-ON-PHONE, owner Nov 5, 23:18):
+     receipt photos did not travel between his sessions. The sync
+     copy of a fuel book sheds its photo fields whenever the book
+     outgrows one cloud document (the v289 law — the facts always
+     cross, the photos do not), and the per-fill photo documents
+     the save handler wrote were never read back by anything: a
+     fill filed from the web session reached the phone photo-less
+     ("No photo for this entry" — tonight's Nov 5 Shell fill:
+     91.915 L, $199.36, odo 171,495), while a fill saved on the
+     phone itself kept its photo ("some do! But that's an
+     exception" — the Nov 4 combined fill). Expenses ride
+     whole-value sync, so a stamp-war loss on that key strands a
+     photo the same way (the Malwa $294 row paints no thumbnail
+     on the phone though the filing session shows the photo).
+     The heal, run once per app session when this module opens:
+     every fill / expense in the LOCAL book that carries no photo
+     is looked up in the places a photo of it can still live —
+     (1) the cloud copy of its own book, (2) its per-record photo
+     document (the save handlers now write those under a STABLE
+     key: a fill's id, or its date/odo/litres/cost; an expense's
+     date/what/cost hash), (3) for fills, a once-a-day scan of
+     the legacy timestamp-keyed photo documents the old saves
+     left behind — and the photo is grafted onto the local
+     record through the verified saves, so sync picks it up and
+     the merge's completeness law (a photo scores +3) defends it
+     from then on. Nothing is invented: a record whose photo
+     survives nowhere reachable stays photo-less, as it was. */
+  function fillContentKey(rec) {
+    if (!rec) return '';
+    return 'fill_' + [rec.date || '', rec.odo || '', rec.litres || '', rec.cost || '']
+      .join('_').replace(/[^a-zA-Z0-9]+/g, '-');
+  }
+  function fillPhotoDocKey(rec) {
+    if (!rec) return '';
+    if (rec.id) return 'fillid_' + String(rec.id).replace(/[^a-zA-Z0-9_-]+/g, '-');
+    return fillContentKey(rec);
+  }
+  /* A fill is matched on its id-key when it has one AND always
+     on its content key — a photo document read back carries the
+     DOCUMENT's id in its id field (FB.loadDoc merges it in), so
+     a source record's own id may be gone; the content key is
+     the bridge that still recognises the same fill. */
+  function fillMatchKeys(rec) {
+    var ks = [fillContentKey(rec)];
+    if (rec && rec.id) ks.push(fillPhotoDocKey(rec));
+    return ks;
+  }
+  function keysMeet(a, b) {
+    for (var i = 0; i < a.length; i++) if (b.indexOf(a[i]) >= 0) return true;
+    return false;
+  }
+  /* A 'fuel'-collection read carries transport fields (the doc
+     id merged into `id`, updatedAt); a stable doc's id encodes
+     the record id it was written under — restore it, drop the
+     rest, so the source record matches its local twin. */
+  function srcFromFuelDoc(d) {
+    if (!d) return null;
+    var rec = {};
+    for (var k in d) { if (Object.prototype.hasOwnProperty.call(d, k)) rec[k] = d[k]; }
+    if (typeof d.id === 'string' && d.id.indexOf('fillid_') === 0) rec.id = d.id.slice('fillid_'.length);
+    else delete rec.id;
+    delete rec.updatedAt;
+    return rec;
+  }
+  function expensePhotoDocKey(rec) {
+    if (!rec) return '';
+    var s = String(rec.date || '') + '|' + String(rec.what || '') + '|' + String(rec.cost || '');
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return 'exp_' + h.toString(36);
+  }
+  function saveFillPhotoDoc(rec) {
+    try {
+      if (window.FB && FB.saveDoc && rec && fillPhotos(rec).length) FB.saveDoc('fuel', fillPhotoDocKey(rec), rec);
+    } catch (e) {}
+  }
+  function saveExpensePhotoDoc(rec) {
+    try {
+      if (window.FB && FB.saveDoc && rec && fillPhotos(rec).length) FB.saveDoc('fuel', expensePhotoDocKey(rec), rec);
+    } catch (e) {}
+  }
+  var photoGraftRan = false;
+  function healPhotoGrafts(body) {
+    if (photoGraftRan) return;
+    if (!(window.FB && FB.loadDoc && FB.loadDocs && FB.user)) return;
+    photoGraftRan = true;
+    function expensesList() { return S('expenses', []); }
+    var missF = fills().filter(function (r) { return r && !fillPhotos(r).length; });
+    var missX = expensesList().filter(function (r) { return r && !fillPhotos(r).length; });
+    if (!missF.length && !missX.length) return;
+    var changed = false;
+    /* Apply against a FRESH read of the book — the driver may
+       have saved while the reads were in flight; a record is
+       grafted only if it is still there and still photo-less,
+       matched by the same keys the lookup used. */
+    function graftInto(isFill, srcRec) {
+      var ps = fillPhotos(srcRec);
+      if (!ps.length) return;
+      var list = isFill ? fills() : expensesList();
+      var srcKeys = isFill ? fillMatchKeys(srcRec) : [expensePhotoDocKey(srcRec)];
+      var hit = null;
+      for (var i = 0; i < list.length; i++) {
+        if (!list[i] || fillPhotos(list[i]).length) continue;
+        var lk = isFill ? fillMatchKeys(list[i]) : [expensePhotoDocKey(list[i])];
+        if (keysMeet(lk, srcKeys)) { hit = list[i]; break; }
+      }
+      if (!hit) return;
+      hit.photo = ps[0];
+      if (ps.length > 1) hit.photos = ps; else delete hit.photos;
+      var okSave = isFill ? saveFillsVerified(list) : saveExpensesVerified(list);
+      if (okSave) changed = true;
+      else { /* the graft didn't land — leave the record as it was */
+        delete hit.photo; delete hit.photos;
+      }
+    }
+    var reads = [];
+    if (missF.length) reads.push(FB.loadDoc('kv', 'fuel_fills').then(function (d) {
+      ((d && d.v) || []).forEach(function (r) { if (r && fillPhotos(r).length) graftInto(true, r); });
+    }).catch(function () {}));
+    if (missX.length) reads.push(FB.loadDoc('kv', 'fuel_expenses').then(function (d) {
+      ((d && d.v) || []).forEach(function (r) { if (r && fillPhotos(r).length) graftInto(false, r); });
+    }).catch(function () {}));
+    missF.forEach(function (r) {
+      reads.push(FB.loadDoc('fuel', fillPhotoDocKey(r)).then(function (d) {
+        var rec = srcFromFuelDoc(d);
+        if (rec) graftInto(true, rec);
+      }).catch(function () {}));
+    });
+    missX.forEach(function (r) {
+      reads.push(FB.loadDoc('fuel', expensePhotoDocKey(r)).then(function (d) {
+        var rec = srcFromFuelDoc(d);
+        if (rec) graftInto(false, rec);
+      }).catch(function () {}));
+    });
+    Promise.all(reads).then(function () {
+      var stillMiss = fills().filter(function (r) { return r && !fillPhotos(r).length; });
+      var lastScan = 0;
+      try { lastScan = +App._store.get('__fuel_photo_scan', 0) || 0; } catch (e) {}
+      if (!stillMiss.length || Date.now() - lastScan < 86400000) return null;
+      try { App._store.set('__fuel_photo_scan', Date.now()); } catch (e) {}
+      return FB.loadDocs('fuel').then(function (docs) {
+        (docs || []).forEach(function (d) { var rec = srcFromFuelDoc(d); if (rec) graftInto(true, rec); });
+      }).catch(function () {});
+    }).then(function () {
+      if (changed && body && fuelBody === body) {
+        try { Meticulous.modules.fuel.render(body); } catch (e) {}
+      }
+    }).catch(function () {});
+  }
+
   /* v75: which fill-up (index into fills()) the form is editing, or
      null for a new fill-up; editErr is the guard/save message kept
      visible in the form after a blocked save (the form is NOT
@@ -331,6 +482,7 @@
             return;
           }
         }
+        saveExpensePhotoDoc(rec); /* v350: the per-expense photo doc, under its stable key */
         Meticulous.modules.fuel.render(body);
         if (photoDropped) {
           var rd = body.querySelector('#fx_read');
@@ -517,6 +669,10 @@
     },
     render: function (body) {
       fuelBody = body;
+      /* v350: heal any photo-less records from the copies of
+         their photos that survive elsewhere (async; re-renders
+         itself if it grafted anything). Once per app session. */
+      try { healPhotoGrafts(body); } catch (e) {}
       var trend = mpgTrend();
       /* v75: an edit target that vanished (deleted elsewhere) falls
          back to a plain new-fill-up form — never edits a ghost. */
@@ -1371,7 +1527,7 @@
             }
           }
           try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
-          if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), updated);
+          saveFillPhotoDoc(updated); /* v350: the per-fill photo doc, under its stable key */
           editFillIdx = null; editErr = '';
           var un = '';
           if (odoPlan.mode === 'correct') { try { App._store.set(wpKeyFor('mt_odo'), String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} un = odoOutcomeNote(); }
@@ -1451,7 +1607,7 @@
         /* v59: this save confirms the form — consume any power-read
            result that was waiting for this screen. */
         try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
-        if (window.FB && FB.saveDoc) FB.saveDoc('fuel', 'f' + Date.now(), rec);
+        saveFillPhotoDoc(rec); /* v350: the per-fill photo doc, under its stable key */
         // v39: feed the master odometer (upward only) + show the outcome —
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
