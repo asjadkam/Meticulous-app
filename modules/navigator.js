@@ -1606,6 +1606,139 @@
     return v;
   }
 
+  /* v356 (DIMENSION-AWARE ROUTING — addendum 7's routing half,
+     owner Nov 6, 08:32 MDT: "Why parked... Start now"): the
+     saved VEHICLE profile (Preferences -> Truck / onboarding:
+     the VIN record's vehHeightM / vehLengthM / vehWeightKg,
+     confirmed once by the driver) is where route dimensions
+     come from. vehicleDimsFromOnboarding reads that record
+     into Valhalla units — metres, metres, TONNES (the record
+     stores kilograms) — keeping only the fields honestly there
+     (positive, finite); null when the vehicle carries no
+     dimensions at all. profileWithVehicleDims lays those
+     fields over the Navigator's own profile: the vehicle wins
+     per field, and everything else (width, axle load, axles,
+     hazmat) stays the Navigator profile's, exactly as before.
+     With no vehicle dimensions the merged profile IS the old
+     profile, so the proven request shape is untouched. */
+  function vehicleDimsFromOnboarding(o) {
+    if (!o) return null;
+    var d = {}, any = false, v;
+    v = Number(o.vehHeightM); if (isFinite(v) && v > 0) { d.height = v; any = true; }
+    v = Number(o.vehLengthM); if (isFinite(v) && v > 0) { d.length = v; any = true; }
+    v = Number(o.vehWeightKg); if (isFinite(v) && v > 0) { d.weight = v / 1000; any = true; }
+    return any ? d : null;
+  }
+  function profileWithVehicleDims(profile, dims) {
+    var p = navProfile(profile);
+    if (dims) {
+      if (dims.height > 0) p.height = dims.height;
+      if (dims.length > 0) p.length = dims.length;
+      if (dims.weight > 0) p.weight = dims.weight;
+    }
+    return p;
+  }
+
+  /* v356: OpenStreetMap's maxheight tag -> metres. The forms
+     the map actually carries: a bare number or a number + 'm'
+     (metres — a bare number IS metres by OSM convention), and
+     the feet/inches spellings (12'6", 12 ft 6 in, 12.5 ft).
+     Anchored on purpose: a string that is not plainly one
+     value is no value (null), never a guess. */
+  function parseMaxheightM(tag) {
+    if (tag === null || tag === undefined) return null;
+    var s = String(tag).trim();
+    if (!s) return null;
+    var m = s.match(/^(\d+(?:\.\d+)?)\s*(m|metres?|meters?)?$/i);
+    if (m) { var v = parseFloat(m[1]); return v > 0 ? v : null; }
+    m = s.match(/^(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:(\d+(?:\.\d+)?)\s*(?:"|in|inches)?)?$/i);
+    if (m) {
+      var mm = (parseFloat(m[1]) * 12 + (m[2] ? parseFloat(m[2]) : 0)) * 0.0254;
+      return mm > 0 ? mm : null;
+    }
+    return null;
+  }
+
+  /* v356: the clearance second look. The route response this
+     server returns carries NO restriction attributes (probed
+     live Nov 6: trip legs/maneuvers expose no maxheight, and
+     /trace_attributes is not served on this deployment), so
+     the adopted line is checked against OpenStreetMap's
+     maxheight tags directly — the same free Overpass source
+     the speed-limit badge reads. clearanceFindings keeps only
+     tagged ways whose GEOMETRY runs along the route line (a
+     vertex within 25 m of it): a low bridge on a parallel
+     street is not on this route, and a tag with no geometry
+     match never becomes a finding. Findings close together
+     along the route (the two carriageways of one underpass)
+     fold into one, keeping the lowest value. atKm is the
+     distance along the route from its start. */
+  function clearanceFindings(elements, line) {
+    if (!elements || !elements.length || !line || line.length < 2) return [];
+    var cum = [0], li;
+    for (li = 0; li + 1 < line.length; li++) cum.push(cum[li] + haversineM(line[li], line[li + 1]));
+    var mnLat = 90, mxLat = -90, mnLon = 180, mxLon = -180;
+    for (li = 0; li < line.length; li++) {
+      if (line[li][0] < mnLat) mnLat = line[li][0];
+      if (line[li][0] > mxLat) mxLat = line[li][0];
+      if (line[li][1] < mnLon) mnLon = line[li][1];
+      if (line[li][1] > mxLon) mxLon = line[li][1];
+    }
+    var found = [];
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var mh = parseMaxheightM(el && el.tags && el.tags.maxheight);
+      if (!mh) continue;
+      var g = (el && el.geometry) || [];
+      if (!g.length) continue;
+      /* cheap reject: the way's own bounds never come near the
+         route's bounds (padded ~45 m) — not this route's road. */
+      var eMnLat = 90, eMxLat = -90, eMnLon = 180, eMxLon = -180, bi;
+      for (bi = 0; bi < g.length; bi++) {
+        if (g[bi].lat < eMnLat) eMnLat = g[bi].lat;
+        if (g[bi].lat > eMxLat) eMxLat = g[bi].lat;
+        if (g[bi].lon < eMnLon) eMnLon = g[bi].lon;
+        if (g[bi].lon > eMxLon) eMxLon = g[bi].lon;
+      }
+      if (eMxLat < mnLat - 0.0004 || eMnLat > mxLat + 0.0004 ||
+          eMxLon < mnLon - 0.0004 || eMnLon > mxLon + 0.0004) continue;
+      var best = null;
+      for (var gi = 0; gi < g.length; gi++) {
+        var pt = [g[gi].lat, g[gi].lon];
+        for (var si = 0; si + 1 < line.length; si++) {
+          var ps = pointSegM(pt, line[si], line[si + 1]);
+          if (!best || ps.dist < best.distM) best = { distM: ps.dist, atKm: (cum[si] + ps.along) / 1000 };
+        }
+      }
+      if (best && best.distM <= 25) found.push({ maxheightM: mh, atKm: best.atKm, distM: best.distM });
+    }
+    found.sort(function (a, b) { return a.atKm - b.atKm; });
+    var out = [];
+    for (var fi = 0; fi < found.length; fi++) {
+      var last = out[out.length - 1];
+      if (last && found[fi].atKm - last.atKm < 0.05) {
+        if (found[fi].maxheightM < last.maxheightM) last.maxheightM = found[fi].maxheightM;
+      } else out.push({ maxheightM: found[fi].maxheightM, atKm: found[fi].atKm, distM: found[fi].distM });
+    }
+    return out;
+  }
+
+  /* v356: ONE warning, for the LOWEST restriction on the route
+     that the vehicle does not fit under. A restriction at or
+     above the vehicle's height is a fit, not a warning; no
+     findings (or no vehicle height) is silence — never an
+     invented clearance, never a wall of alerts. */
+  function clearanceWarning(findings, vehicleHeightM) {
+    if (!findings || !findings.length || !(vehicleHeightM > 0)) return null;
+    var worst = null;
+    for (var i = 0; i < findings.length; i++) {
+      var f = findings[i];
+      if (f.maxheightM < vehicleHeightM && (!worst || f.maxheightM < worst.maxheightM)) worst = f;
+    }
+    if (!worst) return null;
+    return { maxheightM: worst.maxheightM, vehicleHeightM: vehicleHeightM, atKm: worst.atKm };
+  }
+
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -1749,6 +1882,23 @@
          voice below; no pick keeps the native-first order. */
       voiceURI: s.voiceURI ? String(s.voiceURI) : ''
     };
+    /* v356 (DIMENSION-AWARE ROUTING): the saved VEHICLE
+       profile's dimensions ride on every route — they are laid
+       over the Navigator profile here, so the one profile
+       object every route request is built from carries the
+       vehicle's real height / length / weight whenever they
+       are saved (Preferences -> Truck, the VIN record). Width,
+       axle load, axles and hazmat still come from the
+       Navigator profile above. No vehicle dimensions saved ->
+       the profile is exactly what it always was, and the
+       proven request shape is untouched. vehicleDims rides
+       along so the settings menu can say where the numbers
+       come from and the clearance second look knows the
+       height it is checking against. */
+    var vehDims = null;
+    try { vehDims = vehicleDimsFromOnboarding(App._store.get('onboarding', {}) || {}); } catch (e) {}
+    out.profile = profileWithVehicleDims(out.profile, vehDims);
+    out.vehicleDims = vehDims;
     setNavViewMode(out.viewMode);
     return out;
   }
@@ -2533,6 +2683,9 @@
            warned about on THIS route, and the marker groups for
            the planning map and the drive map. */
         trafficList: [], trafficAt: 0, trafficSaid: {}, trafficGroup: null, driveTrafficGroup: null,
+        /* v356: the clearance second look's one warning for the
+           active route (null = none / not checked yet). */
+        clearanceWarn: null,
         /* v280 (NAV-TRAFFIC-LIVE-ETA): live-ETA state — the
            pace window (rolling GPS distance/time samples from
            onPos), the licensed-provider traffic probe/poll
@@ -2695,7 +2848,7 @@
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
-      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div></div>';
+      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_clearance"></div><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div></div>';
 
       /* v101 DRIVE SCREEN — a dedicated full-screen mode (fixed
          overlay; rendered hidden with the module so teardown is the
@@ -3706,6 +3859,20 @@
       } catch (e) {}
 
       /* ---------- routing ---------- */
+      /* v356: the clearance warning's one home on the glass —
+         a single bold line at the top of the Directions card.
+         paintClearanceWarn renders S.clearanceWarn and nothing
+         else; an empty state clears the line. */
+      function fmtHeightM(v) { return (Math.round(v * 10) / 10).toFixed(1); }
+      function paintClearanceWarn() {
+        var el = body.querySelector('#nv_clearance');
+        if (!el) return;
+        var w = S && S.clearanceWarn;
+        if (!w) { el.innerHTML = ''; return; }
+        el.innerHTML = '<p style="margin:0 0 8px;color:#b91c1c;font-weight:700;font-size:1.05em">⚠️ Low clearance ahead: ' +
+          fmtHeightM(w.maxheightM) + ' m in ' + fmtDist(w.atKm * 1000) + ' — your vehicle is ' + fmtHeightM(w.vehicleHeightM) + ' m</p>';
+      }
+
       function clearRoute() {
         if (S.drive) exitDrive();
         /* v103: ending a route also spends the auto-route latch —
@@ -3713,6 +3880,9 @@
            its own; Route is the driver's deliberate tap now. */
         S.autoWanted = false;
         S.plan = null; S.line = null; S.manIdx = -1; S.offSince = 0; S.arrived = false;
+        /* v356: the clearance warning belongs to the route —
+           ending the route ends the warning with it. */
+        S.clearanceWarn = null; paintClearanceWarn();
         if (S.routeLine && S.map) { S.map.removeLayer(S.routeLine); S.routeLine = null; }
         var st = body.querySelector('#nv_steps'); if (st) st.innerHTML = '<div class="empty">No route yet.</div>';
         var end = body.querySelector('#nv_end'); if (end) end.classList.add('hidden');
@@ -3846,11 +4016,62 @@
           } catch (e) {}
         }
 
+        /* v356 (DIMENSION-AWARE ROUTING): the clearance second
+           look. Truck costing already keeps the vehicle off the
+           graph edges whose tagged restrictions it violates
+           (verified live Nov 6: a 5.5 m vehicle height finds NO
+           path across the downtown rail corridor where 3.9 m
+           routes freely) — this check reads the same map data
+           the other way, against the adopted line itself, from
+           the free Overpass source the speed-limit badge uses:
+           a maxheight-tagged way running along this route that
+           the SAVED vehicle does not fit under raises ONE plain
+           warning (painted + spoken once). Guarded like the
+           grade/lane fetches: off the critical path, silence on
+           any failure, and an answer for a superseded route
+           never paints. Runs only when a vehicle height is
+           actually saved — no height, no check, and never an
+           invented clearance. Its honest limit: it can only see
+           restrictions the map carries a maxheight tag for. */
+        function fetchClearanceWarnings(line) {
+          S.clearanceWarn = null;
+          paintClearanceWarn();
+          var vehH = S.settings.vehicleDims && S.settings.vehicleDims.height;
+          if (!vehH || typeof fetch !== 'function' || !line || line.length < 2) return;
+          try {
+            var minLat = 90, maxLat = -90, minLon = 180, maxLon = -180, i;
+            for (i = 0; i < line.length; i++) {
+              if (line[i][0] < minLat) minLat = line[i][0];
+              if (line[i][0] > maxLat) maxLat = line[i][0];
+              if (line[i][1] < minLon) minLon = line[i][1];
+              if (line[i][1] > maxLon) maxLon = line[i][1];
+            }
+            var pad = 0.0015;
+            var q = '[out:json][timeout:10];way["maxheight"](' +
+              (minLat - pad).toFixed(6) + ',' + (minLon - pad).toFixed(6) + ',' +
+              (maxLat + pad).toFixed(6) + ',' + (maxLon + pad).toFixed(6) + ');out tags geom 300;';
+            fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) })
+              .then(function (r) { if (!r.ok) throw new Error('overpass ' + r.status); return r.json(); })
+              .then(function (j) {
+                if (!S || S.line !== line) return;
+                var w = clearanceWarning(clearanceFindings(j && j.elements, line), vehH);
+                if (!w) return;
+                S.clearanceWarn = w;
+                paintClearanceWarn();
+                speak('Warning. Low clearance ahead: ' + fmtHeightM(w.maxheightM) + ' metres. Your vehicle is ' + fmtHeightM(w.vehicleHeightM) + ' metres.');
+              })
+              .catch(function () {});
+          } catch (e) {}
+        }
+
         function finalizeRoute(line, plan, reqBody) {
           S.rerouting = false;
           S.line = line;
           S.plan = plan;
           fetchGradeEvents(line);
+          /* v356: the clearance second look rides every adopted
+             route (see fetchClearanceWarnings above). */
+          fetchClearanceWarnings(line);
           /* v264 (NAV-LANE-INSET-EMPTY): the same adopted
              request, replayed once against the owner's own
              server in OSRM format for its lane data (see
@@ -6220,11 +6441,19 @@
           '<p class="note" id="nvs_voicenote" style="margin-top:4px">Tap Test my voice — you should hear the guidance speak out loud.</p>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_grades"' + (st.gradeAlerts ? ' checked' : '') + '> Announce hills and steep grades ahead</label>' +
           '<h3 style="margin:16px 0 4px">🚛 Your truck</h3>' +
-          '<p class="note" style="margin-top:0">Routes keep you legal for a truck of this size and weight.</p>' +
-          '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '">' +
+          /* v356: when the saved VEHICLE profile carries
+             dimensions, height / length / weight ARE the
+             vehicle's — they show here locked, with the door
+             named, because Preferences -> Truck is where they
+             are confirmed and changed. Width, axles and hazmat
+             stay this menu's own. */
+          '<p class="note" style="margin-top:0">' + (st.vehicleDims
+            ? 'Height, length and weight come from your vehicle (Preferences → Truck) and ride on every route. Width, axles and hazmat are set here.'
+            : 'Routes keep you legal for a truck of this size and weight.') + '</p>' +
+          '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '"' + (st.vehicleDims && st.vehicleDims.height ? ' disabled' : '') + '>' +
           '<label class="f">Width (m)</label><input id="nvs_width" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.width) + '">' +
-          '<label class="f">Length (m)</label><input id="nvs_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.length) + '">' +
-          '<label class="f">Weight (tonnes)</label><input id="nvs_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.weight) + '">' +
+          '<label class="f">Length (m)</label><input id="nvs_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.length) + '"' + (st.vehicleDims && st.vehicleDims.length ? ' disabled' : '') + '>' +
+          '<label class="f">Weight (tonnes)</label><input id="nvs_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.weight) + '"' + (st.vehicleDims && st.vehicleDims.weight ? ' disabled' : '') + '>' +
           '<label class="f">Axle load (tonnes)</label><input id="nvs_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.axleLoad) + '">' +
           '<label class="f">Axles</label><input id="nvs_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(p.axles) + '">' +
           '<label class="chk" style="display:block;margin-top:10px"><input type="checkbox" id="nvs_hazmat"' + (p.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +

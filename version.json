@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 355,
-  "notes": "Split-shift bus-driver mode (web 355): driver kinds in onboarding + Preferences (Dump truck / School bus / Community bus / Long haul / Log driver), the self-pausing two-block split day with learned yard + midday places, named route stops with route-sheet intake and per-day skips, one pre-trip a day with the next-morning odometer close, split-shift rate, and the VIN vehicle profile. Standard days unchanged.",
+  "webVersion": 356,
+  "notes": "Dimension-aware navigation routing (web 356): the saved vehicle profile's height / length / weight (Preferences -> Truck, the VIN record) now ride on every truck route request, so Valhalla's truck costing keeps the vehicle legal for its real size; a clearance second look checks the adopted route against the map's maxheight tags and raises ONE plain warning when a restriction on the route is lower than the vehicle. No vehicle dimensions saved: routing is exactly as before.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "8f8d6174cf8110dfabadb8b2eba00a956766aaad129b67ede78649ded79e1995",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "cc4143e66ebddd5b9118eac3e7cf3a9543bf66252ec7482261fe54c825362096",
+    "index.html": "7465c550253af5767e71c929c959cd4468c9e997def41e809c2dadf72f8eb962",
     "js/app.js": "12f9f09830fd0fcc33ef7b74d4e0d93afcf21666ce7490f0fc2abe616ae361e7",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -50,7 +50,7 @@
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "855f1dcab6389677e4ceea2d1cd90e943a37aec208a4c84c64dab9da4c975fb1",
     "modules/navigation.js": "6f049a62b46ffbf8d2777f2ce10b2043c29bfb76a54d8b46badf819435fe4b8e",
-    "modules/navigator.js": "18b415cb0ea56bc95a201cdc1cb043b51b62a96bde801a52ae690b4166c1018a",
+    "modules/navigator.js": "5b218a76eed9179c45083d0c52af684de97e6e74256dbb96280f6a04b9237ac3",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "f984bc3892f4c4753fdc1c396d8bce7672711d92ec0f4a8e794ff77ff48d37d2",
     "modules/pti.js": "5a7f225353cff46c70c9234c642aa454ea29e508075516bb02358fcbfb3b36ac",
