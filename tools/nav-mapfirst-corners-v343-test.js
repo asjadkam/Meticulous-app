@@ -80,7 +80,7 @@ ok("the front face defaults to the map ('drive')",
 ok('no stale places-default remains',
   navSrc.indexOf("var nvFace = 'places';") === -1);
 ok('resetView lands fresh entry on the map',
-  navSrc.indexOf("resetView: function () { nvFace = 'drive'; },") !== -1);
+  navSrc.indexOf("resetView: function () { nvFace = 'drive';") !== -1);
 ok('resetView no longer lands on places',
   navSrc.indexOf("resetView: function () { nvFace = 'places'; },") === -1);
 ok('Back on the places face returns to the map',
@@ -128,7 +128,7 @@ ok('the kind pills are wired to the one switch',
 ok('a panel pick sets the destination from its pin (v107 tap rule kept)',
   /paintPlacesPanel[\s\S]{0,4000}setDest\(\[p\.lat, p\.lng\], pName\)/.test(navSrc));
 ok('the map search runs the destination search flow for free text',
-  /mapGoBtn\.onclick[\s\S]{0,900}searchBtn\.onclick\(\)/.test(navSrc));
+  /mapGoBtn\.onclick[\s\S]{0,1600}searchBtn\.onclick\(\)/.test(navSrc));
 ok('Search as address hands the words to the same search door',
   navSrc.indexOf('id="nv_map_addr"') !== -1 && /mapAddrBtn\.onclick[\s\S]{0,400}searchBtn\.onclick\(\)/.test(navSrc));
 ok('Manage places opens the places face on the same tab',
@@ -148,8 +148,9 @@ ok('the places panel drops under the stack, centre clear',
   /\.nv-places-panel\{position:absolute;top:108px/.test(cssSrc));
 ok('the search bar is a white pill on the map',
   cssSrc.indexOf('.nv-mapsearch{') !== -1);
-ok('the banner tucks to the bottom edge above the mode row',
-  /\.nv-banner-overlay\{position:absolute;bottom:62px/.test(cssSrc));
+ok('the banner tucks to the bottom edge above the mode row (v348 pin move, NAV-YOU-ARE-HERE-PEEK: the bottom:62px solo anchor WAS the peek defect — the banner now rides the one .nv-map-bottom stack as a static card above the row)',
+  /\.nv-map-bottom\{position:absolute/.test(cssSrc) &&
+  /\.nv-banner-overlay\{position:static/.test(cssSrc));
 
 /* ---------------- ship pins ---------------- */
 console.log('— ship pins —');

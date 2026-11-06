@@ -309,7 +309,7 @@ ok('no routing-server config touched (no serverUrl writes in either module)', !/
   ok('v119: a pending destination promotes the render to the drive face (in-module hand-off)',
     torSrc.includes("if (hasPending) nvFace = 'drive';") && torSrc.includes("App._store.get('nav_pending', null)"));
   ok('v343: fresh entry lands on the MAP face (resetView) — supersedes the v119 places-front law',
-    torSrc.includes("resetView: function () { nvFace = 'drive'; },"));
+    torSrc.includes("resetView: function () { nvFace = 'drive';"));
   ok('v343: the back staircase — places face returns to the MAP; the map root exits (no demotion to the list)',
     torSrc.includes("if (nvFace === 'places')") && torSrc.includes("nvFace = 'drive';") &&
     torSrc.includes('if (nvBody) api.render(nvBody);'));

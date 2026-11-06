@@ -1863,6 +1863,14 @@
   var nvFace = 'drive';
   var nvKind = 'work';
   var nvBody = null;
+  /* v348 (NAV-PLACES-PANEL-NO-EXIT): the drive-face render's
+     Places-panel closer, installed while that render stands so
+     the module-level back() can fold the panel before anything
+     else on the map face. Returns true only when it actually
+     closed an open panel. Cleared on resetView and on the
+     places-face delegation so a stale render can never consume
+     a Back it no longer owns. */
+  var nvPlacesPanelCloser = null;
 
   /* v220 (PIP-REDESIGN, owner spec verbatim): in picture-in-
      picture the drive screen is NOT a miniature clone of the big
@@ -2383,6 +2391,11 @@
            consumed and the driver STAYS on the drive — doing
            nothing visible beats silently killing navigation. */
         if (S && S.drive) return true;
+        /* v348 (NAV-PLACES-PANEL-NO-EXIT): an open Places panel
+           is the topmost layer on the map — Back folds it first
+           and lands on the plain map, no destination chosen.
+           Only a panel-less map root exits (below). */
+        if (nvPlacesPanelCloser && nvPlacesPanelCloser()) return true;
         /* v343: the map IS the module root — Back here exits to
            the dashboard (return false) instead of demoting to
            the places list page. */
@@ -2397,7 +2410,7 @@
       }
       return false;
     },
-    resetView: function () { nvFace = 'drive'; },
+    resetView: function () { nvFace = 'drive'; nvPlacesPanelCloser = null; },
 
     /* v330 test hook: the sent-pin link parser (pure). */
     _sentPinCoords: sentPinCoords,
@@ -2469,6 +2482,7 @@
         }
       } catch (e) {}
       if (nvFace === 'places') {
+        nvPlacesPanelCloser = null; /* v348: the map render that owned the panel is gone */
         teardown();
         var navMod = (window.Meticulous && Meticulous.modules.navigation) || null;
         if (navMod && typeof navMod.render === 'function') { navMod.render(body); return; }
@@ -2569,19 +2583,43 @@
            The map's centre stays clear; the banner tucks to the
            bottom edge above the mode row (see style.css). */
         '<div class="nv-map-top">' +
-        '<div class="nv-mapsearch"><input id="nv_map_q" placeholder="Search places or an address…" style="flex:1">' +
-        '<button class="btn navy" id="nv_map_go">Search</button></div>' +
+        '<div class="nv-mapsearch"><input id="nv_map_q" placeholder="Search places or an address…" style="flex:1" enterkeyhint="search">' +
+        /* v348 (NAV-SEARCH-MUST-BE-TEXTBOX): the bar is a TEXT
+           BOX with a small Go beside it — not a big Search
+           button. The input is the control; Go just submits. */
+        '<button class="btn small navy" id="nv_map_go">Go</button></div>' +
         '<div class="nv-kindrow">' +
         '<button class="btn small ' + (nvKind === 'work' ? 'navy' : 'ghost') + '" id="nv_kind_work">⭐ Work</button>' +
         '<button class="btn small ' + (nvKind === 'personal' ? 'navy' : 'ghost') + '" id="nv_kind_personal">🏠 Personal</button>' +
         '<button class="btn small ghost" id="nv_places_btn" style="margin-left:auto">📍 Places ▾</button>' +
         '</div></div>' +
         '<div id="nv_places_panel" class="nv-places-panel hidden">' +
+        /* v348 (NAV-PLACES-PANEL-NO-EXIT): the panel carries its
+           own visible exit — a ✕ Close in its head, beside the
+           title, so leaving without choosing is a first-glance
+           door, never a hunt. Tap-outside (a map tap) and shell
+           Back fold it too — see pinTap and back(). */
+        '<div class="nv-places-head"><span>📍 Places</span>' +
+        '<button type="button" class="btn small ghost" id="nv_places_close">✕ Close</button></div>' +
         '<div id="nv_map_results"></div>' +
         '<div class="row" style="margin-top:6px">' +
         '<button class="btn small ghost hidden" id="nv_map_addr" style="flex:1">Search as address →</button>' +
         '<button class="btn small ghost" id="nv_map_manage" style="flex:1">Manage places</button>' +
         '</div></div>' +
+        /* v348 (NAV-YOU-ARE-HERE-PEEK): the banner and the mode
+           row ride in ONE bottom stack (.nv-map-bottom, see
+           style.css) — a single bottom-anchored flex column, so
+           the banner card always sits fully above the row with a
+           fixed gap, at any row height or font scale. The v343
+           arrangement anchored the banner by a magic bottom:62px
+           over a separately-anchored row: the moment the row
+           grew (its labels wrapping at larger font scales), the
+           banner's subtitle slid behind the row's translucent
+           background and ghosted through it, and the whole
+           bottom edge sat in the gesture-bar zone with no
+           safe-area clearance anywhere. Same elements, same
+           ids — one stack now. */
+        '<div class="nv-map-bottom">' +
         '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
         '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
         /* v103: Truck/Car + Follow + Sound demoted to ONE small
@@ -2594,7 +2632,7 @@
         '<button class="btn small ' + (settings.mode === 'car' ? 'navy' : 'ghost') + '" id="nv_mode_car" style="flex:1">🚗 Car</button>' +
         '<button class="btn small ghost" id="nv_follow" style="flex:1">🎯 Follow: on</button>' +
         '<button class="btn small ghost" id="nv_mute" style="flex:1">' + (settings.muted ? '🔇 Sound: off' : '🔊 Sound: on') + '</button>' +
-        '</div></div>';
+        '</div></div></div>';
 
       /* v330 (NAV-MAP-FIRST): the Navigator opens ON THE MAP —
          like Google Maps, the map is the screen and the sheet
@@ -2919,6 +2957,17 @@
          it answers — no new service, no key; offline, the line
          simply stays "Dropped pin (coords)". */
       function pinTap(latlng) {
+        /* v348 (NAV-PLACES-PANEL-NO-EXIT): a map tap while the
+           Places panel is open is a tap OUTSIDE the panel — it
+           folds the panel and is swallowed whole: no pin drops,
+           no destination is chosen, the map returns untouched.
+           Only a tap on the plain map (panel closed) drops a
+           pin, exactly as before. */
+        if (placesPanelOpen) {
+          placesPanelOpen = false;
+          paintPlacesPanel();
+          return;
+        }
         setDest(latlng, 'Dropped pin');
         var coords = latlng[0].toFixed(5) + ', ' + latlng[1].toFixed(5);
         paintDestNote('Destination: Dropped pin (' + coords + ')');
@@ -3292,6 +3341,19 @@
       if (kindPersBtn) kindPersBtn.onclick = function () { setNvKind('personal'); };
       var placesBtn = body.querySelector('#nv_places_btn');
       if (placesBtn) placesBtn.onclick = function () { placesPanelOpen = !placesPanelOpen; paintPlacesPanel(); };
+      /* v348 (NAV-PLACES-PANEL-NO-EXIT): the panel's own ✕, and
+         the closer shell Back consults (see nvPlacesPanelCloser
+         at module level). All three exits — ✕, map tap (pinTap's
+         guard), Back — land on the same single state change:
+         panel folded, nothing chosen. */
+      var placesCloseBtn = body.querySelector('#nv_places_close');
+      if (placesCloseBtn) placesCloseBtn.onclick = function () { placesPanelOpen = false; paintPlacesPanel(); };
+      nvPlacesPanelCloser = function () {
+        if (!placesPanelOpen) return false;
+        placesPanelOpen = false;
+        paintPlacesPanel();
+        return true;
+      };
       var mapQEl = body.querySelector('#nv_map_q');
       if (mapQEl && typeof mapQEl.addEventListener === 'function') {
         mapQEl.addEventListener('input', function () {
@@ -3308,15 +3370,23 @@
       }
       var mapGoBtn = body.querySelector('#nv_map_go');
       if (mapGoBtn) mapGoBtn.onclick = function () {
-        /* The map search bar's one action: a saved place wins
-           (the panel's matches — one tap picks); free text runs
-           the destination search flow (saved-places-first, then
-           the geocoder) through the sheet's own search door. */
+        /* v348 (NAV-SEARCH-MUST-BE-TEXTBOX, owner Nov 5, 23:16:
+           "Search bar shouldnt pull out anything... It should be
+           text box where one can type any address or a place to
+           search."): submitting the box runs the EXISTING
+           destination search flow for the typed words — the
+           sheet's own search door (saved-places-first, then the
+           geocoder), exactly as the sheet's Search does — and
+           NEVER pulls the Places panel out. The v343 Go opened
+           the panel on an empty box and again on saved-place
+           matches, which made the bar a panel toggle wearing a
+           Search label. The panel belongs to the Places door
+           alone; typing's live filter of saved places (the
+           input listener above) is untouched, and an empty box
+           submitted is a plain no-op. */
         var v = mapQEl ? String(mapQEl.value || '').trim() : '';
         nvMapQ = mapQEl ? String(mapQEl.value || '') : '';
-        if (!v) { placesPanelOpen = true; paintPlacesPanel(); return; }
-        var res2 = navPicker ? navPicker.pickerEntries(nvKind, v) : { rows: [] };
-        if (res2.rows.length) { placesPanelOpen = true; paintPlacesPanel(); return; }
+        if (!v) return;
         var q2 = body.querySelector('#nv_q');
         if (q2 && searchBtn) {
           q2.value = v;
