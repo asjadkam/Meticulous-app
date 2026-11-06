@@ -27,14 +27,14 @@ function section(name, fn) {
 
 /* ---------- registry / pins ---------- */
 console.log('— registry —');
-ok('web version is 347', ver.webVersion === 352, 'got ' + ver.webVersion);
+ok('web version is 347', ver.webVersion === 353, 'got ' + ver.webVersion);
 execSyncTags();
 function execSyncTags() {
   ['damage', 'revenue', 'invoice', 'documents'].forEach(function (m) {
     ok('index.html loads ' + m + '.js?v=340', idx.includes('modules/' + m + '.js?v=340'));
   });
   /* v344 (MULTI-DAY-MANIFEST-COLUMNS): manifest.js re-pinned at 344. */
-  ok('index.html loads manifest.js?v=345', idx.includes('modules/manifest.js?v=345'));
+  ok('index.html loads manifest.js?v=353', idx.includes('modules/manifest.js?v=353'));
   /* v347: fuel.js re-pinned at 347 (audit's own list includes it). */
   ok('index.html loads fuel.js?v=351', idx.includes('modules/fuel.js?v=351'));
   /* v341 (INSPECTION-MODE-DAY-BUTTON-LABELS): pti.js re-pinned at 341. */

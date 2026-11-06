@@ -354,11 +354,17 @@ console.log('— 3/4/5/6. the Oct 31 shape: pegs by name, cycles in ONE line, hi
   const haulRows = doc.split('\n').filter(l => /–/.test(l) && /loads?$/.test(l));
   eq('the printed route carries the ONE summary line, in his format',
     haulRows, ['Remington – Dog Park|3 loads']);
+  /* v353 re-pin: genuine stops print as CLUMPED place lines
+     now (name + stop count) — the per-stop minutes the old
+     assertions matched are exactly what the owner's Nov 5 law
+     removed. The naming law these checks guard is unchanged:
+     the wait is Remington (not Maple Ridge), the fuel stop is
+     his Petro at Road King (not Nitestar). */
   ok('the site wait prints as Remington — the place he navigated to, not Maple Ridge',
-    doc.split('\n').some(l => /^Remington\|/.test(l) && /46 min/.test(l)),
+    doc.split('\n').some(l => /^Remington\|1 stop/.test(l)),
     doc.split('\n').filter(l => /Remington|Maple/.test(l)).join(' ;; '));
   ok('the fuel stop prints with HIS name — Petro at Road King, not Nitestar',
-    doc.split('\n').some(l => /^Petro at Road King\|/.test(l) && /9 min/.test(l)));
+    doc.split('\n').some(l => /^Petro at Road King\|1 stop/.test(l)));
   ok('the route frame stands: Start — Home, End — Home, GPS distance',
     /^Start — Home\|/m.test(doc) && /^End — Home\|/m.test(doc) && /^GPS distance\|151\.8 km$/m.test(doc),
     doc.split('\n').filter(l => /Start|End|GPS/.test(l)).join(' ;; '));

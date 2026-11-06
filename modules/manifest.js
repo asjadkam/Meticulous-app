@@ -1322,6 +1322,58 @@
     return sumCollected((days || []).map(function (rd) { return collect(rd); }));
   }
 
+  /* v353 (MANIFEST-NO-RAW-GPS-STOPS + MANIFEST-CLUMP-50M,
+     owner Nov 5, 2026 23:30–23:32 MDT, over the Nov 5
+     manifest): "Manifest doesnt have to write every gps tag
+     where it stops... Just so many dumps in this locations."
+     The route section no longer lists stops one by one — the
+     day's genuine stops CLUMP: stops within ~50 m of each
+     other are ONE place, printed as a single summary line
+     carrying the place's name and how many stops clumped
+     there. A cluster takes its name from a member stop's
+     resolved label (the driver's own names win there, per the
+     tiered naming law); a cluster no stop could name gets one
+     more chance at its centre through placeNameFor, and only
+     then prints as "Unnamed stop" — RAW COORDINATES NEVER
+     PRINT on the manifest, here or in the Start/End frame
+     (their old coordinate fallback is gone the same way).
+     The haul pairing lines (v299) are untouched and merge
+     with the clusters in time order. */
+  function stopClusters353(stops) {
+    var clusters = [];
+    (stops || []).forEach(function (s) {
+      if (!s || !isFinite(s.lat) || !isFinite(s.lng)) return;
+      var hit = null;
+      for (var i = 0; i < clusters.length && !hit; i++) {
+        for (var j = 0; j < clusters[i].pts.length; j++) {
+          if (trailDistM(s.lat, s.lng, clusters[i].pts[j].lat, clusters[i].pts[j].lng) <= 50) { hit = clusters[i]; break; }
+        }
+      }
+      if (!hit) { hit = { pts: [], label: '', at: 0, n: 0 }; clusters.push(hit); }
+      hit.pts.push(s);
+      hit.n++;
+      if (!hit.label && s.label) hit.label = s.label;
+      var at = Date.parse(s.at) || 0;
+      if (at && (!hit.at || at < hit.at)) hit.at = at;
+    });
+    clusters.forEach(function (cl) {
+      if (!cl.label) {
+        var la = 0, lo = 0;
+        cl.pts.forEach(function (p) { la += p.lat; lo += p.lng; });
+        cl.label = placeNameFor(la / cl.pts.length, lo / cl.pts.length) || 'Unnamed stop';
+      }
+      delete cl.pts;
+    });
+    return clusters;
+  }
+  /* The frame name for a trail endpoint: its resolved label,
+     else the place pool at the point, else NOTHING — the bare
+     word prints (Start / End), never coordinates. */
+  function frameName353(pt) {
+    if (!pt) return '';
+    return pt.label || placeNameFor(pt.lat, pt.lng) || '';
+  }
+
   function docLines(d, c, t) {
     var L = [{ k: 'title', a: 'MANIFEST — ' + d }];
     if (c.live) L.push({ k: 'note', a: 'Shift still in progress — the end time and final numbers land when the shift is stopped.' });
@@ -1371,26 +1423,30 @@
     if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length) || (c.haulLines && c.haulLines.length))) {
       L.push({ k: 'h', a: 'Where the truck went (from its GPS trail)' });
       if (c.routeInfo) {
-        L.push({ k: 'kv', a: 'Start — ' + (c.routeInfo.start.label || (Number(c.routeInfo.start.lat).toFixed(5) + ', ' + Number(c.routeInfo.start.lng).toFixed(5))),
+        var startName353 = frameName353(c.routeInfo.start);
+        L.push({ k: 'kv', a: startName353 ? 'Start — ' + startName353 : 'Start',
           b: fmtStamp(c.routeInfo.start.at) });
       }
       /* v299 (MANIFEST-HAUL-SUMMARY-LINE): the day's haul
          cycles print as ONE line per pickup–dump pairing,
          merged with the genuine stops in time order — the
-         cycles never list stop by stop again. */
-      var routeRows299 = (c.routeStops || []).map(function (s) { return { stop: s, at: Date.parse(s.at) || 0 }; })
+         cycles never list stop by stop again.
+         v353: the genuine stops no longer list stop by stop
+         either — they arrive CLUMPED (stopClusters353): one
+         summary line per place, its name and its stop count. */
+      var routeRows299 = stopClusters353(c.routeStops).map(function (cl) { return { cluster: cl, at: cl.at || 0 }; })
         .concat((c.haulLines || []).map(function (hl) { return { haul: hl, at: +hl.at || 0 }; }));
       routeRows299.sort(function (x, y) { return x.at - y.at; });
       routeRows299.forEach(function (r) {
         if (r.haul) {
           L.push({ k: 'kv', a: r.haul.from + ' – ' + r.haul.to, b: r.haul.n + (r.haul.n === 1 ? ' load' : ' loads') });
         } else {
-          L.push({ k: 'kv', a: r.stop.label || ('Stop — ' + Number(r.stop.lat).toFixed(5) + ', ' + Number(r.stop.lng).toFixed(5)),
-            b: fmtStamp(r.stop.at) + ' · ' + r.stop.mins + ' min' });
+          L.push({ k: 'kv', a: r.cluster.label, b: r.cluster.n + (r.cluster.n === 1 ? ' stop' : ' stops') });
         }
       });
       if (c.routeInfo) {
-        L.push({ k: 'kv', a: 'End — ' + (c.routeInfo.end.label || (Number(c.routeInfo.end.lat).toFixed(5) + ', ' + Number(c.routeInfo.end.lng).toFixed(5))),
+        var endName353 = frameName353(c.routeInfo.end);
+        L.push({ k: 'kv', a: endName353 ? 'End — ' + endName353 : 'End',
           b: fmtStamp(c.routeInfo.end.at) });
         if (typeof c.routeInfo.km === 'number' && isFinite(c.routeInfo.km)) {
           L.push({ k: 'kv', a: 'GPS distance', b: c.routeInfo.km.toFixed(1) + ' km' });
@@ -1776,13 +1832,17 @@
       if (t.nav && (c.routeInfo || (c.routeStops && c.routeStops.length) || (c.haulLines && c.haulLines.length))) {
         h += '<h3>🗺️ Where the truck went</h3>';
         if (c.routeInfo) {
-          h += '<div class="kv"><span>Start — ' + esc(c.routeInfo.start.label || (Number(c.routeInfo.start.lat).toFixed(5) + ', ' + Number(c.routeInfo.start.lng).toFixed(5))) + '</span><b>' +
+          var startNameS353 = frameName353(c.routeInfo.start);
+          h += '<div class="kv"><span>' + esc(startNameS353 ? 'Start — ' + startNameS353 : 'Start') + '</span><b>' +
             esc(fmtStamp(c.routeInfo.start.at)) + '</b></div>';
         }
         /* v299: the screen twin of the printed haul summary —
            one line per pairing, merged with the stops in
-           time order. */
-        var routeRowsS299 = (c.routeStops || []).map(function (s) { return { stop: s, at: Date.parse(s.at) || 0 }; })
+           time order.
+           v353: the stops arrive CLUMPED, exactly as printed
+           (stopClusters353) — one line per place with its
+           stop count; no coordinates on screen either. */
+        var routeRowsS299 = stopClusters353(c.routeStops).map(function (cl) { return { cluster: cl, at: cl.at || 0 }; })
           .concat((c.haulLines || []).map(function (hl) { return { haul: hl, at: +hl.at || 0 }; }));
         routeRowsS299.sort(function (x, y) { return x.at - y.at; });
         h += routeRowsS299.map(function (r) {
@@ -1790,11 +1850,12 @@
             return '<div class="kv"><span>' + esc(r.haul.from + ' – ' + r.haul.to) + '</span><b>' +
               r.haul.n + (r.haul.n === 1 ? ' load' : ' loads') + '</b></div>';
           }
-          return '<div class="kv"><span>' + esc(r.stop.label || ('Stop — ' + Number(r.stop.lat).toFixed(5) + ', ' + Number(r.stop.lng).toFixed(5))) + '</span><b>' +
-            esc(fmtStamp(r.stop.at)) + ' · ' + r.stop.mins + ' min</b></div>';
+          return '<div class="kv"><span>' + esc(r.cluster.label) + '</span><b>' +
+            r.cluster.n + (r.cluster.n === 1 ? ' stop' : ' stops') + '</b></div>';
         }).join('');
         if (c.routeInfo) {
-          h += '<div class="kv"><span>End — ' + esc(c.routeInfo.end.label || (Number(c.routeInfo.end.lat).toFixed(5) + ', ' + Number(c.routeInfo.end.lng).toFixed(5))) + '</span><b>' +
+          var endNameS353 = frameName353(c.routeInfo.end);
+          h += '<div class="kv"><span>' + esc(endNameS353 ? 'End — ' + endNameS353 : 'End') + '</span><b>' +
             esc(fmtStamp(c.routeInfo.end.at)) + '</b></div>';
           if (typeof c.routeInfo.km === 'number' && isFinite(c.routeInfo.km)) {
             h += '<div class="kv"><span>GPS distance</span><b>' + c.routeInfo.km.toFixed(1) + ' km</b></div>';

@@ -76,24 +76,38 @@
 
   var W = { 32: 278, 33: 278, 34: 355, 35: 556, 36: 556, 37: 889, 38: 667, 39: 222, 40: 333, 41: 333, 42: 389, 43: 584, 44: 278, 45: 333, 46: 278, 47: 278, 48: 556, 49: 556, 50: 556, 51: 556, 52: 556, 53: 556, 54: 556, 55: 556, 56: 556, 57: 556, 58: 278, 59: 278, 60: 584, 61: 584, 62: 584, 63: 556, 64: 1015, 65: 667, 66: 667, 67: 722, 68: 722, 69: 667, 70: 611, 71: 778, 72: 722, 73: 278, 74: 500, 75: 667, 76: 556, 77: 833, 78: 722, 79: 778, 80: 667, 81: 778, 82: 722, 83: 667, 84: 611, 85: 722, 86: 667, 87: 944, 88: 667, 89: 667, 90: 611, 91: 278, 92: 278, 93: 278, 94: 469, 95: 556, 96: 333, 97: 556, 98: 556, 99: 500, 100: 556, 101: 556, 102: 278, 103: 556, 104: 556, 105: 222, 106: 222, 107: 500, 108: 222, 109: 833, 110: 556, 111: 556, 112: 556, 113: 556, 114: 333, 115: 500, 116: 278, 117: 556, 118: 500, 119: 722, 120: 500, 121: 500, 122: 500, 123: 334, 124: 260, 125: 334, 126: 584 };
 
-  function textWidth(winAnsiStr, size) {
-    var units = 0;
+  /* v353 (MANIFEST-PDF-COLUMNS-CUT-OFF): Helvetica-Bold has its
+     OWN AFM widths — wider than regular for most letters — but
+     textWidth only ever knew the regular table, while kv values,
+     headings and table headers are DRAWN bold (F2). Every bold
+     string was therefore measured narrower than it renders: a
+     right-aligned kv value anchored at RIGHT - (regular width)
+     protruded past the right margin by the bold delta, and a
+     long value (the odometer range, the Loaded at / Dumped at
+     place chains, a loads line carrying a site name) ran off
+     the page edge and clipped — the owner's Nov 5 manifest
+     screenshot. Measurement now takes the font into account
+     everywhere a string is measured, wrapped or anchored. */
+  var WB = { 32: 278, 33: 333, 34: 474, 35: 556, 36: 556, 37: 889, 38: 722, 39: 278, 40: 333, 41: 333, 42: 389, 43: 584, 44: 278, 45: 333, 46: 278, 47: 278, 48: 556, 49: 556, 50: 556, 51: 556, 52: 556, 53: 556, 54: 556, 55: 556, 56: 556, 57: 556, 58: 333, 59: 333, 60: 584, 61: 584, 62: 584, 63: 611, 64: 975, 65: 722, 66: 722, 67: 722, 68: 722, 69: 667, 70: 611, 71: 778, 72: 722, 73: 278, 74: 556, 75: 722, 76: 611, 77: 833, 78: 722, 79: 778, 80: 667, 81: 778, 82: 722, 83: 667, 84: 611, 85: 722, 86: 667, 87: 944, 88: 667, 89: 667, 90: 611, 91: 333, 92: 278, 93: 333, 94: 474, 95: 556, 96: 333, 97: 556, 98: 611, 99: 556, 100: 611, 101: 611, 102: 389, 103: 611, 104: 611, 105: 278, 106: 278, 107: 556, 108: 278, 109: 889, 110: 611, 111: 611, 112: 611, 113: 611, 114: 389, 115: 556, 116: 333, 117: 611, 118: 556, 119: 722, 120: 556, 121: 556, 122: 500, 123: 334, 124: 260, 125: 334, 126: 584 };
+
+  function textWidth(winAnsiStr, size, bold) {
+    var units = 0, T = bold ? WB : W;
     for (var i = 0; i < winAnsiStr.length; i++) {
       var c = winAnsiStr.charCodeAt(i);
-      units += (W[c] !== undefined) ? W[c] : 556;
+      units += (T[c] !== undefined) ? T[c] : 556;
     }
     return units * size / 1000;
   }
 
   /* Greedy word wrap. Returns an array of WinAnsi strings. */
-  function wrapText(winAnsiStr, size, maxWidth) {
+  function wrapText(winAnsiStr, size, maxWidth, bold) {
     var words = winAnsiStr.split(' '), lines = [], cur = '';
     function pushLongWord(word) {
       // a single word wider than the column: hard-split by characters
       var rest = word;
-      while (textWidth(rest, size) > maxWidth && rest.length > 1) {
+      while (textWidth(rest, size, bold) > maxWidth && rest.length > 1) {
         var n = rest.length;
-        while (n > 1 && textWidth(rest.slice(0, n), size) > maxWidth) n--;
+        while (n > 1 && textWidth(rest.slice(0, n), size, bold) > maxWidth) n--;
         lines.push(rest.slice(0, n));
         rest = rest.slice(n);
       }
@@ -103,9 +117,9 @@
       var w = words[i];
       if (w === '') continue;
       var cand = cur ? cur + ' ' + w : w;
-      if (textWidth(cand, size) <= maxWidth) { cur = cand; continue; }
+      if (textWidth(cand, size, bold) <= maxWidth) { cur = cand; continue; }
       if (cur) { lines.push(cur); cur = ''; }
-      cur = (textWidth(w, size) > maxWidth) ? pushLongWord(w) : w;
+      cur = (textWidth(w, size, bold) > maxWidth) ? pushLongWord(w) : w;
     }
     if (cur) lines.push(cur);
     return lines.length ? lines : [''];
@@ -184,7 +198,7 @@
       for (var c0 = 0; c0 < ncols; c0++) {
         var wmax = 0;
         run.forEach(function (r) {
-          var w = textWidth(toWinAnsi(cellAt(r, c0).t || ''), st.size);
+          var w = textWidth(toWinAnsi(cellAt(r, c0).t || ''), st.size, !!r.head);
           if (w > wmax) wmax = w;
         });
         nat.push(wmax + 2 * COLS_PAD);
@@ -204,6 +218,15 @@
           if (give <= 0) break;
           widths[wi] -= give; over -= give;
         }
+        /* v353: every column at its floor and STILL over — scale
+           the whole table down to the page (cells wrap harder)
+           rather than letting the right columns run off the
+           edge, which is how values clipped before. */
+        var tot353 = widths.reduce(function (s2, w) { return s2 + w; }, 0);
+        if (tot353 > CONTENT_W) {
+          var f353 = CONTENT_W / tot353;
+          widths = widths.map(function (w) { return w * f353; });
+        }
       }
       var xs = [], xacc = MARGIN;
       widths.forEach(function (w) { xs.push(xacc); xacc += w; });
@@ -221,7 +244,7 @@
              can leave that cell a hair WIDER than the space it is
              wrapped into (25.020000… vs 25.019999…), wrapping a
              one-line figure onto two lines and doubling the row. */
-          var parts = wrapText(toWinAnsi(cellAt(r, c).t || ''), st.size, Math.max(10, widths[c] - 2 * COLS_PAD + 0.5));
+          var parts = wrapText(toWinAnsi(cellAt(r, c).t || ''), st.size, Math.max(10, widths[c] - 2 * COLS_PAD + 0.5), !!r.head);
           wrapped.push(parts);
           if (parts.length > nL) nL = parts.length;
         }
@@ -235,7 +258,7 @@
             var txt = m.wrapped[c][li];
             if (!txt) continue;
             var tx = cellAt(r, c).r
-              ? xs[c] + widths[c] - COLS_PAD - textWidth(txt, st.size)
+              ? xs[c] + widths[c] - COLS_PAD - textWidth(txt, st.size, isHead)
               : xs[c] + COLS_PAD;
             textOp(st, tx, base - li * lead, txt, isHead ? 'F2' : 'F1', st.color);
           }
@@ -306,7 +329,9 @@
       var a = toWinAnsi(ln.a || '');
       if (ln.k === 'kv') {
         var b = toWinAnsi(ln.b || '');
-        var bw = textWidth(b, st.size);
+        /* v353: the value is drawn BOLD — measure it bold, or
+           its right-aligned anchor lands it past the margin. */
+        var bw = textWidth(b, st.size, true);
         need(st.before + st.leading);
         y -= st.before;
         if (textWidth(a, st.size) + bw + 18 <= CONTENT_W) {
@@ -323,10 +348,16 @@
             y -= 3;
           }
           if (b) {
-            need(st.leading);
-            y -= st.leading - 3;
-            textOp(st, RIGHT - bw, y, b, 'F2', st.color);
-            y -= 3;
+            /* v353: a value wider than the page wraps too —
+               right-aligned lines under the label, never a
+               single line drawn off the edge. */
+            var wrappedB = wrapText(b, st.size, CONTENT_W, true);
+            for (var wB = 0; wB < wrappedB.length; wB++) {
+              need(st.leading);
+              y -= st.leading - 3;
+              textOp(st, RIGHT - textWidth(wrappedB[wB], st.size, true), y, wrappedB[wB], 'F2', st.color);
+              y -= 3;
+            }
           }
         }
         y -= st.after;
@@ -334,7 +365,7 @@
       }
       // paragraph-like styles
       y -= st.before;
-      var parts = wrapText(a, st.size, CONTENT_W);
+      var parts = wrapText(a, st.size, CONTENT_W, st.font === 'F2');
       for (var pI = 0; pI < parts.length; pI++) {
         need(st.leading + (pI === parts.length - 1 && st.rule ? 4 : 0));
         y -= st.leading - 3;
