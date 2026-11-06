@@ -1290,6 +1290,11 @@
   function fmtKm1(km) { return (Math.round((km || 0) * 10) / 10).toFixed(1) + ' km'; }
   function fmtH1(hours) { return (Math.round((hours || 0) * 10) / 10).toFixed(1) + ' h'; }
   function fmtL1(litres) { return (Math.round((litres || 0) * 10) / 10).toFixed(1) + ' L'; }
+  /* v344 (MULTI-DAY-MANIFEST-COLUMNS): the bare one-decimal
+     figure for a table cell — the column heading carries the
+     unit, so the cell is the number alone and every figure in
+     the column lines up digit-for-digit. */
+  function fmtN1(v) { return (Math.round((v || 0) * 10) / 10).toFixed(1); }
   function fmtDayLabel(ds) {
     var p = String(ds || '').split('-');
     if (p.length !== 3) return String(ds || '');
@@ -1864,18 +1869,27 @@
         h += '<div class="card" id="mn_preview"><h3>Preview — ' + esc(mnFrom) + ' → ' + esc(mnTo) + '</h3><div id="mn_doc">';
         if (!rangeDays.length) h += '<div class="empty">Pick a From and a To date above.</div>';
         var rcs = [];
+        /* v344 (MULTI-DAY-MANIFEST-COLUMNS): the preview is the
+           SAME table the PDF prints — Date · km · Hours · Loads
+           · Fuel, one row per day, every figure in its own
+           straight right-aligned column (the v331 loose kv lines
+           are retired on the owner's Nov 5, 2026 22:41 word).
+           Nothing else rides a row: no odometer, no start/end
+           times, no GPS, no pay. */
+        if (rangeDays.length) {
+          h += '<table class="mn-sumtab"><tr><th>Date</th><th class="r">km</th><th class="r">Hours</th><th class="r">Loads</th><th class="r">Fuel</th></tr>';
+        }
         rangeDays.forEach(function (rd) {
           var rc = collect(rd);
           rcs.push(rc);
-          /* v331 (MULTI-DAY-MANIFEST-SUMMARY): one compact line
-             per day — date, total km, total hours, loads, fuel.
-             The v211 stacked FULL day blocks are retired on the
-             owner's Nov 5, 2026 word: a multi-day manifest is a
-             SUMMARY, not the daily manifests stretched; a month
-             of lines fits one page. Nothing else rides the line:
-             no odometer, no start/end times, no GPS, no pay. */
-          h += '<div class="kv"><span>' + esc(fmtDayLabel(rd)) + '</span><b>' + esc(daySummaryText(daySummaryOf(rc))) + '</b></div>';
+          var s = daySummaryOf(rc);
+          h += '<tr><td>' + esc(fmtDayLabel(rd)) + '</td>' +
+            '<td class="r">' + fmtN1(s.km) + '</td>' +
+            '<td class="r">' + fmtN1(s.hours) + '</td>' +
+            '<td class="r">' + (s.loads || 0) + '</td>' +
+            '<td class="r">' + fmtN1(s.fuelL) + '</td></tr>';
         });
+        if (rangeDays.length) h += '</table>';
         if (rangeDays.length) {
           var rtS = sumCollected(rcs);
           /* Page 2's totals, previewed the same way: total
@@ -2006,8 +2020,18 @@
           lines.push({ k: 'note', a: 'No days in this range.' });
           return lines;
         }
+        /* v344 (MULTI-DAY-MANIFEST-COLUMNS, owner Nov 5, 2026
+           22:41 — screenshot of the Oct 1–31 PDF): the per-day
+           lines are a REAL TABLE now (MetPdf 'cols'), not loose
+           right-aligned text: Date in its own column, and every
+           day's km / hours / loads / fuel in ONE straight column
+           under its plain heading, rows aligned. The figures are
+           the same daySummaryOf facts as before — only the shape
+           changed. Page 2 is unchanged. */
+        lines.push({ k: 'cols', head: true, compact: true, cells: [{ t: 'Date' }, { t: 'km', r: 1 }, { t: 'Hours', r: 1 }, { t: 'Loads', r: 1 }, { t: 'Fuel', r: 1 }] });
         rangeDays.forEach(function (rd) {
-          lines.push({ k: 'kv', a: fmtDayLabel(rd), b: daySummaryText(daySummaryOf(collect(rd))) });
+          var s = daySummaryOf(collect(rd));
+          lines.push({ k: 'cols', compact: true, cells: [{ t: fmtDayLabel(rd) }, { t: fmtN1(s.km), r: 1 }, { t: fmtN1(s.hours), r: 1 }, { t: '' + (s.loads || 0), r: 1 }, { t: fmtN1(s.fuelL), r: 1 }] });
         });
         var rtP = rangeTotals(rangeDays);
         lines.push({ k: 'pb' });

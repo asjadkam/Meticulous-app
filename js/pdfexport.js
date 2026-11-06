@@ -164,6 +164,14 @@
     var COLS_PAD = 6;
     function renderCols(run) {
       var st = STYLES.cols;
+      /* v344 (MULTI-DAY-MANIFEST-COLUMNS): a run whose lines
+         carry `compact` renders at summary density — tighter
+         leading and row padding — so a 31-row month table still
+         fits ONE page (the multi-day manifest's density law).
+         Ordinary tables (invoices) keep the standing spacing. */
+      var compact = run.some(function (r) { return !!(r && r.compact); });
+      var lead = compact ? 11.5 : st.leading;
+      var rowPad = compact ? 2 : 5;
       var head = null, dataRows = [];
       run.forEach(function (r) {
         if (r.head && !head) head = r; else dataRows.push(r);
@@ -208,15 +216,20 @@
       function measure(r) {
         var wrapped = [], nL = 1;
         for (var c = 0; c < ncols; c++) {
-          var parts = wrapText(toWinAnsi(cellAt(r, c).t || ''), st.size, Math.max(10, widths[c] - 2 * COLS_PAD));
+          /* v344: +0.5 pt of wrap tolerance — a column's natural
+             width IS its widest cell + padding, but float rounding
+             can leave that cell a hair WIDER than the space it is
+             wrapped into (25.020000… vs 25.019999…), wrapping a
+             one-line figure onto two lines and doubling the row. */
+          var parts = wrapText(toWinAnsi(cellAt(r, c).t || ''), st.size, Math.max(10, widths[c] - 2 * COLS_PAD + 0.5));
           wrapped.push(parts);
           if (parts.length > nL) nL = parts.length;
         }
-        return { wrapped: wrapped, nL: nL, rowH: nL * st.leading + 5 };
+        return { wrapped: wrapped, nL: nL, rowH: nL * lead + rowPad };
       }
       function paint(r, m, isHead) {
         if (isHead) ruleOp(NAVY, 1, y + 1);
-        var base = y - 11;
+        var base = y - (compact ? 9 : 11);
         for (var li = 0; li < m.nL; li++) {
           for (var c = 0; c < ncols; c++) {
             var txt = m.wrapped[c][li];
@@ -224,7 +237,7 @@
             var tx = cellAt(r, c).r
               ? xs[c] + widths[c] - COLS_PAD - textWidth(txt, st.size)
               : xs[c] + COLS_PAD;
-            textOp(st, tx, base - li * st.leading, txt, isHead ? 'F2' : 'F1', st.color);
+            textOp(st, tx, base - li * lead, txt, isHead ? 'F2' : 'F1', st.color);
           }
         }
         y -= m.rowH;

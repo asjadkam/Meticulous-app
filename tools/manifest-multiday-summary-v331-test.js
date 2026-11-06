@@ -20,8 +20,12 @@
  *  - the range PREVIEW: one compact line per day (label · km ·
  *    hours · loads · fuel), a Period total of hours/fuel/loads
  *    ONLY — no pay, no odometer, no times, no GPS, no range km.
+ *    (v344: the preview renders those same per-day facts as a
+ *    TABLE — one row per day, a cell per figure.)
  *  - the range PDF lines: title + one kv per day, a real page
  *    break, then PERIOD TOTAL with exactly three kv lines.
+ *    (v344: the day lines are 'cols' TABLE rows under a plain
+ *    Date · km · Hours · Loads · Fuel heading.)
  *  - MetPdf honours the 'pb' break: the built PDF has 2 pages,
  *    and 31 day lines alone fit ONE page (the density law).
  *  - the single-day manifest is untouched (full detail, Edit
@@ -123,8 +127,14 @@ function makeWorld(extra) {
   const w = makeWorld({ mani_mode: 'range', mani_from: '2026-10-19', mani_to: '2026-10-20', mani_date: '2026-10-19' });
   w.api.render(w.body);
   const h = w.body.innerHTML;
-  ok('day A is ONE summary line', h.indexOf('Mon, Oct 19') >= 0 && h.indexOf('120.5 km · 10.0 h · 3 loads · 50.0 L fuel') >= 0, h.slice(h.indexOf('Preview'), h.indexOf('Preview') + 400));
-  ok('day B is ONE summary line', h.indexOf('Tue, Oct 20') >= 0 && h.indexOf('60.3 km · 5.0 h · 2 loads · 0.0 L fuel') >= 0);
+  ok('day A is ONE table row with its figures in cells (v344)',
+    h.indexOf('<td>Mon, Oct 19</td>') >= 0 && h.indexOf('<td class="r">120.5</td>') >= 0 &&
+    h.indexOf('<td class="r">10.0</td>') >= 0 && h.indexOf('<td class="r">3</td>') >= 0 &&
+    h.indexOf('<td class="r">50.0</td>') >= 0, h.slice(h.indexOf('Preview'), h.indexOf('Preview') + 500));
+  ok('day B is ONE table row with its figures in cells (v344)',
+    h.indexOf('<td>Tue, Oct 20</td>') >= 0 && h.indexOf('<td class="r">60.3</td>') >= 0 &&
+    h.indexOf('<td class="r">5.0</td>') >= 0 && h.indexOf('<td class="r">2</td>') >= 0 &&
+    h.indexOf('<td class="r">0.0</td>') >= 0);
   /* The ban list governs the manifest PREVIEW (the settings
      card above it legitimately names its toggles "Odometer" /
      "Total Earned Income" — the v213 pin keeps those). */
@@ -143,16 +153,20 @@ function makeWorld(extra) {
   await new Promise(function (r) { setTimeout(r, 20); });
   ok('the PDF was requested', !!w.captured.pdf);
   const lines = (w.captured.pdf && w.captured.pdf.payload.lines) || [];
-  eq('the document is exactly: title, 2 day lines, break, total head, 3 total lines',
+  eq('the document is exactly: title, table head, 2 day rows, break, total head, 3 total lines (v344)',
     lines.map(function (ln) { return ln.k; }),
-    ['title', 'kv', 'kv', 'pb', 'h', 'kv', 'kv', 'kv']);
-  eq('day A line', lines[1], { k: 'kv', a: 'Mon, Oct 19', b: '120.5 km · 10.0 h · 3 loads · 50.0 L fuel' });
-  eq('day B line', lines[2], { k: 'kv', a: 'Tue, Oct 20', b: '60.3 km · 5.0 h · 2 loads · 0.0 L fuel' });
-  eq('total hours line', lines[5], { k: 'kv', a: 'Total hours', b: '15.0 h' });
-  eq('total fuel line', lines[6], { k: 'kv', a: 'Total fuel', b: '50.0 L' });
-  eq('total loads line', lines[7], { k: 'kv', a: 'Total loads', b: '5' });
-  ok('no line carries money', lines.every(function (ln) { return String(ln.a || '').indexOf('$') === -1 && String(ln.b || '').indexOf('$') === -1; }));
-  ok('no line carries a range km total or odometer', lines.every(function (ln) { return !/180\.8|Odometer|Miles/.test(String(ln.a || '') + String(ln.b || '')); }));
+    ['title', 'cols', 'cols', 'cols', 'pb', 'h', 'kv', 'kv', 'kv']);
+  eq('the table heading is plain: Date · km · Hours · Loads · Fuel', lines[1],
+    { k: 'cols', head: true, compact: true, cells: [{ t: 'Date' }, { t: 'km', r: 1 }, { t: 'Hours', r: 1 }, { t: 'Loads', r: 1 }, { t: 'Fuel', r: 1 }] });
+  eq('day A row — same figures as the v331 line, in columns', lines[2],
+    { k: 'cols', compact: true, cells: [{ t: 'Mon, Oct 19' }, { t: '120.5', r: 1 }, { t: '10.0', r: 1 }, { t: '3', r: 1 }, { t: '50.0', r: 1 }] });
+  eq('day B row — same figures as the v331 line, in columns', lines[3],
+    { k: 'cols', compact: true, cells: [{ t: 'Tue, Oct 20' }, { t: '60.3', r: 1 }, { t: '5.0', r: 1 }, { t: '2', r: 1 }, { t: '0.0', r: 1 }] });
+  eq('total hours line', lines[6], { k: 'kv', a: 'Total hours', b: '15.0 h' });
+  eq('total fuel line', lines[7], { k: 'kv', a: 'Total fuel', b: '50.0 L' });
+  eq('total loads line', lines[8], { k: 'kv', a: 'Total loads', b: '5' });
+  ok('no line carries money', lines.every(function (ln) { return JSON.stringify(ln).indexOf('$') === -1; }));
+  ok('no line carries a range km total or odometer', lines.every(function (ln) { return !/180\.8|Odometer|Miles/.test(JSON.stringify(ln)); }));
 
   /* — MetPdf honours the break; a month fits page 1 — */
   const psb = { console: console, Date: Date, Math: Math, JSON: JSON };
@@ -163,10 +177,17 @@ function makeWorld(extra) {
   vm.runInContext(read('js/pdfexport.js'), psb, { filename: 'js/pdfexport.js' });
   const built = psb.window.MetPdf.buildPdf({ title: 't', lines: lines });
   eq('the summary PDF is exactly 2 pages (days, then totals)', built.pages, 2);
-  const monthLines = [{ k: 'title', a: 'MANIFEST — month' }];
-  for (let i = 1; i <= 31; i++) monthLines.push({ k: 'kv', a: 'Day ' + i, b: '150.0 km · 10.0 h · 8 loads · 120.0 L fuel' });
+  const monthLines = [{ k: 'title', a: 'MANIFEST — month' },
+    { k: 'cols', head: true, compact: true, cells: [{ t: 'Date' }, { t: 'km', r: 1 }, { t: 'Hours', r: 1 }, { t: 'Loads', r: 1 }, { t: 'Fuel', r: 1 }] }];
+  for (let i = 1; i <= 31; i++) monthLines.push({ k: 'cols', compact: true, cells: [{ t: 'Day ' + i }, { t: '150.0', r: 1 }, { t: '10.0', r: 1 }, { t: '8', r: 1 }, { t: '120.0', r: 1 }] });
   const monthBuilt = psb.window.MetPdf.buildPdf({ title: 't', lines: monthLines });
-  eq('31 day lines fit ONE page (the density law)', monthBuilt.pages, 1);
+  eq('31 day TABLE rows fit ONE page (the density law, v344 shape)', monthBuilt.pages, 1);
+  eq('the month renders as ONE table', monthBuilt.tables.length, 1);
+  eq('the table has 5 columns', monthBuilt.tables[0] && monthBuilt.tables[0].cols, 5);
+  ok('every column has ONE straight x (aligned geometry)',
+    monthBuilt.tables[0] && monthBuilt.tables[0].xs.length === 5 &&
+    monthBuilt.tables[0].xs.every(function (x, i, a) { return i === 0 || x > a[i - 1]; }),
+    JSON.stringify(monthBuilt.tables[0]));
 
   /* — the single-day manifest is untouched — */
   const w1 = makeWorld({ mani_date: '2026-10-19' });
@@ -181,9 +202,9 @@ function makeWorld(extra) {
     manSrc.indexOf('function daySummaryOf(rc)') >= 0 && manSrc.indexOf('var s = daySummaryOf(rc);') >= 0);
   ok('the range document breaks to its own totals page',
     manSrc.indexOf("{ k: 'pb' }") >= 0 && read('js/pdfexport.js').indexOf("ln.k === 'pb'") >= 0);
-  eq('webVersion is 331', ver.webVersion, 331);
-  ok('index.html pins manifest.js?v=331 + pdfexport.js?v=331',
-    idxSrc.indexOf('modules/manifest.js?v=331') >= 0 && idxSrc.indexOf('js/pdfexport.js?v=331') >= 0);
+  eq('webVersion is 344', ver.webVersion, 344);
+  ok('index.html pins manifest.js?v=344 (pdfexport unchanged since its own gen)',
+    idxSrc.indexOf('modules/manifest.js?v=344') >= 0);
 
   console.log('\nmanifest-multiday-summary-v331 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
