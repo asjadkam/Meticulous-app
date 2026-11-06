@@ -10,7 +10,11 @@
   Meticulous.modules = Meticulous.modules || {};
 
   var S = function (k, d) { return App._store.get('dsp_' + k, d); };
-  var W = function (k, v) { return App._store.set('dsp_' + k, v); }; // v48: returns write result
+  var W = function (k, v) { // v48: returns write result
+    var r = App._store.set('dsp_' + k, v);
+    if (k === 'list' || k === 'active') { try { dspNudgeAutostart(); } catch (e) {} } // v342: see dspSet
+    return r;
+  };
   var esc = function (s) { return App._esc(s); };
 
   function list() { return S('list', []); }       // saved / history
@@ -47,7 +51,22 @@
          (photo at top level) and new ones both display.
   */
   function dspGet(k, d) { return App._store.get('dsp_' + k, d); }
-  function dspSet(k, v) { return App._store.set('dsp_' + k, v); }
+  function dspSet(k, v) {
+    var r = App._store.set('dsp_' + k, v);
+    if (k === 'list' || k === 'active') dspNudgeAutostart();
+    return r;
+  }
+  /* v342 (AUTO-START-MUST-FOLLOW-DISPATCH-TIME, owner Nov 5, 2026):
+     every write that changes the dispatch records re-points the
+     auto-start engine and the native arm at the CURRENT records —
+     a dispatch saved, edited, completed or cleared moves the day's
+     start with it, so the arm can never stay locked to an earlier
+     copy (both readers re-resolve from the store on this nudge).
+     Guarded: in harness slices without the engine present, inert. */
+  function dspNudgeAutostart() {
+    try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+    try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+  }
   function dspPhotoFor(d) {
     if (!d) return null;
     if (d.photo) return d.photo;

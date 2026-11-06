@@ -1241,6 +1241,14 @@
       /* my day now includes the boss-sent job — it flows back up
          with its origin on it, so his board expects the ticket */
       Object.keys(changedDates).forEach(function (ds) { try { CP.publishDay(ds); } catch (e) {} });
+      /* v342 (AUTO-START-MUST-FOLLOW-DISPATCH-TIME): a boss-sent
+         dispatch that just landed is a dispatch change — re-point
+         the auto-start engine and the native arm at the new
+         records now, not at the next boot. */
+      if (landedCount > 0) {
+        try { if (window.App && App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+        try { if (window.App && App.armNativeDay) App.armNativeDay(); } catch (e) {}
+      }
       /* v207: the count is what actually LANDED — a destination
          held back by the navigation gate is not a landing. */
       return landedCount;

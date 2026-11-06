@@ -2753,7 +2753,15 @@
     if (st) {
       if (t.status !== 'idle') {
         st.textContent = 'Counting from ' + fmtTimeAMPM(trackerSessionStartMs());
-      } else if (t.presetStart) {
+      } else if (t.presetStart && todayStr(new Date(t.presetStart)) === todayStr(new Date()) && !autoStartFired(todayStr(new Date()))) {
+        /* v342 (AUTO-START-MUST-FOLLOW-DISPATCH-TIME): his preset
+           ("I actually started at …") is a same-day, pre-start word
+           — it shows only while today is still unstarted. A preset
+           left over after the day already fired, or from an earlier
+           day, used to sit on this line forever ("Will count from
+           9:00 AM" every evening) and mask the real plan; it never
+           poses as the plan again — the card falls through to the
+           dispatch-derived plan below. */
         st.textContent = 'Will count from ' + fmtTimeAMPM(t.presetStart);
       } else {
         /* v123: an armed plan (today's dispatch, a per-day override,
@@ -2761,6 +2769,16 @@
            — never a bare "Starts from now" while a plan exists. */
         var armed = null;
         try { if (App.autostartPlanLabel && App.autostartTodayInfo) armed = App.autostartPlanLabel(App.autostartTodayInfo()); } catch (e) {}
+        if (!armed) {
+          /* v342: today's plan is spent — promise the NEXT day's
+             start, from the same next-plan read the native arm
+             fires on (App.autostartNextInfo): a tomorrow dispatch
+             at 10:00 AM reads "Will count from 10:00 AM" tonight. */
+          try {
+            var nx = App.autostartNextInfo ? App.autostartNextInfo() : null;
+            if (nx && !nx.today) armed = 'Will count from ' + nx.label;
+          } catch (e) {}
+        }
         st.textContent = armed || 'Starts from now';
       }
     }
@@ -4510,6 +4528,42 @@
     if (info.source === 'dispatch' && info.dispatchName) s += ' · ' + info.dispatchName;
     else if (info.source === 'override') s += ' (changed for today)';
     return s;
+  };
+  /* v342 (AUTO-START-MUST-FOLLOW-DISPATCH-TIME, owner Nov 5, 2026):
+     the NEXT start — the same today-then-tomorrow selection
+     App.armNativeDay arms the native side by, resolved from the
+     CURRENT store on every call. The dashboard's idle card reads
+     this for its "Will count from …" line, so the time the card
+     promises for tomorrow is the dispatch-derived one (tomorrow's
+     10:00 AM dispatch -> "Will count from 10:00 AM"), never a
+     leftover fixed clock time. Nothing here caches: an edit to a
+     dispatch re-resolves on the very next read. */
+  App.autostartNextInfo = function () {
+    var p = autoStartPrefs();
+    var active = store.get('dsp_active', null);
+    var list = store.get('dsp_list', []);
+    var ov = store.get('autostart_override', null);
+    var now = new Date();
+    var today = todayStr(now);
+    var t = App.tracker || { status: 'idle' };
+    function of(dateStr, dayIdx, isToday) {
+      var plan = autostartPlan(p, active, list, ov, dateStr, dayIdx);
+      if (!plan.willStart) return null;
+      var win = autostartDispatchFor(active, list, dateStr);
+      return {
+        date: dateStr, today: isToday, willStart: true,
+        time: plan.time, source: plan.source,
+        label: autoStartLabel(plan.time),
+        dispatchName: win ? win.name : '',
+        startMs: autostartTodayMs(dateStr, plan.time)
+      };
+    }
+    if (t.status === 'idle' && !autoStartFired(today)) {
+      var t0 = of(today, now.getDay(), true);
+      if (t0) return t0;
+    }
+    var tm = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return of(todayStr(tm), tm.getDay(), false);
   };
   /* v53: the per-day override behind the card's Change affordance.
      Stored per date in the synced store ({date, time}); the date check
