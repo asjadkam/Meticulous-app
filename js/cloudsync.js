@@ -2629,6 +2629,54 @@
           }
         }
 
+        /* v352 (PHONE-TIMER-RUNS-AFTER-WEB-CLOSE, owner Nov 5,
+           20:02): the mirror image of the v271 tombstone — and
+           the one shape none of the rules above covered. The
+           LOCAL tracker is the live one (the phone, still
+           working its day) and the CLOUD copy is the closed day
+           (the web session's End-shift: an idle tracker, no
+           sessionId). v265 needs a cloud sessionId to compare,
+           v271 needs an idle LOCAL, v303 needs a live CLOUD —
+           so the phone's copy fell to the stamp game below,
+           where its own ticking re-stamps made it unbeatable:
+           the books showed the day closed (sessions union) while
+           the phone's timer ran on (11:02:52 and counting at
+           20:02, the day closed at 18:00). The booked truth is
+           the same test v271 runs, from the other chair: if the
+           local sessions list holds a FINISHED entry whose own
+           start names the local live session (within the v69
+           jitter), the account has closed this day — install
+           the cloud's idle copy with clean stamps. The app's
+           own healClosedTracker (js/app.js) stands the engines
+           and the widget down on its tick; this rule makes the
+           store itself converge at pull time. */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var ct352CloudLive = d.v.status === 'running' || d.v.status === 'paused';
+          var ct352Local = parseJson(raw, null);
+          if (!ct352CloudLive && ct352Local && typeof ct352Local === 'object' &&
+              !Array.isArray(ct352Local) &&
+              (ct352Local.status === 'running' || ct352Local.status === 'paused')) {
+            var ct352Sid = Number(ct352Local.sessionId) || 0;
+            if (ct352Sid > 0) {
+              var ct352Sessions = parseJson(lsGetRaw('sessions'), null);
+              if (Array.isArray(ct352Sessions)) {
+                for (var ct352i = 0; ct352i < ct352Sessions.length; ct352i++) {
+                  var ct352e = ct352Sessions[ct352i];
+                  if (!ct352e || !ct352e.endedAt || !(Number(ct352e.seconds) > 0)) continue;
+                  var ct352Start = Date.parse(ct352e.endedAt) - Number(ct352e.seconds) * 1000;
+                  if (isFinite(ct352Start) && Math.abs(ct352Start - ct352Sid) <= 5000) {
+                    lsSetRaw(key, JSON.stringify(d.v));
+                    meta.keys[key] = { t: cloudTs, s: cloudTs };
+                    applied++;
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
+
         if (raw === null) {
           // Not on this device.
           if (km.d && km.d > cloudTs) {

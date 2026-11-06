@@ -2900,6 +2900,49 @@
     try { if (window.ShiftTrack && ShiftTrack.sessionStopped) ShiftTrack.sessionStopped('s' + ghostSid); } catch (e) {}
     return true;
   }
+  /* v352 (PHONE-TIMER-RUNS-AFTER-WEB-CLOSE, owner Nov 5, 20:02):
+     the day was closed from the WEB session (End-shift at 18:00,
+     the books correct), but the phone's live tracker never got
+     the word — at 20:02 it painted Working… 11:02:52 and its
+     miles engine was still accruing (259.3 live km against a
+     236 km odometer span). The sessions list is the booked
+     truth: when it holds a FINISHED entry whose own start names
+     this tracker's session (the v271/v69 identity test), the
+     day is closed — on whatever session closed it — and this
+     device stands everything down WITHOUT booking anything (the
+     closing session already wrote the entry; a stopSessionAt
+     here would double-book it). The engine posture mirrors a
+     local close exactly (LiveMiles.stopDay with trailHome, so
+     the drive home still accrues into the closed day's trail —
+     the standing close law; GeoLoads stop; the native session
+     stop), then the tracker resets to idle and trackerSave
+     carries the idle facts to the widget and the native record.
+     Wired on the same cadence as healStaleTrackerPeriodic. */
+  function healClosedTracker() {
+    var t = App.tracker;
+    if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
+    var sid = Number(t.sessionId) || 0;
+    var startMs = sid > 0 ? sid : trackerSessionStartMs();
+    if (!(startMs > 0)) return false;
+    var sessions = store.get('sessions', []);
+    if (!Array.isArray(sessions)) return false;
+    for (var i = 0; i < sessions.length; i++) {
+      var e = sessions[i];
+      if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
+      var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
+      if (isFinite(st) && Math.abs(st - startMs) <= 5000) {
+        var milesFin = null;
+        try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (err) {}
+        try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (err) {}
+        try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (err) {}
+        App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
+        trackerSave();
+        try { trackerPaint(); } catch (err) {}
+        return true;
+      }
+    }
+    return false;
+  }
   /* v314 (PHANTOM-SESSION-31H): the periodic re-test. Until now
      healStaleTracker was wired ONLY at cold open (init), on the
      sign-in restore and on the first-pull reload — three doors a
@@ -2921,7 +2964,10 @@
     healStaleTrackerPeriodic._at = now;
     var t = App.tracker;
     if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
-    try { return healStaleTracker(); } catch (e) { return false; }
+    var healed = false;
+    try { healed = healStaleTracker(); } catch (e) {}
+    if (!healed) { try { healed = healClosedTracker(); } catch (e) {} }
+    return healed;
   }
   function closeTrackerStartSheet() {
     el('trkStartSheet').classList.remove('open');
@@ -3182,6 +3228,19 @@
             entry.milesKey = rk;
           }
         } catch (e) {}
+      }
+      /* v352 (LIVE-MILES-OVERCOUNT-DRIFT, owner Nov 5, 23:34:
+         "How can the live miles be more then ptis?"): live GPS
+         miles must never out-run the truck's own odometer. When
+         the finished entry carries BOTH readings, their span is
+         the day's ground truth and it caps the live total the
+         entry books (Nov 5 would have booked 259.3 live km
+         against a 171,261 -> 171,497 span of 236). The trail
+         record keeps its own crumbs; only the booked liveKm —
+         the figure the manifest prints — is reconciled. */
+      if (typeof entry.liveKm === 'number' && entry.startOdo > 0 && entry.endOdo > entry.startOdo) {
+        var odoSpanKm352 = entry.endOdo - entry.startOdo;
+        if (entry.liveKm > odoSpanKm352) entry.liveKm = odoSpanKm352;
       }
       // v41: the dynamic tracker's accumulated quantities for the day
       // (Weight: totalWeightKg + loadCount; Trip: tripCount).

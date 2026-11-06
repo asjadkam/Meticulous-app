@@ -69,6 +69,13 @@
 
   var ACC_MAX_M = 50;            // drop fixes with accuracy worse than 50 m
   var MIN_STEP_M = 10;           // ignore movement under 10 m (GPS jitter)
+  var STILL_RADIUS_M = 45;       // v352: a fix wandering inside this
+                                 // radius of a stillness centre is a
+                                 // PARKED truck, not miles — under the
+                                 // old step rule a parked random walk
+                                 // still summed its >=10 m hops into
+                                 // phantom kilometres (owner Nov 5:
+                                 // 259.3 live km vs a 236 km span)
   var MAX_SPEED_KMH = 160;       // implied speed above this = bad fix, drop it
   var CRUMB_MIN_MS = 30 * 1000;  // breadcrumb throttle: at least 30 s …
   var CRUMB_MIN_M = 50;          // … AND at least 50 m from the last crumb,
@@ -162,8 +169,11 @@
         S = {
           key: key, active: true, totalM: 0, anchor: null,
           crumbs: [], hasFix: false, joinZero: false,
-          segs: [], joinFrom: null
+          segs: [], joinFrom: null, still: null
         };
+        if (saved && saved.still && isFinite(saved.still.latitude) && isFinite(saved.still.longitude)) {
+          S.still = { latitude: saved.still.latitude, longitude: saved.still.longitude };
+        }
         if (saved) {
           S.totalM = (typeof saved.totalM === 'number' && saved.totalM > 0) ? saved.totalM : 0;
           if (saved.crumbs && saved.crumbs.length) S.crumbs = saved.crumbs.slice();
@@ -267,6 +277,25 @@
           S.hasFix = true;
           maybeCrumb(f);
           return { accepted: true, addedM: 0, joined: true };
+        }
+        /* v352: stillness. While the truck sits parked, fixes
+           keep wandering around the spot, and every wander hop
+           over MIN_STEP used to add its length to the day. Now
+           any fix landing within STILL_RADIUS_M of the anchor
+           names the anchor as a stillness centre and counts
+           NOTHING; while fixes stay inside the radius the
+           anchor never moves. The first fix beyond the radius
+           is real movement again and counts in full from the
+           anchor — so a slow creep books once, as its chord,
+           when it leaves, and a parked truck books zero. */
+        if (!S.still && d < STILL_RADIUS_M) {
+          S.still = { latitude: S.anchor.latitude, longitude: S.anchor.longitude };
+        }
+        if (S.still) {
+          if (haversineM(S.still.latitude, S.still.longitude, f.latitude, f.longitude) < STILL_RADIUS_M) {
+            return { accepted: true, addedM: 0, still: true };
+          }
+          S.still = null;
         }
         if (d < MIN_STEP_M) return { accepted: false, why: 'jitter' }; // anchor stays put
         var dtH = (f.time - S.anchor.time) / 3600000;
@@ -373,6 +402,18 @@
           }
           seedPair = false;
           var d = haversineM(chain.latitude, chain.longitude, f.latitude, f.longitude);
+          /* v352: the same stillness law as ingest — a crumb
+             landing within STILL_RADIUS_M of the chain point
+             names it a stillness centre and counts nothing;
+             while crumbs stay inside the radius the chain never
+             moves, and the leaving segment books in full. */
+          if (!S.still && d < STILL_RADIUS_M) {
+            S.still = { latitude: chain.latitude, longitude: chain.longitude };
+          }
+          if (S.still) {
+            if (haversineM(S.still.latitude, S.still.longitude, f.latitude, f.longitude) < STILL_RADIUS_M) { res.skipped++; continue; }
+            S.still = null;
+          }
           if (d < MIN_STEP_M) { res.skipped++; continue; } // jitter: chain stays (accumulates)
           var dtH = (f.time - chain.time) / 3600000;
           if ((d / 1000) / dtH > MAX_SPEED_KMH) { res.skipped++; continue; } // teleport: point dropped
@@ -420,6 +461,7 @@
           key: S.key,
           totalM: S.totalM,
           anchor: S.anchor ? { time: S.anchor.time, latitude: S.anchor.latitude, longitude: S.anchor.longitude } : null,
+          still: S.still ? { latitude: S.still.latitude, longitude: S.still.longitude } : null, // v352
           crumbs: S.crumbs.slice(),
           hasFix: S.hasFix,
           // v126: the counted-coverage intervals + the unconsumed
