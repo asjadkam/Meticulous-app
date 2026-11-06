@@ -86,6 +86,16 @@
     var back = S('fills', null);
     return JSON.stringify(back) === JSON.stringify(f);
   }
+  /* v347 (EXPENSE-ADD-FORM-DROPS-PHOTO): the same verified
+     write for the expenses list — the expense save carries a
+     receipt photo now (see wireFx), and a photo is the largest
+     thing in the record, so the v48 write-read-compare rule
+     applies to it exactly as it does to fills. */
+  function saveExpensesVerified(x) {
+    W('expenses', x);
+    var back = S('expenses', null);
+    return JSON.stringify(back) === JSON.stringify(x);
+  }
   /* FUEL-OPEN-END */
 
   /* v75: which fill-up (index into fills()) the form is editing, or
@@ -234,6 +244,18 @@
         e.value = v;
       }
       var fxOcrDate = '';
+      /* v347 (EXPENSE-ADD-FORM-DROPS-PHOTO): the receipt photo
+         itself (the 1600px OCR rendition from fileToOCRImage —
+         the same rendition the fill-up form keeps as fuPhoto,
+         v127), held until Add. Until now this form previewed
+         and read the photo but kept NO copy of it: the Add
+         handler below built the record from what/cost/date
+         alone, so every expense the owner added himself landed
+         with no receipt attached even though he took the
+         picture (owner, Nov 5, 23:01: "Don't you dare tell me
+         these receipts I have been taking for a month hasn't
+         been attaching!"). Add now saves it — see the handler. */
+      var fxPhoto = '';
       var fxCamInput = body.querySelector('#fx_img_cam');
       var fxPickInput = body.querySelector('#fx_img');
       body.querySelector('#fx_cam').onclick = function () { fxCamInput.click(); };
@@ -254,6 +276,7 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== fxOcrToken) return;
           if (!ocrUrl) { fxSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
+          fxPhoto = ocrUrl; /* v347: keep the photo for the record (see fxPhoto above) */
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== fxOcrToken) return;
             try { fxSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
@@ -282,8 +305,37 @@
       body.querySelector('#fx_add').onclick = function () {
         var what = body.querySelector('#fx_what').value.trim(), cost = body.querySelector('#fx_cost').value;
         if (!what || !cost) return;
-        var x = S('expenses', []); x.push({ what: what, cost: cost, date: fxOcrDate || App._today() }); W('expenses', x);
+        var rec = { what: what, cost: cost, date: fxOcrDate || App._today() };
+        /* v347 (EXPENSE-ADD-FORM-DROPS-PHOTO): the receipt photo
+           rides on the record — `photo`, the first-receipt field
+           the one v332 fillPhotos reader reads, in the exact
+           shape the fill-up form's save writes (v127/v332), so
+           the expense lists paint its thumbnail and the v346 tap
+           opens it, and it syncs inside the record the same way
+           fill-up photos do. No photo attached → no photo field:
+           the record is byte-for-byte the one this form has
+           always written. */
+        if (fxPhoto) rec.photo = fxPhoto;
+        var x = S('expenses', []); x.push(rec);
+        var photoDropped = false;
+        if (!saveExpensesVerified(x)) {
+          /* The photo is the largest thing in the record — if
+             it is what didn't fit, retry ONCE without it (the
+             v127 fill-up rule): the entry always saves, the
+             photo is kept only when it fits, and the drop is
+             said out loud below — never silently. */
+          var retry = false;
+          if (rec.photo) { delete rec.photo; photoDropped = true; retry = saveExpensesVerified(x); }
+          if (!retry) {
+            fxSetRead('<span style="color:#e67e22">That expense did NOT save — the app storage on your phone looks full, or the write failed. Your entry is still in the form — free up some phone space and tap “Add expense” again.</span>');
+            return;
+          }
+        }
         Meticulous.modules.fuel.render(body);
+        if (photoDropped) {
+          var rd = body.querySelector('#fx_read');
+          if (rd) rd.innerHTML = '✓ Expense saved — the receipt photo didn\'t fit in the app storage, so it wasn\'t kept.';
+        }
       };
   }
 
