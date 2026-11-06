@@ -102,6 +102,7 @@
   var detailFillIdx = null;
   var fxView = false; // v202 FUEL-TAB: the Other-expenses view is open (its tab on the face opens it)
   var auditView = false; // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
+  var fxPhotoIdx = null; // v346 EXPENSE-TAP-OPENS-RECEIPT: the expense whose receipt photo is open (index into S('expenses'))
   var detailDelArm = false;
   var fuShowAll = false; /* v177 (D6): Fill-ups shows the latest 3 until asked for more (the Entries pattern) */
   /* v118: receipt precision — litres carry 3 decimals, money 2.
@@ -286,6 +287,37 @@
       };
   }
 
+  /* v346 (EXPENSE-TAP-OPENS-RECEIPT, owner Nov 5, 2026 22:53,
+     with screen recording): an expense entry that carries a
+     receipt photo is TAPPABLE — the row shows the photo itself
+     as a thumbnail plus a "tap to view" line (first-glance
+     obvious, LOOK-TWICE), and the tap opens the expense photo
+     view in render() — the same photo pattern the app uses
+     everywhere: the picture full-width with the _photoDl door
+     (the fill-up details view, Documents, Damage). An expense
+     with no photo keeps the plain row it has always had: no
+     tap, no clutter. fillPhotos is the one reader (v332): the
+     record's photo / photos stack, whichever shape it carries. */
+  function fxRowHTML(x, i) {
+    var photos = fillPhotos(x);
+    if (!photos.length) {
+      return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
+    }
+    return '<div class="listitem" data-fxphoto="' + i + '" style="cursor:pointer">' +
+      '<img src="' + photos[0] + '" style="width:46px;height:46px;object-fit:cover;border-radius:8px;float:right;margin-left:10px" alt="">' +
+      '<div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div>' +
+      '<div class="b">' + esc(x.date) + ' · 📷 Receipt photo — tap to view ›</div></div>';
+  }
+  function wireFxPhotoRows(body) {
+    body.querySelectorAll('[data-fxphoto]').forEach(function (el) {
+      el.onclick = function () {
+        fxPhotoIdx = +el.getAttribute('data-fxphoto');
+        Meticulous.modules.fuel.render(body);
+        try { if (body.scrollIntoView) body.scrollIntoView({ block: 'start' }); } catch (e) {}
+      };
+    });
+  }
+
   /* v202 FUEL-TAB: the Other-expenses VIEW — opened from the
      small tab at the top of the Fuel & Expense face, the same
      pattern as Revenue's tabs (v201). The card below is the
@@ -310,14 +342,15 @@
       '<div id="fx_prev"></div>' +
       '<div id="fx_read" style="font-size:13px;margin-top:4px;"></div>' +
       '<button class="btn navy" id="fx_add">Add expense</button>' +
-      '<div id="fx_list">' + S('expenses', []).slice().reverse().map(function (x) {
-        return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
+      '<div id="fx_list">' + S('expenses', []).map(function (x, i) { return { x: x, i: i }; }).reverse().map(function (p) {
+        return fxRowHTML(p.x, p.i);
       }).join('') + '</div></div>';
     body.innerHTML = h;
     body.querySelector('#fx_back').onclick = function () {
       fxView = false;
       Meticulous.modules.fuel.render(body);
     };
+    wireFxPhotoRows(body);
     wireFx(body);
     try { if (window.ConnectPipe) ConnectPipe.publishRecords(); } catch (e) {}
   }
@@ -350,14 +383,15 @@
     var exps = S('expenses', []);
     h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Other expenses</h3>' +
       '<p class="note" style="margin-top:0">Every other expense on file, newest first — ' + exps.length + ' record' + (exps.length === 1 ? '' : 's') + '.</p>' +
-      (exps.length ? exps.slice().reverse().map(function (x) {
-        return '<div class="listitem"><div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div><div class="b">' + esc(x.date) + '</div></div>';
+      (exps.length ? exps.map(function (x, i) { return { x: x, i: i }; }).reverse().map(function (p) {
+        return fxRowHTML(p.x, p.i);
       }).join('') : '<div class="empty">No other expenses on file.</div>') + '</div>';
     body.innerHTML = h;
     body.querySelector('#fu_audit_back').onclick = function () {
       auditView = false;
       Meticulous.modules.fuel.render(body);
     };
+    wireFxPhotoRows(body);
     body.querySelectorAll('[data-fuedit]').forEach(function (el) {
       el.onclick = function () {
         detailFillIdx = +el.getAttribute('data-fuedit');
@@ -370,6 +404,7 @@
 
   Meticulous.modules.fuel = {
     _fillPhotos: fillPhotos, /* v332: the one receipt-stack reader, exported for the suite */
+    _fxPhotoIdx: function () { return fxPhotoIdx; }, /* v346: exported for the suite */
     _auditView: function () { return auditView; }, /* v340: exported for the suite */
     _masterOnSave: masterOnSave,
     _mpgTrend: mpgTrend,
@@ -391,6 +426,13 @@
         if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
         return true;
       }
+      /* v346: Back from the expense photo view returns to the
+         expense list it was opened from. */
+      if (fxPhotoIdx !== null) {
+        fxPhotoIdx = null;
+        if (fuelBody) Meticulous.modules.fuel.render(fuelBody);
+        return true;
+      }
       /* v340: Back from the Audit view returns to the face
          (a fill opened FROM audit closes back into it — the
          detail branch above re-renders, and render() lands on
@@ -402,7 +444,7 @@
       }
       return false;
     },
-    resetView: function () { editFillIdx = null; editErr = ''; detailFillIdx = null; detailDelArm = false; auditView = false; },
+    resetView: function () { editFillIdx = null; editErr = ''; detailFillIdx = null; detailDelArm = false; auditView = false; fxPhotoIdx = null; },
     /* v78: the card preview — the most recent fill-up (litres · $
        · when), the fact a driver glances for; the MPG trend stays
        inside the module where it always lived. */
@@ -485,6 +527,40 @@
             if (!saveFillsVerified(f2)) { detailDelArm = false; Meticulous.modules.fuel.render(body); return; }
             detailFillIdx = null; detailDelArm = false;
             saveNote = 'Fill-up deleted.';
+            Meticulous.modules.fuel.render(body);
+          };
+          return;
+        }
+      }
+      /* v346 (EXPENSE-TAP-OPENS-RECEIPT): THE EXPENSE PHOTO
+         VIEW — an expense row carrying a receipt photo opens
+         here: the entry's facts plus EVERY photo on it, full-
+         width with the _photoDl door — the fill-up details
+         pattern above, verbatim in shape. Back returns to the
+         list the tap came from (the fxView / auditView flags
+         still stand underneath, exactly as a fill opened from
+         audit closes back into it). */
+      if (fxPhotoIdx !== null) {
+        var xRec = S('expenses', [])[fxPhotoIdx] || null;
+        if (!xRec) { fxPhotoIdx = null; }
+        else {
+          var xkv = function (k, v) { return '<div class="kv"><span>' + k + '</span><b>' + esc(v) + '</b></div>'; };
+          var xC = parseFloat(xRec.cost);
+          var xPhotos = fillPhotos(xRec);
+          var xh = '<div class="card"><h3>🧾 Expense</h3>' +
+            xkv('What', String(xRec.what || '—')) +
+            xkv('Cost', isFinite(xC) ? '$' + xC.toFixed(2) : '$' + String(xRec.cost || '')) +
+            xkv('Date', String(xRec.date || '—')) +
+            (xPhotos.length
+              ? xPhotos.map(function (p, pi) {
+                  return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:10px">' +
+                    (App._photoDl ? App._photoDl(p, 'expense-receipt-' + (xRec.date || '') + (xPhotos.length > 1 ? '-' + (pi + 1) : '')) : '');
+                }).join('')
+              : '<div class="empty" style="margin-top:10px">No photo for this entry</div>') +
+            '<button class="btn ghost" id="fx_photo_back" style="margin-top:8px">‹ Back</button></div>';
+          body.innerHTML = xh;
+          body.querySelector('#fx_photo_back').onclick = function () {
+            fxPhotoIdx = null;
             Meticulous.modules.fuel.render(body);
           };
           return;
