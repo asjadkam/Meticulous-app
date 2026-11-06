@@ -27,7 +27,7 @@ function section(name, fn) {
 
 /* ---------- registry / pins ---------- */
 console.log('— registry —');
-ok('web version is 347', ver.webVersion === 353, 'got ' + ver.webVersion);
+ok('web version is 347', ver.webVersion === 354, 'got ' + ver.webVersion);
 execSyncTags();
 function execSyncTags() {
   ['damage', 'revenue', 'invoice', 'documents'].forEach(function (m) {

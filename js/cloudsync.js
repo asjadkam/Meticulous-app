@@ -2101,9 +2101,122 @@
     var at = a.time || '', bt = b.time || '';
     if (at && bt && at !== bt) return false;
     var ao = parseFloat(a.odo) || 0, bo = parseFloat(b.odo) || 0;
-    if (ao > 0 && bo > 0 && ao !== bo && !(a.updAt || b.updAt)) return false;
+    /* v354 (EDIT-SAVE-STILL-EATS-SIBLING): the updAt clause
+       below used to forgive an odometer conflict on the stamp
+       alone. On Oct 22 that ate a bystander: the edited Mobil
+       (38.970 L, odo 170,079, updAt-stamped, OCR time) paired
+       with the day's OTHER fill — Petro 99.047 L, odo 169,999,
+       no time on the record, so the time veto could not fire —
+       won the slot on updAt, and the Petro vanished from the
+       union (Audit 64 -> 63) though nobody touched it. An
+       odometer conflict is forgiven ONLY when a second anchor
+       survives: both copies carry the SAME time (the v293
+       correction-edit shape). No shared time, conflicting
+       odometers — two fills, full stop. */
+    if (ao > 0 && bo > 0 && ao !== bo && !((a.updAt || b.updAt) && at && bt && at === bt)) return false;
     if (!(ao > 0 || bo > 0) && !(at && bt)) return false; // nothing anchors them as one fill
     return true;
+  }
+  /* v354 (DEDUPE LAW — the restore hazard): two copies of one
+     fill that agree on the facts a duplicate cannot fake —
+     same date, same litres, same total — resolve to ONE
+     record keeping the UNION of their fields: the photos of
+     whichever copy has them, the fullest station name, an
+     odometer reading if either has one, and every other field
+     the fuller copy carries. Born of the Oct 14/15 restore:
+     the lost fills were re-added through the Add form, then
+     the phone's local book healed the ORIGINALS back alongside
+     them (Audit 62 -> 64) — duplicates differing only in the
+     fields one path dropped (the form's odometer guard threw
+     Oct 15's 519,326 away; the originals carry the fuller
+     station names). Two records whose ids BOTH exist and
+     differ are genuinely two records and never fold; two
+     copies that disagree on BOTH anchors (odometers conflict
+     AND times conflict) are two fills that happen to share
+     figures and never fold either. */
+  function fuelDedupeKey(rec) {
+    if (!rec || typeof rec !== 'object' || !rec.date) return null;
+    var l = parseFloat(rec.litres), c = parseFloat(rec.cost);
+    if (isNaN(l) || isNaN(c)) return null;
+    return rec.date + '|' + Math.round(l * 1000) + '|' + Math.round(c * 100);
+  }
+  function fuelPhotoList(rec) {
+    var out = [];
+    function push(v) { if (typeof v === 'string' && v && out.indexOf(v) < 0) out.push(v); }
+    if (!rec) return out;
+    push(rec.photo);
+    if (Array.isArray(rec.photos)) rec.photos.forEach(push);
+    push(rec.photo2);
+    return out;
+  }
+  function fuelUnionFill(base, other) {
+    if (!base || typeof base !== 'object') return other || base;
+    if (!other || typeof other !== 'object' || other === base) return base;
+    var out = {}, k;
+    for (k in base) { if (Object.prototype.hasOwnProperty.call(base, k)) out[k] = base[k]; }
+    for (k in other) {
+      if (!Object.prototype.hasOwnProperty.call(other, k)) continue;
+      var bv = out[k], ov = other[k];
+      if ((bv === null || bv === undefined || bv === '') && ov !== null && ov !== undefined && ov !== '') out[k] = ov;
+    }
+    /* an odometer of 0 / blank is a missing reading, not a
+       fact — the other copy's real reading fills it. */
+    if (!(parseFloat(out.odo) > 0) && parseFloat(other.odo) > 0) out.odo = other.odo;
+    if (typeof base.station === 'string' && typeof other.station === 'string' &&
+        other.station.length > base.station.length) out.station = other.station;
+    var ps = fuelPhotoList(base);
+    fuelPhotoList(other).forEach(function (p) { if (ps.indexOf(p) < 0) ps.push(p); });
+    if (ps.length) {
+      out.photo = ps[0];
+      if (ps.length > 1) out.photos = ps; else delete out.photos;
+      delete out.photo2; // folded into photo/photos above
+    }
+    var bu = +base.updAt || 0, ou = +other.updAt || 0;
+    if (ou > bu) out.updAt = other.updAt;
+    return out;
+  }
+  function fuelHardConflict(a, b) {
+    var ao = parseFloat(a && a.odo) || 0, bo = parseFloat(b && b.odo) || 0;
+    if (!(ao > 0 && bo > 0 && ao !== bo)) return false;
+    var at = (a && a.time) || '', bt = (b && b.time) || '';
+    return !!(at && bt && at !== bt);
+  }
+  function dedupeFuelFills(arr, doomed) {
+    var groups = {}, order = [];
+    arr.forEach(function (r, i) {
+      var k = fuelDedupeKey(r);
+      if (k === null) return;
+      if (!groups[k]) { groups[k] = []; order.push(k); }
+      groups[k].push(i);
+    });
+    var consumed = {};
+    order.forEach(function (k) {
+      var idxs = groups[k].filter(function (i) { return !consumed[i]; });
+      if (idxs.length < 2) return;
+      /* the base carries the surviving identity: a copy whose
+         identity is NOT shadow-doomed beats a doomed one (the
+         merge filter would kill a doomed survivor), then the
+         fuller record, then the later-offered (local) copy. */
+      var baseIdx = idxs[0], bi;
+      for (bi = 1; bi < idxs.length; bi++) {
+        var cand = arr[idxs[bi]], cur = arr[baseIdx];
+        var candDoomed = !!(doomed && doomed[recordIdentity('fuel_fills', cand)]);
+        var curDoomed = !!(doomed && doomed[recordIdentity('fuel_fills', cur)]);
+        if (candDoomed !== curDoomed) { if (curDoomed) baseIdx = idxs[bi]; continue; }
+        var cs = recordCompleteness('fuel_fills', cand), bs = recordCompleteness('fuel_fills', cur);
+        if (cs > bs || (cs === bs && idxs[bi] > baseIdx)) baseIdx = idxs[bi];
+      }
+      for (bi = 0; bi < idxs.length; bi++) {
+        var i = idxs[bi];
+        if (i === baseIdx || consumed[i]) continue;
+        var a = arr[baseIdx], b = arr[i];
+        if (a.id && b.id && a.id !== b.id) continue; // two real records
+        if (fuelHardConflict(a, b)) continue; // two fills sharing figures
+        arr[baseIdx] = fuelUnionFill(a, b);
+        consumed[i] = 1;
+      }
+    });
+    return arr.filter(function (r, i) { return !consumed[i]; });
   }
   /* v293: which of two copies of one fuel fill survives.
      A shadow-doomed copy (this device deleted that identity on
@@ -2140,6 +2253,19 @@
     if (ns !== cs) return ns > cs;
     return isLocal;
   }
+  /* v354: when two fuel copies paired as one fill ALSO meet
+     the dedupe law (same date + litres + total), the survivor
+     is their UNION, not the bare winner — the winner-takes-all
+     arbitration used to throw the loser's odometer, fuller
+     station name and photo away even when it kept the record.
+     Pairs whose figures moved (a real figures edit) keep the
+     v293 winner-takes-all law untouched. */
+  function fuelPairResult(key, cur, rec, recWins) {
+    if (fuelDedupeKey(cur) !== null && fuelDedupeKey(cur) === fuelDedupeKey(rec)) {
+      return fuelUnionFill(recWins ? rec : cur, recWins ? cur : rec);
+    }
+    return recWins ? rec : cur;
+  }
   function mergeRecordLists(key, localArr, cloudArr, doomed) {
     var out = [], pos = {};
     function offer(rec, isLocal) {
@@ -2148,7 +2274,8 @@
       if (id in pos) {
         var slot = pos[id];
         if (key === 'fuel_fills') {
-          if (fuelCopyWins(out[slot], rec, isLocal, doomed, recordIdentity(key, out[slot]), id)) out[slot] = rec;
+          var w0 = fuelCopyWins(out[slot], rec, isLocal, doomed, recordIdentity(key, out[slot]), id);
+          out[slot] = fuelPairResult(key, out[slot], rec, w0);
         } else {
           var cur = out[slot];
           /* v301 (SYNC-STUB-MERGE): a session's liveKm is the
@@ -2179,20 +2306,40 @@
         return;
       }
       if (key === 'fuel_fills') {
+        /* v354: BEST match, not first match. The scan used to
+           stop at the first same-fill candidate in array order;
+           when a looser candidate sat ahead of the record's
+           true twin, the pairing (and its slot aliasing) bound
+           to the wrong record. Anchors score: equal odometer
+           4, equal time 2, dedupe-key equality 1. */
+        var bestJ = -1, bestScore = -1;
         for (var j = 0; j < out.length; j++) {
-          if (fuelSameFill(out[j], rec)) {
-            var oid = recordIdentity(key, out[j]);
-            if (fuelCopyWins(out[j], rec, isLocal, doomed, oid, id)) out[j] = rec;
-            pos[id] = j;
-            if (oid) pos[oid] = j;
-            return;
-          }
+          if (!fuelSameFill(out[j], rec)) continue;
+          var o = out[j], sc = 0;
+          var ao2 = parseFloat(o.odo) || 0, bo2 = parseFloat(rec.odo) || 0;
+          if (ao2 > 0 && bo2 > 0 && ao2 === bo2) sc += 4;
+          if (o.time && rec.time && o.time === rec.time) sc += 2;
+          var dk = fuelDedupeKey(rec);
+          if (dk !== null && dk === fuelDedupeKey(o)) sc += 1;
+          if (sc > bestScore) { bestScore = sc; bestJ = j; }
+        }
+        if (bestJ >= 0) {
+          var oid = recordIdentity(key, out[bestJ]);
+          var w1 = fuelCopyWins(out[bestJ], rec, isLocal, doomed, oid, id);
+          out[bestJ] = fuelPairResult(key, out[bestJ], rec, w1);
+          pos[id] = bestJ;
+          if (oid) pos[oid] = bestJ;
+          return;
         }
       }
       pos[id] = out.length; out.push(rec);
     }
     (cloudArr || []).forEach(function (r) { offer(r, false); });
     (localArr || []).forEach(function (r) { offer(r, true); });
+    /* v354: the dedupe pass — copies the pairing could not
+       reach (an id on one side bars fuelSameFill) still fold
+       when the dedupe law's facts agree. */
+    if (key === 'fuel_fills') out = dedupeFuelFills(out, doomed);
     return out;
   }
 
@@ -2259,6 +2406,37 @@
        it) yields to that sibling inside the merge, and the
        filter below then removes only true deletions. */
     var del = pendingRecordDeletes(key, shadowIds, localArr, cloudArr);
+    /* v354 (DEDUPE LAW): a doomed fuel identity whose cloud
+       record has a dedupe twin in the local list (same date +
+       litres + total, no hard conflict, no id clash) is not a
+       deletion at all — the local twin IS that fill, wearing
+       the fields its own save path kept, and the union below
+       folds the two into one record. Without this rescue the
+       folded survivor — which takes the fuller station name
+       and odometer, i.e. often the doomed copy's own
+       fingerprint — would be filtered out as its own delete.
+       A true delete has no local twin, so the shadow law is
+       untouched (pinned by the v349 E2 case and S5 below). */
+    if (key === 'fuel_fills') {
+      var delIds = Object.keys(del);
+      for (var di = 0; di < delIds.length; di++) {
+        var did = delIds[di], crec = null, ci;
+        for (ci = 0; ci < (cloudArr || []).length; ci++) {
+          if (recordIdentity(key, cloudArr[ci]) === did) { crec = cloudArr[ci]; break; }
+        }
+        if (!crec) continue;
+        var dk2 = fuelDedupeKey(crec);
+        if (dk2 === null) continue;
+        for (ci = 0; ci < (localArr || []).length; ci++) {
+          var lrec = localArr[ci];
+          if (fuelDedupeKey(lrec) !== dk2) continue;
+          if (fuelHardConflict(lrec, crec)) continue;
+          if (lrec.id && crec.id && lrec.id !== crec.id) continue;
+          delete del[did];
+          break;
+        }
+      }
+    }
     var merged = mergeRecordLists(key, localArr, cloudArr, del);
     var any = false, dk;
     for (dk in del) { if (Object.prototype.hasOwnProperty.call(del, dk)) { any = true; break; } }
