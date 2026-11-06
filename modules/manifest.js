@@ -462,6 +462,19 @@
     var expenses = (G('fuel_expenses', [])).filter(function (x) { return x.date === d; });
     var incidents = (G('dmg_reports', [])).filter(function (x) { return x.at.slice(0, 10) === d; });
     var sessions = (G('sessions', [])).filter(function (x) { return x.date === d; });
+    /* v355 (SPLIT-SHIFT): the day's named route stops, carried on
+       its split sessions (app.js stopSessionAt) in the order
+       driven — NAMES ONLY (never coordinates); a stop skipped for
+       the day rides flagged so the record can show it as skipped,
+       in the driver's word, never "missed". */
+    var splitStops = [], splitBlocks = [];
+    sessions.forEach(function (s) {
+      if (!s || !s.split) return;
+      (s.splitStops || []).forEach(function (st) {
+        if (st && st.name) splitStops.push({ key: st.key || '', name: String(st.name), at: st.at || 0, skipped: !!st.skipped });
+      });
+      (s.splitBlocks || []).forEach(function (b) { if (b) splitBlocks.push(b); });
+    });
     var revEntries = (G('rev_entries', [])).filter(function (x) { return x.date === d; });
     var extras = (G('rev_extras', [])).filter(function (x) { return x.date === d; });
     var o = G('onboarding', {});
@@ -1180,7 +1193,7 @@
     if (!ptiPost) missing.push('post-trip PTI');
     if (!gpsTrail) missing.push('GPS trail');
     var complete = missing.length === 0;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, haulLines: haulLines, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, revEntries: revEntries, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, splitStops: splitStops, splitBlocks: splitBlocks, haulLines: haulLines, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, revEntries: revEntries, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
   }
 
   /* v247: one filed PTI report as the manifest prints it —
@@ -1451,6 +1464,22 @@
         if (typeof c.routeInfo.km === 'number' && isFinite(c.routeInfo.km)) {
           L.push({ k: 'kv', a: 'GPS distance', b: c.routeInfo.km.toFixed(1) + ' km' });
         }
+      }
+    }
+    /* v355 (SPLIT-SHIFT): the split day's run record — its named
+       route stops in the order driven, and the day's skips named
+       as skipped (the driver's word — never "missed"). Names
+       only; a stop's coordinates never print. */
+    if (c.splitStops && c.splitStops.length) {
+      var served355 = c.splitStops.filter(function (s) { return !s.skipped; });
+      var skipped355 = c.splitStops.filter(function (s) { return s.skipped; });
+      L.push({ k: 'h', a: 'Route stops' });
+      if (served355.length) {
+        L.push({ k: 'kv', a: 'Route — ' + served355.length + (served355.length === 1 ? ' stop' : ' stops'),
+          b: served355.map(function (s) { return s.name; }).join(' · ') });
+      }
+      if (skipped355.length) {
+        L.push({ k: 'kv', a: 'Skipped', b: skipped355.map(function (s) { return s.name; }).join(' · ') });
       }
     }
     if (t.expense && (c.fills.length || c.expenses.length)) {
@@ -1788,6 +1817,11 @@
          stays single-day only, below the call. */
       function dayBodyHtml(dd, cc, tt) {
         var d = dd, c = cc, t = tt, h = '';
+      /* v355 (SPLIT-SHIFT): the split day's live facts — is this
+         TODAY, and is the split engine on for this account. */
+      var isToday355 = false, splitOn355 = false;
+      try { isToday355 = (dd === App._today()); } catch (e) {}
+      try { splitOn355 = !!(window.SplitShift && SplitShift.enabled && SplitShift.enabled()); } catch (e) {}
       if (t.dispatch && c.dispatches.length) {
         h += '<h3>Dispatches</h3>' + c.dispatches.map(function (x) {
           var dh = '<div class="kv"><span>' + esc(x.jobSite || x.pickup || 'Dispatch') + '</span><b>' + esc(x.material || '') + '</b></div>';
@@ -1821,6 +1855,49 @@
         h += '<h3>Work travel</h3>' + c.navLog.map(function (x) {
           return '<div class="kv"><span>' + esc(x.name) + '</span><b>' + esc(fmtStamp(x.at)) + '</b></div>';
         }).join('');
+      }
+      /* v355 (addendum 6): TODAY's route, live — the sheet's
+         stops for both runs with the day's state: done, coming,
+         or skipped. One BIG button per row: skip for today (the
+         stop stays on the route for tomorrow, untouched) or
+         bring it back. No menus, no forms — the driver is
+         sitting at a stop when she uses it. */
+      if (isToday355 && splitOn355) {
+        var rt355 = null;
+        try { rt355 = (window.SplitShift && SplitShift.routeToday) ? SplitShift.routeToday() : null; } catch (e) {}
+        if (rt355 && ((rt355.am && rt355.am.length) || (rt355.pm && rt355.pm.length))) {
+          h += '<h3>🚌 Today’s route</h3>';
+          ['am', 'pm'].forEach(function (blk) {
+            var rows = rt355[blk] || [];
+            if (!rows.length) return;
+            h += '<p class="note" style="margin:8px 0 4px;font-weight:700">' + (blk === 'am' ? 'Morning run' : 'Afternoon run') + '</p>';
+            rows.forEach(function (r) {
+              h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #26314d">' +
+                '<div style="flex:1;min-width:0"><b>' + esc(r.name) + '</b>' +
+                (r.time ? ' <span class="note">' + esc(r.time) + '</span>' : '') +
+                (r.skipped ? ' <span class="note" style="color:#f0b35e">skipped today</span>' : (r.doneAt ? ' <span class="note" style="color:#7dd87d">✓ done</span>' : '')) +
+                '</div>' +
+                '<button type="button" class="btn ' + (r.skipped ? 'ghost' : 'primary') + '" data-split-skip="' + esc(r.key) + '" style="min-width:132px;padding:12px 10px;font-size:15px">' + (r.skipped ? '↩ Bring back' : '⏭ Skip today') + '</button></div>';
+            });
+          });
+          h += '<p class="note">Skip is for today only — the stop stays on the route for tomorrow.</p>';
+        }
+      }
+      /* v355 (SPLIT-SHIFT): the day's recorded route stops — BY
+         NAME, in the order driven (tap a name to fix it once;
+         the fixed name sticks for that stop — the wiring below).
+         The day's skips stand apart, named as skipped — never
+         "missed". */
+      if (cc.splitStops && cc.splitStops.length) {
+        var servedH = cc.splitStops.filter(function (s) { return !s.skipped; });
+        var skippedH = cc.splitStops.filter(function (s) { return s.skipped; });
+        h += '<h3>🚌 Route stops — ' + servedH.length + '</h3>';
+        if (servedH.length) {
+          h += '<p class="note" style="margin:2px 0 6px">' + servedH.map(function (s) {
+            return '<span data-split-stop="' + esc(s.key || '') + '" style="text-decoration:underline dotted;cursor:pointer">' + esc(s.name) + '</span>';
+          }).join(' · ') + '</p><p class="note" style="margin:0 0 6px">Tap a stop’s name to fix it — the fixed name sticks for that stop.</p>';
+        }
+        if (skippedH.length) h += '<div class="kv"><span>Skipped</span><b>' + skippedH.map(function (s) { return esc(s.name); }).join(' · ') + '</b></div>';
       }
       /* v184 (M-route): where the truck actually went — the GPS
          trail's stops for the day, shown whether or not the
@@ -2001,6 +2078,40 @@
         '<div class="note" id="mn_msg"></div></div>';
 
       body.innerHTML = h;
+      /* v355 (addendum 6): the big skip / bring-back buttons —
+         one tap, for today only, then the page repaints with
+         the stop's new state. */
+      body.querySelectorAll('[data-split-skip]').forEach(function (b) {
+        b.onclick = function () {
+          try { if (window.SplitShift && SplitShift.toggleSkip) SplitShift.toggleSkip(b.getAttribute('data-split-skip')); } catch (e) {}
+          Meticulous.modules.manifest.render(body);
+        };
+      });
+      /* v355 (addendum 2): tap a recorded stop's name to fix it
+         once — the editor opens in place of the name; the fixed
+         name sticks for that stop (SplitShift.renameStop). */
+      body.querySelectorAll('[data-split-stop]').forEach(function (sp) {
+        sp.onclick = function () {
+          if (sp.getAttribute('data-editing')) return;
+          sp.setAttribute('data-editing', '1');
+          var key = sp.getAttribute('data-split-stop');
+          var cur = sp.textContent;
+          sp.innerHTML = '';
+          var inp = document.createElement('input');
+          inp.value = cur;
+          inp.style.cssText = 'width:170px;padding:6px;font-size:14px';
+          var sv = document.createElement('button');
+          sv.type = 'button'; sv.className = 'btn primary'; sv.textContent = 'Save name';
+          sv.style.cssText = 'margin-left:6px;padding:6px 12px';
+          sv.onclick = function (ev) {
+            ev.stopPropagation();
+            try { if (window.SplitShift && SplitShift.renameStop) SplitShift.renameStop(key, inp.value); } catch (e) {}
+            Meticulous.modules.manifest.render(body);
+          };
+          sp.appendChild(inp); sp.appendChild(sv);
+          try { inp.focus(); inp.select(); } catch (e) {}
+        };
+      });
       var mnAuditB = body.querySelector('#mn_audit');
       if (mnAuditB) mnAuditB.onclick = function () { maniAudit = true; Meticulous.modules.manifest.render(body); };
       body.querySelector('#mn_date').onchange = function (e) {

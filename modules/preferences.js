@@ -242,6 +242,24 @@
         ['Miles', 'Hourly', 'Trip', 'Weight'].map(function (x) { return '<option' + (o.payStandard === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>' +
         '<label class="f">Travel time bonus (hours/day)</label><input id="pf_travel" type="number" inputmode="decimal" min="0" step="0.5" value="' + esc(o.travelBonus || '1') + '">' +
         '<p class="note">Fixed daily bonus added to foreman ticket hours — for example 1 h, some drivers 1.5 h.</p>';
+      /* v355 (SPLIT-SHIFT + addenda 1/3/4): the driver kind and
+         the work pattern — the same two facts onboarding asks
+         (js/app.js ONB-KIND region). The kind select carries the
+         kind's default pattern with it (the wiring below); the
+         pattern select is the split engine's own switch and can
+         be set on its own — a community bus driver's midday gap
+         lives here. Long haul and Log driver run Standard: their
+         day shapes are parked, not invented (owner, Nov 6). */
+      var pfKind355 = (window.App && App.driverKindOf) ? App.driverKindOf(o) : (o.driverKind || 'dump');
+      h += '<label class="f">Driver kind</label><select id="pf_kind">' +
+        [['dump', 'Dump truck'], ['school-bus', 'School bus driver'], ['community-bus', 'Community bus driver'], ['longhaul', 'Long haul'], ['log', 'Log driver']].map(function (k) {
+          return '<option value="' + k[0] + '"' + (pfKind355 === k[0] ? ' selected' : '') + '>' + k[1] + '</option>';
+        }).join('') + '</select>' +
+        '<label class="f">Work pattern</label><select id="pf_pattern">' +
+        [['standard', 'Standard — one shift'], ['split', 'Split shift — two blocks, midday gap off the clock']].map(function (k) {
+          return '<option value="' + k[0] + '"' + ((o.workPattern || 'standard') === k[0] ? ' selected' : '') + '>' + k[1] + '</option>';
+        }).join('') + '</select>' +
+        '<p class="note">Split shift is the bus day: two blocks, the app pauses itself at the midday place, run records instead of haul tickets, one pre-trip a day.</p>';
       if (pfOO) {
         /* v105's two fields become ONE (PAY-CARD-ROLE, Oct 21,
            2026): an owner-operator's wage is his OWN wage — the
@@ -265,6 +283,31 @@
          fallback through ConnectPipe.pricingFor — it is stored
          data, no longer a field on this card. Each driver's wage
          still shows read-only under Drivers' wages below. */
+      if (!pfOfficeFace) {
+        /* v355 (SPLIT-SHIFT): the split day's own rate — its two
+           blocks price at this in Revenue when set (otherwise
+           the wage rate above speaks for it). */
+        h += '<label class="f">Split-shift rate ($/hour)</label><input id="pf_splitrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.splitRate || '') + '">' +
+          '<p class="note">For split-shift days only: the day pays its two blocks at this rate. Blank = your pay rate above.</p>';
+      }
+      if (!pfOfficeFace && o.workPattern === 'split') {
+        /* v355 (addendum 5): the route-sheet doors. One photo of
+           the printed route detail sheet fills the whole route —
+           every named stop in order — through the same reader
+           the haul cards use (TicketOCR). AM and PM sheets are
+           separate routes; a new photo replaces that run's
+           route, and the day's GPS matching follows the sheet. */
+        var sheetInfo355 = { am: 0, pm: 0 };
+        try { if (window.SplitShift && SplitShift.routeSheetInfo) sheetInfo355 = SplitShift.routeSheetInfo(); } catch (e) {}
+        h += '<label class="f">Morning route sheet</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="pf_sheet_am" style="flex:1">📷 Photograph the AM route sheet</button></div>' +
+          '<input type="file" id="pf_sheet_am_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<p class="note" id="pf_sheet_am_note">' + (sheetInfo355.am ? 'Route saved — ' + sheetInfo355.am + ' stops. Photograph a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet and the app fills in the whole route.') + '</p>' +
+          '<label class="f">Afternoon route sheet</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="pf_sheet_pm" style="flex:1">📷 Photograph the PM route sheet</button></div>' +
+          '<input type="file" id="pf_sheet_pm_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<p class="note" id="pf_sheet_pm_note">' + (sheetInfo355.pm ? 'Route saved — ' + sheetInfo355.pm + ' stops. Photograph a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet and the app fills in the whole route.') + '</p>';
+      }
       h += '</div>';
 
       /* v242 (WORK-PROFILES, owner, Fri Oct 23, 2026 evening —
@@ -423,6 +466,25 @@
            v241 nothing in the app wrote onboarding.plate at all,
            so every PTI's plate field pre-filled blank. */
         '<label class="f">Licence plate</label><input id="pf_plate" value="' + esc(o.plate || o.plateNo || '') + '">';
+      /* v355 (addendum 7, owner Nov 6, 05:46): every vehicle is
+         different. The VIN — typed, or photographed off the dash
+         plate / door sticker (the wiring below reads the 17
+         characters with the haul-card reader) — decodes to the
+         vehicle (make / model / year / body), and its dimensions
+         are confirmed ONCE by the driver and saved with the
+         vehicle. Nothing here guesses a size: the decode names
+         the vehicle, the driver confirms its measurements. */
+      h += '<label class="f">VIN</label>' +
+        '<div style="display:flex;gap:8px;margin:6px 0;">' +
+        '<input id="pf_vin" value="' + esc(o.vin || '') + '" placeholder="17 characters" maxlength="17" style="flex:1;text-transform:uppercase">' +
+        '<button type="button" class="btn secondary" id="pf_vin_cam">📷 Snap VIN</button></div>' +
+        '<input type="file" id="pf_vin_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+        '<div id="pf_vin_status" class="note">' + (o.vehDesc ? 'Vehicle: <b>' + esc(o.vehDesc) + '</b>' : 'Photograph the VIN plate or type the VIN — the app names the vehicle from it.') + '</div>' +
+        '<input type="hidden" id="pf_vdesc" value="' + esc(o.vehDesc || '') + '">' +
+        '<div class="row"><div><label class="f">Height (m)</label><input id="pf_vheight" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.vehHeightM || '') + '"></div>' +
+        '<div><label class="f">Length (m)</label><input id="pf_vlength" type="number" inputmode="decimal" min="0" step="0.1" value="' + esc(o.vehLengthM || '') + '"></div>' +
+        '<div><label class="f">Weight (kg)</label><input id="pf_vweight" type="number" inputmode="numeric" min="0" step="10" value="' + esc(o.vehWeightKg || '') + '"></div></div>' +
+        '<p class="note">Check the height, length and weight once against your vehicle — they save with it.</p>';
       /* v76 (F6, boss QA Oct 14): the odometer-baseline photo flow and
          the Daily-odometer-photos tracker toggle are DRIVER tools —
          hidden for office-only users (a man who never starts a tracker
@@ -654,6 +716,11 @@
             if ((v = gv('pf_cont')) !== null) oo.contractingCo = v;
             if ((v = gv('pf_tnum')) !== null) oo.truckNo = v;
             if ((v = gv('pf_plate')) !== null) oo.plate = v;
+            if ((v = gv('pf_vin')) !== null) oo.vin = v.toUpperCase();
+            if ((v = gv('pf_vdesc')) !== null) oo.vehDesc = v;
+            if ((v = gv('pf_vheight')) !== null) oo.vehHeightM = v;
+            if ((v = gv('pf_vlength')) !== null) oo.vehLengthM = v;
+            if ((v = gv('pf_vweight')) !== null) oo.vehWeightKg = v;
             if ((v = gv('pf_wagerate')) !== null) oo.ownWageRate = v;
             if ((v = gv('pf_nextinv')) !== null) oo.nextInvoiceNo = v;
             var tc = body.querySelector('#pf_taxincl'); if (tc) oo.rateIncludesTax = tc.checked;
@@ -761,6 +828,20 @@
            every Save untouched, as the company fallback default
            the pricing paths read (see the Pay card note). */
         var pfWgEl = body.querySelector('#pf_wagerate'); if (pfWgEl) o.ownWageRate = pfWgEl.value.trim();
+        /* v355: the kind / pattern / split rate save with the
+           rest (their onchange handlers already wrote them live;
+           these guarded reads keep Save authoritative). */
+        var pfKindEl = body.querySelector('#pf_kind'); if (pfKindEl) o.driverKind = pfKindEl.value;
+        var pfPatEl = body.querySelector('#pf_pattern'); if (pfPatEl) o.workPattern = pfPatEl.value;
+        var pfSrEl = body.querySelector('#pf_splitrate'); if (pfSrEl) o.splitRate = pfSrEl.value.trim();
+        /* v355 (addendum 7): the vehicle identity + dimensions
+           save on the truck record, guarded like the plate (an
+           office save never reaches for them). */
+        if (body.querySelector('#pf_vin')) o.vin = g('pf_vin').toUpperCase();
+        if (body.querySelector('#pf_vdesc')) o.vehDesc = g('pf_vdesc');
+        if (body.querySelector('#pf_vheight')) o.vehHeightM = g('pf_vheight');
+        if (body.querySelector('#pf_vlength')) o.vehLengthM = g('pf_vlength');
+        if (body.querySelector('#pf_vweight')) o.vehWeightKg = g('pf_vweight');
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont'); o.contractingAddr = g('pf_contaddr');
         o.nextInvoiceNo = g('pf_nextinv');
@@ -1107,6 +1188,30 @@
           App._store.set('onboarding', o);
           pfRepaintLive(body); /* v161 */
         };
+        /* v355: the kind + pattern selects persist the moment they
+           change (the same live-write law) — the split engine
+           reads the store fresh, so the next day runs the new
+           shape with no restart. Picking a kind also brings its
+           default pattern (App.driverKindPattern): School bus
+           turns Split on, Dump / Long haul / Log turn it off,
+           Community bus leaves the pattern as it stands. */
+        var kindSel = body.querySelector('#pf_kind');
+        if (kindSel) kindSel.onchange = function () {
+          o.driverKind = kindSel.value;
+          var kp = (window.App && App.driverKindPattern) ? App.driverKindPattern(kindSel.value) : null;
+          if (kp) {
+            o.workPattern = kp;
+            var ps = body.querySelector('#pf_pattern'); if (ps) ps.value = kp;
+          }
+          App._store.set('onboarding', o);
+          pfRepaintLive(body);
+        };
+        var patSel = body.querySelector('#pf_pattern');
+        if (patSel) patSel.onchange = function () {
+          o.workPattern = patSel.value;
+          App._store.set('onboarding', o);
+          pfRepaintLive(body);
+        };
         /* v147: the name fields persist the moment they change,
            through the same funnel as the account type above —
            stored, the render closure kept in sync, and the
@@ -1136,6 +1241,86 @@
           ob.odoDailyPhotos = odoTgl.checked;
           App._store.set('onboarding', ob);
         };
+      } catch (e) {}
+      /* v355 (addendum 5): the route-sheet doors. The photo goes
+         through the haul-card reader (TicketOCR); the read text
+         becomes the run's route in the split engine
+         (SplitShift.setRouteSheet parses the named stops, in
+         order). The note reports plainly what was read — zero
+         stops read says so, never a silent nothing. */
+      try {
+        [['am', '#pf_sheet_am', '#pf_sheet_am_in', '#pf_sheet_am_note', 'Morning'],
+         ['pm', '#pf_sheet_pm', '#pf_sheet_pm_in', '#pf_sheet_pm_note', 'Afternoon']].forEach(function (cfg) {
+          var btn = body.querySelector(cfg[1]), inp = body.querySelector(cfg[2]), note = body.querySelector(cfg[3]);
+          if (!btn || !inp) return;
+          btn.onclick = function () { inp.click(); };
+          inp.onchange = function () {
+            var f = inp.files && inp.files[0];
+            if (!f) return;
+            if (note) note.textContent = 'Reading the route sheet…';
+            var done = function (text) {
+              var n = 0;
+              try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(cfg[0], text || ''); } catch (e) {}
+              if (note) note.textContent = n > 0
+                ? (cfg[4] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.')
+                : 'That photo could not be read as a route sheet — try a closer, straight-on shot of the printed sheet.';
+            };
+            if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+              TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
+            } else done('');
+          };
+        });
+      } catch (e) {}
+      /* v355 (addendum 7): the VIN door. The photo is read by the
+         same machinery; the 17 VIN characters are pulled from its
+         text. A VIN — read or typed — decodes through the public
+         NHTSA vPIC decoder to the vehicle's make / model / year /
+         body, which fills the vehicle line and saves at once; the
+         dimensions stay the driver's to confirm. Any failure
+         names itself in the status line and the typed VIN still
+         saves — the decoder is a helper, never a gate. */
+      try {
+        var vinEl = body.querySelector('#pf_vin'),
+            vinCam = body.querySelector('#pf_vin_cam'),
+            vinIn = body.querySelector('#pf_vin_in'),
+            vinSt = body.querySelector('#pf_vin_status');
+        var decodeVin355 = function (vin) {
+          vin = String(vin || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '');
+          if (vinEl && vinEl.value !== vin) vinEl.value = vin;
+          if (vin.length !== 17) { if (vinSt) vinSt.textContent = 'A VIN is 17 characters — check what is typed.'; return; }
+          if (typeof fetch !== 'function') { if (vinSt) vinSt.textContent = 'VIN noted. (The vehicle decoder is not reachable from here.)'; return; }
+          if (vinSt) vinSt.textContent = 'Reading the VIN…';
+          fetch('https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/' + encodeURIComponent(vin) + '?format=json')
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              var row = j && j.Results && j.Results[0];
+              var desc = '';
+              if (row) desc = [row.ModelYear, row.Make, row.Model, row.BodyClass].filter(function (x) { return x && x !== 'Not Applicable'; }).join(' · ');
+              var vd = body.querySelector('#pf_vdesc'); if (vd && desc) vd.value = desc;
+              var ob = App._store.get('onboarding', {}) || {};
+              ob.vin = vin; if (desc) ob.vehDesc = desc;
+              App._store.set('onboarding', ob);
+              if (vinSt) vinSt.innerHTML = desc
+                ? ('Vehicle: <b>' + esc(desc) + '</b> — now check the height, length and weight once, and Save.')
+                : 'That VIN did not return vehicle details — the number itself is saved.';
+            })
+            .catch(function () { if (vinSt) vinSt.textContent = 'The vehicle decoder could not be reached — the VIN is saved as typed.'; });
+        };
+        if (vinCam && vinIn) vinCam.onclick = function () { vinIn.click(); };
+        if (vinIn) vinIn.onchange = function () {
+          var f = vinIn.files && vinIn.files[0];
+          if (!f) return;
+          if (vinSt) vinSt.textContent = 'Reading the VIN photo…';
+          var fail = function () { if (vinSt) vinSt.textContent = 'No VIN could be read from that photo — type it in, or try a closer shot of the plate.'; };
+          if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+            TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(function (txt) {
+              var raw = String(txt || '').toUpperCase();
+              var m = /[A-HJ-NPR-Z0-9]{17}/.exec(raw) || /[A-HJ-NPR-Z0-9]{17}/.exec(raw.replace(/\s+/g, ''));
+              if (m) decodeVin355(m[0]); else fail();
+            }).catch(fail);
+          } else fail();
+        };
+        if (vinEl) vinEl.onchange = function () { decodeVin355(vinEl.value); };
       } catch (e) {}
       /* v127: the economy-unit select also persists the moment it
          changes — Fuel and Maintenance read it live next render. */

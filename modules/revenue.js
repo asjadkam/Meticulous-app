@@ -1865,15 +1865,28 @@
     onSession: function (session) {
       var o = App._store.get('onboarding', {});
       var std = (o.payStandard || 'hourly').toLowerCase();
+      /* v355 (SPLIT-SHIFT): a split day books as ONE hourly run
+         record — its seconds are the two blocks only (the
+         tracker was paused across the midday gap), priced at
+         the split-shift rate when one is set in Preferences,
+         otherwise the wage rate. Quantity standards (miles /
+         weight / trip) never apply to a run. */
+      var splitDay355 = !!(session && session.split);
+      if (splitDay355) std = 'hourly';
       /* v242 (WORK-PROFILES): the entry is priced at — and stamped
          with — the SESSION's profile: the profile the tracker
          started under, which a mid-day switch never moves. */
       var sessPid = (session && session.profileId) ? String(session.profileId) : wpActiveId();
       var rate = wpRateOf(sessPid);
       if (!(rate > 0)) rate = ownRate(o);
+      if (splitDay355) { var sr355 = parseFloat(o.splitRate); if (sr355 > 0) rate = sr355; }
       var hrs = (session.seconds || 0) / 3600;
       var e = { date: session.date || App._today(), type: 'hourly', hours: hrs.toFixed(2), note: 'Auto from tracker', auto: true };
       var feed = 'Tracked session ' + hrs.toFixed(2) + 'h logged to Revenue.';
+      if (splitDay355) {
+        e.note = 'Auto from tracker — split-shift day';
+        feed = 'Split-shift day ' + hrs.toFixed(2) + 'h logged to Revenue.';
+      }
       if (std === 'miles') {
         e.type = 'miles';
         var km = (typeof session.liveKm === 'number') ? session.liveKm : null;
@@ -1920,7 +1933,9 @@
          is ticket-shaped — there the session is the foreman base
          and the bonus is owed on top, exactly as the dispatch
          completion books it. */
-      var travelH = (std === 'hourly') ? (parseFloat(session.travelHours) || 0) : 0;
+      var travelH = (std === 'hourly' && !splitDay355) ? (parseFloat(session.travelHours) || 0) : 0;
+      /* v355: no travel bonus on a split day — its pay is its
+         two blocks, summed, and nothing else (owner, Nov 6). */
       if (travelH > 0) {
         var fhH = Math.round(hrs * 100) / 100;
         var totH = Math.round((hrs + travelH) * 100) / 100;

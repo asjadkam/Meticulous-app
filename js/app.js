@@ -739,7 +739,7 @@
       if (App.tracker && (App.tracker.status === 'running' || App.tracker.status === 'paused')) {
         var rk2 = 's' + trackerSessionKeyMs();
         if (window.LiveMiles && LiveMiles.dayKey && LiveMiles.dayKey() !== rk2) LiveMiles.startDay(rk2, { resume: true });
-        if (window.GeoLoads && GeoLoads.startDay) GeoLoads.startDay(rk2, { resume: true });
+        dayEngineStart(rk2, { resume: true });
         /* v222 (LIVE-MILES-DISPLAY-RESET + LOADS-RESTORE-FAIL,
            Oct 22): the engines may already be running for this
            session's key — begun at boot against an EMPTY store on
@@ -2886,6 +2886,37 @@
      ghost-branch principle), and the ghost's native recording
      service is stopped. The sessions list and Revenue are never
      touched. Returns true when a discard happened. */
+  /* v355 (SPLIT-SHIFT): the day-engine door. A session started
+     as a split day (tracker.splitDay, pinned at its start from
+     onboarding.workPattern) is driven by the split engine
+     (js/splitshift.js) INSTEAD of the geofence load counter —
+     a bus day is runs, blocks and named stops, never loads.
+     Every session start/stop path in this file comes through
+     these two helpers, so the choice is made in exactly one
+     place: SplitShift.startDay claims the session only when it
+     is a split day (it answers false otherwise), and the stop
+     side stands down whichever engine is actually watching. A
+     standard session's path is byte-for-byte the old one. */
+  function dayEngineStart(key, opts) {
+    try {
+      if (window.SplitShift && SplitShift.startDay && SplitShift.startDay(key, opts)) return;
+    } catch (e) {}
+    try { if (window.GeoLoads && GeoLoads.startDay) GeoLoads.startDay(key, opts); } catch (e) {}
+  }
+  function dayEngineStop() {
+    var watching = false;
+    try { watching = !!(window.SplitShift && SplitShift.info && SplitShift.info().watching); } catch (e) {}
+    if (watching) { try { SplitShift.stopDay(); } catch (e) {} return; }
+    try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
+  }
+  function pinSplitDay(t) {
+    /* The session's day shape is pinned at its start, like its
+       profile (v242): a session begun under one pattern never
+       converts mid-day, whatever Preferences does later. */
+    t.splitDay = false;
+    try { t.splitDay = store.get('onboarding', {}).workPattern === 'split'; } catch (e) {}
+  }
+
   function healStaleTracker() {
     var t = App.tracker;
     if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
@@ -2933,7 +2964,7 @@
       if (isFinite(st) && Math.abs(st - startMs) <= 5000) {
         var milesFin = null;
         try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (err) {}
-        try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (err) {}
+        try { dayEngineStop(); } catch (err) {}
         try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (err) {}
         App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
         trackerSave();
@@ -3067,10 +3098,11 @@
          active at its start, for its whole life — a mid-day switch
          changes only what is created after it. */
       try { t.profileId = App.workProfiles.activeId(); } catch (e) {}
+      pinSplitDay(t); // v355: the day shape pins with the profile
       trackerSave();
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
       // v50: geofence load counting rides the same session (js/geoloads.js)
-      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
+      try { dayEngineStart('s' + trackerSessionKeyMs()); } catch (e) {}
       // v63: native background tracking (new shell only) rides it too
       try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
       // v92: today is underway — the native arm now belongs to the NEXT day
@@ -3146,7 +3178,7 @@
        closed day's trail record for the Manifest — the day
        itself stays closed (see js/miles.js). */
     try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (e) {}
-    try { if (window.GeoLoads) GeoLoads.stopDay(); } catch (e) {}
+    try { dayEngineStop(); } catch (e) {}
     // v63: native background tracking — final crumb drain + service stop
     try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (e) {}
     // v92: with today closed, arm tomorrow natively — the evening a
@@ -3160,6 +3192,20 @@
          from before profiles existed takes the active one). */
       entry.profileId = App.tracker.profileId || 'p1';
       try { if (!App.tracker.profileId) entry.profileId = App.workProfiles.activeId(); } catch (e) {}
+      /* v355 (SPLIT-SHIFT): a split day books as ONE run record —
+         the split flag Revenue prices by, the two blocks, and
+         the day's named route stops (names in the order driven,
+         skips flagged; a stop's coordinates NEVER reach the
+         record — js/splitshift.js dayStops carries none). */
+      if (App.tracker.splitDay) {
+        entry.split = true;
+        try {
+          var spB355 = (window.SplitShift && SplitShift.dayBlocks) ? SplitShift.dayBlocks() : null;
+          if (spB355 && spB355.length) entry.splitBlocks = spB355;
+          var spS355 = (window.SplitShift && SplitShift.dayStops) ? SplitShift.dayStops() : null;
+          if (spS355 && spS355.length) entry.splitStops = spS355;
+        } catch (e) {}
+      }
       // v39: carry the by-mile starting-odometer reading (captured at
       // shift start, pending on the tracker) onto the day's session.
       var pendingStart = takePendingStartOdo(todayStr(new Date(trackerSessionStartMs())));
@@ -3270,6 +3316,41 @@
     try { maybePromptOdo('end'); } catch (e) {}
   }
   App.trackerStop = function () { stopSessionAt(Date.now()); };
+  /* v355 (SPLIT-SHIFT): the split engine's hands on the tracker.
+     js/splitshift.js decides WHEN (the midday dwell inside the
+     window, the afternoon departure, the evening yard return);
+     these own the tracker mechanics — the same elapsed/startTs
+     bookkeeping trackerToggle's pause/resume branches run, at
+     the engine's own timestamps, so the booked seconds are the
+     two blocks and never the gap. A close goes through
+     stopSessionAt, so a split day books exactly like any other
+     close — one session record, Revenue's onSession and all. */
+  App.splitAutoPause = function (atMs) {
+    var t = App.tracker;
+    if (!t || t.status !== 'running') return false;
+    var at = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
+    t.elapsed = Math.max(0, t.elapsed + Math.max(0, Math.floor((at - t.startTs) / 1000)));
+    t.status = 'paused';
+    App._lastStateAt = Date.now(); // v52: own-change stamp
+    trackerSave(); trackerPaint();
+    try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
+    return true;
+  };
+  App.splitAutoResume = function (atMs) {
+    var t = App.tracker;
+    if (!t || t.status !== 'paused') return false;
+    t.status = 'running';
+    t.startTs = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
+    App._lastStateAt = Date.now();
+    trackerSave(); trackerPaint();
+    try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
+    return true;
+  };
+  App.splitAutoClose = function (atMs) {
+    if (!sessionActive()) return false;
+    stopSessionAt((typeof atMs === 'number' && atMs > 0) ? atMs : Date.now());
+    return true;
+  };
   /* v82: a USER-initiated completion of the active dispatch closes
      the shift with it (owner, Oct 15: "Closed dispatch was suppose
      to close my shift!"). Dispatch calls this ONLY from its two
@@ -4528,12 +4609,13 @@
       /* v242 (WORK-PROFILES): an auto-started session belongs to
          the profile active at its start, like a manual one. */
       try { App.tracker.profileId = App.workProfiles.activeId(); } catch (e) {}
+      pinSplitDay(App.tracker); // v355: the day shape pins too
       trackerSave();
       autoStartNotify('Tracker auto-started at ' + label +
         (plan.source === 'dispatch' ? ' (from your dispatch)' : plan.source === 'override' ? ' (changed for today)' : ''));
       // v40: an auto-started shift tracks live miles like any other.
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
-      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs()); } catch (e) {}
+      try { dayEngineStart('s' + trackerSessionKeyMs()); } catch (e) {}
       // v63: native background tracking rides an auto-started shift too
       try { if (window.ShiftTrack) ShiftTrack.sessionStarted('s' + trackerSessionKeyMs()); } catch (e) {}
       // v39: auto-start is a shift start too — same by-mile odometer
@@ -4827,6 +4909,44 @@
   }
 
   /* ---------------- onboarding ---------------- */
+  /* ONB-KIND-BEGIN — the driver-kind law (v355: SPLIT-SHIFT +
+     addenda 1/3/4, owner Nov 6, 2026 05:37–05:40): onboarding
+     asks ONE question — "What kind of driver are you?" — and
+     stores TWO facts: onboarding.driverKind (dump / school-bus /
+     community-bus / longhaul / log) and the work pattern the day
+     engines read (onboarding.workPattern: 'split' / 'standard').
+     driverKindPattern is the default each kind carries: School
+     bus -> 'split' (the two-block bus day, js/splitshift.js);
+     Dump truck, Long haul and Log driver -> 'standard';
+     Community bus -> null (leave the pattern as it stands — its
+     self-pause comes from the pattern preference itself,
+     Preferences -> Pay -> Work pattern, whenever that driver's
+     day has a midday gap). Long haul and Log driver day shapes
+     are NOT specced — the kinds are stored from day one and run
+     standard until the owner designs them (PARKED, Nov 6).
+     An unanswered record behaves as Dump truck everywhere
+     (driverKindOf). Harness-extractable: pure JS only. */
+  var DRIVER_KINDS = ['dump', 'school-bus', 'community-bus', 'longhaul', 'log'];
+  var DRIVER_KIND_LABELS = {
+    dump: 'Dump truck', 'school-bus': 'School bus driver',
+    'community-bus': 'Community bus driver', longhaul: 'Long haul',
+    log: 'Log driver'
+  };
+  function driverKindOf(o) {
+    o = o || {};
+    if (DRIVER_KINDS.indexOf(o.driverKind) >= 0) return o.driverKind;
+    return o.workPattern === 'split' ? 'school-bus' : 'dump';
+  }
+  function driverKindPattern(kind) {
+    if (kind === 'school-bus') return 'split';
+    if (kind === 'community-bus') return null;
+    return 'standard';
+  }
+  /* ONB-KIND-END */
+  App.driverKindOf = driverKindOf;
+  App.driverKindPattern = driverKindPattern;
+  App.driverKindLabels = DRIVER_KIND_LABELS;
+
   var ONB_STEPS = [
     /* v147 (owner, Oct 17 21:31 MDT): the FIRST question is the
        person's own name — "why are we not asking first and last
@@ -4845,6 +4965,21 @@
        road or the office, and decides whose pay travel time belongs to. */
     { key: 'userRole', title: 'Do you drive a truck yourself?', hint: 'Drivers get the tracker and road tools up front; office-only users get dispatches, invoices and paperwork — no tracker in the way. This also decides whether travel time is your income or a wage you pay a driver.',
       type: 'opts', opts: [['driver', '🚛', 'Yes — I drive'], ['both', '🚛🧾', 'I drive and do office work'], ['office', '🧾', 'No — office only']] },
+    /* v355 (SPLIT-SHIFT-BUS-DRIVER-MARKET + addenda 1/3/4,
+       owner Nov 6, 2026): the driver-kind question — onboarding
+       is the front door for onboarding.driverKind AND the
+       work-pattern preference (onboarding.workPattern) the
+       split-shift engine reads (js/splitshift.js); the pattern
+       each kind carries by default is driverKindPattern's law
+       (ONB-KIND region above). The step def carries NO
+       pre-selection: optGrid marks an option only when the
+       record holds the value, an unanswered record behaves as
+       Dump truck everywhere, and both facts stay changeable in
+       Preferences -> Pay — onboarding is the front door, not a
+       lock. Office-only users never see it (ONB_OFFICE_SKIP):
+       they do not drive any kind of day. */
+    { key: 'driverKind', title: 'What kind of driver are you?', hint: 'A dump truck day runs as one shift. A school bus day runs in two blocks — a morning run and an afternoon run with a midday gap — and the app pauses itself in the middle, keeps run records instead of haul tickets, and takes one pre-trip a day. A community bus day is route work — its two blocks come from the Work pattern setting in Preferences. Long haul and log driver days run as one shift. You can change this later in Preferences.',
+      type: 'opts', opts: [['dump', '🚛', 'Dump truck'], ['school-bus', '🚌', 'School bus driver'], ['community-bus', '🚌', 'Community bus driver'], ['longhaul', '🛣️', 'Long haul'], ['log', '🪵', 'Log driver']] },
     { key: 'employment', title: 'How are you paid?', hint: 'Contract or payroll — used for invoices and pay stubs.',
       type: 'opts', opts: [['Contract', '📝', 'Contract'], ['Payroll', '💼', 'Payroll']] },
     { key: 'pay', title: 'Payment standard', hint: 'How your pay is calculated, and your rate.',
@@ -4868,7 +5003,7 @@
        an office-only user never sees them.
      Navigation walks VISIBLE steps only; App.onbStep stays a raw
      ONB_STEPS index and every mover snaps through hidden steps. */
-  var ONB_OFFICE_SKIP = ['base', 'truck', 'odometer', 'safety'];
+  var ONB_OFFICE_SKIP = ['base', 'truck', 'odometer', 'safety', 'driverKind'];
   var _onbRoleNudge = false; // set when a mover is blocked at the role question
   function onbRoleStepIndex() {
     for (var i = 0; i < ONB_STEPS.length; i++) { if (ONB_STEPS[i].key === 'userRole') return i; }
@@ -5009,7 +5144,14 @@
         '<p class="note">Sets the tax rate on your invoices — the app will not guess your location.</p>';
     } else if (st.type === 'truck') {
       h += '<label class="f">Truck number</label><input id="ob_tnum" value="' + esc(o.truckNo || '') + '" placeholder="e.g. 007">' +
-        '<label class="f">Load / trailer type</label><input id="ob_ttype" value="' + esc(o.truckType || '') + '" placeholder="e.g. Tandem dump">';
+        '<label class="f">Load / trailer type</label><input id="ob_ttype" value="' + esc(o.truckType || '') + '" placeholder="e.g. Tandem dump">' +
+        /* v355 (addendum 7): every vehicle is different — the VIN
+           is asked once, here at vehicle setup. In Preferences
+           the driver can photograph it instead, the app decodes
+           it (make / model / year / body) and the vehicle's
+           dimensions are confirmed once and saved with it. */
+        '<label class="f">VIN (optional)</label><input id="ob_vin" value="' + esc(o.vin || '') + '" placeholder="17 characters — on the dash plate or door sticker" maxlength="17" style="text-transform:uppercase">' +
+        '<p class="note">Every vehicle is different: the VIN tells the app which vehicle this is, and its size is saved with it in Preferences.</p>';
     } else if (st.type === 'odometer') {
       h += '<div style="display:flex;gap:10px;margin:10px 0;">' +
         '<button type="button" class="btn secondary" id="ob_odo_cam" style="flex:1;">📷 Take photo</button>' +
@@ -5043,7 +5185,10 @@
         '<div class="kv"><span>Truck</span><b>' + esc(o.truckNo || '—') + '</b></div>' +
         '<div class="kv"><span>Odometer</span><b>' + esc(o.odometerBaseline ? Number(o.odometerBaseline).toLocaleString('en-CA') + ' km' : '—') + '</b></div>' +
         '<div class="kv"><span>Safety expiry</span><b>' + esc(o.safetyExpiry || '—') + '</b></div>' +
-        '<div class="kv"><span>You drive</span><b>' + esc({ driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' }[resolveUserRole(o)] || '—') + '</b></div></div>';
+        '<div class="kv"><span>You drive</span><b>' + esc({ driver: 'Yes — I drive', both: 'I drive and do office work', office: 'No — office only' }[resolveUserRole(o)] || '—') + '</b></div>' +
+        /* v355: the driver-kind answer reviews with the rest —
+           unanswered reads as the Dump truck default it behaves as. */
+        '<div class="kv"><span>Driver kind</span><b>' + esc(DRIVER_KIND_LABELS[driverKindOf(o)] || 'Dump truck') + '</b></div></div>';
     }
     h += '</div>';
     el('onbSteps').innerHTML = h;
@@ -5053,6 +5198,11 @@
         if (st.key === 'pay') o.payStandard = v; else o[st.key] = v;
         if (st.key === 'userRole') { _onbRoleNudge = false; o.roleStamped = 'answer'; } // answered — the gate is satisfied (v177 D7: mark the genuine pick)
         if (st.key === 'accountType') _onbTypeNudge = false; // v147: same
+        /* v355: the kind carries its default pattern with it
+           (driverKindPattern, ONB-KIND region) — School bus
+           turns the split engine on; Community bus leaves the
+           pattern preference to speak for itself. */
+        if (st.key === 'driverKind') { var kp355 = driverKindPattern(v); if (kp355) o.workPattern = kp355; }
         store.set('onboarding', o);
         renderOnbStep();
       };
@@ -6206,6 +6356,7 @@
     if (g('ob_prov')) o.province = g('ob_prov');
     if (g('ob_tnum')) o.truckNo = g('ob_tnum');
     if (g('ob_ttype')) o.truckType = g('ob_ttype');
+    if (el('ob_vin')) o.vin = g('ob_vin').toUpperCase(); // v355 (addendum 7): the vehicle's identity, stored from setup
     if (g('ob_odo')) o.odometerBaseline = g('ob_odo');
     if (g('ob_safety')) o.safetyExpiry = g('ob_safety');
     store.set('onboarding', o);
@@ -6557,7 +6708,7 @@
     // count the unobserved join segment.
     if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
       try { if (window.LiveMiles) LiveMiles.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
-      try { if (window.GeoLoads) GeoLoads.startDay('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
+      try { dayEngineStart('s' + trackerSessionKeyMs(), { resume: true }); } catch (e) {}
       /* v222 (BUBBLE-NO-SHOW): a session that survived a relaunch
          raises the native session PiP arm from the web side — the
          shell's own arm is a start() side effect that a restored

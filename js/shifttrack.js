@@ -271,6 +271,10 @@
         if (trackerActive()) {
           try { if (window.LiveMiles) moved = !!LiveMiles.mergeNativeCrumbs(fresh) || moved; } catch (e) {}
           try { if (window.GeoLoads) GeoLoads.ingestNativeCrumbs(fresh); } catch (e) {}
+          /* v355 (SPLIT-SHIFT): the split day's crumbs fold through
+             the split engine the same way — it acts only while a
+             split day is watching, so standard days never notice. */
+          try { if (window.SplitShift) SplitShift.ingestNativeCrumbs(fresh); } catch (e) {}
           try { if (window.ParkPlace) ParkPlace.ingestCrumbs(fresh); } catch (e) {}
           try { if (window.YardStart) YardStart.ingestCrumbs(fresh); } catch (e) {}
         } else {

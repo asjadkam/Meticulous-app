@@ -140,6 +140,19 @@
      defaults to Pre-trip, and rides the filed report. */
   function kindOf(r) { return (r && r.kind === 'post') ? 'post' : 'pre'; }
   function kindLabel(r) { return kindOf(r) === 'post' ? 'Post-trip' : 'Pre-trip'; }
+  /* PTI-SPLIT-BEGIN — v355 (SPLIT-SHIFT): the kinds a day
+     offers. A split-shift day takes ONE pre-trip in the morning
+     and NO post-trip (owner, Nov 6, 2026) — the next morning's
+     pre-trip odometer closes the bus day instead
+     (js/splitshift.js onPreTripFiled, called at filing below).
+     Every other day offers both, exactly as before. Pure: the
+     pattern goes in, the offered kinds come out. */
+  function ptiKindsFor(pattern) { return pattern === 'split' ? ['pre'] : ['pre', 'post']; }
+  /* PTI-SPLIT-END */
+  function ptiSplitMode() {
+    try { return ptiKindsFor((App._store.get('onboarding', {}) || {}).workPattern).length === 1; }
+    catch (e) { return false; }
+  }
   /* v165: a report is SIGNED when the driver attested it. Filing
      through Sign & file signs by construction (the attestation
      tap IS the signature); reports that predate the field (or
@@ -722,9 +735,16 @@
       /* v242 (WORK-PROFILES): the inspection names the profile it
          files under — company + truck, unmissable before filing. */
       (wpActiveLabel() ? '<div class="kv" style="margin-bottom:8px"><span>Working for</span><b>' + esc(wpActiveLabel()) + '</b></div>' : '') +
-      '<div style="display:flex;gap:8px;margin-bottom:10px">' +
-      '<button type="button" class="btn ' + (kindOf(d) !== 'post' ? 'primary' : 'ghost') + '" data-pti-kind="pre" style="flex:1">🌅 Pre-trip</button>' +
-      '<button type="button" class="btn ' + (kindOf(d) === 'post' ? 'primary' : 'ghost') + '" data-pti-kind="post" style="flex:1">🌇 Post-trip</button></div>' +
+      /* v355 (SPLIT-SHIFT): a split day offers the pre-trip ONLY
+         (ptiKindsFor) — one in the morning, no post-trip; the
+         note says why, in the driver's words. */
+      (ptiSplitMode()
+        ? '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+          '<button type="button" class="btn primary" data-pti-kind="pre" style="flex:1">🌅 Pre-trip</button></div>' +
+          '<p class="note" style="margin:-4px 0 10px">Split-shift day: one pre-trip in the morning — no post-trip. Tomorrow morning’s pre-trip odometer closes today.</p>'
+        : '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+          '<button type="button" class="btn ' + (kindOf(d) !== 'post' ? 'primary' : 'ghost') + '" data-pti-kind="pre" style="flex:1">🌅 Pre-trip</button>' +
+          '<button type="button" class="btn ' + (kindOf(d) === 'post' ? 'primary' : 'ghost') + '" data-pti-kind="post" style="flex:1">🌇 Post-trip</button></div>') +
       '<label class="f">Carrier</label><input id="pti_carrier" value="' + esc(dVal(d, prof, 'carrier')) + '">' +
       '<label class="f">Carrier address</label><input id="pti_caddr" value="' + esc(dVal(d, prof, 'carrierAddr')) + '">' +
       '<div class="row"><div><label class="f">Truck unit #</label><input id="pti_unit" value="' + esc(dVal(d, prof, 'unit')) + '"></div>' +
@@ -957,10 +977,13 @@
       if (r) { view = { mode: 'report', id: r.id }; Meticulous.modules.pti.render(body); }
     };
 
-    /* v165: Pre-trip / Post-trip choice (default Pre-trip) */
+    /* v165: Pre-trip / Post-trip choice (default Pre-trip).
+       v355: in split mode the post-trip button never renders —
+       and a draft that somehow carries 'post' still files as a
+       pre-trip, the only kind a split day offers. */
     body.querySelectorAll('[data-pti-kind]').forEach(function (b) {
       b.onclick = function () {
-        var dd = draft(); dd.kind = b.getAttribute('data-pti-kind') === 'post' ? 'post' : 'pre'; saveDraft(dd);
+        var dd = draft(); dd.kind = (!ptiSplitMode() && b.getAttribute('data-pti-kind') === 'post') ? 'post' : 'pre'; saveDraft(dd);
         Meticulous.modules.pti.render(body);
       };
     });
@@ -1121,6 +1144,12 @@
       return;
     }
     try { if (window.FB && FB.saveDoc) { var c = Object.assign({}, rep); FB.saveDoc('pti', rep.id, c); } } catch (e) {}
+    /* v355 (SPLIT-SHIFT): a filed PRE-trip closes yesterday's
+       split day with its odometer (the bus sat parked overnight
+       — js/splitshift.js onPreTripFiled). A post-trip never
+       does, and standard days are untouched (the engine answers
+       only for an unclosed split session). */
+    try { if (window.SplitShift && SplitShift.onPreTripFiled) SplitShift.onPreTripFiled(rep); } catch (e) {}
     /* v274 (PTI-SIGNATURE-NOT-SAVED): the signature that just
        filed becomes the saved signature — drawn once, it is
        offered on every later form; a redrawn signature replaces
