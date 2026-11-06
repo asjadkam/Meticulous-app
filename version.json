@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 340,
-  "notes": "Audit: every module that keeps records \u2014 Fuel, PTI, Revenue, Damage & Incidents, Documents, Invoices and Manifest \u2014 now opens with an Audit button. One tap shows the complete history in date order: every receipt, every inspection, every entry, ready for tax season or a DOT safety audit.",
+  "webVersion": 341,
+  "notes": "Inspection Mode: the day buttons in the officer's inspection view now read Previous and Next.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "9f2dc31b20079115b95196b5bd1cbb3c5f3c24a5e6e4c7be49fd2a200c48f4b4",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "19b64615c498bfb577490fba9079af38a586c28b70248a378587b7eb8cac4f65",
+    "index.html": "4e584be62581d8cd4540cb805fb40c9aeec61579e3f5f0adf3af71fcebe50393",
     "js/app.js": "7bb298f663a853a8eb27046a7a78a8200a47b44180c85bc1b18c91f90d378b8a",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -52,7 +52,7 @@
     "modules/navigator.js": "0d88b35151831b93a60c9c33ee777b9a3305c40e25c0f8b7b5ae3cbbc86556d6",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "b229b4798d23beca3da49c0f0f33317a78580243276ae16991f78be59de1f8da",
-    "modules/pti.js": "0f0d01279306332b980380fe4f7ce0c199ce56536a7e6defb3bb421efcdce84a",
+    "modules/pti.js": "c525d95843f0b2e0192bfb48dea6529c2cf03dc98a22af9922f6b7a2ee41726a",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
     "modules/revenue.js": "0c3d99d751944d879d5fee18468df5f736df7a1d33b41912fd2740eab5cdc561",
     "modules/subscription.js": "694b586116f2c9dcee3507042ce329493be928046132fef86d03b614f9990719",

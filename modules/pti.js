@@ -494,8 +494,8 @@
           '<div class="b">' + esc(dotSummaryText(r).split(' · ').slice(1).join(' · ')) + '</div></div>';
       }).join('') : '<div class="empty">No inspection filed this day.</div>') +
       '<div style="display:flex;gap:8px;margin-top:12px">' +
-      '<button type="button" class="btn secondary" id="pti_dot_newer" style="flex:1' + (dotDayIdx === 0 ? ';opacity:.45' : '') + '"' + (dotDayIdx === 0 ? ' disabled' : '') + '>‹ Newer day</button>' +
-      '<button type="button" class="btn secondary" id="pti_dot_older" style="flex:1' + (dotDayIdx === days.length - 1 ? ';opacity:.45' : '') + '"' + (dotDayIdx === days.length - 1 ? ' disabled' : '') + '>Older day ›</button>' +
+      '<button type="button" class="btn secondary" id="pti_dot_newer" style="flex:1' + (dotDayIdx === 0 ? ';opacity:.45' : '') + '"' + (dotDayIdx === 0 ? ' disabled' : '') + '>‹ Previous</button>' +
+      '<button type="button" class="btn secondary" id="pti_dot_older" style="flex:1' + (dotDayIdx === days.length - 1 ? ';opacity:.45' : '') + '"' + (dotDayIdx === days.length - 1 ? ' disabled' : '') + '>Next ›</button>' +
       '</div></div>';
     h += '<div class="card"><button type="button" class="btn primary" id="pti_dot_exit" style="width:100%">Exit Inspection Mode</button>' +
       '<p class="note">Driver: tap Exit when the officer hands the phone back. The rest of the app stays behind this view until then.</p></div>';
