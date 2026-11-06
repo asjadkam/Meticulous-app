@@ -176,9 +176,9 @@ function loadPdf() {
     cssSrc.indexOf('.mn-sumtab{') >= 0 && cssSrc.indexOf('.mn-sumtab .r{text-align:right') >= 0);
 
   /* — pins — */
-  eq('webVersion is 344', ver.webVersion, 344);
-  ok('index.html pins manifest.js?v=344 + style.css?v=344 + pdfexport.js?v=344',
-    idxSrc.indexOf('modules/manifest.js?v=344') >= 0 && idxSrc.indexOf('css/style.css?v=344') >= 0 &&
+  eq('webVersion is 345', ver.webVersion, 345);
+  ok('index.html pins manifest.js?v=345 (style.css + pdfexport keep their v344 change gen)',
+    idxSrc.indexOf('modules/manifest.js?v=345') >= 0 && idxSrc.indexOf('css/style.css?v=344') >= 0 &&
     idxSrc.indexOf('js/pdfexport.js?v=344') >= 0);
 
   console.log('\nmanifest-columns-v344: ' + pass + ' passed, ' + fail + ' failed');

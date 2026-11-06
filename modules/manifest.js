@@ -1180,7 +1180,7 @@
     if (!ptiPost) missing.push('post-trip PTI');
     if (!gpsTrail) missing.push('GPS trail');
     var complete = missing.length === 0;
-    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, haulLines: haulLines, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
+    return { dispatches: dispatches, navLog: navLog, routeStops: routeStops, haulLines: haulLines, routeInfo: routeInfo, fills: fills, expenses: expenses, incidents: incidents, sessions: sessions, revEntries: revEntries, earned: earned, startT: startT, endT: endT, startSrc: startSrc, endSrc: endSrc, odoStart: odoStart, odoEnd: odoEnd, odoStartPhoto: odoStartPhoto, odoEndPhoto: odoEndPhoto, liveKm: liveKm, liveKmAny: liveKmAny, milesIssues: milesIssues, geoDay: geoDay, pegPlaces: pegPlaces, live: live, loads: loads, loadsSrc: loadsSrc, loadsSite: loadsSite, dayNote: dayNote, dayEdit: dayEdit, pti: pti, gpsTrail: gpsTrail, complete: complete, missing: missing };
   }
 
   /* v247: one filed PTI report as the manifest prints it —
@@ -1246,28 +1246,41 @@
      (sumCollected) under both faces: the screen preview sums the
      collects it already made for the day blocks; the printed
      document sums through rangeTotals. Same math, so the screen
-     and the PDF can never disagree. Hours = the day's session
-     span: closed-session seconds plus the live hours figure —
-     the same facts the day blocks show. Miles keep the v184
+     and the PDF can never disagree. Hours = the day's REVENUE
+     hours (v345 — see daySummaryOf; the v211 session-span basis
+     was the wrong source and is retired). Miles keep the v184
      basis (live km, days that have it). */
   /* v331 (MULTI-DAY-MANIFEST-SUMMARY, owner Nov 5, 2026 ~12:39):
      ONE day as its summary — the only four facts a multi-day
      manifest may carry per day: total km, total hours, loads,
      fuel filled (litres). No odometer readings, no start/end
      times, no GPS marks, no pay — the amendment's exact list.
-     Hours and km keep the v211 basis (session span + live
-     hours; live km on days that have it); fuel is the day's
-     fills' litres summed. sumCollected below reads through
-     this, so the reducer's math lives in exactly one place. */
+     km keeps the v211 basis (live km on days that have it);
+     fuel is the day's fills' litres summed. sumCollected below
+     reads through this, so the reducer's math lives in exactly
+     one place.
+     v345 (MANIFEST-HOURS-WRONG-SOURCE, owner Nov 5, 2026 22:47 —
+     "There are noooo run away days! My actual hours are in my
+     revenue.. Or my invoices."): the summary's HOURS are the
+     day's REVENUE hours — the sum of the day's revenue entries'
+     recorded hours (foreman ticket hours + travel, the same
+     hours his invoices bill). Tracker-session seconds and live
+     tracker hours NEVER enter this summary: a day with revenue
+     hours but no session shows those hours; a day with sessions
+     but no revenue hours shows 0.0 h here. (The v331–v344
+     session-span basis printed impossible days — 88.9 h on a
+     single October day, 351 h for the month — because it summed
+     the tracker's clock, not his recorded hours.) collect()
+     returns the day's revEntries for exactly this. */
   function daySummaryOf(rc) {
     if (!rc) return { km: 0, hours: 0, loads: 0, fuelL: 0 };
-    var secs = 0;
-    (rc.sessions || []).forEach(function (s) { secs += (s && s.seconds) || 0; });
+    var revH = 0;
+    (rc.revEntries || []).forEach(function (e) { revH += parseFloat(e && e.hours) || 0; });
     var fuelL = 0;
     (rc.fills || []).forEach(function (x) { fuelL += parseFloat(x && x.litres) || 0; });
     return {
       km: rc.liveKmAny ? (rc.liveKm || 0) : 0,
-      hours: secs / 3600 + ((rc.live && rc.live.hours) || 0),
+      hours: revH,
       loads: rc.loads || 0,
       fuelL: fuelL
     };

@@ -15,8 +15,9 @@
  *
  * Pins:
  *  - daySummaryOf: the one per-day summarizer (km on the live
- *    basis, hours = session span + live hours, loads, fuel
- *    litres summed from the day's fills).
+ *    basis, hours = the day's REVENUE entries' recorded hours
+ *    (v345 — tracker-session hours never enter this summary),
+ *    loads, fuel litres summed from the day's fills).
  *  - the range PREVIEW: one compact line per day (label · km ·
  *    hours · loads · fuel), a Period total of hours/fuel/loads
  *    ONLY — no pay, no odometer, no times, no GPS, no range km.
@@ -111,13 +112,15 @@ function makeWorld(extra) {
   /* — the summarizer — */
   const w0 = makeWorld({});
   const sum = w0.api._daySummaryOf;
-  eq('a full day: km · hours · loads · fuel litres',
-    sum({ liveKmAny: true, liveKm: 120.5, sessions: [{ seconds: 36000 }], loads: 3, fills: [{ litres: 50 }, { litres: '25.5' }] }),
+  eq('a full day: km · hours · loads · fuel litres (hours from the day\'s revenue entries, v345)',
+    sum({ liveKmAny: true, liveKm: 120.5, revEntries: [{ hours: 10 }], sessions: [{ seconds: 36000 }], loads: 3, fills: [{ litres: 50 }, { litres: '25.5' }] }),
     { km: 120.5, hours: 10, loads: 3, fuelL: 75.5 });
   eq('no live km that day → 0 km (the v211 basis)',
     sum({ liveKmAny: false, liveKm: 999, sessions: [], loads: 0, fills: [] }).km, 0);
-  eq('a live day adds its live hours on top of closed sessions',
-    sum({ liveKmAny: true, liveKm: 10, sessions: [{ seconds: 3600 }], live: { hours: 0.5 }, loads: 1, fills: [] }).hours, 1.5);
+  eq('tracker hours NEVER enter the summary (v345): session + live hours with no revenue read 0.0 h',
+    sum({ liveKmAny: true, liveKm: 10, sessions: [{ seconds: 36000 }], live: { hours: 0.5 }, loads: 1, fills: [] }).hours, 0);
+  eq('a revenue-only day (no sessions at all) shows its revenue hours (v345)',
+    sum({ revEntries: [{ hours: 9 }, { hours: '1.5' }], sessions: [], loads: 0, fills: [] }).hours, 10.5);
   eq('a null collect reads as an empty day', sum(null), { km: 0, hours: 0, loads: 0, fuelL: 0 });
   const rt = w0.api._rangeTotals(['2026-10-19', '2026-10-20']);
   eq('rangeTotals carries the fuel total too', rt.fuelL, 50);
@@ -202,9 +205,9 @@ function makeWorld(extra) {
     manSrc.indexOf('function daySummaryOf(rc)') >= 0 && manSrc.indexOf('var s = daySummaryOf(rc);') >= 0);
   ok('the range document breaks to its own totals page',
     manSrc.indexOf("{ k: 'pb' }") >= 0 && read('js/pdfexport.js').indexOf("ln.k === 'pb'") >= 0);
-  eq('webVersion is 344', ver.webVersion, 344);
-  ok('index.html pins manifest.js?v=344 (pdfexport unchanged since its own gen)',
-    idxSrc.indexOf('modules/manifest.js?v=344') >= 0);
+  eq('webVersion is 345', ver.webVersion, 345);
+  ok('index.html pins manifest.js?v=345 (pdfexport unchanged since its own gen)',
+    idxSrc.indexOf('modules/manifest.js?v=345') >= 0);
 
   console.log('\nmanifest-multiday-summary-v331 test: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

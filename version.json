@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 344,
-  "notes": "The multi-day manifest is a proper table now: date, km, hours, loads and fuel each in its own straight column under plain headings — on screen and in the PDF.",
+  "webVersion": 345,
+  "notes": "Multi-day manifest hours now come from your Revenue hours — the foreman ticket hours plus travel that your invoices bill — not from the tracker clock. Tracker hours stay your personal record only.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "39ce49440dc75556fc1b8234fe39d8216b93b5091b3894cf090da8d40e816580",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "e847beab5a47a63b194df295689e56ea9d569fafadfa3b79f530e0ca9681e075",
+    "index.html": "df56040ac79a9a3f884e7b97f85e49c3538a2823f6ac0afabc29e4ac17336973",
     "js/app.js": "35f9309f48a337dea55574331c6fb7853cc8f1bf8a5416d13ab0e1f6ad5d1889",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -47,7 +47,7 @@
     "modules/fuel.js": "7fbeadfc76bd068f2f9d241997d3f37bd7965e4cda97d0dd0c84a2d7f42ca750",
     "modules/invoice.js": "909eaa90c5adacc52a8495af2515853ca4a76e645855c5f150e35716a6a03b84",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
-    "modules/manifest.js": "fad3923531faac69a3887ceb95dde07509150fe82380c730a21b86ca6ceb8926",
+    "modules/manifest.js": "b98b5a7609a66f959f835719e208227ab8627bfc963b0c92ca3195b5b36500e9",
     "modules/navigation.js": "6f049a62b46ffbf8d2777f2ce10b2043c29bfb76a54d8b46badf819435fe4b8e",
     "modules/navigator.js": "0a32dc57556344d0a96dfdc6e33c28cbf9d6dbf6ee98272ebbf9955efad472b9",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
