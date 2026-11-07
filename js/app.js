@@ -7039,6 +7039,10 @@
             try { App.collectWidgetAction(); } catch (e9) {}
             try { App.collectPipAction(); } catch (e10) {}
             try { App.collectSessionRecord(); } catch (e11) {}
+            /* v362 (TAP-A-MAPS-LINK): a Maps link tapped outside
+               the app may have landed while we floated — drain it
+               on the same arrival posture as every other stash. */
+            try { if (window.DeepLink) DeepLink.drain(); } catch (e12) {}
           }
         });
       }
@@ -7109,6 +7113,9 @@
       try { App.trackerStop(); } catch (e) {}
     });
     App.collectWidgetAction();
+    /* v362 (TAP-A-MAPS-LINK): a cold start may BE a Maps-link tap —
+       drain the deep-link inbox beside the widget collect. */
+    try { if (window.DeepLink) DeepLink.drain(); } catch (e) {}
 
     // v26: save tracker state when app goes to background (Android WebView may be killed)
     document.addEventListener('visibilitychange', function () {
@@ -7137,6 +7144,9 @@
            full reload that might never come. */
         try { App.collectPipAction(); } catch (e7) {}
         try { App.collectSessionRecord(); } catch (e8) {}
+        /* v362 (TAP-A-MAPS-LINK): a warm Maps-link tap that arrived
+           while the app sat in another app is drained on return. */
+        try { if (window.DeepLink) DeepLink.drain(); } catch (e13) {}
         try { App.checkAutoStart(); } catch (e2) {}
         // v92: a dispatch saved or changed while we were away may
         // have moved the next day's plan — re-arm the native side.

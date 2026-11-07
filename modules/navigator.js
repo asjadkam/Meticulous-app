@@ -3663,6 +3663,24 @@
         }
       } catch (e) {}
 
+      /* v362 (TAP-A-MAPS-LINK): a Maps link tapped OUTSIDE the app
+         whose pin the deep-link drain (js/deeplink.js) could not
+         read or resolve arrives here preserved — never with an
+         invented pin. The link waits in this door's own box under
+         a plain note, and Open pin runs the door's own tries on
+         it. Consumed once, then cleared. */
+      try {
+        var ml = (window.App && App._store) ? App._store.get('maplink_link', null) : null;
+        if (ml && ml.url) {
+          App._store.del('maplink_link');
+          var mlInp = body.querySelector('#nv_link');
+          var mlNt = body.querySelector('#nv_link_note');
+          if (mlInp) mlInp.value = String(ml.url);
+          if (mlNt) mlNt.innerHTML = '<p class="note" style="margin-top:6px">' +
+            esc('This link was tapped outside the app and I could not read a pin from it. It is kept here — tap Open pin and I will try again, or open it once in Maps and paste the full link instead — the full link carries the pin.') + '</p>';
+        }
+      } catch (e) {}
+
       /* ---------- GPS follow ---------- */
       /* v101: heading rides the SAME single watch — drive mode
          consumes this stream and nothing else. GPS heading is null
