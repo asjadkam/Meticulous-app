@@ -1,8 +1,8 @@
 {
   "version": 53,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v53.apk",
-  "webVersion": 362,
-  "notes": "Tap a Maps link, open OUR Navigator (web 362 + native v72, on web 361): tapping a Google Maps pin link anywhere on the phone — a dispatcher's text, WhatsApp, any app — now offers Meticulous in Android's chooser (straight here once he picks Always), and the pin lands in our Navigator through the same hand-off a dispatch pin uses (visit recorded, nav_pending). The shell registers the Maps link patterns + geo: in the manifest (native v72); the web half (js/deeplink.js) takes the tapped URL from the Capacitor App plugin exactly once per tap (launch read once + appUrlOpen, seen-marker dedupe), holds it in the store across the tap-to-settle gap and any sign-out, and runs it through PinLinks into Navigation.navigateToPin. A link with no readable pin is followed (direct, then the /ai/resolve door); one that still yields nothing opens the Navigator with the link preserved in its sent-pin box under a plain note — never an invented pin. Google Maps stays installed and untouched for everything else.",
+  "webVersion": 363,
+  "notes": "Tap a Maps link, open OUR Navigator (web 362 + native v72, on web 361): tapping a Google Maps pin link anywhere on the phone \u2014 a dispatcher's text, WhatsApp, any app \u2014 now offers Meticulous in Android's chooser (straight here once he picks Always), and the pin lands in our Navigator through the same hand-off a dispatch pin uses (visit recorded, nav_pending). The shell registers the Maps link patterns + geo: in the manifest (native v72); the web half (js/deeplink.js) takes the tapped URL from the Capacitor App plugin exactly once per tap (launch read once + appUrlOpen, seen-marker dedupe), holds it in the store across the tap-to-settle gap and any sign-out, and runs it through PinLinks into Navigation.navigateToPin. A link with no readable pin is followed (direct, then the /ai/resolve door); one that still yields nothing opens the Navigator with the link preserved in its sent-pin box under a plain note \u2014 never an invented pin. Google Maps stays installed and untouched for everything else.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,8 +17,8 @@
     "css/style.css": "8dfa23dd3229f76c097394c8911a0834c72e92d83071743225c188ba27ae266b",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "635e3d0ae4cc362e1022e2179f5f2a71f29c395b28b52826e9366bff8dbfe2a9",
-    "js/app.js": "a3897b6e810a71a980f67a5892c29e19397b1e54b02fc307ffdaebeb6f48b30d",
+    "index.html": "3329f8e1e111eecef4bc49f4d4e3c6b0887dcc909198a342aa6a217ae02e1482",
+    "js/app.js": "7152e51096d14e20ee265248f361f5640e6f57294f93215384e8dd9b66a46582",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "80d43649e054f67dd56e9cfb6d1cbf077505b28c6c16eac47148ac9ce62d339f",
