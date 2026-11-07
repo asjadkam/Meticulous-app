@@ -54,7 +54,7 @@ const regionCode = regionA + '\n' + regionB + '\n' + regionC;
    semantics copied from the v314 rig (which mirrors the Java). */
 function makeBridge() {
   const rec = { status: 'idle', elapsedBase: 0, segStartMs: 0, loads: 0, loadsManual: 0,
-    loadsArmed: false, loadsCorr: 0, rev: 0, updatedAt: 0, src: '', sessionKey: '' };
+    loadsArmed: false, loadsCorr: 0, rev: 0, updatedAt: 0, src: '', sessionKey: '', stateAt: 0 };
   function elapsedSec(now) {
     let s = rec.elapsedBase;
     if (rec.status === 'running' && rec.segStartMs > 0) s += Math.max(0, Math.floor((now - rec.segStartMs) / 1000));
@@ -64,7 +64,7 @@ function makeBridge() {
     return { status: rec.status, elapsedBase: rec.elapsedBase, segStartMs: rec.segStartMs,
       elapsedSec: elapsedSec(fakeNow), loads: rec.loads, loadsManual: rec.loadsManual,
       loadsArmed: rec.loadsArmed, loadsCorr: rec.loadsCorr, rev: rec.rev,
-      updatedAt: rec.updatedAt, src: rec.src, sessionKey: rec.sessionKey };
+      updatedAt: rec.updatedAt, src: rec.src, sessionKey: rec.sessionKey, stateAt: rec.stateAt };
   }
   return {
     rec: rec, snap: snap,
@@ -90,6 +90,13 @@ function makeBridge() {
       if (rec.status !== 'running') return;
       rec.elapsedBase = elapsedSec(fakeNow);
       rec.status = 'paused'; rec.segStartMs = 0; rec.rev += 1; rec.updatedAt = fakeNow; rec.src = 'native';
+      /* v365 mirror-fidelity: the real nativeToggle (v73,
+         SessionRecord.java) also stamps the transition —
+         `n.stateAt = now` — and js/app.js v365's adoption gate
+         reads exactly that stamp (with src 'native') as the
+         proof of a deliberate face tap. This mirror predates
+         the stamp; T3's adoption depends on it. */
+      rec.stateAt = fakeNow;
     }
   };
 }

@@ -2714,6 +2714,36 @@
             if (sa361SidL > 0 && sa361SidC > 0 &&
                 Math.abs(sa361SidL - sa361SidC) <= 5000 &&
                 sa361L > 0 && sa361C > 0 && sa361L !== sa361C) {
+              /* v365 (TIMER-STOPPED-BY-ITSELF, owner Nov 7,
+                 2026 10:49 — stated twice, plainly: "No, I
+                 never press stop or pause. It stop by
+                 itself."): a cloud copy may NEVER pause or
+                 stop a locally RUNNING session, whatever its
+                 stateAt claims. The stamp is not proof of a
+                 tap: the record-adoption path (js/app.js
+                 adoptSessionRecord) stamped ADOPTED states
+                 into t.stateAt, so a pause manufactured by an
+                 echo (a second client's copy landing in the
+                 phone's native record with the echo's young
+                 clock — the web 363 trace) could mint itself a
+                 "deliberate" stamp and then win HERE on stamp
+                 order alone. js/app.js v365 closes the mint;
+                 this rule closes the road for every copy
+                 already minted: when the local copy is
+                 RUNNING and the cloud's is not, the local
+                 stands — tombstone idiom, the flush pushes
+                 the running truth UP. Every other direction
+                 arbitrates by stateAt exactly as v361 wrote it
+                 (a later deliberate RESUME still installs over
+                 a local pause; a later deliberate CLOSE still
+                 installs over a local pause — neither touches a
+                 running local). */
+              var sa365LocalRunning = sa361Local.status === 'running';
+              var sa365CloudRunning = d.v.status === 'running';
+              if (sa365LocalRunning && !sa365CloudRunning) {
+                meta.keys[key] = { t: now, s: cloudTs };
+                return;
+              }
               if (sa361C > sa361L) {
                 lsSetRaw(key, JSON.stringify(d.v));
                 meta.keys[key] = { t: cloudTs, s: cloudTs };

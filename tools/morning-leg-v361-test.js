@@ -155,9 +155,23 @@ const CLEANMETA = { uid: 'u1', globallySynced: true, keys: { tracker: { t: 4000,
       s1meta.t > 4000 && typeof s1meta.s === 'number',
       JSON.stringify((P.meta() || {}).keys));
   }
-  /* S2: the echo's next pull, after the phone's pause landed —
-     the running client converges onto the pause: same anchor,
-     same state. */
+  /* S2: SUPERSEDED BY v365 (TIMER-STOPPED-BY-ITSELF, owner
+     Nov 7, 2026 10:49: "No, I never press stop or pause. It
+     stop by itself."). This block used to assert that a
+     running client CONVERGES onto a cloud pause whose stamp
+     outranks its own start — the v361 law. The owner's word
+     killed that law for the running direction: the stamp is
+     not proof of a tap (adoption could mint it — js/app.js
+     v365), so a running session NEVER yields to a non-running
+     cloud copy now, genuine-looking stamp or not. The cost is
+     stated plainly: a REAL pause tapped on one client no
+     longer pauses the same session's still-running copy on
+     another client via sync — the pause lives where it was
+     tapped, and the running copy's truth wins the account.
+     That is the owner's invariant: running yields only to the
+     driver's own tap on the device that is running. The full
+     v365 proof lives in tools/timer-stopped-by-itself-v365-
+     test.js (A1–A5); this block now pins the new law. */
   {
     const server = makeServer();
     serverSet(server, 'tracker', PHONE_PAUSED, 6000);
@@ -165,9 +179,9 @@ const CLEANMETA = { uid: 'u1', globallySynced: true, keys: { tracker: { t: 4000,
     B.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle(900);
     const t = B.get('tracker') || {};
-    eq('S2 the second client installs the deliberate pause', t.status, 'paused');
-    eq('S2 both faces now name the same anchor', t.sessionId, SID);
-    eq('S2 both faces carry the same transition stamp', t.stateAt, TPAUSE);
+    eq('S2 (v365) the running client NEVER yields to a cloud pause', t.status, 'running');
+    eq('S2 (v365) the running face keeps its own anchor', t.sessionId, SID_B);
+    eq('S2 (v365) the running face keeps its own transition stamp', t.stateAt, ECHO_RUNNING.stateAt);
   }
   /* S3: a later deliberate RESUME wins the same way, in the
      other direction. */

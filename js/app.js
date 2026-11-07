@@ -1882,6 +1882,24 @@
       loadsManual: (t.accum && t.accum.manualLoads) || 0,
       loadsArmed: loadsArmedNow(),
       milesM: milesM,
+      /* v363 (WIDGET-FROZEN-AGAIN, Nov 7, 2026): the last
+         DELIBERATE transition rides the facts (t.stateAt, stamped
+         only at transition sites — start / pause / resume /
+         stop / edit / adoption). Until v363 the native record —
+         the widget's ONLY source — arbitrated by revision and
+         save stamps alone: the web 361 stateAt law decided WHICH
+         copy of the day won in the cloud merge, but that verdict
+         never crossed the bridge, so the record could be
+         re-anchored onto a second client's younger running echo
+         of the same session (see SessionRecord.syncFromWeb's
+         v73 gate) and the widget painted that echo's young
+         clock, PAUSED, under the day's own loads and miles —
+         Nov 7, in his hands: the face sat at 00:24:47 "Paused"
+         (the 08:05 echo's clock) at 09:54 while its km read
+         57.2. 0 = no deliberate transition known (a pre-v363
+         lifetime); the native gate then falls back to the old
+         arbitration, byte-identical. */
+      stateAt: idle ? 0 : (Number(t.stateAt) || 0),
       sessionKey: idle ? '' : ('s' + trackerSessionKeyMs()),
       baseRev: (typeof App._sessRev === 'number') ? App._sessRev : -1,
       force: !!force
@@ -1963,8 +1981,48 @@
     }
     if (stateNewer && rec.status !== t.status) {
       if (rec.status === 'paused' && t.status === 'running') {
-        t.elapsed = Math.max(0, (rec.elapsedBase || 0));
-        t.startTs = 0; t.status = 'paused'; changed = true;
+        /* v365 (TIMER-STOPPED-BY-ITSELF, owner Nov 7, 2026
+           10:49: "No, I never press stop or pause. It stop by
+           itself."): this branch used to fold a page RUNNING on
+           this device down to the record's PAUSED whenever the
+           record's save stamp (rec.updatedAt) was newer than
+           this page's last transition. But updatedAt is NOT a
+           transition stamp: nativeLoad (every face +/- tap)
+           bumps it, and on pre-v73 records every web sync
+           re-stamped it (stateAt never moved, so n.stateAt =
+           max(cur, 0) applied while updatedAt = now). Nov 7's
+           shape, end to end: the second client's echo landed in
+           the native record PAUSED with the echo's young clock
+           (web 363's own trace: bank 540, pinning ~08:05); the
+           record's updatedAt kept refreshing from day-fact
+           syncs; the phone's page — RUNNING since its 08:16:47
+           auto-start — collected that record on a foreground
+           return and folded ITSELF to the record's paused
+           00:24:47, then stamped the adopted pause
+           t.stateAt = rec.updatedAt (see the changed-block
+           below), MANUFACTURING the "deliberate" stamp web 361
+           later read as his tap. He never tapped anything.
+           The law now: a record may flip this page to PAUSED
+           only on the record's own DELIBERATE-transition stamp
+           — a v73 record whose stateAt is newer than this
+           page's stateAt AND whose last writer was NATIVE (a
+           face toggle; web writes are 'web', the arm's seed
+           'arm'). Everything else is an echo: the record is
+           healed FROM this page's running facts (the
+           ghost-branch idiom) and the session never stops. A
+           record with no provable deliberate pause (pre-v73
+           stateAt 0, or a stateAt this page itself stamped
+           through an earlier adoption of this same shape —
+           equal stamps are this page's own manufacture, never
+           proof of a tap) can never pause a running page. */
+        var recDelib365 = (rec.stateAt || 0) > (t.stateAt || 0) && rec.src === 'native';
+        if (recDelib365) {
+          t.elapsed = Math.max(0, (rec.elapsedBase || 0));
+          t.startTs = 0; t.status = 'paused'; changed = true;
+        } else {
+          try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
+          return;
+        }
       } else if (rec.status === 'running' && t.status === 'paused') {
         t.startTs = rec.segStartMs || now; t.status = 'running'; changed = true;
       } else if (rec.status === 'idle' && t.status !== 'idle') {
