@@ -563,7 +563,7 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 55; // <- bump on every native (APK) release (gen 55, Nov 7 2026)
+      var APK_VERSION = 56; // <- bump on every native (APK) release (gen 56, Nov 7 2026)
       var decide = function (shellGen) {
         fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
           .then(function (r) { return r.json(); })
