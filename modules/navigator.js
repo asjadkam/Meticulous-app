@@ -4623,6 +4623,16 @@
       }
       function onDriveVis() {
         try { if (S && S.drive && !document.hidden) driveWake(true); } catch (e) {}
+        /* Nov 7, 2026 (PIP-DROPS-OUT): every foreground return
+           during a live drive re-asserts the native drive PiP arm.
+           startDrive armed it exactly once; nothing healed a
+           native side that lost it afterwards (process churn, a
+           plugin reload), so PiP silently never came back for the
+           rest of the drive. The arm must track the drive's truth,
+           not the drive's birthday. The native side treats a
+           re-assert as params-only (no bubble-dismissal reset, no
+           feed restart). */
+        try { if (S && S.drive && !document.hidden && window.ShiftTrack) ShiftTrack.setDriving(true); } catch (e) {}
       }
 
       /* ---------- v101 drive screen ---------- */

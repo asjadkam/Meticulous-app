@@ -563,23 +563,44 @@
   (function () {
     try {
       if (!window.Capacitor) return;
-      var APK_VERSION = 52; // <- bump on every native (APK) release
-      fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
-        .then(function (r) { return r.json(); })
-        .then(function (info) {
-          if (info && info.version > APK_VERSION && info.apkUrl) {
-            var bar = document.createElement('div');
-            var link = document.createElement('a');
-            link.href = info.apkUrl;
-            link.textContent = 'Tap to download v' + info.version;
-            link.style.cssText = 'color:#fff;font-weight:bold;text-decoration:underline;';
-            bar.appendChild(document.createTextNode('Update available — '));
-            bar.appendChild(link);
-            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#F26522;color:#fff;text-align:center;padding:12px;z-index:99999;font-size:14px;';
-            document.body.appendChild(bar);
-          }
-        })
-        .catch(function () {});
+      var APK_VERSION = 55; // <- bump on every native (APK) release (gen 55, Nov 7 2026)
+      var decide = function (shellGen) {
+        fetch('https://meticulous-dd570.web.app/version.json', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (info) {
+            if (info && info.version > shellGen && info.apkUrl) {
+              var bar = document.createElement('div');
+              var link = document.createElement('a');
+              link.href = info.apkUrl;
+              link.textContent = 'Tap to download v' + info.version;
+              link.style.cssText = 'color:#fff;font-weight:bold;text-decoration:underline;';
+              bar.appendChild(document.createTextNode('Update available — '));
+              bar.appendChild(link);
+              bar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#F26522;color:#fff;text-align:center;padding:12px;z-index:99999;font-size:14px;';
+              document.body.appendChild(bar);
+            }
+          })
+          .catch(function () {});
+      };
+      /* Nov 7, 2026 (APK_VERSION leftover): the constant above is
+         this WEB bundle's generation, but OTA delivers this same
+         app.js into OLDER shells — a gen-54 phone that OTA'd to
+         web 367 would compare 55 > 55 and never be offered the
+         gen-55 APK, while a fully-updated gen-55 phone is exactly
+         the one that must NOT see the banner. The banner's law is
+         about the RUNNING SHELL's generation, so read it from the
+         platform when offered (versionCode 48 = gen 54, so
+         generation = build + 6, the mapping every release has
+         kept) and fall back to the constant only when the
+         platform stays silent. The comparison stays strictly
+         greater: equal generations never raise the banner. */
+      var CapA = window.Capacitor;
+      if (CapA && CapA.Plugins && CapA.Plugins.App && typeof CapA.Plugins.App.getInfo === 'function') {
+        CapA.Plugins.App.getInfo().then(function (ai) {
+          var b = ai && parseInt(ai.build, 10);
+          decide(isFinite(b) && b > 0 ? b + 6 : APK_VERSION);
+        }).catch(function () { decide(APK_VERSION); });
+      } else decide(APK_VERSION);
     } catch (e) {}
   })();
 
@@ -6871,6 +6892,18 @@
          never recorded (the v61 reinstall harm). */
       try { if (window.ShiftTrack && ShiftTrack.sessionRestored) ShiftTrack.sessionRestored('s' + trackerSessionKeyMs()); } catch (eR) {}
     }
+    /* Nov 7, 2026 (PIP-DROPS-OUT): the drive PiP arm gets its own
+       boot reconcile, with the signs flipped from v222's. A drive
+       lives only inside THIS page — startDrive is its only birth,
+       and a page rebuild is drive death by the navigator's own
+       design — so at boot no drive can be live: any native drive
+       arm still standing (the native side persists it since gen
+       55 and restores it at plugin load, so an arm can outlive
+       the process that owned its page) is stale by definition and
+       is stood down here. startDrive re-arms on the next real
+       drive; the navigator re-asserts on every foreground return
+       while a drive is live. */
+    try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(false); } catch (e) {}
     // v63: reconcile with the native background tracker — it may hold
     // breadcrumbs (or a whole orphaned session) from while we were dead.
     try { if (window.ShiftTrack) ShiftTrack.syncOnBoot(); } catch (e) {}
