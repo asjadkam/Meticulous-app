@@ -447,9 +447,9 @@ function phonePage(bridge, tracker, lastStateAt) {
     /App\.splitAutoPause = function/.test(appSrc));
 
   console.log('— ship pins —');
-  eq('webVersion is 365', ver.webVersion, 365);
+  eq('webVersion is 366 (365 + the deploy-unblock release)', ver.webVersion, 366);
   ok('index.html pins app.js?v=365 and cloudsync.js?v=365',
-    idxSrc.indexOf('js/app.js?v=365') >= 0 && idxSrc.indexOf('js/cloudsync.js?v=365') >= 0);
+    idxSrc.indexOf('js/app.js?v=365') >= 0 && idxSrc.indexOf('js/cloudsync.js?v=365') >= 0 /* the v365 asset tags ride unchanged into 366 */);
   const crypto = require('crypto');
   ok('version.json hashes match the shipped files',
     ver.files['js/app.js'] === crypto.createHash('sha256').update(read('js/app.js')).digest('hex') &&

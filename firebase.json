@@ -24,6 +24,7 @@
       "tools/**",
       ".github/**",
       "*.md",
+      "*.apk",
       "firestore.rules"
     ],
     "public": ".",

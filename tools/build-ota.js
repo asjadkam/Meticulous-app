@@ -38,6 +38,17 @@ function walk(dir, out) {
     } else if (e.isFile()) {
       if (EXCLUDE_FILES.has(e.name)) continue;
       if (e.name.endsWith('.md')) continue;
+      /* v366 (DEPLOY-UNBLOCK): an .apk is NOT a web asset. Nov 7's
+         hosting pass left meticulous-v54.apk in the root; the walk
+         hashed it into this manifest, which (a) made every OTA
+         client treat a 9.75 MB binary as a changed web file, and
+         (b) put the binary in the Firebase Hosting payload, whose
+         Spark plan refuses executable files — the whole deploy
+         failed (CI 42393787313) and hosting stayed a generation
+         behind GitHub. The APK is served from gh-pages (see
+         version.json apkUrl + the APK-HOSTING-RUNBOOK); it never
+         belongs in the OTA manifest or the hosting payload. */
+      if (e.name.endsWith('.apk')) continue;
       if (rel === 'version.json') continue; // regenerated below
       out.push(rel);
     }
