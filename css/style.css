@@ -64,6 +64,18 @@ body{
    from the one sync truth; never dismissible by hand. */
 .syncwarn{background:#fdecea;border:2px solid #c0392b;color:#922b21;border-radius:var(--radius);
   padding:12px 16px;margin:16px 16px 0;font-size:15px;font-weight:700;}
+/* v357 (CONNECT-ALL DASHBOARD MIRROR): the whose-book picker on
+   the dashboard and the persistent viewing banner. Amber, on
+   purpose — a mirrored book must never be mistaken for your own
+   (the Nov 7 zeros were exactly that confusion). */
+.mirrorbar{background:#fff8e6;border:2px solid #b45309;border-radius:var(--radius);
+  padding:12px 16px;margin:16px 16px 0;}
+.mirrorbar .mr-pick{width:100%;margin-top:6px;font-size:15px;font-weight:700;padding:10px;
+  border:1.5px solid #b45309;border-radius:10px;background:#fff;color:var(--navy);}
+.mirrorbanner{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:#fff8e6;border-bottom:2px solid #b45309;color:#7c2d12;
+  padding:10px 16px;font-size:14px;}
+.mirrorbanner.hidden{display:none;}
 .tracker{background:var(--navy);border-radius:var(--radius);margin:16px;padding:26px 18px 24px;
   text-align:center;color:#fff;box-shadow:var(--shadow);}
 .tracker .clock{font-size:36px;font-weight:700;letter-spacing:1px;margin:8px 0 16px;font-variant-numeric:tabular-nums;}

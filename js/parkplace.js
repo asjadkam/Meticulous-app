@@ -399,6 +399,12 @@
     if (typeof window !== 'undefined' && window.App && App._authLocked && App._authLocked()) {
       el.classList.add('hidden'); el.innerHTML = ''; return;
     }
+    /* v357 (ROLE GATE): the park nudge is a shift tool ("Start
+       your shift?" / "Close your day?") — an office-only account
+       never sees it. */
+    if (typeof window !== 'undefined' && window.Mirror && Mirror.officeOnly && Mirror.officeOnly()) {
+      el.classList.add('hidden'); el.innerHTML = ''; return;
+    }
     if (!card || !place) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     var morning = card === 'morning';
     el.innerHTML = '';

@@ -1,8 +1,8 @@
 {
   "version": 52,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v52.apk",
-  "webVersion": 356,
-  "notes": "Dimension-aware navigation routing (web 356): the saved vehicle profile's height / length / weight (Preferences -> Truck, the VIN record) now ride on every truck route request, so Valhalla's truck costing keeps the vehicle legal for its real size; a clearance second look checks the adopted route against the map's maxheight tags and raises ONE plain warning when a restriction on the route is lower than the vehicle. No vehicle dimensions saved: routing is exactly as before.",
+  "webVersion": 357,
+  "notes": "Connect All dashboard mirror (web 357): a payer with a Connect All connection gets a whose-book picker on his dashboard — pick a driver and Revenue, Dispatch, Fuel & Expense, Maintenance, PTI, Damage & Incident and Manifest open on that driver's published book, read-only, under a persistent Viewing banner. Limited connections keep their existing surfaces only. Role gate restated: an office-only account (owners / fleet managers / office staff who do not drive) never gets the work timer, the Navigator, the park nudge, the floating timer face or odometer prompts on its own face.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -14,11 +14,11 @@
     "assets/logo.svg": "ff9022a015da20fe2142d2f70e4c99c3e48f10457adebf681eefb1f840cdec70",
     "assets/manifest.json": "92e467fa45e8df0bb326cfeb23aa83d2fad42876abc58b3935c2ba2bb3ca05bd",
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
-    "css/style.css": "8f8d6174cf8110dfabadb8b2eba00a956766aaad129b67ede78649ded79e1995",
+    "css/style.css": "8dfa23dd3229f76c097394c8911a0834c72e92d83071743225c188ba27ae266b",
     "eng.traineddata": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "7465c550253af5767e71c929c959cd4468c9e997def41e809c2dadf72f8eb962",
-    "js/app.js": "12f9f09830fd0fcc33ef7b74d4e0d93afcf21666ce7490f0fc2abe616ae361e7",
+    "index.html": "e080ffa93e4afa84ac49aab1dd4e601fb61f9ac9d77184149926ab3d7393bf9a",
+    "js/app.js": "4b95bf3cafb3ec7822902637d4c78529d8a415084856f4c888193e8d5710c667",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "26b93f4c2dbc663e5ef036b5a247553b31cdacb3cf24cfcde513a6af16b1e2f0",
@@ -31,7 +31,7 @@
     "js/i18n.js": "727a7533be4fb2c0fa8d676c55df64e1e53a3f460492942f8cefb8496148cf9b",
     "js/miles.js": "498f2ca3e3b06d0f249dd5c5d74826bdcfefe171f5b20f93afd935c54b957f3f",
     "js/ota.js": "6c90a4c1ec4780d91f8696bcc734928123c2fbc1c72c9058d668ffa3fa3bad2f",
-    "js/parkplace.js": "c32d7dabeb215f14b88b7154f4e0b8ad2582c62f1192141c5f7665c9b696cad6",
+    "js/parkplace.js": "18656941f0728839a5a53d26305a6a3ceb61c13ab9f4170956b864f40697ec74",
     "js/pdfexport.js": "82dd6773a26d6907fe38d25bb95739b731a759872d360fcc7a986edd162d1c47",
     "js/powerread.js": "71c52ae9d5700fa62d15449403059d707b3cc3197936045ffadbbac4286bea22",
     "js/shifttrack.js": "023f85f35f79d9e6a7775051b9880aeb2790ec5daef33574046454e14ef5c514",
@@ -57,6 +57,7 @@
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
     "modules/revenue.js": "a0fe28bd07083d48b0bfb352d3aacb06ca076142a4f569e76275084dd77551d6",
     "modules/subscription.js": "694b586116f2c9dcee3507042ce329493be928046132fef86d03b614f9990719",
-    "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
+    "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b",
+    "js/mirror.js": "cbb38279e70bb90471ac441dec68017865c8a4d0863175b81bc66a406a625ca6"
   }
 }

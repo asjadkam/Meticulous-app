@@ -1181,7 +1181,7 @@
   function buildDashboard() {
     /* v216: while locked the grid stays EMPTY — no card, no preview
        figure — whoever calls the repaint (sync, pull-to-refresh…). */
-    if (App._authLocked ? App._authLocked() : false) { var g0 = el('modGrid'); if (g0) g0.innerHTML = ''; return; }
+    if (App._authLocked ? App._authLocked() : false) { var g0 = el('modGrid'); if (g0) g0.innerHTML = ''; try { if (window.Mirror) Mirror.hideBar(); } catch (e) {} return; }
     var g = el('modGrid');
     var html = '';
     /* v52: role tuning — office users get NO tracker card on home and an
@@ -1207,6 +1207,10 @@
       c.onclick = function () { App.openModule(c.getAttribute('data-mod')); };
     });
     paintNameCard(); // v147: the one-time name ask (self-hiding once settled)
+    /* v357 (CONNECT-ALL DASHBOARD MIRROR): the whose-book picker
+       rides every dashboard paint — self-hiding unless this
+       account holds a Connect All / live One-Time peer. */
+    try { if (window.Mirror) Mirror.paintBar(); } catch (e) {}
     /* v187 (PTI-DASH): the no-PTI flag rides EVERY dashboard paint
        (showDashboard, sign-in, the cloud-sync repaint) — not only
        trackerPaint — so it always reads the filed state the PTI
@@ -1406,6 +1410,9 @@
      a module's own navigation is untouched. */
   App.moduleBack = function () {
     try {
+      /* v357: a mirrored face has no sub-views of its own — Back
+         always falls through to the dashboard. */
+      if (window.Mirror && Mirror.active() && Mirror.covers(App._modKey)) return false;
       var m = App._modKey && Meticulous.modules[App._modKey];
       if (m && typeof m.back === 'function') return !!m.back();
     } catch (e) {}
@@ -1432,6 +1439,40 @@
     }
     var mod = Meticulous.modules[key];
     if (!mod) return;
+    /* v357 (ROLE GATE — owner law, restated Nov 7, 2026): the
+       Navigator is a driver tool. An office-only account (it
+       does not drive) has NO Navigator door — not on its
+       dashboard grid (the office module order already omits it),
+       not in its sidebar (filtered), and not through any
+       programmatic open: a docked-tracker tap, a dispatch pin or
+       a deep link lands an office user on his dashboard instead
+       of a drive screen that is not his workspace. The mirror of
+       a driver's book never includes the Navigator either. */
+    if (key === 'navigator' && window.Mirror && Mirror.officeOnly()) {
+      try { App.showDashboard(); } catch (e) {}
+      return;
+    }
+    /* v357 (CONNECT-ALL DASHBOARD MIRROR, owner Nov 7, 2026):
+       while a Connect All driver's book is picked on the
+       dashboard picker, a covered module opens on HIS published
+       book instead — read-only, in the module's own shape
+       (js/mirror.js). The real module never renders, so none of
+       its write controls exist on screen; the payer's own store
+       is never read for these faces and never written. Modules
+       the mirror does not cover open exactly as before. */
+    if (window.Mirror && Mirror.active() && Mirror.covers(key)) {
+      if (App._modKey !== key) teardownModule();
+      App._modKey = key;
+      el('dashView').classList.add('hidden');
+      el('modView').classList.remove('hidden');
+      el('modTitle').textContent = moduleTitle(key) + ' — ' + Mirror.name();
+      var mbody = el('modBody');
+      mbody.innerHTML = '';
+      try { Mirror.render(key, mbody); } catch (e) { mbody.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
+      try { App.ptrNoteRepainted(); } catch (e) {}
+      window.scrollTo(0, 0);
+      return;
+    }
     if (App._modKey !== key) teardownModule();
     App._modKey = key;
     el('dashView').classList.add('hidden');
@@ -2343,7 +2384,10 @@
       miniParked = !!(navMod286 && navMod286.parkedMini && navMod286.parkedMini());
     } catch (e) {}
     var show = (pipShow || !!App._docked)
-      && sessionActive() && !App._authLocked() && !miniParked;
+      && sessionActive() && !App._authLocked() && !miniParked
+      /* v357 (ROLE GATE): the floating timer face is a driver
+         tool — an office-only account never floats one. */
+      && !(window.Mirror && Mirror.officeOnly && Mirror.officeOnly());
     var bf = bubbleEl('bubbleFace');
     if (bf) {
       bf.classList.toggle('hidden', !show);
@@ -3860,6 +3904,10 @@
     return null;
   }
   function shouldPromptOdo(kind) {
+    /* v357 (ROLE GATE): no odometer prompt exists for an
+       office-only account — it does not drive, there is no dash
+       to photograph. */
+    if (window.Mirror && Mirror.officeOnly && Mirror.officeOnly()) return false;
     if (!isByMile() && !odoDailyPhotosOn()) return false;
     var today = todayStr(new Date());
     if (odoPromptShown(kind, today)) return false;
