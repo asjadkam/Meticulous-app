@@ -589,6 +589,34 @@
       endT = (live.status === 'running') ? 'Still working' : 'Paused';
       if (odoStart === null && live.startOdo !== null) { odoStart = live.startOdo; if (live.startPhoto) odoStartPhoto = live.startPhoto; }
       live.hours = lsec / 3600;
+      /* v361 (MORNING-LEG, owner Nov 7, 2026): the summary's km
+         above sums SAVED session entries only — a live session
+         has none until it stops (the v69 note), so the multi-day
+         range preview showed the working day as 0.0 km all day
+         (Nov 7: 0.0 while the day's trail already held 18.5 km).
+         The live session's own persisted miles record joins the
+         sum — the same record the Dashboard's "Miles (live)"
+         reads. Keyed by the live session's own pin, so a closed
+         session's record can never double in; the any-record
+         fallback runs only when the day has no saved sessions.
+         (The summary's HOURS stay revenue-only per the v345 law —
+         a live day honestly shows 0.0 h until its ticket books.) */
+      try {
+        var lmAll361 = G('livemiles', {}) || {};
+        var liveKey361 = (trk && trk.sessionId) ? 's' + Math.round(trk.sessionId) : '';
+        var liveRec361 = liveKey361 ? lmAll361[liveKey361] : null;
+        if (!liveRec361 && !sessions.length) {
+          Object.keys(lmAll361).forEach(function (k361) {
+            var r361 = lmAll361[k361];
+            if (k361.charAt(0) === 's' && r361 && r361.date === d &&
+                typeof r361.km === 'number' &&
+                (!liveRec361 || (r361.updatedAt || 0) > (liveRec361.updatedAt || 0))) liveRec361 = r361;
+          });
+        }
+        if (liveRec361 && typeof liveRec361.km === 'number' && liveRec361.km > 0) {
+          liveKm += liveRec361.km; liveKmAny = true;
+        }
+      } catch (e) {}
     }
     /* v87: with no session start reading, the day's earliest
        odo-bearing record stands in for the start (a fuel fill's

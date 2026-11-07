@@ -2678,6 +2678,54 @@
           }
         }
 
+        /* v361 (MORNING-LEG, owner Nov 7, 2026 08:50–08:54): two
+           copies of the SAME session must show the same pause
+           state on every client — and the stamp game below cannot
+           promise it. A running session's periodic re-save
+           re-stamps its key every minute (js/app.js v220), so a
+           second client's RUNNING echo of the day (a restored
+           browser session that auto-started the same 8:00 AM
+           dispatch) keeps out-stamping the phone's deliberate
+           PAUSE: on Nov 7 the phone sat paused at the pickup peg
+           while the account copy ticked on "running" — one day,
+           two faces, both "All synced". The copies now carry
+           stateAt (js/app.js v361): the moment of the last
+           DELIBERATE transition (start / pause / resume / stop /
+           edit), set only at transition sites and never by the
+           tick re-save. When both copies name the same session
+           (pins within the v271 whole-second jitter family,
+           ±5000 ms — two clients that auto-started the same plan
+           pin a few hundred ms apart) and both carry a stateAt,
+           the LATER deliberate state wins, before pin order
+           (v265) and before stamps: the cloud's installs when its
+           transition is newer; the local stands — tombstone
+           idiom, flush pushes it UP — when the local's is.
+           Different sessions (pins beyond the jitter) fall
+           through to v265 untouched, as do copies from clients
+           too old to carry stateAt. */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var sa361Local = parseJson(raw, null);
+          if (sa361Local && typeof sa361Local === 'object' && !Array.isArray(sa361Local)) {
+            var sa361SidL = Number(sa361Local.sessionId) || 0;
+            var sa361SidC = Number(d.v.sessionId) || 0;
+            var sa361L = Number(sa361Local.stateAt) || 0;
+            var sa361C = Number(d.v.stateAt) || 0;
+            if (sa361SidL > 0 && sa361SidC > 0 &&
+                Math.abs(sa361SidL - sa361SidC) <= 5000 &&
+                sa361L > 0 && sa361C > 0 && sa361L !== sa361C) {
+              if (sa361C > sa361L) {
+                lsSetRaw(key, JSON.stringify(d.v));
+                meta.keys[key] = { t: cloudTs, s: cloudTs };
+                applied++;
+              } else {
+                meta.keys[key] = { t: now, s: cloudTs };
+              }
+              return;
+            }
+          }
+        }
+
         /* v265 (EDIT-START-NOT-PERSISTED): the tracker is a LIVE
            SESSION, not a document — whole-key stamp arbitration
            fails it. Once a stale native-record adoption rewrites

@@ -1904,7 +1904,12 @@
     if (!rec || typeof rec.rev !== 'number' || rec.rev < 0) return;
     var t = App.tracker; if (!t) return;
     var now = Date.now();
-    var stateNewer = (rec.updatedAt || 0) >= (App._lastStateAt || 0);
+    /* v361: _lastStateAt resets to 0 on every relaunch (the v271
+       complaint) — the PERSISTED stateAt on the tracker itself now
+       floors the comparison, so a record stamped before this
+       layer's last deliberate transition can never flip it after
+       a relaunch. */
+    var stateNewer = (rec.updatedAt || 0) >= Math.max(App._lastStateAt || 0, t.stateAt || 0);
     var loadsNewer = (rec.updatedAt || 0) >= (App._lastLoadsAt || 0);
     var changed = false, loadsChanged = false;
     /* A record for a session this layer doesn't know, while
@@ -1974,6 +1979,12 @@
       if (changed && rec.sessionKey) {
         var m = /^s(\d+)$/.exec(rec.sessionKey);
         if (m) { try { t.sessionId = m[1]; } catch (e) {} }
+        /* v361: an adopted session brings its own start for the
+           face's pinned label — the record's derivation start
+           (segment start minus banked base; exact for the arm's
+           seeded running record, the case that matters). */
+        var recStart361 = (rec.segStartMs || 0) - (rec.elapsedBase || 0) * 1000;
+        if (recStart361 > 0) t.startLabelMs = recStart361;
       }
     }
     if (loadsNewer) {
@@ -1989,6 +2000,11 @@
     }
     if (typeof rec.rev === 'number') App._sessRev = rec.rev;
     if (changed) {
+      /* v361: the adopted transition becomes this layer's newest
+         deliberate state — stamped from the record's own moment,
+         so the cloud arbitration (cloudsync v361) sees the same
+         order on every client. */
+      t.stateAt = Math.max(t.stateAt || 0, rec.updatedAt || 0);
       /* v323 (TIMER-REANCHORED-MIDDAY): the adopted day can never
          be older than its own start. A record written before the
          v323 facts fix (or by any mid-segment sync) carries an
@@ -2793,7 +2809,18 @@
     var st = el('trkStartLabel');
     if (st) {
       if (t.status !== 'idle') {
-        st.textContent = 'Counting from ' + fmtTimeAMPM(trackerSessionStartMs());
+        /* v361 (MORNING-LEG, owner Nov 7, 2026 08:50): the label
+           names the session's PINNED start (startLabelMs, set at
+           the start and moved only by his start-time Edit — the
+           sessionId is the same instant at birth). The old text
+           re-derived the start as now − elapsed, a value that
+           CREEPS FORWARD through every pause: on Nov 7 his 8:00 AM
+           session, paused at the 8:24 pickup peg with 24:47
+           banked, painted "Counting from 8:24 AM" — the face read
+           as a mid-day re-anchor that never happened. The pinned
+           start cannot move: pauses, pegs, resumes and relaunches
+           are events INSIDE the day, never a new start. */
+        st.textContent = 'Counting from ' + fmtTimeAMPM(t.startLabelMs || t.sessionId || trackerSessionStartMs());
       } else if (t.presetStart && todayStr(new Date(t.presetStart)) === todayStr(new Date()) && !autoStartFired(todayStr(new Date()))) {
         /* v342 (AUTO-START-MUST-FOLLOW-DISPATCH-TIME): his preset
            ("I actually started at …") is a same-day, pre-start word
@@ -2965,7 +2992,7 @@
     var startMs = sid > 0 ? sid : trackerSessionStartMs();
     if (!staleTrackerStartMs(startMs, Date.now())) return false;
     var ghostSid = startMs;
-    App.tracker = { status: 'idle', startTs: 0, elapsed: 0,
+    App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now(),
       discardedSid: ghostSid, discardedAt: Date.now() };
     trackerSave();
     try { trackerPaint(); } catch (e) {}
@@ -3007,7 +3034,7 @@
         try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (err) {}
         try { dayEngineStop(); } catch (err) {}
         try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (err) {}
-        App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
+        App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
         trackerSave();
         try { trackerPaint(); } catch (err) {}
         return true;
@@ -3078,6 +3105,12 @@
          the record's stale clock later outranked the edit at
          adoption and the phone reverted to the old start. */
       App._lastStateAt = Date.now();
+      /* v361: the edit is also the one legitimate move of the
+         face's pinned start — the label follows his edited start,
+         and the transition stamps like every other deliberate
+         state change. */
+      t.stateAt = App._lastStateAt;
+      t.startLabelMs = target.getTime();
     }
     trackerSave(); trackerPaint(); closeTrackerStartSheet();
     /* v265: one verify collect a beat later — if the edit's own
@@ -3106,6 +3139,16 @@
     else if (t.status === 'running') { t.elapsed = Math.max(0, t.elapsed + Math.floor((Date.now() - t.startTs) / 1000)); t.status = 'paused'; } // v174: never negative (an anchored start lies ahead)
     else { t.status = 'running'; t.startTs = Date.now(); }
     App._lastStateAt = Date.now(); // v52: own-change stamp for session-record adoption
+    /* v361 (MORNING-LEG): the same stamp, PERSISTED on the tracker
+       itself. _lastStateAt dies with the page; stateAt rides the
+       tracker value through the store and the cloud, so the cloud
+       merge can arbitrate two copies of the SAME session by their
+       last DELIBERATE transition (start / pause / resume / stop /
+       edit) instead of by save stamps — the periodic tick re-save
+       must never outrank a pause he tapped (see js/cloudsync.js
+       v361). Only transition sites set it; trackerSave and the
+       tick never touch it. */
+    t.stateAt = App._lastStateAt;
     trackerSave(); trackerPaint();
     // v40: a fresh shift start also starts live-miles tracking (inert
     // when the build has no live location — js/miles.js).
@@ -3135,6 +3178,7 @@
       // preset); it never moves again, even if the driver edits the
       // start clock afterwards.
       t.sessionId = trackerSessionStartMs();
+      t.startLabelMs = t.sessionId; // v361: the face's pinned "Counting from" (see trackerPaint)
       /* v242 (WORK-PROFILES): the session belongs to the profile
          active at its start, for its whole life — a mid-day switch
          changes only what is created after it. */
@@ -3350,7 +3394,7 @@
         try { Meticulous.modules.revenue.onSession(entry); } catch (e) {}
       }
     }
-    App.tracker = { status: 'idle', startTs: 0, elapsed: 0 };
+    App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
     trackerSave(); trackerPaint();
     // v39: shift stopped — by-mile days with a start reading and no end
     // reading get the closing-odometer prompt (once per day).
@@ -3373,6 +3417,7 @@
     t.elapsed = Math.max(0, t.elapsed + Math.max(0, Math.floor((at - t.startTs) / 1000)));
     t.status = 'paused';
     App._lastStateAt = Date.now(); // v52: own-change stamp
+    t.stateAt = App._lastStateAt; // v361: persisted transition stamp (cloudsync v361)
     trackerSave(); trackerPaint();
     try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
     return true;
@@ -3383,6 +3428,7 @@
     t.status = 'running';
     t.startTs = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
     App._lastStateAt = Date.now();
+    t.stateAt = App._lastStateAt; // v361: persisted transition stamp (cloudsync v361)
     trackerSave(); trackerPaint();
     try { if (window.LiveMiles && LiveMiles.syncWake) LiveMiles.syncWake(); } catch (e) {}
     return true;
@@ -4651,6 +4697,8 @@
       // v69: pin the session's stable record identity before the
       // tracking hooks key anything by it (see trackerSessionKeyMs).
       App.tracker.sessionId = trackerSessionStartMs();
+      App.tracker.startLabelMs = App.tracker.sessionId; // v361: pinned face start (the dispatch anchor)
+      App.tracker.stateAt = Date.now(); // v361: a start is a deliberate transition (cloudsync v361)
       /* v242 (WORK-PROFILES): an auto-started session belongs to
          the profile active at its start, like a manual one. */
       try { App.tracker.profileId = App.workProfiles.activeId(); } catch (e) {}
