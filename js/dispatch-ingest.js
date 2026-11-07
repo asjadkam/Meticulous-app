@@ -152,8 +152,20 @@
       locationCode: p.locationCode || '',
       lat: (p.lat !== undefined && p.lat !== null) ? p.lat : null,
       lng: (p.lng !== undefined && p.lng !== null) ? p.lng : null,
+      /* v358: the second pin (haul/dump end) — see parseDispatch */
+      dumpLat: (p.dumpLat !== undefined && p.dumpLat !== null) ? p.dumpLat : null,
+      dumpLng: (p.dumpLng !== undefined && p.dumpLng !== null) ? p.dumpLng : null,
       notes: composeNotes(p, form.notes || '')
     };
+    /* v358: a Maps link whose pin could NOT be read (a short link
+       the resolver could not follow) is preserved in the notes —
+       the saved record keeps the link itself, so the driver can
+       still open it by hand. Nothing pretends a pin exists. */
+    var un358 = (p && p.unresolvedLinks) || [];
+    if (un358.length) {
+      var bits358 = un358.map(function (u) { return 'Pin link: ' + u; }).join(' · ');
+      out.fields.notes = out.fields.notes ? out.fields.notes + ' · ' + bits358 : bits358;
+    }
     return out;
   }
 
@@ -586,6 +598,33 @@
     return res;
   }
 
+  /* intakeResolved(text, source) -> Promise of the intakeBatch
+     result (v358, GOOGLE-MAPS-PIN-INTO-NAVIGATOR). A pasted
+     dispatch's pins arrive as Maps LINKS: full links parse
+     locally inside intakeBatch itself, but a SHORT link's pin
+     hides behind a redirect — so this door first asks PinLinks
+     to follow the text's links and rewrite each resolved one in
+     place as its "lat, lng" pair; the proven synchronous intake
+     then reads the rewritten text exactly as if the dispatcher
+     had pasted coordinates. A link that cannot be resolved stays
+     in the text verbatim (and lands in the suggestion's notes —
+     see parseDispatchText). A text with no Maps links takes the
+     synchronous path unchanged, wrapped in a promise. This door
+     NEVER rejects: any resolver failure falls back to the plain
+     intake of the original text. */
+  function intakeResolved(text, source) {
+    var t = String(text == null ? '' : text);
+    var PL = (typeof window !== 'undefined' && window.PinLinks) || null;
+    if (!PL || !PL.findLinks || !PL.rewriteText || !PL.findLinks(t).length) {
+      return Promise.resolve(intakeBatch(t, source));
+    }
+    return PL.rewriteText(t).then(function (nt) {
+      return intakeBatch(nt, source);
+    }, function () {
+      return intakeBatch(t, source);
+    });
+  }
+
   /* intake(text, source) -> the stored suggestion entry, or null:
      the v65 signature, kept for existing callers. A batch message
      returns its first newly-added suggestion (or the first stored
@@ -620,6 +659,9 @@
       equipment: f.equipment || '',
       lat: (f.lat !== null && f.lat !== undefined) ? String(f.lat) : '',
       lng: (f.lng !== null && f.lng !== undefined) ? String(f.lng) : '',
+      /* v358: the dump pin rides the draft like the main pin */
+      dumpLat: (f.dumpLat !== null && f.dumpLat !== undefined) ? String(f.dumpLat) : '',
+      dumpLng: (f.dumpLng !== null && f.dumpLng !== undefined) ? String(f.dumpLng) : '',
       material: '',
       ticketNo: '',
       amount: '',
@@ -736,6 +778,7 @@
     list: list,
     intake: intake,
     intakeBatch: intakeBatch,
+    intakeResolved: intakeResolved,
     dismiss: dismiss,
     use: use,
     formFieldsFor: formFieldsFor,

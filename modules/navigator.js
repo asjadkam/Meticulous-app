@@ -3179,12 +3179,27 @@
             say('That short link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
             return;
           }
+          /* v358 (GOOGLE-MAPS-PIN-INTO-NAVIGATOR): when the direct
+             follow cannot be read (the WebView's CORS rules are
+             the usual cause), the app's own server door gets the
+             second try (PinLinks.resolveViaServer — the /ai/resolve
+             door on the Navigator's box) before the plain-words
+             fallback. Same landing either way: landSentPin, the
+             visit recorded like every other navigation. */
+          var tryServerPin = function (fallbackMsg) {
+            if (window.PinLinks && PinLinks.resolveViaServer) {
+              PinLinks.resolveViaServer(url).then(function (c3) {
+                if (c3) { say(''); landSentPin([c3.lat, c3.lng]); }
+                else say(fallbackMsg);
+              });
+            } else say(fallbackMsg);
+          };
           fetch(url, { redirect: 'follow' }).then(function (r) {
             var c2 = sentPinCoords((r && r.url) || '');
             if (c2) { say(''); landSentPin(c2); }
-            else say('That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
+            else tryServerPin('That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
           }).catch(function () {
-            say('That short link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
+            tryServerPin('That short link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.');
           });
           return;
         }

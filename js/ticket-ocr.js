@@ -507,6 +507,46 @@
       }
     }
 
+    /* v358 (GOOGLE-MAPS-PIN-INTO-NAVIGATOR, owner Nov 7, 2026
+       08:25 — "Is there a way to open these Google Map pins in
+       our navigator?"): a dispatch text carries its pins as
+       Google Maps LINKS as often as as bare coordinates, and it
+       commonly carries TWO (go-empty + haul-to). PinLinks
+       (js/pinlinks.js) reads every pin in the text in order —
+       a full link's coordinates live inside it (@ pair, q=/ll=
+       pair, the !3d/!4d place segment). The FIRST pin stays
+       exactly what the legacy reads above produced (DMS, else
+       the first decimal pair — the corpus-proven behaviour);
+       the next distinct pin becomes the record's DUMP pin
+       (dumpLat/dumpLng — the "Dump only" navigation target and
+       the load fence's dump site). A Maps link whose pin could
+       not be read (a short link the ingest resolver could not
+       follow) is NAMED on the parse (unresolvedLinks) so ingest
+       keeps the link itself in the record's notes — a pin is
+       never pretended into existence. */
+    var PL358 = (typeof window !== 'undefined' && window.PinLinks) ||
+      (typeof PinLinks !== 'undefined' ? PinLinks : null);
+    if (PL358 && PL358.extractPins) {
+      try {
+        var allPins = PL358.extractPins(text);
+        if (allPins && allPins.pins && allPins.pins.length) {
+          if (f.lat === undefined) {
+            f.lat = allPins.pins[0].lat; f.lng = allPins.pins[0].lng;
+            f.coordinates = f.lat + ', ' + f.lng;
+          }
+          for (var ppi = 0; ppi < allPins.pins.length; ppi++) {
+            var ppn = allPins.pins[ppi];
+            if (Math.abs(ppn.lat - f.lat) < 1e-6 && Math.abs(ppn.lng - f.lng) < 1e-6) continue;
+            f.dumpLat = ppn.lat; f.dumpLng = ppn.lng;
+            break;
+          }
+        }
+        if (allPins && allPins.unresolved && allPins.unresolved.length) {
+          f.unresolvedLinks = allPins.unresolved.slice(0, 3);
+        }
+      } catch (e) {}
+    }
+
     var count = 0;
     ['time', 'datetime', 'equipment', 'site', 'locationCode', 'instructions', 'coordinates'].forEach(function (k) {
       if (f[k]) count++;
@@ -1118,6 +1158,9 @@
       if (parsed.equipment) form.equipment = parsed.equipment;   // → truck type field
       if (parsed.lat !== undefined && parsed.lat !== null) form.lat = parsed.lat;
       if (parsed.lng !== undefined && parsed.lng !== null) form.lng = parsed.lng;
+      /* v358: the second pin (haul/dump end) rides to the form too */
+      if (parsed.dumpLat !== undefined && parsed.dumpLat !== null) form.dumpLat = parsed.dumpLat;
+      if (parsed.dumpLng !== undefined && parsed.dumpLng !== null) form.dumpLng = parsed.dumpLng;
       if (parsed.coordinates) form.coordinates = parsed.coordinates; // DMS display string
       // Notes holds ONLY genuine free-text: the instruction + location code.
       var n = [];

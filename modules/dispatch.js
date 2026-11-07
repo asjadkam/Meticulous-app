@@ -267,6 +267,8 @@
       jobSite: d.jobSite || '', scheduledAt: d.scheduledAt || '', equipment: d.equipment || '',
       lat: (d.lat !== null && d.lat !== undefined) ? String(d.lat) : '',
       lng: (d.lng !== null && d.lng !== undefined) ? String(d.lng) : '',
+      dumpLat: (d.dumpLat !== null && d.dumpLat !== undefined) ? String(d.dumpLat) : '',
+      dumpLng: (d.dumpLng !== null && d.dumpLng !== undefined) ? String(d.dumpLng) : '',
       material: d.material || tkMat || '',
       ticketNo: d.ticketNo || tkNo || '',
       amount: (isNaN(amt) || !(amt > 0)) ? '' : String(d.amount),
@@ -2057,6 +2059,9 @@
         '<div id="dp_active_note"></div>' +
         '<div id="dp_pin" style="font-size:13px;margin:2px 0 6px;"></div>' +
         '<input type="hidden" id="dp_lat"><input type="hidden" id="dp_lng">' +
+        /* v358: the dump pin (second pin of a two-pin dispatch) rides
+           hidden beside the main pin, same discipline */
+        '<input type="hidden" id="dp_dumplat"><input type="hidden" id="dp_dumplng">' +
         '<div class="row"><div><label class="f">Material</label><input id="dp_mat" placeholder="e.g. Gravel"></div>' +
         '<div><label class="f">Ticket #</label><input id="dp_ticket" placeholder="e.g. 48213"></div></div>' +
         '<div class="row"><div><label class="f">Amount $ (optional)</label><input id="dp_amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div>' +
@@ -2248,24 +2253,45 @@
         var pb = wrap.querySelector('#dp_paste_btn');
         if (pb) pb.onclick = function () {
           var ta = wrap.querySelector('#dp_paste');
+          var txt = ta ? ta.value : '';
+          var finishPaste = function (res) {
+            if (res && res.added.length > 1) {
+              ingestFlash = '✓ That message held ' + res.added.length + ' dispatches — each one is in your suggestions above. Tap <b>Use</b> to put one in the form.';
+            } else if (res && res.added.length === 1) {
+              ingestFlash = '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.';
+            } else if (res && res.duplicates > 0) {
+              ingestFlash = 'Those dispatches are already in your suggestions above — nothing was added twice.';
+            } else {
+              ingestFlash = 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
+            }
+            paintIngest();
+          };
+          /* v358 (GOOGLE-MAPS-PIN-INTO-NAVIGATOR): a pasted message
+             carrying Maps links goes through the resolving door —
+             short links are followed first so their pins land on
+             the suggestion like pasted coordinates. The button
+             says what it is doing; the same flash words land when
+             the read completes. A text without links (or any
+             resolver trouble) takes the synchronous path below,
+             byte-identical to before. */
+          try {
+            if (window.DispatchIngest && DispatchIngest.intakeResolved &&
+                window.PinLinks && PinLinks.findLinks && PinLinks.findLinks(txt).length) {
+              pb.disabled = true;
+              pb.textContent = 'Reading the pins…';
+              DispatchIngest.intakeResolved(txt, 'paste').then(finishPaste, function () { finishPaste(null); });
+              return;
+            }
+          } catch (e) {}
           var res = null;
           try {
             if (window.DispatchIngest) {
               res = DispatchIngest.intakeBatch
-                ? DispatchIngest.intakeBatch(ta ? ta.value : '', 'paste')
-                : (DispatchIngest.intake(ta ? ta.value : '', 'paste') ? { added: [1], duplicates: 0 } : { added: [], duplicates: 0 });
+                ? DispatchIngest.intakeBatch(txt, 'paste')
+                : (DispatchIngest.intake(txt, 'paste') ? { added: [1], duplicates: 0 } : { added: [], duplicates: 0 });
             }
           } catch (e) {}
-          if (res && res.added.length > 1) {
-            ingestFlash = '✓ That message held ' + res.added.length + ' dispatches — each one is in your suggestions above. Tap <b>Use</b> to put one in the form.';
-          } else if (res && res.added.length === 1) {
-            ingestFlash = '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.';
-          } else if (res && res.duplicates > 0) {
-            ingestFlash = 'Those dispatches are already in your suggestions above — nothing was added twice.';
-          } else {
-            ingestFlash = 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
-          }
-          paintIngest();
+          finishPaste(res);
         };
         wrap.querySelectorAll('[data-sugdismiss]').forEach(function (b) {
           b.onclick = function () {
@@ -2363,6 +2389,7 @@
           fields: {
             jobSite: q('#dp_site'), scheduledAt: dspComposeSched(q('#dp_date'), q('#dp_time'), App._today()), equipment: q('#dp_equip'),
             lat: q('#dp_lat'), lng: q('#dp_lng'),
+            dumpLat: q('#dp_dumplat'), dumpLng: q('#dp_dumplng'),
             material: q('#dp_mat'), ticketNo: q('#dp_ticket'),
             amount: q('#dp_amt'), loads: q('#dp_loads'), loadsSet: q('#dp_loadsset') === '1',
             notes: q('#dp_notes'),
@@ -2453,6 +2480,7 @@
         set('#dp_date', schedParts.date); set('#dp_time', schedParts.time);
         set('#dp_equip', f.equipment);
         set('#dp_lat', f.lat); set('#dp_lng', f.lng);
+        set('#dp_dumplat', f.dumpLat); set('#dp_dumplng', f.dumpLng);
         set('#dp_mat', f.material); set('#dp_ticket', f.ticketNo);
         set('#dp_amt', f.amount); if (f.loads) set('#dp_loads', f.loads); set('#dp_notes', f.notes);
         /* v173: the job's rate + parties restore with the draft */
@@ -2749,6 +2777,12 @@
           body.querySelector('#dp_lng').value = form.lng;
           paintPinLine(form.coordinates || '');
         }
+        /* v358: a read carrying a second pin fills the dump pin too */
+        if (form.dumpLat !== undefined && form.dumpLat !== null && form.dumpLng !== undefined && form.dumpLng !== null) {
+          var dpDl = body.querySelector('#dp_dumplat'), dpDn = body.querySelector('#dp_dumplng');
+          if (dpDl && !dpDl.value) dpDl.value = form.dumpLat;
+          if (dpDn && !dpDn.value) dpDn.value = form.dumpLng;
+        }
         if (form.material && !body.querySelector('#dp_mat').value) body.querySelector('#dp_mat').value = form.material;
         /* v107: the ticket # comes from the form mapping OR the
            haul card's own cardNumber — one source or the other,
@@ -2963,6 +2997,8 @@
 
       function readForm() {
         var latV = body.querySelector('#dp_lat').value, lngV = body.querySelector('#dp_lng').value;
+        var dumpLatEl = body.querySelector('#dp_dumplat'), dumpLngEl = body.querySelector('#dp_dumplng');
+        var dumpLatV = dumpLatEl ? dumpLatEl.value : '', dumpLngV = dumpLngEl ? dumpLngEl.value : '';
         var drvEl = body.querySelector('#dp_driver'); // v52: absent when no P&L drivers
         return {
           jobSite: body.querySelector('#dp_site').value.trim(),
@@ -2970,6 +3006,9 @@
           equipment: body.querySelector('#dp_equip').value.trim(), // v31: truck type (Tandem…)
           lat: latV !== '' ? parseFloat(latV) : null,               // v31: map pin from OCR coords
           lng: lngV !== '' ? parseFloat(lngV) : null,
+          /* v358: the dump pin saves with the record, like the main pin */
+          dumpLat: dumpLatV !== '' ? parseFloat(dumpLatV) : null,
+          dumpLng: dumpLngV !== '' ? parseFloat(dumpLngV) : null,
           material: body.querySelector('#dp_mat').value.trim(),
           ticketNo: body.querySelector('#dp_ticket').value.trim(),
           amount: body.querySelector('#dp_amt').value.trim(),
