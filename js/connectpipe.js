@@ -209,7 +209,7 @@
      PTI; nobody has to hand-send a report to a peer who already
      has the module. */
   CP.MODULE_KEYS = ['dispatch', 'manifest', 'fuel', 'expenses', 'navigation', 'maintenance', 'pti', 'damage', 'invoices', 'pnl'];
-  CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'damage', 'invoices', 'pnl'];
+  CP.RECORD_MODULES = ['fuel', 'expenses', 'maintenance', 'pti', 'damage', 'invoices', 'pnl', 'navigation'];
   CP.modulesFor = function (uid) {
     var st = store();
     if (!st || !uid) return null;
@@ -677,6 +677,12 @@
       out.maintenance = merged;
     }
     if (!out.driverWage && existing.driverWage) out.driverWage = existing.driverWage;
+    /* v358: the nav block is a single current picture, not a
+       union — the fresher side (more trips, else either) wins,
+       and a side that lost its facts never erases the other's */
+    if (!out.nav && existing.nav) out.nav = existing.nav;
+    else if (out.nav && existing.nav &&
+      ((existing.nav.trips || []).length > (out.nav.trips || []).length)) out.nav = existing.nav;
     return out;
   };
 
@@ -1712,6 +1718,33 @@
       });
   };
 
+  /* v358 (owner, Nov 7, 2026 08:24 MDT — the mirror carries the
+     Navigator too): my NAVIGATION facts for the records doc —
+     the trip log's destination NAMES (the nav_log the manifest
+     already reads: {at, name}) and the last destination name.
+     NAMES ONLY: a name that is really a coordinate pair never
+     rides (the Navigator's own v254 guard — a coordinate string
+     is not a place), and no coordinate field exists here at
+     all. Null when I have no navigation facts to share. */
+  CP.sharedNav = function () {
+    var st = store();
+    if (!st) return null;
+    function isCoords(s) { return /^-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/.test(String(s || '')); }
+    var trips = (st.get('nav_log', []) || []).filter(Boolean)
+      .filter(function (x) { return x && x.at && x.name && !isCoords(x.name); })
+      .slice(-40).reverse()
+      .map(function (x) {
+        return { date: String(x.at).slice(0, 10), at: String(x.at), name: String(x.name) };
+      });
+    var lastDest = '';
+    try {
+      var nv = st.get('navigator', {}) || {};
+      if (nv.lastDest && !isCoords(nv.lastDest)) lastDest = String(nv.lastDest);
+    } catch (e) {}
+    if (!trips.length && !lastDest) return null;
+    return { trips: trips, lastDest: lastDest };
+  };
+
   /* An issued invoice's paid total — the Invoice module's own
      rule (payments list + the paidAmount/paid fields), restated
      here so the shared summary never invents a status. */
@@ -1898,6 +1931,8 @@
       pti: CP.sharedPti(),
       /* v307: my damage & incident reports (see sharedDamage) */
       damage: CP.sharedDamage(),
+      /* v358: my navigation facts (see sharedNav) */
+      nav: CP.sharedNav(),
       /* v163: my own wage rides the records doc (see sharedWage) —
          the boss's books price my days at MY rate, never his */
       driverWage: CP.sharedWage(),
@@ -2359,6 +2394,7 @@
                 if (!CP.allowsModule(p.uid, 'maintenance')) delete rec.maintenance;
                 if (!CP.allowsModule(p.uid, 'pti')) delete rec.pti;
                 if (!CP.allowsModule(p.uid, 'damage')) delete rec.damage;
+                if (!CP.allowsModule(p.uid, 'navigation')) delete rec.nav;
                 if (!CP.allowsModule(p.uid, 'pnl')) delete rec.driverWage;
                 out.records[p.uid] = rec;
               }

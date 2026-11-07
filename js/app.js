@@ -1043,7 +1043,17 @@
        fleet manager whose connection ticks Damage & Incident
        had literally no way to open the screen her access
        points at. Damage rides last, after PTI. */
-    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage', 'documents'],
+    /* v358 (owner correction, Nov 7, 2026 08:24 MDT — supersedes
+       the same morning's read): the NAVIGATOR is a SEEING tool,
+       not a driving one — "He should be able to see everything
+       I am seeing! Just not the timer... In fact the navigator
+       too." An office-only account keeps the Navigator on its
+       face (for viewing the driver's world and its own map
+       use); the ONLY driver tool excluded from the office face
+       is the live work TIMER / tracker face (plus the odometer
+       prompts tied to driving his own truck). Navigator rides
+       at the end of the office order, after Documents. */
+    office: ['connect', 'dispatch', 'invoice', 'pnl', 'manifest', 'pti', 'damage', 'documents', 'navigator'],
     both: ['revenue', 'dispatch', 'navigator', 'fuel', 'pnl', 'maintenance', 'pti', 'damage', 'documents', 'manifest', 'invoice', 'connect']
   };
   /* Sidebar lead-ins: items named here come first (in this order); every
@@ -1439,19 +1449,6 @@
     }
     var mod = Meticulous.modules[key];
     if (!mod) return;
-    /* v357 (ROLE GATE — owner law, restated Nov 7, 2026): the
-       Navigator is a driver tool. An office-only account (it
-       does not drive) has NO Navigator door — not on its
-       dashboard grid (the office module order already omits it),
-       not in its sidebar (filtered), and not through any
-       programmatic open: a docked-tracker tap, a dispatch pin or
-       a deep link lands an office user on his dashboard instead
-       of a drive screen that is not his workspace. The mirror of
-       a driver's book never includes the Navigator either. */
-    if (key === 'navigator' && window.Mirror && Mirror.officeOnly()) {
-      try { App.showDashboard(); } catch (e) {}
-      return;
-    }
     /* v357 (CONNECT-ALL DASHBOARD MIRROR, owner Nov 7, 2026):
        while a Connect All driver's book is picked on the
        dashboard picker, a covered module opens on HIS published

@@ -1,8 +1,10 @@
-/* Meticulous v357 — CONNECT-ALL DASHBOARD MIRROR (owner, Nov 7,
+/* Meticulous v358 — CONNECT-ALL DASHBOARD MIRROR (owner, Nov 7,
  * 2026 08:12 MDT: "doesn't Umar have a permanent seat since he is
  * a Connect All? So shouldn't he just be able to look at my
  * dispatches, my revenue — everything — just on his dashboard,
- * exactly how I intend to do it.")
+ * exactly how I intend to do it." — refined 08:24 MDT: "He should
+ * be able to see everything I am seeing! Just not the timer...
+ * In fact the navigator too.")
  *
  * THE GAP THIS CLOSES (investigation Nov 7, UMAR-SEES-NOTHING):
  * a connected payer's own modules read only HIS local store;
@@ -15,18 +17,36 @@
  * One-Time) connection gets ONE picker on his dashboard — whose
  * book is on screen, "Mine" by default. Pick a driver and the
  * covered modules (Revenue, Dispatch, Fuel & Expense,
- * Maintenance, PTI, Damage & Incident, Manifest) open on THAT
- * DRIVER'S published book, in the same module shapes, READ-ONLY.
+ * Maintenance, PTI, Damage & Incident, Manifest, Navigator,
+ * Documents) open on THAT DRIVER'S published book, in the same
+ * module shapes, READ-ONLY. The mirror's scope is EVERYTHING
+ * the driver sees — with ONE exclusion, the owner's own line:
+ * the live work TIMER (the tracker face: start / pause / stop,
+ * counting-from, live session controls) is a control surface,
+ * not a record, and never appears in the mirror. Historical
+ * days, hours and manifests still show — hours from Revenue,
+ * as everywhere.
  *
  * DATA LAW: the mirror reads ONLY the existing published docs —
  * shareddays (CP.fetchCrew / CP.fetchCrewRange), sharedrecords +
  * sharedbilling (CP.fetchRecords), sharedphotos (CP.fetchPhoto).
- * No new publish format; nothing is back-filled. What never
- * crossed (his rev_entries list as such, his ticket/receipt
- * photo bytes) is not invented here — the Revenue face is his
- * days priced at his own wage (the priced wage leg) plus the
- * invoices billed to this payer, which is what the published
- * docs carry.
+ * No new publish format; nothing is back-filled. v358 adds ONE
+ * section inside the existing records doc (CP.sharedNav: the
+ * trip log's destination names + the last destination — names
+ * only, coordinates never ride) so the Navigator face has the
+ * driver's trips; his saved places and route pins do NOT cross
+ * in any published doc (named gap NAV-PLACES-NOT-PUBLISHED) and
+ * his documents do not cross either (named gap
+ * DOCS-NOT-PUBLISHED — the Documents face states it plainly
+ * instead of ever showing the payer's own files under the
+ * driver's name). What never crossed as records (his
+ * rev_entries list as such, his ticket photo bytes) is not
+ * invented here — the Revenue face is his days priced at his
+ * own wage (the priced wage leg) plus the invoices billed to
+ * this payer, which is what the published docs carry. The
+ * driver's P&L does not exist to mirror (Driver accounts never
+ * surface P&L — v199) and Connect is the payer's own tool, so
+ * neither is a mirror face.
  *
  * SAFETY LAW (the Nov 7 zeros were a whose-book confusion):
  *  - a persistent banner names the driver on EVERY screen while
@@ -55,7 +75,7 @@
   var M = { _uid: undefined, _name: '' };
   window.Mirror = M;
 
-  var COVERS = { revenue: 1, dispatch: 1, fuel: 1, maintenance: 1, pti: 1, damage: 1, manifest: 1 };
+  var COVERS = { revenue: 1, dispatch: 1, fuel: 1, maintenance: 1, pti: 1, damage: 1, manifest: 1, navigator: 1, documents: 1 };
 
   function store() {
     try { return (window.App && App._store) ? App._store : null; } catch (e) { return null; }
@@ -124,11 +144,15 @@
 
   M.covers = function (key) { return !!COVERS[key]; };
 
-  /* v357 (ROLE GATE, owner restated Nov 7, 2026): should THIS
-     account's own dashboard carry driver tools at all? Office-
-     only accounts (owners / fleet managers / office staff who
-     do NOT drive) never get the timer, the Navigator or odometer
-     prompts on their own face. The dashboard paint reads
+  /* v358 (ROLE GATE, owner corrected Nov 7, 2026 08:24 MDT):
+     should THIS account's own dashboard carry the live work
+     TIMER at all? Office-only accounts (owners / fleet managers
+     / office staff who do NOT drive) never get the timer /
+     tracker face or the odometer prompts tied to driving their
+     own truck — the timer is the one driver tool that would
+     "bother an office staff only". The Navigator is NOT gated:
+     it is a seeing tool and stays on the office face (the
+     office module order carries it). The dashboard paint reads
      App.userRole(); the bubble, park card and odometer prompt
      have no paint of their own to gate, so they ask here. An
      office pick stored in Preferences / onboarding is honored
@@ -574,10 +598,72 @@
     });
   }
 
+  /* The driver's trips, as published: the records doc's nav
+     section (v358 — destination names from his trip log + his
+     last destination) over his shared days (the runs themselves,
+     places by name, the day's distance). No live position, no
+     map controls, and — the owner's one exclusion — no timer:
+     a day still working shows its record ("Working now" is a
+     fact on his day doc), never a session face. His saved
+     places and route pins do not cross in the published docs
+     (named gap NAV-PLACES-NOT-PUBLISHED) — the face says so. */
+  function renderNavigator(body, uid, name) {
+    var cp = CP(), t = today();
+    var from = cp && cp.dateShift ? cp.dateShift(t, -13) : t;
+    return Promise.all([cp.fetchCrewRange(from, t), cp.fetchRecords()]).then(function (res) {
+      if (!stillMine(uid)) return false;
+      var days = (res[0] || []).filter(function (d) { return d && d.driver === uid; })
+        .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+      var rec = (res[1] && res[1].records && res[1].records[uid]) || null;
+      var nav = (rec && rec.nav) || null;
+      var h = headHtml(name) + '<div class="card"><h3>🧭 His trips — last 14 days</h3>';
+      if (nav && nav.lastDest) {
+        h += '<div class="kv"><span>Last trip</span><b>→ ' + esc(nav.lastDest) + '</b></div>';
+      }
+      var trips = (nav && nav.trips) || [];
+      if (trips.length) {
+        h += '<div style="margin:10px 0 2px;font-weight:700">From his trip log</div>';
+        trips.slice(0, 20).forEach(function (tr) {
+          h += '<div class="kv"><span>' + esc(tr.date) + (timeText(tr.at) ? ' · ' + esc(timeText(tr.at)) : '') +
+            '</span><b>→ ' + esc(tr.name) + '</b></div>';
+        });
+      }
+      if (days.length) {
+        h += '<div style="margin:10px 0 2px;font-weight:700">His runs</div>';
+        days.forEach(function (day) {
+          (day.dispatches || []).forEach(function (sd) {
+            h += '<div class="kv"><span>' + esc(day.date) + (timeText(sd.scheduledAt) ? ' · ' + esc(timeText(sd.scheduledAt)) : '') +
+              ' · ' + esc(sd.jobSite || 'Dispatch') + '</span><b>' + esc(statusText(sd)) + '</b></div>';
+          });
+          if (day.session && typeof day.session.km === 'number' && day.session.km > 0) {
+            h += '<div class="kv"><span style="padding-left:14px">' + esc(day.date) + ' distance</span><b>' + num(day.session.km) + ' km</b></div>';
+          }
+        });
+      }
+      if (!trips.length && !days.length) {
+        h += '<div class="empty">No trips shared yet.</div>';
+      }
+      h += '<p class="note" style="margin-top:8px">His saved places and route pins don\'t cross yet — trips and runs only.</p>';
+      body.innerHTML = h + '</div>';
+      return true;
+    });
+  }
+
+  /* NAMED GAP (DOCS-NOT-PUBLISHED): a driver's documents do
+     not ride any published doc, so there is nothing honest to
+     paint — the face says exactly that, rather than ever
+     falling through to the payer's OWN documents under the
+     driver's name (the whose-book confusion this build kills). */
+  function renderDocuments(body, uid, name) {
+    body.innerHTML = headHtml(name) + '<div class="card"><h3>📁 His documents</h3>' +
+      '<div class="empty">His documents don\'t cross on Connect yet — nothing of his is published here to show.</div></div>';
+    return Promise.resolve(true);
+  }
+
   var RENDER = {
     dispatch: renderDispatch, revenue: renderRevenue, fuel: renderFuel,
     maintenance: renderMaintenance, pti: renderPti, damage: renderDamage,
-    manifest: renderManifest
+    manifest: renderManifest, navigator: renderNavigator, documents: renderDocuments
   };
 
   /* The openModule door (js/app.js v357 hook): paint the picked
