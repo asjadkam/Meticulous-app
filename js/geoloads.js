@@ -593,7 +593,19 @@
                                 // fixes hold within this of its centroid
 
   function createPegCounter(cfg) {
-    var accBar = cfg.accMaxM || INTRA_ACC_MAX_M;
+    /* v369 (LOAD-NOT-COUNTED-AFTER-BOTH-PEGGED-NOV7): the accuracy
+       bar is the ENGINE STANDARD 50 m (ACC_MAX_M), not the intra-
+       site learner's 30 m. The 30 m bar belongs to sub-cluster
+       work that must separate spots metres apart; a declared peg
+       is judged through a rolling centroid that already smooths
+       scatter. The borrowed 30 m bar starved the peg counter in
+       exactly the conditions the day had already counted in: on
+       Nov 7 the morning's VISIT counter (50 m bar) counted 2,
+       he pegged the dump at 11:18, and at 35-45 m fix accuracy
+       the peg counter dropped EVERY fix and counted nothing
+       again (proven in tools/load-not-counted-bothpegged-v369-
+       test.js N4: acc 35/45 -> morning 2, post-peg cycle 0). */
+    var accBar = cfg.accMaxM || ACC_MAX_M;
     var seedLoad = isCoord(cfg.load) ? { lat: +cfg.load.lat, lng: +cfg.load.lng } : null;
     var seedDump = isCoord(cfg.dump) ? { lat: +cfg.dump.lat, lng: +cfg.dump.lng } : null;
     /* the day's site frame, from the seeds alone */
@@ -3598,7 +3610,18 @@
         var hcCen = null;
         try { var hcAll = counter.centres ? counter.centres() : null; hcCen = hcAll && hcAll.dump; } catch (e) {}
         var hcPt = hcCen || (curSites && curSites.dump);
-        if (hcPt && ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, hcPt.lat, hcPt.lng) <= 120) handCarry = true;
+        /* v369 (LOAD-NOT-COUNTED-AFTER-BOTH-PEGGED-NOV7): the mark
+           gate is the counter's own REACH at this dump. A peg
+           counter judges arrivals out to its fence plus the
+           recovery band (a face 70-200 m off the centre is still
+           this dump, walked in by recovery) — a +1 tapped at such
+           a face IS a tap for the pending carry, and the old flat
+           120 m gate left it unmarked, so the machine firing late
+           for that same visit would STACK on the driver's tap
+           (his Nov 7 load 3 was exactly such a hand count). The
+           standard counter's reach is its 120 m fence, unchanged. */
+        var hcGate = hcCen ? (PEG_FENCE_M + RECOVERY_BAND_M) : 120;
+        if (hcPt && ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, hcPt.lat, hcPt.lng) <= hcGate) handCarry = true;
       }
       /* v324: the same race under the visit law — a +1 tapped at
          the tip while the visit counter is standing AT the dump
