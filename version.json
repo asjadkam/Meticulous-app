@@ -1,8 +1,8 @@
 {
-  "version": 54,
-  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v54.apk",
+  "version": 55,
+  "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v55.apk",
   "webVersion": 367,
-  "notes": "Web 367 (Nov 7, 2026) - the web half of native gen 55 (v74). (1) APK_VERSION leftover closed: the banner constant is bumped 52 -> 55 per OTA.md, and the comparison now reads the RUNNING SHELL generation from Capacitor App.getInfo (generation = versionCode + 6; vc48 = gen 54) with the constant as fallback - the law is unchanged (banner only when the published version is STRICTLY greater), but OTA no longer poisons it: a gen-54 phone on web 367 is correctly offered the gen-55 APK, and a gen-55 phone never sees the banner. (2) PIP-DROPS-OUT web side: app boot stands down any stale native drive PiP arm (a fresh page cannot hold a live drive; startDrive is a drive only birth), and the navigator re-asserts the arm on every foreground return while a drive is live (onDriveVis). The native half (persisted drive arm + restore + idempotent re-asserts; widget 30s repaint bucket + chain re-arm on every sessionSync) ships in gen 55 / v74. Proof: tools/widget-pip-v367-test.js. Ready for his verdict.",
+  "notes": "Gen 55 published (Nov 7, 2026): native v74 (versionCode 49 / 1.47) placed on gh-pages per APK-HOSTING-RUNBOOK (commit 445115d, blob 1ff04f8) and verified from outside - HTTP 200, application/vnd.android.package-archive, 9,755,469 bytes, sha256 21af3ce2ae2d6a02e5a68e427e57d907e3cd6417b00d1a0df1b834d3cf3866d2, byte-identical to the CI binary, aapt2 vc49/1.47 on the downloaded copy. Ships: WIDGET-FROZEN-AGAIN (30s repaint bucket + chain re-arm on every sessionSync; honest bound ~1 min while any driver lives), PIP-DROPS-OUT-NOV7 (persisted/restored drive PiP arm + boot reconcile + foreground re-assert), APK_VERSION 55 + shell-generation banner. Web 367 was the web half (live since this morning push). Ready for his verdict - the banner now offers v55 to gen <=54 shells only.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
