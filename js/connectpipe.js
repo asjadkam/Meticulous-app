@@ -182,6 +182,58 @@
     return out;
   };
 
+  /* v364 (MIRROR-DIRECTION-BACKWARDS, owner Nov 7, 2026 09:57
+     MDT: "I shouldn't have the feature to look at the owner's
+     dashboard — it should be the other way around and only the
+     other way around"): the peers whose books THIS account has
+     ever RECEIVED — direction evidence off the published docs
+     themselves, never off my own con_list (a con_list entry
+     names a pair, never its direction: my owners sit in mine
+     beside my drivers). A peer shares TO me exactly when docs
+     he PUBLISHED name him as their driver and me as a viewer:
+       shareddays — any day doc with driver = the peer (the
+         fetchCrew door already proves I stand in its viewers);
+       sharedrecords/{peer} — readable; the doc's own driver
+         field proves he published it (the rules allow the read
+         only to its driver and its named viewers; I am not him);
+       sharedbilling/{peer}_{me} — exists (it names him as its
+         driver and me as its viewer outright).
+     Asymmetric by construction: an owner's docs never carry me
+     as their driver, so an account I only SEND to can never be
+     named. Queries are filtered on .driver (a shareddays doc
+     field), never a whole-collection scan. Resolves
+     { uid: true } for every sharing peer found, {} when none
+     (or when signed out). The caller (the dashboard mirror)
+     treats the answer as a one-way gate: only a named peer may
+     ever be offered as a viewable book. */
+  CP.receivingFrom = function () {
+    var f = fb();
+    if (!f) return Promise.resolve({});
+    var me = f.user.uid;
+    var found = {};
+    function job(p) { return Promise.resolve(p).catch(function () { return null; }); }
+    var jobs = [];
+    CP.connectedPeers().forEach(function (p) {
+      if (!p || !p.uid || p.uid === me) return;
+      jobs.push(job(f.db.collection('shareddays').where('driver', '==', p.uid).get())
+        .then(function (snap) {
+          if (snap && !snap.empty) found[p.uid] = true;
+        }));
+      jobs.push(job(f.db.collection('sharedrecords').doc(p.uid).get())
+        .then(function (snap) {
+          if (snap && snap.exists) {
+            var d = snap.data() || {};
+            if (d.driver === p.uid && CP.kindFor(p.uid) !== 'limited') found[p.uid] = true;
+          }
+        }));
+      jobs.push(job(f.db.collection('sharedbilling').doc(p.uid + '_' + me).get())
+        .then(function (snap) {
+          if (snap && snap.exists && CP.kindFor(p.uid) !== 'limited') found[p.uid] = true;
+        }));
+    });
+    return Promise.all(jobs).then(function () { return found; });
+  };
+
   /* v148: the kind on MY con_list entry for a peer — the same
      grandfather read as ConnectLive.kindOf (absent/invalid =
      'all'), restated here so the pipe never depends on the

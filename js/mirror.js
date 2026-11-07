@@ -48,6 +48,19 @@
  * surface P&L — v199) and Connect is the payer's own tool, so
  * neither is a mirror face.
  *
+ * v364 — DIRECTION (owner, Nov 7, 2026 09:57 MDT): the picker
+ * exists ONLY on the receiving side of a share. v357/358 built
+ * the pickable set from the viewer's own con_list + kind, and a
+ * con_list entry names a pair, never its direction — so a pure
+ * DRIVER account, whose 'all' entries are the owners he sends
+ * TO, was offered those owners as viewable books (his phone
+ * showed Umar / AI Trucking and Dave Cooper). The pipe's reads
+ * stayed viewers-gated, so an owner's book could never actually
+ * load — but the offer itself was the backwards feature he
+ * struck down. Now a peer is pickable only when the published
+ * docs prove he shares TO this account (CP.receivingFrom), and
+ * a driver-only account gets no picker at all. See M.drivers.
+ *
  * SAFETY LAW (the Nov 7 zeros were a whose-book confusion):
  *  - a persistent banner names the driver on EVERY screen while
  *    mirroring, and every mirrored module opens with the same
@@ -72,7 +85,7 @@
 (function () {
   'use strict';
 
-  var M = { _uid: undefined, _name: '' };
+  var M = { _uid: undefined, _name: '', _recv: undefined, _recvSeq: 0 };
   window.Mirror = M;
 
   var COVERS = { revenue: 1, dispatch: 1, fuel: 1, maintenance: 1, pti: 1, damage: 1, manifest: 1, navigator: 1, documents: 1 };
@@ -104,19 +117,91 @@
 
   /* ---------------- whose book ---------------- */
 
+  /* ---------------- direction (v364) -------------------------
+     MIRROR-DIRECTION-BACKWARDS (owner, Nov 7, 2026 09:57 MDT,
+     from his own phone: the picker on his DRIVER account offered
+     him "Osouraya@hotmail.com Hanan*111" — Umar / AI Trucking —
+     and "Dave Cooper": the OWNERS he shares TO — "I shouldn't
+     have the feature to look at the owner's dashboard — it
+     should be the other way around and only the other way
+     around"). The v357/358 pickable set was built from the
+     viewer's OWN con_list + kind alone — and a con_list entry
+     names a pair, never its direction: a driver who sends his
+     book UP to Connect All owners holds the same 'all' entries
+     as a payer who receives from drivers. The picker therefore
+     offered every All pair as a book — including owners, whose
+     mirror faces then rendered honest empties (the pipe's reads
+     are viewers-gated server-side: an owner's published docs
+     never name the driver a viewer, so nothing of an owner's
+     could ever load — a backwards OFFER, not a data door).
+
+     THE GATE: a peer is pickable only when the published docs
+     prove he shares TO this account — CP.receivingFrom (his day
+     docs name him as their driver with me fetchable as a
+     viewer, or his records doc reads under his uid, or a
+     billing doc names him driver / me viewer). Owners I send to
+     publish under their own uid only, so they can never be
+     named; a driver-only account receives from NOBODY, so its
+     picker never renders at all — no bar, no select, nothing in
+     the DOM. An owner-operator who both drives and receives
+     keeps the picker, listing only the drivers sharing TO him.
+
+     The evidence is ASYNC and ONE-WAY: until it lands, nothing
+     is pickable (a payer's bar appears a beat after the
+     dashboard paints — the honest price of never offering a
+     backwards book); once a peer is proven IN, later refreshes
+     can widen the set but never narrow it (a flaky read can
+     never un-prove a real share); and a pair whose kind flips
+     Limited — or a one-time pair that ends — still falls out
+     the moment it happens, because the kind/status half of the
+     filter is re-read live on every call, exactly as v357. */
+
+  /* Kick (or re-kick) the direction evidence. Returns the cached
+     verdict immediately — {} until the first answer lands — and
+     re-paints the bar when a refresh lands a WIDER set. The
+     cache is a PLAIN object: the pipe's verdict is built in its
+     own realm (a vm / iframe boundary away), and only its keys
+     are ever read — values are never carried across, so no
+     cross-realm prototype surprise can ride in on a key. */
+  M._proveDirection = function () {
+    var cp = CP();
+    if (M._recv === undefined) M._recv = {};
+    var seq = ++M._recvSeq;
+    if (!cp || !cp.receivingFrom) return M._recv;
+    try {
+      cp.receivingFrom().then(function (found) {
+        if (seq !== M._recvSeq || !found) return;
+        var wider = false;
+        Object.keys(found).forEach(function (uid) {
+          if (found[uid] && !M._recv[uid]) { M._recv[uid] = true; wider = true; }
+        });
+        if (wider) { try { M.paintBar(); } catch (e) {} }
+      }).catch(function () {});
+    } catch (e) {}
+    return M._recv;
+  };
+
   /* The pickable drivers: my connected peers at Connect All
-     scope. Kind is read live on every call (CP.kindFor), so a
-     pair flipped to Limited — or a one-time pair that ended —
-     falls out of the mirror the moment it happens. */
+     scope WHO SHARE TO ME. Kind is read live on every call
+     (CP.kindFor), so a pair flipped to Limited — or a one-time
+     pair that ended — falls out of the mirror the moment it
+     happens; direction is the v364 evidence above. */
   M.drivers = function () {
     var cp = CP();
     if (!cp || !cp.connectedPeers) return [];
-    return cp.connectedPeers().filter(function (c) {
+    var recv = M._proveDirection();
+    var list = cp.connectedPeers().filter(function (c) {
+      if (!Object.prototype.hasOwnProperty.call(recv, c.uid)) return false;
       var k = cp.kindFor(c.uid);
       return k === 'all' || k === 'once';
     }).map(function (c) {
       return { uid: c.uid, name: String(c.name || c.business || 'Connected driver'), kind: cp.kindFor(c.uid) };
     });
+    /* the list is rebuilt in THIS realm — .filter/.map ride the
+       pipe realm's arrays, and a caller reading the result with
+       its own realm's intrinsics (instanceof / strict array
+       checks) must never see a foreign array */
+    return Array.prototype.slice.call(list);
   };
 
   function curUid() {
