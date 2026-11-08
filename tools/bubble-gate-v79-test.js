@@ -73,6 +73,16 @@
  * gate logic (v78 leave/settle mirrors + dismiss + hideAll +
  * the v79 start rule) driven over event scripts, run under
  * BOTH rule sets. Run: node tools/bubble-gate-v79-test.js
+ *
+ * ADDENDUM (v81, PIP-BUBBLE-DISMISS-NOT-NOW-NOV8): the
+ * owner's Nov 8, 2026 ruling — the ✕ silences only its
+ * leave; the return spends it — supersedes the latch
+ * lifetime that S1's gloss, S5 and S6 state. Those cases
+ * stand untouched as the pre-ruling record (their scripts
+ * contain no return event — under the old code none
+ * mattered); section A below re-runs their arcs WITH the
+ * returns they physically contain, under the ruling.
+ * Full record: tools/bubble-gate-v81-test.js.
  */
 'use strict';
 const fs = require('fs');
@@ -171,6 +181,16 @@ function countersEq(st, want) {
   const c = st.counters;
   return c.leaves === want[0] && c.shows === want[1] && c.dismissals === want[2]
       && c.deferred === want[3] && c.deferredShows === want[4];
+}
+// v81 addendum (PIP-BUBBLE-DISMISS-NOT-NOW-NOV8): a
+// return to the app under the owner's Nov 8 ruling —
+// onAppResumed spends the dismissal alongside the
+// deferred want. The v78/v79 mirrors above have no
+// resume event (under the old code the latch rode
+// through one); this is the spend the ruling adds.
+function evResumeV81(st) {
+  st.leaveWant = false; st.shown = false;
+  st.dismissed = false; st.dismissedKey = '';
 }
 
 /* ============ S1. Tonight's exact counter history ============
@@ -307,6 +327,50 @@ for (const gen of ['v78', 'v79']) {
   evRecordLands(st, 'running', 'sB');
   ok(st.dismissed === false && evLeave(st) === 'show',
      `S8 (${gen}) stop → start: the end-clear plus the new key — the next session shows (no regression at the old boundary)`);
+}
+
+/* ============ A. v81 ADDENDUM — the ruling applied to S1/S5/S6 ============
+ * The same arcs as S1, S5 and S6, WITH the returns they
+ * physically contain (a second minimize is impossible
+ * without reopening the app; a restore arrives by
+ * relaunch). Under the Nov 8 ruling the return spends
+ * the ✕, so each post-✕ leave SHOWS. The S-cases above
+ * are the pre-ruling record and are not re-graded. */
+{
+  const st = newState();
+  evStart(st, 'sDAY', 'v79');
+  evRecordLands(st, 'running', 'sDAY');
+  const o1 = evLeave(st);
+  evDismissTap(st);
+  evResumeV81(st);
+  const o2 = evLeave(st);
+  evResumeV81(st);
+  const o3 = evLeave(st);
+  ok(o1 === 'show' && o2 === 'show' && o3 === 'show'
+     && countersEq(st, [3, 3, 1, 0, 0]),
+     'A1 (v81) S1\'s arc with its physical returns: every post-✕ leave SHOWS again — counters 3/3/1/0/0 (S1\'s 3/1/1/0/0 is the pre-ruling code\'s)');
+}
+{
+  const st = newState();
+  st.dismissed = true; st.dismissedKey = 'sSAME';
+  st.record = { rev: 6, status: 'running', sessionKey: 'sSAME' };
+  evResumeV81(st); // the relaunch's return, in front of the restore
+  evStart(st, 'sSAME', 'v79');
+  ok(st.dismissed === false && evLeave(st) === 'show',
+     'A2 (v81) S5\'s same-key restore arriving by relaunch: the return spent the latch before the announce — the leave shows (the S5 keep now guards only a re-announce inside one stay)');
+}
+{
+  const st = newState();
+  st.dismissed = true; st.dismissedKey = 'sOLD';
+  st.record = { rev: 6, status: 'running', sessionKey: 'sOLD' };
+  evStart(st, 'sNEW', 'v79');
+  evRecordLands(st, 'running', 'sNEW');
+  evLeave(st);
+  evDismissTap(st);
+  evResumeV81(st);
+  evStart(st, 'sNEW', 'v79'); // a restore of the new session
+  ok(st.dismissed === false && evLeave(st) === 'show',
+     'A3 (v81) S6\'s ✕ on the new session, then a restore: the return spent that latch too — the leave shows again');
 }
 
 /* ============ P. Source pins (the fix + preserved law) ============ */

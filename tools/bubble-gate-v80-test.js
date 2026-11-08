@@ -100,6 +100,17 @@
  * Dismissal semantics (incl. the v79 start-boundary clear)
  * and the drive posture are untouched.
  *
+ * ADDENDUM (v81, PIP-BUBBLE-DISMISS-NOT-NOW-NOV8): two
+ * assertions below pinned the session-long dismissal
+ * latch the owner overruled on Nov 8, 2026 — T3's
+ * post-fix branch ("✕ rules its session") and T5b ("a
+ * same-key restore does not clear it"). Both are flipped
+ * in place to the v81 rule set and marked FLIPPED where
+ * they stand; the simulator's evResume/evStamp now carry
+ * the v81 spend for those branches. The pre-ruling
+ * reproductions (T1, T3's v79 branch) are untouched.
+ * The full new-law record is tools/bubble-gate-v81-test.js.
+ *
  * Run: node tools/bubble-gate-v80-test.js
  */
 'use strict';
@@ -179,9 +190,10 @@ function evBubblePush(st) { return evRecordWritten(st); }
 // empty key stamps nothing; a record already live for the
 // announced key is never clobbered; otherwise the record
 // is written RUNNING from the start — and that write fires
-// the hook like any other.
+// the hook like any other. (v81 carries the stamp
+// unchanged, so 'v81' stamps too.)
 function evStamp(st, key, startMs, gen) {
-  if (gen !== 'v80') return false;
+  if (gen !== 'v80' && gen !== 'v81') return false;
   if (!key || key.length === 0) return false;
   if (liveForKeyM(st.record, key)) return false;
   st.record = { rev: st.record.rev + 1, status: 'running', sessionKey: key,
@@ -250,8 +262,16 @@ function evHiddenSaveSwallowed(st) { return 'swallowed'; }
 // are throttled/frozen — no trackerSave, no write.
 function evBackgroundMinute(st) { return 'no-write'; }
 // Reopening the app: onAppResumed spends the want at its
-// head, BEFORE any return-to-visible sync can land.
-function evResume(st) { st.leaveWant = false; return 'spent'; }
+// head, BEFORE any return-to-visible sync can land. v81
+// (PIP-BUBBLE-DISMISS-NOT-NOW-NOV8) spends the dismissal
+// in the same head — the return ends the ✕'s leave; the
+// gen parameter carries that one difference (T1's call,
+// under the old rules, passes no gen).
+function evResume(st, gen) {
+  st.leaveWant = false;
+  if (gen === 'v81') { st.dismissed = false; st.dismissedKey = ''; }
+  return 'spent';
+}
 function countersEq(st, want) {
   const c = st.counters;
   return c.leaves === want[0] && c.shows === want[1] && c.dismissals === want[2]
@@ -339,13 +359,24 @@ function countersEq(st, want) {
 /* ============ T3. The full gen-60 retest arc ============
  * leave → rises → ✕ → leave → silent → STOP → NEW session
  * → Home → must rise. Pre-fix the last step degrades into
- * the starved deferred path; post-fix it shows. */
-for (const gen of ['v79', 'v80']) {
+ * the starved deferred path; post-fix it shows.
+ * FLIPPED by v81 (PIP-BUBBLE-DISMISS-NOT-NOW-NOV8): the
+ * 'v80' branch asserted o2 === 'nothing' — "✕ rules its
+ * session" — the session-long latch the owner overruled
+ * on Nov 8. The branch now runs under 'v81' rules with
+ * the return the arc physically contains (he reopens the
+ * app between minimizes — a second minimize is
+ * impossible without one): the return spends the ✕, o2
+ * SHOWS in the same session, and the new session's first
+ * leave still rises. The 'v79' branch is the pre-ruling
+ * reproduction, untouched. */
+for (const gen of ['v79', 'v81']) {
   const st = newState();
   evStart(st, 'sA', gen, 1000);
   if (gen === 'v79') evRecordLands(st, 'running', 'sA', { stateAt: 1000, segStartMs: 1000 });
   const o1 = evLeave(st);
   evDismissTap(st);
+  if (gen === 'v81') evResume(st, 'v81'); // the return between minimizes
   const o2 = evLeave(st);
   evStopSession(st);
   evStart(st, 'sB', gen, 2000);
@@ -362,8 +393,8 @@ for (const gen of ['v79', 'v80']) {
        && st.counters.deferredShows === 0,
        'T3 (v79) the retest arc pre-fix: first session fine, the NEW session\'s first leave starves in the deferred path — "still only the first time"');
   } else {
-    ok(o1 === 'show' && o2 === 'nothing' && o3 === 'show' && st.shown === true,
-       'T3 (v80) the retest arc post-fix: ✕ rules its session, and the NEW session\'s first leave rises — the fix\'s whole point');
+    ok(o1 === 'show' && o2 === 'show' && o3 === 'show' && st.shown === true,
+       'T3 (v81) FLIPPED: the retest arc under the Nov 8 ruling — ✕ silences its leave, the return spends it, the SAME session rises again, and the NEW session\'s first leave rises too');
   }
 }
 
@@ -422,15 +453,24 @@ for (const gen of ['v79', 'v80']) {
      'T5a (v80) the session end spent the want — a later session\'s write raises no zombie bubble');
 }
 {
-  // (b) an ✕ inside the stamped session still rules it,
-  // and a same-key restore (stamp no-op, latch kept) too.
+  // (b) FLIPPED by v81 (PIP-BUBBLE-DISMISS-NOT-NOW-NOV8):
+  // this case asserted that an ✕ inside the stamped
+  // session "still rules it" and that a same-key restore
+  // does not clear it — the session-long latch the owner
+  // overruled on Nov 8. A restore arrives by relaunch,
+  // and a relaunch is a return: the resume spends the ✕
+  // before the restore's same-key announce is judged, so
+  // the restored session's next leave SHOWS. (Within the
+  // ✕'s own leave, with no return interposed, the latch
+  // still rules — v81's N6 pins that.)
   const st = newState();
-  evStart(st, 'sB', 'v80', 2000);
-  ok(evLeave(st) === 'show', 'T5b (v80) the stamped session shows at its first leave');
+  evStart(st, 'sB', 'v81', 2000);
+  ok(evLeave(st) === 'show', 'T5b (v81) the stamped session shows at its first leave');
   evDismissTap(st);
-  evStart(st, 'sB', 'v80', 2000); // a restore of the same session
-  ok(st.dismissed === true && evLeave(st) === 'nothing',
-     'T5b (v80) his ✕ on the stamped session latches against it and a same-key restore does not clear it');
+  evResume(st, 'v81');            // the return a relaunch/restore rides on
+  evStart(st, 'sB', 'v81', 2000); // a restore of the same session
+  ok(st.dismissed === false && evLeave(st) === 'show',
+     'T5b (v81) FLIPPED: his ✕ on the stamped session is spent by the return — a same-key restore no longer preserves it across a resume, and the leave shows');
 }
 {
   // (c) the settled path is unchanged when the record was
