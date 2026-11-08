@@ -538,7 +538,7 @@ async function partF() {
     eq('the fill-up saved anyway', saved.length, 1);
     ok('…without the photo that could not fit', !('photo' in saved[0]), JSON.stringify(Object.keys(saved[0])));
     eq('…with its numbers intact', saved[0].litres, '83.965');
-    ok('the drop is said once, in the save note', w.body._html.indexOf('didn\'t fit in the app storage, so this entry was saved without it') >= 0);
+    ok('the drop is said once, in the save note', w.body._html.indexOf("didn't fit in this device's app storage") >= 0 && w.body._html.indexOf('kept in your account copy') >= 0); /* web 370 wording: the photo is kept in the account copy now, not lost — the law (shed said once, in the save note) is unchanged */
   }
 
   console.log('\n— (f) edit: a fresh photo replaces; no photo keeps the old —');

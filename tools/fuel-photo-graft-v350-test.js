@@ -263,8 +263,8 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 30); }
 
   /* — source + ship pins — */
   ok('the fill save handlers write the photo doc under its stable key (no timestamp keys left)',
-    fuelSrc.indexOf("FB.saveDoc('fuel', 'f' + Date.now()") === -1 && fuelSrc.indexOf('saveFillPhotoDoc(updated)') >= 0 && fuelSrc.indexOf('saveFillPhotoDoc(rec)') >= 0);
-  ok('the expense save writes its photo doc too', fuelSrc.indexOf('saveExpensePhotoDoc(rec)') >= 0);
+    fuelSrc.indexOf("FB.saveDoc('fuel', 'f' + Date.now()") === -1 && fuelSrc.indexOf('saveFillPhotoDoc(updated, mergedStack)') >= 0 && fuelSrc.indexOf('saveFillPhotoDoc(rec, addDocStack)') >= 0);
+  ok('the expense save writes its photo doc too', fuelSrc.indexOf('saveExpensePhotoDoc(rec, fxPhoto ? [fxPhoto] : null)') >= 0);
   ok('render opens the heal', fuelSrc.indexOf('healPhotoGrafts(body)') >= 0);
   eq('webVersion is 350', ver.webVersion, 350);
   ok('index.html pins fuel.js?v=350', idxSrc.indexOf('modules/fuel.js?v=350') >= 0);

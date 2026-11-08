@@ -204,7 +204,11 @@ async function attachPhoto(w) {
   w.els['#fx_add'].onclick();
   eq('the expense still saved', w.data.fuel_expenses.length, 1);
   ok('it saved without the photo that didn\'t fit', !('photo' in w.data.fuel_expenses[0]) && !('photos' in w.data.fuel_expenses[0]));
-  ok('the drop is said out loud, never silent', w.els['#fx_read'].innerHTML.indexOf('Expense saved') >= 0 && w.els['#fx_read'].innerHTML.indexOf("wasn't kept") >= 0, w.els['#fx_read'].innerHTML);
+  /* web 370 wording: the photo is no longer lost when it doesn't
+     fit — it is kept in the account copy — so the note says that;
+     the law this pin guards (the shed is SAID, never silent) is
+     unchanged. */
+  ok('the drop is said out loud, never silent', w.els['#fx_read'].innerHTML.indexOf('Expense saved') >= 0 && w.els['#fx_read'].innerHTML.indexOf("kept in your account copy") >= 0, w.els['#fx_read'].innerHTML);
 }
 
 /* — the write fails entirely: form stays open, nothing silently lost — */

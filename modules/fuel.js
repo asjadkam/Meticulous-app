@@ -170,14 +170,34 @@
     for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
     return 'exp_' + h.toString(36);
   }
-  function saveFillPhotoDoc(rec) {
+  /* web 370 (FUEL-PHOTO-SAVE-DROP-NOV7): the photo document is
+     written from the stack CAPTURED at save time, BEFORE the
+     verified local save's didn't-fit fallback can shed it from
+     the record. Before this, the doc was written from the
+     already-shed record, so the fallback's one retry quietly
+     destroyed the photo's only other home too and the v350
+     graft had nothing to heal with — the photo was lost
+     everywhere the moment this device's store was too full to
+     hold it in the book. An override stack rides on a COPY of
+     the record; the record itself is never touched. */
+  function photoDocPayload(rec, stack) {
+    var doc = {};
+    for (var k in rec) { if (Object.prototype.hasOwnProperty.call(rec, k)) doc[k] = rec[k]; }
+    doc.photo = stack[0];
+    if (stack.length > 1) doc.photos = stack.slice(); else delete doc.photos;
+    delete doc.photo2;
+    return doc;
+  }
+  function saveFillPhotoDoc(rec, stackOverride) {
     try {
-      if (window.FB && FB.saveDoc && rec && fillPhotos(rec).length) FB.saveDoc('fuel', fillPhotoDocKey(rec), rec);
+      var stack = (stackOverride && stackOverride.length) ? stackOverride : fillPhotos(rec || {});
+      if (window.FB && FB.saveDoc && rec && stack.length) FB.saveDoc('fuel', fillPhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
     } catch (e) {}
   }
-  function saveExpensePhotoDoc(rec) {
+  function saveExpensePhotoDoc(rec, stackOverride) {
     try {
-      if (window.FB && FB.saveDoc && rec && fillPhotos(rec).length) FB.saveDoc('fuel', expensePhotoDocKey(rec), rec);
+      var stack = (stackOverride && stackOverride.length) ? stackOverride : fillPhotos(rec || {});
+      if (window.FB && FB.saveDoc && rec && stack.length) FB.saveDoc('fuel', expensePhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
     } catch (e) {}
   }
   var photoGraftRan = false;
@@ -407,6 +427,10 @@
          these receipts I have been taking for a month hasn't
          been attaching!"). Add now saves it — see the handler. */
       var fxPhoto = '';
+      /* web 370 (FUEL-PHOTO-SAVE-DROP-NOV7): like fuPhoto, the
+         copy the record keeps is the storage rendition once it
+         lands; the flag stops the OCR callback overwriting it. */
+      var fxPhotoFromStorage = false;
       var fxCamInput = body.querySelector('#fx_img_cam');
       var fxPickInput = body.querySelector('#fx_img');
       body.querySelector('#fx_cam').onclick = function () { fxCamInput.click(); };
@@ -416,6 +440,7 @@
       function fxHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
         var token = ++fxOcrToken;
+        fxPhotoFromStorage = false; /* web 370: a fresh photo starts un-stored */
         var r = new FileReader();
         r.onload = function () { body.querySelector('#fx_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
         r.readAsDataURL(file);
@@ -427,7 +452,13 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== fxOcrToken) return;
           if (!ocrUrl) { fxSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
-          fxPhoto = ocrUrl; /* v347: keep the photo for the record (see fxPhoto above) */
+          if (!fxPhotoFromStorage) fxPhoto = ocrUrl; /* v347: keep the photo for the record (see fxPhoto above) */
+          /* web 370: the stored copy is the storage rendition
+             (see fxPhotoFromStorage above). */
+          if (TicketOCR.fileToStorageImage) { try { TicketOCR.fileToStorageImage(file, function (storeUrl) {
+            if (token !== fxOcrToken || !storeUrl) return;
+            fxPhoto = storeUrl; fxPhotoFromStorage = true;
+          }); } catch (e) {} }
           TicketOCR.recognizeWithRotation(ocrUrl, function (p) {
             if (token !== fxOcrToken) return;
             try { fxSetRead('📖 Reading receipt… ' + Math.round(p * 100) + '%'); } catch (e) {}
@@ -482,11 +513,11 @@
             return;
           }
         }
-        saveExpensePhotoDoc(rec); /* v350: the per-expense photo doc, under its stable key */
+        saveExpensePhotoDoc(rec, fxPhoto ? [fxPhoto] : null); /* v350: the per-expense photo doc, under its stable key — web 370: from the pre-shed photo */
         Meticulous.modules.fuel.render(body);
         if (photoDropped) {
           var rd = body.querySelector('#fx_read');
-          if (rd) rd.innerHTML = '✓ Expense saved — the receipt photo didn\'t fit in the app storage, so it wasn\'t kept.';
+          if (rd) rd.innerHTML = '✓ Expense saved — the receipt photo didn\'t fit in this device\'s app storage, so it\'s kept in your account copy and will re-attach where there\'s room.';
         }
       };
   }
@@ -1021,6 +1052,14 @@
          photo entry?... The picture I took yesterday?"). Save now
          attaches it — see the save handler. */
       var fuPhoto = '';
+      /* web 370 (FUEL-PHOTO-SAVE-DROP-NOV7): fuPhoto holds the
+         STORAGE rendition (TicketOCR.fileToStorageImage, 1280px)
+         once it lands — the 1600px OCR rendition is for the
+         reader only. This flag keeps the OCR callback from
+         overwriting the smaller stored copy when the two
+         renditions race; worlds without the helper keep the
+         v127 behaviour (fuPhoto = the OCR rendition). */
+      var fuPhotoFromStorage = false;
       /* v332 (FUEL-MULTI-RECEIPT): the ADDED receipts' photos
          for this form session (receipt 2, 3, …) — saved onto
          the record's `photos` stack beside fuPhoto. */
@@ -1043,6 +1082,7 @@
       function fuHandlePhoto(ev) {
         var file = ev.target.files && ev.target.files[0]; if (!file) return;
         var token = ++fuOcrToken;
+        fuPhotoFromStorage = false; /* web 370: a fresh photo starts un-stored */
         var r = new FileReader();
         r.onload = function () { body.querySelector('#fu_prev').innerHTML = '<img src="' + r.result + '" style="width:100%;border-radius:10px;margin-top:10px">'; };
         r.readAsDataURL(file);
@@ -1054,7 +1094,15 @@
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (token !== fuOcrToken) return;
           if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — fill the form by hand.</span>'); return; }
-          fuPhoto = ocrUrl; /* v127: keep the photo for the record (see fuPhoto above) */
+          if (!fuPhotoFromStorage) fuPhoto = ocrUrl; /* v127: keep the photo for the record (see fuPhoto above) */
+          /* web 370: …but the copy the record KEEPS is the
+             storage rendition of the same file — the OCR
+             rendition stays the reader's working copy (race,
+             power read and recognition below are untouched). */
+          if (TicketOCR.fileToStorageImage) { try { TicketOCR.fileToStorageImage(file, function (storeUrl) {
+            if (token !== fuOcrToken || !storeUrl) return;
+            fuPhoto = storeUrl; fuPhotoFromStorage = true;
+          }); } catch (e) {} }
           var race = { litres: null, cost: null, delivered: false, prImg: null };
           fuRace = race;
           var startCloud = function (prImg) {
@@ -1181,8 +1229,13 @@
         fuSetRead('📖 Reading the added receipt…');
         TicketOCR.fileToOCRImage(file, function (ocrUrl) {
           if (!ocrUrl) { fuSetRead('<span style="color:#e67e22">Couldn\'t read that photo — it was NOT added.</span>'); return; }
-          fuExtraPhotos.push(ocrUrl);
-          fuPaintExtras();
+          /* web 370: the stack keeps the storage rendition too
+             (the read below still runs on the OCR rendition). */
+          if (TicketOCR.fileToStorageImage) { try { TicketOCR.fileToStorageImage(file, function (storeUrl) {
+            fuExtraPhotos.push(storeUrl || ocrUrl);
+            fuPaintExtras();
+          }); } catch (e) { fuExtraPhotos.push(ocrUrl); fuPaintExtras(); } }
+          else { fuExtraPhotos.push(ocrUrl); fuPaintExtras(); }
           TicketOCR.recognizeWithRotation(ocrUrl, function () {}).then(function (text) {
             var parsed = null;
             try { parsed = TicketOCR.parseFuelReceipt(text || ''); } catch (e) {}
@@ -1538,7 +1591,7 @@
             }
           }
           try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
-          saveFillPhotoDoc(updated); /* v350: the per-fill photo doc, under its stable key */
+          saveFillPhotoDoc(updated, mergedStack); /* v350: the per-fill photo doc, under its stable key — web 370: from the merged pre-shed stack */
           editFillIdx = null; editErr = '';
           var un = '';
           if (odoPlan.mode === 'correct') { try { App._store.set(wpKeyFor('mt_odo'), String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} un = odoOutcomeNote(); }
@@ -1550,7 +1603,7 @@
             try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(updated)); } catch (e) {}
           }
           saveNote = un || '✓ Fill-up updated.';
-          if (editPhotoDropped) saveNote += ' The new receipt photo didn\'t fit in the app storage, so it wasn\'t kept.';
+          if (editPhotoDropped) saveNote += ' The new receipt photo didn\'t fit in this device\'s app storage — it\'s kept in your account copy and will re-attach where there\'s room.';
           Meticulous.modules.fuel.render(body);
           return;
         }
@@ -1600,6 +1653,14 @@
           if (newStack.length > 1) rec.photos = newStack;
         }
         f.push(rec);
+        /* web 370 (FUEL-PHOTO-SAVE-DROP-NOV7): the photo stack as
+           INTENDED, captured before the verified save below can
+           shed it — the per-record photo document is written
+           from this copy, so the photo always lands in the
+           account even when this device's store can't hold it
+           in the book (the v350 graft re-attaches it wherever
+           there is room). */
+        var addDocStack = fillPhotos(rec);
         /* v75: the add path is verified too — a failed write used to
            look exactly like a saved fill-up. */
         var photoDropped = false;
@@ -1618,7 +1679,7 @@
         /* v59: this save confirms the form — consume any power-read
            result that was waiting for this screen. */
         try { if (window.PowerRead && PowerRead.takeResult) PowerRead.takeResult('text', 'fuel'); } catch (e) {}
-        saveFillPhotoDoc(rec); /* v350: the per-fill photo doc, under its stable key */
+        saveFillPhotoDoc(rec, addDocStack); /* v350: the per-fill photo doc, under its stable key — web 370: from the pre-shed stack */
         // v39: feed the master odometer (upward only) + show the outcome —
         // ONLY when a real reading was entered. An odo-less save never
         // touches the master (mt_odo) and just confirms the save.
@@ -1626,7 +1687,7 @@
         if (odoPlan.mode === 'correct') { try { App._store.set(wpKeyFor('mt_odo'), String(odoPlan.value)); } catch (e) {} try { if (App._logOdoReading) App._logOdoReading(odoPlan.value, 'fuel', null, true); } catch (e) {} saveNote = odoOutcomeNote(); }
         else if (odoPlan.mode === 'refuse') { saveNote = odoOutcomeNote(); }
         else { saveNote = hasOdo ? masterOnSave(odo) : '✓ Fill-up saved.'; }
-        if (photoDropped) saveNote = (saveNote ? saveNote + ' ' : '') + 'The receipt photo didn\'t fit in the app storage, so this entry was saved without it.';
+        if (photoDropped) saveNote = (saveNote ? saveNote + ' ' : '') + 'The receipt photo didn\'t fit in this device\'s app storage — it\'s kept in your account copy and will re-attach where there\'s room.';
         /* v122: the fill's own reading joins the dated log at
            the fill's moment (see fuFillTs). */
         if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {

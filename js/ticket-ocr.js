@@ -1245,6 +1245,19 @@
   }
   TicketOCR.fileToOCRImage = function (file, cb) { _fileToSizedImage(file, 1600, cb); };
 
+  /* ---------- web 370 (Nov 7, 2026): the STORAGE rendition ----------
+     The rendition a module KEEPS on a saved record (FUEL-PHOTO-SAVE-
+     DROP-NOV7). The 1600px OCR rendition above is for the READER
+     only — the v39 split's own rule — yet Fuel stored it on the
+     record, and at the book's size the verified local save's
+     didn't-fit fallback shed exactly that oversized field and the
+     photo was lost (the facts, being small, always fit). Records
+     are stored at the text-read size the cloud reader already
+     uses: big enough to read back, small enough to survive the
+     local quota beside the whole book. Callers fall back to the
+     OCR rendition when this helper is absent. */
+  TicketOCR.fileToStorageImage = function (file, cb) { _fileToSizedImage(file, 1280, cb); };
+
   /* ---------- v142: the cloud-send rendition ----------
      The cloud vision reader does not need the OCR rendition's pixels:
      probed against the live endpoint on the owner's real fixtures
