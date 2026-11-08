@@ -321,35 +321,81 @@
      this device's copies of OLD photos get smaller, and
      never before their full copy is safe in the account. */
   var PHOTO_RECLAIM_MAX = 960;
+  /* web 373 (FUEL-PHOTO-SAVE-DROP-NOV7, round 4 — the Oct 10
+     exception): the reclaim freed the room for the Part A pass
+     (Oct 1–8) and the Nov 7 heal, then silently ran dry. Its
+     one shrink size was 960px — the ladder's own first rung —
+     so once every stored photo had been laddered or reclaimed
+     to 960px or under (the state the evening's own work
+     produced), a "shrink" re-encoded a photo to ITSELF:
+     shrinkDataUrl answers an at-or-under-cap image unchanged,
+     the verified save of the identical book succeeded, and
+     the reclaim reported room freed when ZERO bytes had been
+     freed. The ladder walked the whole book on phantom frees
+     and gave up; the photo stayed in its account document and
+     every later graft repeated the same futile cycle on the
+     still-full store (owner evidence: Oct 10 — Mobil,
+     105.977 L, $250.00 — two clean attach saves, the account
+     document written and verified, "No photo for this entry"
+     in every session after; the round-4 suite's spent-book
+     phases show every Oct 10 write REFUSED beside 17–18
+     phantom writes, in all five record shapes — the record's
+     shape was never the difference; it was simply the first
+     attach to arrive after the >960px supply ran out).
+     THE FIX: a reclaim counts only when it frees real bytes.
+     If the 960px shrink frees nothing, the same candidate is
+     stepped down to 640px before it is given up as spent, and
+     a spent or failed candidate no longer ends the ladder —
+     the walk moves to the next-largest stored photo. The
+     safety law is untouched: the candidate's FULL stack is
+     written to its account document first and awaited, and
+     the local copy is shrunk only on that write's success —
+     a candidate whose document write fails is skipped,
+     never shrunk. */
+  var PHOTO_RECLAIM_STEP = 640;
   function reclaimOnePhoto(isFill, targetRec, tried, cb) {
-    var list = isFill ? fills() : S('expenses', []);
     var targetKeys = isFill ? fillMatchKeys(targetRec) : [expensePhotoDocKey(targetRec)];
-    var best = null, bestTotal = 0;
-    list.forEach(function (r) {
-      if (!r) return;
-      var ps = fillPhotos(r);
-      if (!ps.length) return;
-      var lk = isFill ? fillMatchKeys(r) : [expensePhotoDocKey(r)];
-      if (keysMeet(lk, targetKeys)) return;
-      var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
-      if (tried[dk]) return;
-      var total = 0;
-      ps.forEach(function (u) { total += u.length; });
-      /* a stack no bigger than its re-encode cannot free
-         anything worth having */
-      if (total > 20000 && total > bestTotal) { best = { rec: r, stack: ps, key: dk }; bestTotal = total; }
-    });
-    if (!best) { cb(false); return; }
-    tried[best.key] = 1;
-    var p = null;
-    try { if (window.FB && FB.saveDoc) p = FB.saveDoc('fuel', best.key, photoDocPayload(best.rec, best.stack)); } catch (e) { p = null; }
-    if (!p || !p.then) { cb(false); return; }
-    p.then(function () {
-      shrinkPhotoStack(best.stack, PHOTO_RECLAIM_MAX, function (small) {
-        if (!small) { cb(false); return; }
-        cb(applyShrunkStack(isFill, best.rec, small));
+    function stackTotal(stack) {
+      var t = 0;
+      (stack || []).forEach(function (u) { t += u.length; });
+      return t;
+    }
+    function next() {
+      var list = isFill ? fills() : S('expenses', []);
+      var best = null, bestTotal = 0;
+      list.forEach(function (r) {
+        if (!r) return;
+        var ps = fillPhotos(r);
+        if (!ps.length) return;
+        var lk = isFill ? fillMatchKeys(r) : [expensePhotoDocKey(r)];
+        if (keysMeet(lk, targetKeys)) return;
+        var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
+        if (tried[dk]) return;
+        var total = stackTotal(ps);
+        /* a stack no bigger than its re-encode cannot free
+           anything worth having */
+        if (total > 20000 && total > bestTotal) { best = { rec: r, stack: ps, key: dk }; bestTotal = total; }
       });
-    }, function () { cb(false); });
+      if (!best) { cb(false); return; }
+      tried[best.key] = 1;
+      var p = null;
+      try { if (window.FB && FB.saveDoc) p = FB.saveDoc('fuel', best.key, photoDocPayload(best.rec, best.stack)); } catch (e) { p = null; }
+      if (!p || !p.then) { next(); return; }
+      p.then(function () {
+        shrinkPhotoStack(best.stack, PHOTO_RECLAIM_MAX, function (small) {
+          if (small && stackTotal(small) < bestTotal) { settle(small); return; }
+          shrinkPhotoStack(best.stack, PHOTO_RECLAIM_STEP, function (smaller) {
+            if (smaller && stackTotal(smaller) < bestTotal) { settle(smaller); return; }
+            next(); /* this candidate can free nothing — try the next */
+          });
+        });
+        function settle(small) {
+          if (applyShrunkStack(isFill, best.rec, small)) { cb(true); return; }
+          next();
+        }
+      }, function () { next(); });
+    }
+    next();
   }
   /* Retry applyPhotoStack with the photo re-encoded at each
      rung, largest first; when no rung fits, free room from
