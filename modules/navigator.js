@@ -2698,7 +2698,16 @@
         providerName: '', offerFor: '', offerEta: 0, liveEtaMin: 0,
         /* v135: the drive wake lock's sentinel + visibility
            handler (see driveWake in the drive section). */
-        wakeSentinel: null, wakeVis: null
+        wakeSentinel: null, wakeVis: null,
+        /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the route
+           plan's hold on the destination — the coords key + the
+           sheet-stop key the plan last routed to, and whether
+           the standing destination is the plan's own. A
+           destination the driver sets herself releases the
+           plan's hold (see setDest); the plan never overrides
+           her. All three stay empty/false on every account
+           without a known bus route. */
+        planDestKey: '', planStopKey: '', planOwns: false
       };
 
       /* v101: the Navigator is a FULL-SCREEN view (owner, Oct 16:
@@ -2709,6 +2718,12 @@
          pin) plus the route actions in a bottom sheet OVER the
          shell — the map itself stays visible above it. The drive
          screen (below) layers over this shell. */
+      /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the known
+         route's plan card stands on the map face ONLY when a
+         split account actually has a route — computed once here
+         so every other account's face stays byte-identical. */
+      var rp0 = null;
+      try { rp0 = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rp0 = null; }
       var h = '<div class="nv-shell">' +
         '<div class="nv-shell-head"><button class="btn ghost small" id="nv_back">← Back</button>' +
         '<span class="nv-shell-title">🧭 Navigator</span>' +
@@ -2775,6 +2790,13 @@
         '<div class="nv-map-bottom">' +
         '<div id="nv_banner" class="nv-banner nv-banner-overlay"><div class="nv-banner-main">Where to?</div>' +
         '<div class="nv-banner-sub">Search for a place, or tap the map to drop a pin.</div></div>' +
+        /* v382: the route plan card — the day's stops from the
+           known route, the current stop as the target, one
+           quiet Next door. Painted by paintRoutePlan; present
+           in the markup only when a plan exists (rp0). */
+        (rp0 ? '<div id="nv_routeplan" class="nv-banner"><div class="nv-banner-main" id="nv_rp_main"></div>' +
+        '<div class="nv-banner-sub" id="nv_rp_sub"></div>' +
+        '<button class="btn small navy" id="nv_rp_next" style="margin-top:6px">Next stop ▸</button></div>' : '') +
         /* v103: Truck/Car + Follow + Sound demoted to ONE small
            quiet row — same controls, same ids, but no loud
            primary styling: they are settings, not steps on the
@@ -3072,6 +3094,13 @@
            the same destination re-set (a reverse-geocode rename,
            a re-tap of the same pin) does not re-fire it. */
         var key = latlng[0].toFixed(6) + ',' + latlng[1].toFixed(6);
+        /* v382: a destination that is NOT the plan's own target
+           is the driver's own choice — it releases the route
+           plan's hold on the destination for good (the plan
+           card stays as information; it never takes the wheel
+           back). The plan's own setDest arrives with
+           S.planDestKey already carrying this key. */
+        if (S.planOwns && key !== S.planDestKey) { S.planOwns = false; S.planDestKey = ''; S.planStopKey = ''; }
         if (key !== S.autoKey) {
           S.autoKey = key; S.autoWanted = true;
           /* v104: a new destination is a new arm for auto-Drive
@@ -3104,6 +3133,59 @@
         if (S.plan || S.rerouting) return;
         S.autoWanted = false;
         doRoute();
+      }
+
+      /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the route
+         plan card — the Navigator surface of the split engine's
+         known route. The card speaks the sheet's own words: the
+         current stop's name, its place in the run ("Stop 3 of
+         8"), the run's name. While the plan owns the
+         destination, the card routes her to the plan's target —
+         the first stop from the cursor that carries a placed
+         point; a stop with no point is PASSED OVER, named on
+         the card, never silently dropped, and the Next stop
+         door steps the plan by hand when a stop is done without
+         the glass noticing. No card element exists on accounts
+         without a known route — this painter is then a no-op. */
+      function paintRoutePlan() {
+        var card = body.querySelector('#nv_routeplan');
+        if (!card) return;
+        var rp = null;
+        try { rp = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rp = null; }
+        var mainEl = body.querySelector('#nv_rp_main'),
+            subEl = body.querySelector('#nv_rp_sub'),
+            nextBtn = body.querySelector('#nv_rp_next');
+        if (!rp) {
+          card.classList.add('hidden');
+          S.planOwns = false; S.planDestKey = ''; S.planStopKey = '';
+          return;
+        }
+        card.classList.remove('hidden');
+        var runWord = (rp.block === 'am') ? 'Morning run' : 'Afternoon run';
+        if (rp.done || rp.current < 0) {
+          if (mainEl) mainEl.textContent = '🚌 Route done';
+          if (subEl) subEl.textContent = 'All ' + rp.total + ' stops on the ' + runWord.toLowerCase() + ' are done.';
+          if (nextBtn) nextBtn.classList.add('hidden');
+          return;
+        }
+        if (nextBtn) nextBtn.classList.remove('hidden');
+        var cur = rp.stops[rp.current];
+        if (mainEl) mainEl.textContent = '🚌 Next stop: ' + cur.name;
+        var sub = 'Stop ' + (rp.current + 1) + ' of ' + rp.total + ' — ' + runWord + '.';
+        if (rp.target && rp.passedNames && rp.passedNames.length) {
+          sub += ' ' + rp.passedNames.join(', ') + ' isn’t on the map yet — heading to ' + rp.target.name + '.';
+        } else if (!rp.target) {
+          sub += ' This stop isn’t on the map yet — tap Next stop when you’ve done it.';
+        }
+        if (rp.offRoute) sub = 'You’re off the route. ' + sub;
+        if (subEl) subEl.textContent = sub;
+        if (rp.target && (!S.dest || S.planOwns)) {
+          var tk = rp.target.lat.toFixed(6) + ',' + rp.target.lng.toFixed(6);
+          if (!S.planOwns || S.planDestKey !== tk) {
+            S.planDestKey = tk; S.planStopKey = rp.target.key; S.planOwns = true;
+            setDest([rp.target.lat, rp.target.lng], rp.target.name);
+          }
+        }
       }
 
       /* v101 door 3: tap-the-map pin (owner, Oct 16: anyone not
@@ -3794,6 +3876,7 @@
         if (!S.plan) maybeAutoRoute();
         if (S.plan) trackProgress();
         if (S.drive) driveTick();
+        paintRoutePlan();
       }
       /* Seed from the native geo wrapper's last fix when present,
          then follow the browser watcher (works in every build).
@@ -4474,6 +4557,13 @@
           banner('You have arrived', S.destLabel || '');
           speak((last && last.verbalPost) || 'You have arrived.');
           if (S.drive) driveArrived();
+          /* v382: an arrival at the plan's own target steps the
+             route plan (the split engine's proximity walk usually
+             beats this to it — navConsumeKey only steps a stop
+             that is still current, so the two never double-step). */
+          if (S.planOwns && S.planStopKey) {
+            try { if (window.SplitShift && SplitShift.navConsumeKey) SplitShift.navConsumeKey(S.planStopKey); } catch (e) {}
+          }
         }
       }
 
@@ -6257,6 +6347,13 @@
         try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
       };
       body.querySelector('#nv_route').onclick = doRoute;
+      /* v382: the plan card's Next door + its first paint. */
+      var rpNext382 = body.querySelector('#nv_rp_next');
+      if (rpNext382) rpNext382.onclick = function () {
+        try { if (window.SplitShift && SplitShift.navAdvance) SplitShift.navAdvance(); } catch (e) {}
+        paintRoutePlan();
+      };
+      paintRoutePlan();
       var driveBtn = body.querySelector('#nv_drive');
       if (driveBtn) driveBtn.onclick = startDrive;
       var dExit = body.querySelector('#nvd_exit');

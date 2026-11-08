@@ -471,7 +471,7 @@
     sessions.forEach(function (s) {
       if (!s || !s.split) return;
       (s.splitStops || []).forEach(function (st) {
-        if (st && st.name) splitStops.push({ key: st.key || '', name: String(st.name), at: st.at || 0, skipped: !!st.skipped });
+        if (st && st.name) splitStops.push({ key: st.key || '', name: String(st.name), at: st.at || 0, skipped: !!st.skipped, kids: (st.kids && typeof st.kids === 'object') ? { up: +st.kids.up || 0, down: +st.kids.down || 0, absent: +st.kids.absent || 0 } : null });
       });
       (s.splitBlocks || []).forEach(function (b) { if (b) splitBlocks.push(b); });
     });
@@ -1904,8 +1904,28 @@
                 '<div style="flex:1;min-width:0"><b>' + esc(r.name) + '</b>' +
                 (r.time ? ' <span class="note">' + esc(r.time) + '</span>' : '') +
                 (r.skipped ? ' <span class="note" style="color:#f0b35e">skipped today</span>' : (r.doneAt ? ' <span class="note" style="color:#7dd87d">✓ done</span>' : '')) +
+                /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
+                   day measured against the sheet's clock — her
+                   real arrival beside the printed time. */
+                (r.doneAt && r.deltaMin !== null && r.deltaMin !== undefined ? ' <span class="note">' + (r.deltaMin === 0 ? 'on time' : (r.deltaMin > 0 ? r.deltaMin + ' min late' : (-r.deltaMin) + ' min early')) + '</span>' : '') +
+                /* v382: the stop's kids, from the sheet's own
+                   roster — how many ride here, and how many she
+                   has marked absent today. */
+                (r.kids && (r.kids.up.exp || r.kids.down.exp) ? ' <span class="note">🧒 ' + (r.kids.up.exp + r.kids.down.exp) + ((r.kids.up.exp + r.kids.down.exp) === 1 ? ' kid' : ' kids') + (r.kids.absent ? ' · ' + r.kids.absent + ' absent' : '') + '</span>' : '') +
                 '</div>' +
                 '<button type="button" class="btn ' + (r.skipped ? 'ghost' : 'primary') + '" data-split-skip="' + esc(r.key) + '" style="min-width:132px;padding:12px 10px;font-size:15px">' + (r.skipped ? '↩ Bring back' : '⏭ Skip today') + '</button></div>';
+              /* v382: the absent door — one tap per kid, today
+                 only (SplitShift.toggleAbsent). The roster is
+                 the sheet's; the mark is the day's. */
+              if (r.kids && !r.skipped) {
+                var allKids382 = (r.kids.up.kids || []).concat(r.kids.down.kids || []);
+                if (allKids382.length) {
+                  h += '<div style="padding:2px 0 8px 2px"><span class="note">Tap a name if the kid is absent today:</span><br>' +
+                    allKids382.map(function (k) {
+                      return '<button type="button" class="btn ' + (k.absent ? 'primary' : 'ghost') + ' small" data-split-absent="' + esc(k.key) + '" style="margin:4px 6px 0 0;padding:9px 12px;font-size:14px">' + esc(k.name) + (k.absent ? ' — absent ✓' : '') + '</button>';
+                    }).join('') + '</div>';
+                }
+              }
             });
           });
           h += '<p class="note">Skip is for today only — the stop stays on the route for tomorrow.</p>';
@@ -1926,6 +1946,15 @@
           }).join(' · ') + '</p><p class="note" style="margin:0 0 6px">Tap a stop’s name to fix it — the fixed name sticks for that stop.</p>';
         }
         if (skippedH.length) h += '<div class="kv"><span>Skipped</span><b>' + skippedH.map(function (s) { return esc(s.name); }).join(' · ') + '</b></div>';
+        /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the day's
+           kid count stands on the run record — boarded and set
+           down at the stops actually served, absents named as
+           absents. The bus count is kids, never loads. */
+        var kidOn382 = 0, kidOff382 = 0, kidAbs382 = 0, anyKids382 = false;
+        cc.splitStops.forEach(function (s) {
+          if (s.kids) { anyKids382 = true; kidOn382 += s.kids.up || 0; kidOff382 += s.kids.down || 0; kidAbs382 += s.kids.absent || 0; }
+        });
+        if (anyKids382) h += '<div class="kv"><span>Kids carried</span><b>' + kidOn382 + ' on · ' + kidOff382 + ' off' + (kidAbs382 ? ' · ' + kidAbs382 + ' absent' : '') + '</b></div>';
       }
       /* v184 (M-route): where the truck actually went — the GPS
          trail's stops for the day, shown whether or not the
@@ -2112,6 +2141,15 @@
       body.querySelectorAll('[data-split-skip]').forEach(function (b) {
         b.onclick = function () {
           try { if (window.SplitShift && SplitShift.toggleSkip) SplitShift.toggleSkip(b.getAttribute('data-split-skip')); } catch (e) {}
+          Meticulous.modules.manifest.render(body);
+        };
+      });
+      /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the absent
+         taps — one per kid, today only, then the page repaints
+         with the kid's new state and the day's counts moved. */
+      body.querySelectorAll('[data-split-absent]').forEach(function (b) {
+        b.onclick = function () {
+          try { if (window.SplitShift && SplitShift.toggleAbsent) SplitShift.toggleAbsent(b.getAttribute('data-split-absent')); } catch (e) {}
           Meticulous.modules.manifest.render(body);
         };
       });

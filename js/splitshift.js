@@ -76,6 +76,33 @@
  * record shows it by name marked skipped, the matching steps
  * over it, and the route itself is untouched for tomorrow.
  *
+ * THE KNOWN ROUTE (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8, owner
+ * Nov 8, 2026 16:57–17:01 CST — "After it knows her route it
+ * has to actually know it!" / "bus drivers don't upload a
+ * dispatch daily — they run a FIXED route"): the saved sheet
+ * is not a per-day upload — it is the app's STANDING knowledge
+ * of her work, the bus account's standing dispatch. It carries
+ * across days until a new sheet replaces it; each day opens
+ * with the route already in place. The day is measured against
+ * it: the Navigator's plan IS the known route (routePlan —
+ * the stops in the sheet's order, the current stop the target,
+ * reached stops advancing the plan behind the glass), arrivals
+ * match to the known stops (the sheet walk below), a stop never
+ * reached reads as not reached — never relabelled — and the
+ * day's fixes are judged against the route's corridor. Stops
+ * are PLACED once behind the glass (the app's geocode door,
+ * cached on the route record; a new sheet or a rename retires
+ * the point) and the placement SHARPENS by use: where she
+ * truly stops nudges the point, and a stop the geocoder could
+ * not place adopts the ground she actually stops on. The
+ * sheet also names the STUDENTS at each stop — the bus count
+ * is KIDS (parseRouteRoster): expected boardings and set-downs
+ * come from the sheet, the day's reality is the roster minus
+ * the absents she marks with one tap (toggleAbsent — that day
+ * only, recorded absent, never "missed"). Bus mode has no
+ * markers to set and no loads to count — the route sheet is
+ * the whole machine.
+ *
  * Safety: feature-detected everywhere. With the preference off,
  * or no live location, every method is inert and the app behaves
  * exactly as before. Nothing in here ever throws into the
@@ -573,6 +600,140 @@
     return out;
   }
 
+  /* ---- the sheet's clock ("7:26 AM" -> minutes of day) ---- */
+  function sheetTimeMin(time) {
+    var m = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/.exec(String(time || ''));
+    if (!m) return null;
+    var hh = +m[1], mm = +m[2];
+    if (mm > 59) return null;
+    if (m[3]) { hh = hh % 12; if (/p/i.test(m[3])) hh += 12; }
+    else if (hh > 23) return null;
+    return hh * 60 + mm;
+  }
+
+  /* ---- the route roster (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8,
+   * addendum: the count is KIDS, owner Nov 8, 2026 16:59 CST) ----
+   * The company's sheet names the STUDENTS at every stop: a
+   * PICK-UP or DROP-OFF line under a stop names its kids (the
+   * first on the marker line itself, the rest on the lines that
+   * follow it, each carrying the sheet's '*' mark and a phone).
+   * parseRouteRoster walks a run's OWN section text against the
+   * run's parsed stops — a timed line whose cleaned name is the
+   * next stop's name opens that stop; a marker line opens its
+   * kid list; a line carrying a clock time, or a new marker,
+   * closes the list. Care plans, equipment and direction lines
+   * carry no '*' and never become kids. Returns one entry per
+   * stop, aligned by index: { up: [names], down: [names] } —
+   * boardings and set-downs AS THE SHEET PRINTS THEM (a morning
+   * home stop prints PICK-UP, its school prints DROP-OFF; the
+   * afternoon mirrors it). Text the sheet does not carry names
+   * nobody: a stop with no marker lines gets two empty lists. */
+  function rosterLineStopName(raw) {
+    var tm = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/.exec(raw);
+    if (!tm) return null;
+    var hh = +tm[1], mm = +tm[2];
+    if (!(hh >= 1 && hh <= 12 && mm <= 59)) return null;
+    var name = raw.replace(tm[0], ' ');
+    name = name.replace(/^\s*(stop\s*)?\d{1,3}\s*[.):\-]\s*/i, '')
+      .replace(/\s*\(\s*stop\s*#?\s*\d+\)\s*/i, ' ')
+      .replace(/^[\s•·\-\|]+/, '').replace(/[\s\-\|]+$/, '')
+      .replace(/\s{2,}/g, ' ').trim();
+    return name;
+  }
+  function kidNameOf(text) {
+    var nm = String(text || '');
+    var star = nm.indexOf('*');
+    if (star >= 0) nm = nm.slice(0, star);
+    nm = nm.replace(/[•·]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    if (nm.length < 3 || !/[A-Za-z]/.test(nm) || /\d/.test(nm)) return '';
+    if (/^(meet at bus|care plan|equipment|not assigned)$/i.test(nm)) return '';
+    return nm;
+  }
+  function parseRouteRoster(text, stops) {
+    var out = [];
+    stops = Array.isArray(stops) ? stops : [];
+    for (var s = 0; s < stops.length; s++) out.push({ up: [], down: [] });
+    if (!text || !stops.length) return out;
+    var lines = String(text)
+      .replace(/PICK\s*-\s*UP/gi, 'PICK-UP').replace(/DROP\s*-\s*OFF/gi, 'DROP-OFF')
+      .split(/\r?\n/);
+    var cur = -1, list = null;
+    for (var i = 0; i < lines.length; i++) {
+      var raw = lines[i].trim();
+      if (!raw) continue;
+      var isStopLine = false;
+      if (cur + 1 < stops.length) {
+        var sn = rosterLineStopName(raw);
+        if (sn && sn === stops[cur + 1].name) { cur++; list = null; isStopLine = true; }
+      }
+      if (isStopLine) continue;
+      var mk = /^(PICK-UP|DROP-OFF)\b/i.exec(raw);
+      if (mk) {
+        if (cur >= 0) {
+          list = /pick/i.test(mk[1]) ? out[cur].up : out[cur].down;
+          var first = kidNameOf(raw.slice(mk[0].length));
+          if (first) list.push(first);
+        } else list = null;
+        continue;
+      }
+      if (/\d{1,2}:\d{2}/.test(raw)) { list = null; continue; }  // a schedule line closes the list
+      if (list && raw.indexOf('*') >= 0) {
+        var kn = kidNameOf(raw);
+        if (kn) list.push(kn);
+      }
+    }
+    return out;
+  }
+
+  /* ---- the navigation walk (ROUTE-SHEET-DRIVES-NAVIGATION-
+   * NOV8) ---- the known route, walked in the sheet's order:
+   * stops at or after the day's cursor that are marked skipped
+   * for today are stepped over; the CURRENT stop is the first
+   * one left; the routing TARGET is the first current-or-later
+   * stop that carries a placed point (ps === 'ok'); the stops
+   * before the target that carry no placed point are PASSED —
+   * named, never dropped, just not routed to. done when no
+   * current stop remains. Pure: stops in, the walk out. */
+  function planWalk(stops, prog, skipKeys, block) {
+    stops = Array.isArray(stops) ? stops : [];
+    skipKeys = skipKeys || {};
+    var cur = -1, tgt = -1, passed = [];
+    for (var i = Math.max(0, +prog || 0); i < stops.length; i++) {
+      if (skipKeys['sheet:' + block + ':' + i]) continue;
+      if (cur < 0) cur = i;
+      if (stops[i] && stops[i].ps === 'ok' && isCoord(stops[i])) { tgt = i; break; }
+      passed.push(i);
+    }
+    if (cur < 0) return { current: -1, target: -1, passed: [], done: true };
+    return { current: cur, target: tgt, passed: passed, done: false };
+  }
+
+  /* Distance from a point to the chain of placed stops (the
+   * route's corridor): the least distance to any segment, in
+   * metres, on a local flat projection. null when the chain
+   * cannot judge (no points). */
+  function pointSegDistM(lat, lng, a, b) {
+    var rad = Math.PI / 180, R = 6371000;
+    var cosL = Math.cos(lat * rad);
+    function xy(p) { return { x: (p.lng - lng) * rad * R * cosL, y: (p.lat - lat) * rad * R }; }
+    var A = xy(a), B = xy(b);
+    var dx = B.x - A.x, dy = B.y - A.y;
+    var len2 = dx * dx + dy * dy;
+    var t = len2 > 0 ? Math.max(0, Math.min(1, -(A.x * dx + A.y * dy) / len2)) : 0;
+    var px = A.x + t * dx, py = A.y + t * dy;
+    return Math.sqrt(px * px + py * py);
+  }
+  function distToChainM(lat, lng, pts) {
+    if (!pts || !pts.length || !isCoord({ lat: lat, lng: lng })) return null;
+    if (pts.length === 1) return haversineM(lat, lng, pts[0].lat, pts[0].lng);
+    var best = Infinity;
+    for (var i = 0; i + 1 < pts.length; i++) {
+      var d = pointSegDistM(lat, lng, pts[i], pts[i + 1]);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
   var ENGINE = {
     haversineM: haversineM, isCoord: isCoord, normFix: normFix,
     dayStr: dayStr, minOfDay: minOfDay,
@@ -580,6 +741,8 @@
     windowFromObs: windowFromObs, seedWindowFromRuns: seedWindowFromRuns,
     inWindow: inWindow, createDayMachine: createDayMachine,
     createStopBook: createStopBook, parseRouteSheet: parseRouteSheet,
+    parseRouteRoster: parseRouteRoster, planWalk: planWalk,
+    distToChainM: distToChainM, sheetTimeMin: sheetTimeMin,
     FENCE_M: FENCE_M, EXIT_M: EXIT_M, ACC_MAX_M: ACC_MAX_M,
     DWELL_MS: DWELL_MS, DEPART_MS: DEPART_MS,
     STOP_MIN_MS: STOP_MIN_MS, STOP_MAX_MS: STOP_MAX_MS, STOP_MATCH_M: STOP_MATCH_M
@@ -630,6 +793,21 @@
                              // (addendum 6): keys are stop keys —
                              // 'sheet:<block>:<idx>' or a learned
                              // stop's id; for THIS day only
+  var routeRoster = { am: [], pm: [] }; // the sheet's STUDENTS
+                             // per stop (addendum: the count is
+                             // kids): [{up: [names], down:
+                             // [names]}] aligned with routeSheets
+                             // by index; replaced with the sheet
+  var dayAbsent = { date: '', keys: {} }; // per-day absent kids:
+                             // keys 'sheet:<block>:<idx>:<up|
+                             // down>:<n>' — that day only, the
+                             // roster itself never changes
+  var navProg = { date: '', am: 0, pm: 0 }; // the navigation
+                             // plan's cursor: stops consumed per
+                             // run for the plan's day — reached,
+                             // passed, or advanced by hand
+  var placingNow = {};       // '<block>:<idx>' with a geocode
+                             // in flight (memory only)
   var namingNow = {};        // cluster ids with a street lookup
                              // in flight (memory only)
   var restored = false;
@@ -650,8 +828,11 @@
         dayStops: dayStops,
         dayStopsDate: dayStopsDate,
         routeSheets: routeSheets,
+        routeRoster: routeRoster,
         sheetUsed: sheetUsed,
-        daySkips: daySkips
+        daySkips: daySkips,
+        dayAbsent: dayAbsent,
+        navProg: navProg
       });
     } catch (e) {}
   }
@@ -684,9 +865,42 @@
       ['am', 'pm'].forEach(function (b) {
         if (Array.isArray(rec.routeSheets[b])) {
           routeSheets[b] = rec.routeSheets[b].filter(function (x) { return x && x.name; })
-            .map(function (x) { return { name: String(x.name), time: String(x.time || '') }; });
+            .map(function (x) {
+              var o = { name: String(x.name), time: String(x.time || '') };
+              /* The placed point rides the route record (a new
+                 sheet parses fresh stops without one — the cache
+                 invalidates itself; a rename retires it too). */
+              if (ENGINE.isCoord(x)) { o.lat = x.lat; o.lng = x.lng; o.ps = 'ok'; if (x.src) o.src = String(x.src); }
+              else if (x.ps === 'no') o.ps = 'no';
+              return o;
+            });
         }
       });
+    }
+    routeRoster = { am: [], pm: [] };
+    if (rec.routeRoster && typeof rec.routeRoster === 'object') {
+      ['am', 'pm'].forEach(function (b) {
+        if (Array.isArray(rec.routeRoster[b])) {
+          routeRoster[b] = rec.routeRoster[b].map(function (r) {
+            function names(v) {
+              return Array.isArray(v) ? v.filter(function (n) { return typeof n === 'string' && n; }).map(String) : [];
+            }
+            return { up: names(r && r.up), down: names(r && r.down) };
+          });
+        }
+      });
+    }
+    dayAbsent = { date: '', keys: {} };
+    if (rec.dayAbsent && typeof rec.dayAbsent === 'object' &&
+        rec.dayAbsent.keys && typeof rec.dayAbsent.keys === 'object') {
+      dayAbsent = { date: String(rec.dayAbsent.date || ''), keys: rec.dayAbsent.keys };
+    }
+    navProg = { date: '', am: 0, pm: 0 };
+    if (rec.navProg && typeof rec.navProg === 'object') {
+      navProg = {
+        date: String(rec.navProg.date || ''),
+        am: +rec.navProg.am || 0, pm: +rec.navProg.pm || 0
+      };
     }
     sheetUsed = { date: '', am: 0, pm: 0 };
     if (rec.sheetUsed && typeof rec.sheetUsed === 'object') {
@@ -708,6 +922,108 @@
   function windowNow() {
     var w = ENGINE.windowFromObs(windowObs);
     return w || windowSeed;
+  }
+
+  /* ---- the known route: placement + the plan's day/block ----
+   * A stop is placed ONCE, behind the glass, through the app's
+   * own geocode door (MeticulousGeo.geocode — the same door the
+   * yard and the haul sites use), and the point is cached on
+   * the route record itself: ps 'ok' with lat/lng, or ps 'no'
+   * when the geocoder found nothing (the stop stays in the
+   * plan by name; navigation passes over it, named). Nothing
+   * re-asks daily: the attempt stands until the sheet is
+   * replaced or the stop renamed. Where she truly stops then
+   * sharpens the point (recordRouteStop): an unplaced stop
+   * adopts the ground, a placed point nudges halfway toward a
+   * driven stop within 300 m — never dragged further. */
+  var PLAN_ARRIVE_M = 75;    // a fix this close to the target
+                             // stop has reached it (navigation)
+  var CORRIDOR_M = 400;      // further than this from every
+                             // placed segment = off the route
+  var NUDGE_M = 300;         // a driven stop within this of a
+                             // placed point may nudge it
+  function geoDoor() {
+    try {
+      return (window.MeticulousGeo && typeof MeticulousGeo.geocode === 'function')
+        ? MeticulousGeo : null;
+    } catch (e) { return null; }
+  }
+  function placeStop(block, idx) {
+    var stop = (routeSheets[block] || [])[idx];
+    if (!stop || stop.ps) return;
+    var g = geoDoor();
+    if (!g) return;
+    var pk = block + ':' + idx;
+    if (placingNow[pk]) return;
+    placingNow[pk] = true;
+    var name = stop.name;
+    function settle(hit) {
+      delete placingNow[pk];
+      var cur = (routeSheets[block] || [])[idx];
+      if (!cur || cur.name !== name || cur.ps) return;  // the sheet moved on
+      if (hit && isFinite(+hit.latitude) && isFinite(+hit.longitude)) {
+        cur.lat = +hit.latitude; cur.lng = +hit.longitude;
+        cur.ps = 'ok'; cur.src = 'geo';
+      } else cur.ps = 'no';
+      persist();
+    }
+    try {
+      g.geocode(name).then(settle).catch(function () { settle(null); });
+    } catch (e) { delete placingNow[pk]; }
+  }
+  function ensureRoutePlaced() {
+    ['am', 'pm'].forEach(function (b) {
+      (routeSheets[b] || []).forEach(function (st, i) {
+        if (!st.ps) placeStop(b, i);
+      });
+    });
+  }
+  /* The plan's day: the live machine's day while a session
+     runs, else today — a fresh morning opens on today's plan,
+     never on yesterday's cursor. */
+  function planDay() {
+    var snap = machine ? machine.snapshot() : null;
+    return (snap && snap.date) || ENGINE.dayStr(Date.now());
+  }
+  /* The plan's run: the split engine's own block logic — the
+     machine's phase while a day runs (block 1 = morning; the
+     midday gap and block 2 belong to the afternoon run, whose
+     plan stands ready in the gap); before any session, the
+     morning run until it is fully consumed, then the afternoon. */
+  function planBlock() {
+    var ph = machine ? machine.phase() : null;
+    if (ph === 'block1') return 'am';
+    if (ph === 'gap' || ph === 'block2' || ph === 'done') return 'pm';
+    var day = planDay();
+    var progAm = (navProg.date === day) ? (navProg.am || 0) : 0;
+    var amLen = (routeSheets.am || []).length;
+    return (amLen && progAm >= amLen && (routeSheets.pm || []).length) ? 'pm' : 'am';
+  }
+  function planSkipKeys() {
+    var day = planDay(), today = ENGINE.dayStr(Date.now());
+    return (daySkips.date === day || daySkips.date === today) ? daySkips.keys : {};
+  }
+  function absentKeys() {
+    return (dayAbsent.date === ENGINE.dayStr(Date.now())) ? dayAbsent.keys : {};
+  }
+  /* One stop's kid truth: the sheet's roster for the stop with
+     today's absent marks laid over it — expected, absent, and
+     the day's count (expected minus absent) per direction. */
+  function kidLine(block, idx) {
+    var r = (routeRoster[block] || [])[idx] || { up: [], down: [] };
+    var ak = absentKeys();
+    var key0 = 'sheet:' + block + ':' + idx;
+    function side(dir, names) {
+      var kids = (names || []).map(function (nm, k) {
+        var key = key0 + ':' + dir + ':' + k;
+        return { key: key, name: nm, absent: !!ak[key] };
+      });
+      var abs = 0;
+      kids.forEach(function (x) { if (x.absent) abs++; });
+      return { kids: kids, exp: kids.length, abs: abs, got: kids.length - abs };
+    }
+    var up = side('up', r.up), down = side('down', r.down);
+    return { up: up, down: down, absent: up.abs + down.abs };
   }
   function subscribe() {
     if (subscribed) return;
@@ -838,6 +1154,29 @@
       sheetName = sheet[sIdx].name;
       sheetKey = 'sheet:' + block + ':' + sIdx;
     }
+    if (sheetKey) {
+      /* The driven stop sharpens the known route (the plan
+       * follows): an unplaced sheet stop adopts the ground she
+       * actually stops on; a placed point nudges halfway toward
+       * a driven stop nearby — the route learns her real stops
+       * the way a seed learns a site, silently. And the
+       * navigation plan has reached this stop: its cursor steps
+       * past it. */
+      var rst = sheet[sIdx];
+      if (rst) {
+        if (rst.ps !== 'ok') {
+          rst.lat = ev.lat; rst.lng = ev.lng; rst.ps = 'ok'; rst.src = 'driven';
+        } else {
+          var nd = ENGINE.haversineM(rst.lat, rst.lng, ev.lat, ev.lng);
+          if (nd > 0 && nd <= NUDGE_M) {
+            rst.lat = (rst.lat + ev.lat) / 2;
+            rst.lng = (rst.lng + ev.lng) / 2;
+          }
+        }
+      }
+      if (navProg.date !== ds) navProg = { date: ds, am: 0, pm: 0 };
+      if (navProg[block] < sIdx + 1) navProg[block] = sIdx + 1;
+    }
     var c = stopBook.match(ev.lat, ev.lng);
     if (!c) c = stopBook.add(ev.lat, ev.lng, ds);
     else stopBook.touch(c, ds);
@@ -905,6 +1244,30 @@
       ev = machine.feed(f, { yard: yardPlace, midday: midPlace, window: windowNow() });
     } catch (e) { ev = null; }
     if (ev) onEvent(ev);
+    /* The plan's own arrival: a fix at the current target stop
+       has reached it — the cursor steps past, no dwell needed
+       (a stop with nobody to pick up may only be a pass). The
+       dwell-driven sheet walk above remains the run record's
+       truth; this is navigation only. Monotonic: the cursor
+       never steps back. */
+    if (watching) {
+      try {
+        var pb = planBlock();
+        var pstops = routeSheets[pb] || [];
+        if (pstops.length) {
+          var pday = planDay();
+          var pprog = (navProg.date === pday) ? (navProg[pb] || 0) : 0;
+          var pw = ENGINE.planWalk(pstops, pprog, planSkipKeys(), pb);
+          if (pw.target >= 0) {
+            var pt = pstops[pw.target];
+            if (ENGINE.haversineM(pt.lat, pt.lng, f.lat, f.lng) <= PLAN_ARRIVE_M) {
+              if (navProg.date !== pday) navProg = { date: pday, am: 0, pm: 0 };
+              if (navProg[pb] < pw.target + 1) { navProg[pb] = pw.target + 1; persist(); }
+            }
+          }
+        }
+      } catch (e) {}
+    }
     return ev;
   }
 
@@ -954,6 +1317,7 @@
       }
       if (dayStopsDate !== today) { dayStops = []; dayStopsDate = today; }
       seedFromDispatch(today);
+      ensureRoutePlaced();
       subscribe();
       if (!(opts && opts.resume)) oneShotEdge('start');
       persist();
@@ -1044,12 +1408,28 @@
     dayStops: function () {
       restore();
       var today = dayStopsDate || ENGINE.dayStr(Date.now());
-      var skipKeys = (daySkips.date === today) ? daySkips.keys : {};
+      /* The skip marks belong to the calendar day they were
+         made (toggleSkip's stamp) and to the record's own day —
+         either stamp honours them, so a day that crosses
+         midnight keeps its record honest. */
+      var skipKeys = (daySkips.date === today || daySkips.date === ENGINE.dayStr(Date.now()))
+        ? daySkips.keys : {};
       var served = {};
       var out = dayStops.map(function (s) {
         served[s.key] = true;
         var o = { key: s.key, name: s.name, at: s.at };
         if (skipKeys[s.key]) o.skipped = true;
+        /* Kids actually carried at this stop (the roster minus
+           today's absents) — the run record's count, never a
+           load count. Sheet stops only; a learned extra stop
+           carries no roster and no count. */
+        var km = /^sheet:(am|pm):(\d+)$/.exec(s.key || '');
+        if (km) {
+          var kl = kidLine(km[1], +km[2]);
+          if (kl.up.exp || kl.down.exp || kl.absent) {
+            o.kids = { up: kl.up.got, down: kl.down.got, absent: kl.absent };
+          }
+        }
         return o;
       });
       ['am', 'pm'].forEach(function (b) {
@@ -1079,6 +1459,50 @@
       return !!daySkips.keys[key];
     },
 
+    /* One tap per absent kid (the kid-level skip law): this
+       kid is absent TODAY — the run's count for their stop
+       drops by one, the record says absent, and the roster
+       itself is untouched for tomorrow. Key shape:
+       'sheet:<block>:<idx>:<up|down>:<n>'. Returns the new
+       absent state. */
+    toggleAbsent: function (key) {
+      restore();
+      if (!/^sheet:(am|pm):\d+:(up|down):\d+$/.test(String(key || ''))) return false;
+      var today = ENGINE.dayStr(Date.now());
+      if (dayAbsent.date !== today) dayAbsent = { date: today, keys: {} };
+      if (dayAbsent.keys[key]) delete dayAbsent.keys[key];
+      else dayAbsent.keys[key] = true;
+      persist();
+      return !!dayAbsent.keys[key];
+    },
+
+    /* The kid totals per run, from the sheet's roster and
+       today's truth: expected (the sheet's own counts),
+       absent (her marks), and carried — boarded / set down at
+       the stops the bus actually served, the same served set
+       the run record carries. */
+    kidCounts: function () {
+      restore();
+      var servedMap = {};
+      SplitShift.dayStops().forEach(function (s) {
+        if (s && !s.skipped) servedMap[s.key] = s;
+      });
+      var out = {};
+      ['am', 'pm'].forEach(function (b) {
+        var t = { expectedUp: 0, expectedDown: 0, absent: 0, boarded: 0, alighted: 0 };
+        (routeSheets[b] || []).forEach(function (st, i) {
+          var kl = kidLine(b, i);
+          t.expectedUp += kl.up.exp;
+          t.expectedDown += kl.down.exp;
+          t.absent += kl.absent;
+          var sv = servedMap['sheet:' + b + ':' + i];
+          if (sv && sv.kids) { t.boarded += sv.kids.up || 0; t.alighted += sv.kids.down || 0; }
+        });
+        out[b] = t;
+      });
+      return out;
+    },
+
     /* Today's route for the skip surface (the Manifest day
        view): the sheet's stops per run, each with its state —
        done (driven at), skipped for today, or still ahead —
@@ -1092,10 +1516,22 @@
       function rows(block) {
         return (routeSheets[block] || []).map(function (st, i) {
           var key = 'sheet:' + block + ':' + i;
+          var doneAt = served[key] ? served[key].at : 0;
+          var sheetMin = ENGINE.sheetTimeMin(st.time);
           return {
             key: key, name: st.name, time: st.time || '', block: block,
             skipped: !!skipKeys[key],
-            doneAt: served[key] ? served[key].at : 0
+            doneAt: doneAt,
+            /* The day measured against the known route: done,
+               skipped (her mark only), or ahead — a stop never
+               reached stays 'ahead' on the live day and reads
+               as not reached once the day closes; it is never
+               relabelled. deltaMin is her real arrival against
+               the sheet's printed time, when both exist. */
+            state: skipKeys[key] ? 'skipped' : (doneAt ? 'done' : 'ahead'),
+            deltaMin: (doneAt && sheetMin !== null)
+              ? ENGINE.minOfDay(doneAt) - sheetMin : null,
+            kids: kidLine(block, i)
           };
         });
       }
@@ -1122,7 +1558,15 @@
       if (sm) {
         var blk = routeSheets[sm[1]] || [];
         var idx = +sm[2];
-        if (blk[idx]) { blk[idx].name = name; ok = true; }
+        if (blk[idx]) {
+          blk[idx].name = name;
+          /* The placed point was geocoded from the OLD name —
+             a rename retires it and the stop is placed afresh
+             behind the glass. */
+          delete blk[idx].lat; delete blk[idx].lng;
+          delete blk[idx].ps; delete blk[idx].src;
+          ok = true;
+        }
       } else if (stopBook) {
         ok = stopBook.rename(key, name);
       }
@@ -1149,6 +1593,7 @@
           }
         } catch (e2) {}
       }
+      ensureRoutePlaced();
       persist();
       return true;
     },
@@ -1158,16 +1603,126 @@
        every named stop, in order (times when printed). AM and
        PM sheets are separate routes. Re-shooting a sheet
        replaces that run's route. Returns the stop count read
-       (0 = nothing readable — the caller says so plainly). */
-    setRouteSheet: function (block, text) {
+       (0 = nothing readable — the caller says so plainly).
+       The roster (the sheet's named students) is read from
+       rosterText — the run's own section of the source file —
+       or from the sheet text itself when no section is passed
+       (a photographed sheet IS one run's text). A new sheet
+       replaces the roster with it and retires the run's placed
+       points, its plan cursor and its absent marks: they all
+       belonged to the old sheet. */
+    setRouteSheet: function (block, text, rosterText) {
       restore();
       if (block !== 'am' && block !== 'pm') return 0;
       var stops = ENGINE.parseRouteSheet(text);
       if (!stops.length) return 0;
       routeSheets[block] = stops;
-      if (sheetUsed.date === ENGINE.dayStr(Date.now())) sheetUsed[block] = 0;
+      var rtext = (rosterText === undefined) ? text : rosterText;
+      routeRoster[block] = rtext
+        ? ENGINE.parseRouteRoster(rtext, stops)
+        : stops.map(function () { return { up: [], down: [] }; });
+      var today = ENGINE.dayStr(Date.now());
+      if (sheetUsed.date === today) sheetUsed[block] = 0;
+      if (navProg.date === today) navProg[block] = 0;
+      if (dayAbsent.date === today) {
+        var pre = 'sheet:' + block + ':';
+        Object.keys(dayAbsent.keys).forEach(function (k) {
+          if (k.indexOf(pre) === 0) delete dayAbsent.keys[k];
+        });
+      }
       persist();
+      ensureRoutePlaced();
       return stops.length;
+    },
+
+    /* The day's navigation plan — the known route itself
+       (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the current run's
+       stops in the sheet's own order and names, the cursor the
+       day has reached, the routing target (the first stop from
+       the cursor that carries a placed point), the stops passed
+       over for routing because they carry no point yet (named,
+       never dropped), and whether the last fix stands off the
+       route's corridor. null when the account is not a split
+       account or no route is known — the Navigator is then
+       exactly what it was. Asking for the plan also keeps the
+       route's placement warm behind the glass. */
+    routePlan: function () {
+      restore();
+      if (!enabled()) return null;
+      ensureRoutePlaced();
+      var block = planBlock();
+      var stops = routeSheets[block] || [];
+      if (!stops.length) {
+        var other = (block === 'am') ? 'pm' : 'am';
+        if ((routeSheets[other] || []).length) { block = other; stops = routeSheets[block]; }
+        else return null;
+      }
+      var day = planDay();
+      var prog = (navProg.date === day) ? (navProg[block] || 0) : 0;
+      var sk = planSkipKeys();
+      var walk = ENGINE.planWalk(stops, prog, sk, block);
+      var outStops = stops.map(function (st, i) {
+        return {
+          key: 'sheet:' + block + ':' + i,
+          name: st.name, time: st.time || '',
+          state: sk['sheet:' + block + ':' + i] ? 'skipped'
+            : ((walk.done || i < prog || (walk.current >= 0 && i < walk.current)) ? 'done'
+              : (i === walk.current ? 'current' : 'ahead')),
+          placed: st.ps === 'ok'
+        };
+      });
+      var chain = [];
+      stops.forEach(function (st) { if (st.ps === 'ok') chain.push({ lat: st.lat, lng: st.lng }); });
+      var off = false;
+      if (chain.length >= 2 && lastFix) {
+        var cd = ENGINE.distToChainM(lastFix.lat, lastFix.lng, chain);
+        off = (cd !== null && cd > CORRIDOR_M);
+      }
+      return {
+        block: block, total: stops.length, stops: outStops,
+        current: walk.current, done: walk.done,
+        target: walk.target >= 0 ? {
+          idx: walk.target, key: 'sheet:' + block + ':' + walk.target,
+          name: stops[walk.target].name,
+          lat: stops[walk.target].lat, lng: stops[walk.target].lng
+        } : null,
+        passedNames: walk.passed.map(function (i) { return stops[i].name; }),
+        offRoute: off
+      };
+    },
+
+    /* The manual door: this stop is done — step the plan to
+       the next one. (Arrivals step it behind the glass; this
+       is the fallback tap.) Returns the new plan. */
+    navAdvance: function () {
+      restore();
+      if (!enabled()) return null;
+      var rp = SplitShift.routePlan();
+      if (!rp || rp.done || rp.current < 0) return rp;
+      var day = planDay();
+      if (navProg.date !== day) navProg = { date: day, am: 0, pm: 0 };
+      navProg[rp.block] = rp.current + 1;
+      persist();
+      return SplitShift.routePlan();
+    },
+
+    /* A face that navigated to a plan stop (the Navigator's
+       own arrival) reports it reached: the plan steps past —
+       only while that stop is still the plan's current one, so
+       two arrival paths can never double-step. */
+    navConsumeKey: function (key) {
+      restore();
+      if (!enabled() || !key) return null;
+      var rp = SplitShift.routePlan();
+      if (!rp || rp.done || rp.current < 0) return rp;
+      if (rp.stops[rp.current] && rp.stops[rp.current].key === key) {
+        var day = planDay();
+        if (navProg.date !== day) navProg = { date: day, am: 0, pm: 0 };
+        navProg[rp.block] = rp.current + 1;
+        persist();
+        return SplitShift.routePlan();
+      }
+      return rp;
     },
     routeSheetInfo: function () {
       restore();
@@ -1192,7 +1747,10 @@
         stopsToday: dayStops.length,
         stopsLearned: stopBook ? stopBook.count() : 0,
         sheetAm: (routeSheets.am || []).length,
-        sheetPm: (routeSheets.pm || []).length
+        sheetPm: (routeSheets.pm || []).length,
+        placedAm: (routeSheets.am || []).filter(function (s) { return s.ps === 'ok'; }).length,
+        placedPm: (routeSheets.pm || []).filter(function (s) { return s.ps === 'ok'; }).length,
+        kids: (function () { try { return SplitShift.kidCounts(); } catch (e) { return null; } })()
       };
     }
   };

@@ -2367,6 +2367,28 @@
       if (todayItems.length) {
         h += '<div class="card" id="dp_today_card"><h3>🚛 Today\'s dispatch</h3>' +
           todayItems.map(dspRowHtml).join('') + '</div>';
+      } else if (dspSplitDay) {
+        /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8 — the
+           FIXED-ROUTE law, owner Nov 8, 2026 17:01 CST: "bus
+           drivers don't upload a dispatch daily — they run a
+           FIXED route, the same one every day, until they're
+           told otherwise"): a bus account with a known route
+           never opens on an empty day — the known route IS the
+           day's standing dispatch, in place from the morning,
+           with no upload step. It stands until a new sheet
+           replaces it (the Route sheets card below is where a
+           replacement lands — when the company changes the
+           route, not as a daily chore). */
+        var routeInfo382 = { am: 0, pm: 0 };
+        try { if (window.SplitShift && SplitShift.routeSheetInfo) routeInfo382 = SplitShift.routeSheetInfo(); } catch (e) {}
+        if (routeInfo382.am || routeInfo382.pm) {
+          var runs382 = [];
+          if (routeInfo382.am) runs382.push('Morning run — ' + routeInfo382.am + ' stops');
+          if (routeInfo382.pm) runs382.push('Afternoon run — ' + routeInfo382.pm + ' stops');
+          h += '<div class="card" id="dp_today_card"><h3>🚛 Today\'s dispatch</h3>' +
+            '<p class="note" style="margin:2px 0">🚌 <b>Your route is today’s dispatch</b> — ' + runs382.join(' · ') + '. ' +
+            'The same fixed route every day — it stands until a new sheet replaces it.</p></div>';
+        }
       }
 
       /* ---- v380 (ROUTE-SHEET-FILE-UPLOAD-NOV8, owner Nov 8,
@@ -2692,7 +2714,17 @@
               [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Afternoon', '#dp_sheet_pm_note']].forEach(function (rc) {
                 if (!runs[rc[0]]) return;
                 var n = 0;
-                try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]]); } catch (e) {}
+                /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
+                   run's own SECTION of the file rides along — it
+                   carries the sheet's named students, and the
+                   split engine reads the run's roster from it.
+                   A sectionless file passes '' — its route saves
+                   without a roster, plainly (the roster attaches
+                   from the file's own shift sections, or from a
+                   photographed sheet). */
+                var sec382 = '';
+                try { sec382 = RouteSheetFile.sliceShift(text || '', rc[0]) || ''; } catch (e) { sec382 = ''; }
+                try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]], sec382); } catch (e) {}
                 if (n > 0) {
                   saved.push(rc[1] + ' ' + n + ' stops');
                   var rn = body.querySelector(rc[2]);
