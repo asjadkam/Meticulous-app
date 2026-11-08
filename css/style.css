@@ -39,6 +39,18 @@ body{
 .topbar h1{font-size:18px;margin:0;flex:1;}
 .iconbtn{background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer;padding:8px;min-width:44px;min-height:44px;}
 
+/* v380 (UPDATE-BANNER-OVERLAPS-HEADER-NOV8): while the native-APK
+   update banner (js/app.js) is on screen, the layout makes room
+   for it — the body gains the banner's measured height in top
+   padding, and the sticky heads stick BELOW the banner instead of
+   sliding under it. The height arrives as --updBannerH, set on
+   <html> by the banner code from the bar's own offsetHeight, so a
+   bar wrapped to two lines on a big-font handset reserves its true
+   size. No banner → no updBannerOn class → none of this applies
+   and the layout is exactly as it was. */
+body.updBannerOn{padding-top:var(--updBannerH,44px);}
+body.updBannerOn .topbar,body.updBannerOn .modhead{top:var(--updBannerH,44px);}
+
 /* ---------- sidebar ---------- */
 #sidebar{position:fixed;top:0;left:0;bottom:0;width:280px;max-width:84vw;background:#fff;z-index:100;
   transform:translateX(-105%);transition:transform .25s ease;box-shadow:4px 0 18px rgba(0,0,0,.18);

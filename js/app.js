@@ -578,6 +578,26 @@
               bar.appendChild(link);
               bar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#F26522;color:#fff;text-align:center;padding:12px;z-index:99999;font-size:14px;';
               document.body.appendChild(bar);
+              /* v380 (UPDATE-BANNER-OVERLAPS-HEADER-NOV8): the bar is
+                 a fixed overlay at the viewport top and NOTHING
+                 reserved room for it — it painted straight over the
+                 sticky .topbar (and .modhead), clipping the title,
+                 bell and menu by its own height on any shell behind
+                 the current gen (Niro's phone, Nov 8, 2026: "Why is
+                 her screen cutting off?"). The moment the bar lands,
+                 measure it and hand its exact height to the layout:
+                 body gains that much top padding and the sticky
+                 heads stick below it (the updBannerOn rules in
+                 css/style.css). No bar → no class, no var → the
+                 layout is exactly as before; the bar itself is
+                 untouched and still the download door. */
+              var updH = 0;
+              try { updH = bar.offsetHeight || 0; } catch (e) {}
+              if (!(updH > 0)) updH = 44; // 12+12 padding + one 14px line, rounded up
+              try {
+                document.documentElement.style.setProperty('--updBannerH', updH + 'px');
+                document.body.classList.add('updBannerOn');
+              } catch (e) {}
             }
           })
           .catch(function () {});
