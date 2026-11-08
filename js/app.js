@@ -5176,6 +5176,23 @@
      Navigation walks VISIBLE steps only; App.onbStep stays a raw
      ONB_STEPS index and every mover snaps through hidden steps. */
   var ONB_OFFICE_SKIP = ['base', 'truck', 'odometer', 'safety', 'driverKind'];
+  /* v379 (ONBOARDING-COMPANY-DETAILS-FOR-PAYROLL-NOV8, owner
+     Nov 8, 2026): the SAME visibility law for the employment
+     answer — a payroll employee has no company, no GST/HST
+     number and issues no invoices, so the Company details step's
+     questions are owner-operator questions and she never sees
+     them ("Why is it asking her all these question if I selected
+     payroll"). The employment step (key 'employment', stored
+     value 'Payroll') sits BEFORE the company step in the walk,
+     so the answer is always on the record when the step would
+     render; the counter counts visible steps only, so her walk
+     renumbers honestly (11, not 12). Contract keeps every step.
+     The country/province pair the company step also collected is
+     not lost to her: the pay-stub face's jurisdiction banner
+     already routes to Preferences, which collects the province
+     there — the wizard no longer makes her answer six company
+     questions to reach it. */
+  var ONB_PAYROLL_SKIP = ['company'];
   var _onbRoleNudge = false; // set when a mover is blocked at the role question
   function onbRoleStepIndex() {
     for (var i = 0; i < ONB_STEPS.length; i++) { if (ONB_STEPS[i].key === 'userRole') return i; }
@@ -5198,6 +5215,7 @@
     var st = ONB_STEPS[idx];
     if (!st) return false;
     if (o && o.userRole === 'office' && ONB_OFFICE_SKIP.indexOf(st.key) >= 0) return false;
+    if (o && o.employment === 'Payroll' && ONB_PAYROLL_SKIP.indexOf(st.key) >= 0) return false;
     return true;
   }
   function onbNextVisible(idx, o) {
