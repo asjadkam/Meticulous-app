@@ -1258,6 +1258,44 @@
      OCR rendition when this helper is absent. */
   TicketOCR.fileToStorageImage = function (file, cb) { _fileToSizedImage(file, 1280, cb); };
 
+  /* ---------- web 371 (Nov 7, 2026): shrink a KEPT photo ----------
+     FUEL-PHOTO-SAVE-DROP-NOV7 round 2: the survival test proved
+     a device whose store is full beside the whole book cannot
+     hold even the 1280px storage rendition — the verified save
+     sheds it, and the v350 graft (which persists through the
+     same verified save) cannot land it either, so the photo
+     sat in its account document, invisible on the device that
+     took it. Callers retry the save with the SAME photo
+     re-encoded smaller (the photo-fit ladder in modules/fuel.js);
+     this is the re-encode, from a data URL this time. Mirrors
+     _capReadSize's guards exactly: any environment without
+     Image/canvas, a non-data-URL input, or a decode failure
+     answers null and the caller keeps its previous behaviour.
+     An image already at or under the cap answers itself. */
+  TicketOCR.shrinkDataUrl = function (url, max, cb) {
+    var done = false;
+    function give(v) { if (!done) { done = true; cb(v); } }
+    try {
+      if (typeof url !== 'string' || url.indexOf('data:') !== 0) { give(null); return; }
+      if (typeof Image === 'undefined' || typeof document === 'undefined' || !document.createElement) { give(null); return; }
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h) { give(null); return; }
+          if (Math.max(w, h) <= max) { give(url); return; }
+          var s = max / Math.max(w, h);
+          var c = document.createElement('canvas');
+          c.width = Math.round(w * s); c.height = Math.round(h * s);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          give(c.toDataURL('image/jpeg', 0.85));
+        } catch (e) { give(null); }
+      };
+      img.onerror = function () { give(null); };
+      img.src = url;
+    } catch (e) { give(null); }
+  };
+
   /* ---------- v142: the cloud-send rendition ----------
      The cloud vision reader does not need the OCR rendition's pixels:
      probed against the live endpoint on the owner's real fixtures

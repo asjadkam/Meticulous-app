@@ -200,6 +200,84 @@
       if (window.FB && FB.saveDoc && rec && stack.length) FB.saveDoc('fuel', expensePhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
     } catch (e) {}
   }
+  /* web 371 (FUEL-PHOTO-SAVE-DROP-NOV7, round 2 — the web 370
+     survival test, owner evidence Nov 7, 2026, live app): the
+     re-attached Nov 7 receipt previewed, saved, "All synced" —
+     and after a full reload the entry again showed "No photo
+     for this entry". The web 370 doc guarantee held (the photo
+     WAS in its per-record cloud document), but on a device
+     whose store is full beside the whole book, the book + even
+     the 1280px storage rendition does not fit: the save's
+     fallback sheds it, and the v350 graft — which persists
+     through the same verified save — sheds it again on every
+     reload, forever. The photo was safe in the account and
+     invisible on the device that took it. THE FIT LADDER: when
+     a verified save cannot hold a photo's storage rendition,
+     the SAME photo is re-encoded at descending sizes and the
+     save retried per rung, so the record keeps a readable copy
+     on THIS device; the per-record document always keeps the
+     full storage rendition, untouched. When no rung fits the
+     web 370 behaviour stands exactly: the record saves
+     photo-less here, the photo lives in its account document,
+     and the note says so. Worlds without the shrinker keep the
+     web 370 behaviour too. */
+  var PHOTO_FIT_RUNGS = [960, 640];
+  function shrinkPhotoStack(stack, max, cb) {
+    if (!(stack && stack.length) || !(window.TicketOCR && TicketOCR.shrinkDataUrl)) { cb(null); return; }
+    var out = new Array(stack.length), left = stack.length, dead = false;
+    stack.forEach(function (u, i) {
+      try {
+        TicketOCR.shrinkDataUrl(u, max, function (s) {
+          if (dead) return;
+          if (!s) { dead = true; cb(null); return; }
+          out[i] = s;
+          if (--left === 0) cb(out);
+        });
+      } catch (e) { if (!dead) { dead = true; cb(null); } }
+    });
+  }
+  /* Put `stack` on the photo-less record in the CURRENT book
+     that `keyRec` names (the graft's own match keys) and persist
+     through the verified save; true when it landed. A record
+     that meanwhile gained a photo, or is gone, is left alone —
+     and a failed save leaves the stored book exactly as it was
+     (the verified save's own contract). */
+  function applyPhotoStack(isFill, keyRec, stack) {
+    var list = isFill ? fills() : S('expenses', []);
+    var srcKeys = isFill ? fillMatchKeys(keyRec) : [expensePhotoDocKey(keyRec)];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (!r || fillPhotos(r).length) continue;
+      var lk = isFill ? fillMatchKeys(r) : [expensePhotoDocKey(r)];
+      if (!keysMeet(lk, srcKeys)) continue;
+      r.photo = stack[0];
+      if (stack.length > 1) r.photos = stack.slice(); else delete r.photos;
+      var okSave = isFill ? saveFillsVerified(list) : saveExpensesVerified(list);
+      if (okSave) return true;
+      delete r.photo; delete r.photos;
+      return false;
+    }
+    return false;
+  }
+  /* Retry applyPhotoStack with the photo re-encoded at each
+     rung, largest first; onLanded fires (once) when a rung
+     persists. Async: the facts of the save that shed are never
+     blocked on it. */
+  function photoFitLadder(isFill, keyRec, stack, onLanded) {
+    if (!(stack && stack.length)) return;
+    if (!(window.TicketOCR && TicketOCR.shrinkDataUrl)) return;
+    var rungs = PHOTO_FIT_RUNGS.slice();
+    function next() {
+      if (!rungs.length) return;
+      var max = rungs.shift();
+      shrinkPhotoStack(stack, max, function (small) {
+        if (!small) { next(); return; }
+        if (applyPhotoStack(isFill, keyRec, small)) { if (onLanded) onLanded(small); return; }
+        next();
+      });
+    }
+    next();
+  }
   var photoGraftRan = false;
   function healPhotoGrafts(body) {
     if (photoGraftRan) return;
@@ -226,13 +304,21 @@
         if (keysMeet(lk, srcKeys)) { hit = list[i]; break; }
       }
       if (!hit) return;
-      hit.photo = ps[0];
-      if (ps.length > 1) hit.photos = ps; else delete hit.photos;
-      var okSave = isFill ? saveFillsVerified(list) : saveExpensesVerified(list);
-      if (okSave) changed = true;
-      else { /* the graft didn't land — leave the record as it was */
-        delete hit.photo; delete hit.photos;
-      }
+      /* web 371: the apply goes through applyPhotoStack (same
+         match, same verified save) — and when the book cannot
+         hold the photo at its stored size, the fit ladder
+         retries it smaller instead of leaving the record
+         photo-less on a device the photo simply doesn't fit
+         beside the book (the graft's round-2 wall). A landed
+         rung repaints, since the reads below may already have
+         settled by the time it lands. */
+      if (applyPhotoStack(isFill, hit, ps)) { changed = true; return; }
+      photoFitLadder(isFill, hit, ps, function () {
+        changed = true;
+        if (body && fuelBody === body) {
+          try { Meticulous.modules.fuel.render(body); } catch (e) {}
+        }
+      });
     }
     var reads = [];
     if (missF.length) reads.push(FB.loadDoc('kv', 'fuel_fills').then(function (d) {
@@ -518,6 +604,15 @@
         if (photoDropped) {
           var rd = body.querySelector('#fx_read');
           if (rd) rd.innerHTML = '✓ Expense saved — the receipt photo didn\'t fit in this device\'s app storage, so it\'s kept in your account copy and will re-attach where there\'s room.';
+          /* web 371: the fit ladder (see the heal block) —
+             retry the expense's photo at smaller sizes against
+             this device's book before the account copy alone. */
+          if (fxPhoto) {
+            photoFitLadder(false, rec, [fxPhoto], function () {
+              var rd2 = body.querySelector('#fx_read');
+              if (rd2) rd2.innerHTML = '✓ Expense saved — the receipt photo was kept at a smaller size so it fits in this device\'s app storage.';
+            });
+          }
         }
       };
   }
@@ -1604,6 +1699,15 @@
           }
           saveNote = un || '✓ Fill-up updated.';
           if (editPhotoDropped) saveNote += ' The new receipt photo didn\'t fit in this device\'s app storage — it\'s kept in your account copy and will re-attach where there\'s room.';
+          /* web 371: "where there's room" starts HERE — try the
+             photo at smaller sizes against this device's book
+             before settling for the account copy alone. */
+          if (editPhotoDropped && mergedStack.length) {
+            photoFitLadder(true, updated, mergedStack, function () {
+              saveNote = '✓ Fill-up updated — the receipt photo was kept at a smaller size so it fits in this device\'s app storage.';
+              if (fuelBody === body) { try { Meticulous.modules.fuel.render(body); } catch (e) {} }
+            });
+          }
           Meticulous.modules.fuel.render(body);
           return;
         }
@@ -1692,6 +1796,16 @@
            the fill's moment (see fuFillTs). */
         if (hasOdo && odoPlan.mode !== 'refuse' && odoPlan.mode !== 'correct') {
           try { if (App._logOdoReading) App._logOdoReading(odo, 'fuel', fuFillTs(rec)); } catch (e) {}
+        }
+        /* web 371: the fit ladder (see the heal block) — a photo
+           the verified save just shed gets retried at smaller
+           sizes against this device's book before the account
+           copy is its only home here. */
+        if (photoDropped && addDocStack.length) {
+          photoFitLadder(true, rec, addDocStack, function () {
+            saveNote = '✓ Fill-up saved — the receipt photo was kept at a smaller size so it fits in this device\'s app storage.';
+            if (fuelBody === body) { try { Meticulous.modules.fuel.render(body); } catch (e) {} }
+          });
         }
         Meticulous.modules.fuel.render(body);
       };
