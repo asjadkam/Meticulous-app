@@ -1,8 +1,8 @@
 {
   "version": 63,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v63.apk",
-  "webVersion": 377,
-  "notes": "Gen 63 (native v82, versionCode 57 / versionName 1.55) — PIP-BUBBLE-FACE-NOT-LIVE-NOV8 (owner, Nov 8, 2026 12:19 CST, testing gen 62 / web 377: screen recording + his words: \"Finally it's coming on consistently now but it's not live playing\"). The bubble rose on EVERY minimize (the gen-61 stamp + gen-62 not-now rule both CONFIRMED in his hands), but its clock read 00:00:00 STATIC in every appearance ~30-45 s into a fresh session while the home-screen widget beside it ticked 00:00:23 -> 00:00:37. Convicted: the bubble's clock was a plain TextView set only in refresh() from the record's derivation — elapsedBase plus the live segment, which counts ONLY when segStartMs > 0; his fresh sessions run RUNNING with segStartMs == 0, where the derivation is the constant bank (0 at a fresh session), and every repaint driver faithfully repainted the same frozen value — nothing in the bubble advanced time on its own. Fix, native only, ONE file (BubbleOverlay.java, +229/-3): the clock is now a Chronometer armed inside refresh() off the record's elapsed (elapsedMsOf mirrored from the widget at millisecond precision; for seg0 records the first arm's base is stamped as the record state's anchor in the overlay's prefs, keyed rev + updatedAt + elapsedBase — the widget's v78 mechanism — and reused across rebuilds, so a hide/show cycle resumes the count where the session is). The Chronometer advances the seconds itself: no record write, no repaint in the loop. PAUSED keeps the frozen TEXT clock at the banked elapsed. The one designed shape — armed-not-yet-started — keeps its honest static 00:00:00. Show/dismiss semantics, the v80 stamp, the deferred backstop and the drive posture untouched. Proof: tools/bubble-gate-v82-test.js 24/24 (seg0 model: frozen face pre-fix, ticking post-fix; anchor survives hide/show; PAUSED frozen; source pins), run against the shipped bytes. No web change in this release — webVersion holds 377; this pointer commit's version.json also refreshes the js/app.js manifest hash for the gen-63 APK_VERSION marker (release prep 0a5cd7d). Job A's files, the fuel round-5 bench edits and all other parked work NOT in this release. Verdict owed in his hands: install over the top (never uninstall); start a session, minimize, watch the bubble's seconds climb on their own; x -> return -> minimize again -> bubble back, still counting from the session's age; pause freezes its clock.",
+  "webVersion": 378,
+  "notes": "Web 378 \u2014 TWO fixes ride together (both benches tagged v378). (1) AUDIT-ENTRY-NOT-OPENABLE-NOV8 (owner, Nov 8, 2026 12:24 CST, screen recording \u2014 \"Audit has to have a way to click on a record and open its details and the picture!\"): the Audit lists' rows were dead text. In modules/revenue.js the Revenue + Extras audit rows now carry data-rvday and open the module's own day detail (the v75 door the face's rows use), with dayFromAudit so the detail's Back returns to the audit list; the day detail itself now renders the day's pictures \u2014 the session's ticketPhoto stamped by the End-shift sheet rides the day projection, and each dispatch's ticket photos (every ticket's photo, else the top-level photo) render under the dispatch they were filed on. In modules/pti.js a PTI report opened from the audit remembers fromAudit and its Back returns to the audit list instead of the form. View-only wiring: the audit adds no edit door of its own. Proof: tools/audit-entry-openable-nov8-test.js 35/35. (2) DISPATCH-SEND-SCREEN-NOV8 (owner, Nov 8, 2026 12:29 CST \u2014 \"There should be 1 dispatch screen with a drop down with all the drivers connected and should just check which drivers to send that dispatch... And + 1 sign underneath to make more dispatches... this is a owner and fleet manager thing only\"): in modules/dispatch.js the pipe surface (crew board + send card) is now gated on a POSITIVE sender entitlement \u2014 dspSenderAcct, true only when the account type IS 'Owner-Operator' or 'Fleet Manager' \u2014 replacing the v186 negative gate under which the boss cards stood on his Driver phone; a driver account now paints neither card and fetches no crew. The send compose keeps ONE screen: the check-off list folds into a driver dropdown whose button always restates the live tick count; the compose gains the pin/paste fields (paste a Maps link or the whole dispatch message through the same PinLinks door as v358; first pin = job pin, second = dump pin; pins ride the pipe doc, which has carried them since v220) and a \uff0b New dispatch button that discards the compose and starts a fresh one in place. Proof: tools/dispatch-send-screen-v378-test.js 38/38. Web only \u2014 the gen-63 native pointer is unchanged (version 63, meticulous-v63.apk; webVersion 377 -> 378). Job A's files (deeplink.js, the navigator.js Job A hunks, the index.html Job A hunks), the fuel round-5 bench edits (modules/fuel.js + its test), css/style.css and all other parked work NOT in this release. Verdicts owed in his hands: (audit) Revenue -> Audit -> tap an entry -> the day opens with its details and the haul-ticket photo; Back returns to the audit list. (dispatch) his Driver phone shows NO 'Send a dispatch' card and no crew board after a full relaunch; the owner tester account shows the one compose screen with the driver dropdown.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -16,7 +16,7 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "c734dc1f4741feb2fb0f72c4d0dec489a5f6472c5e6d27d2d7fcf28f62f3606f",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "31b4a6da384feb592ee2711ca92f5e57b7d6d3bb35344fad8f6dcdc2c24cd2f5",
+    "index.html": "5bcbd3f9924b06e7c08776ae6de7f5adbbf8005dfa3cdc4c7969a3e27d9b2867",
     "js/app.js": "716a37aa270719d2a83932bf960cf6fe5eb922a217c0bc7d32ccd9d53694f594",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -45,7 +45,7 @@
     "modules/billing.js": "5027d7d3fad18d698c819aad4168d763fd5346c78b4daa5a5ebce1fb70c53aeb",
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "368b434eb9ed8cf9f986636892bf442a44c62017fe458241dbef7147897e4299",
-    "modules/dispatch.js": "14b086ee78658952ba9e6bd9772191aa928d91b1e4b4ec769f2a1179f6afd4db",
+    "modules/dispatch.js": "cb2445f495ce244d0cd4196ede0de963f40cb9df2fcd69870c50ca515eecb17a",
     "modules/documents.js": "cdb0128669f678463057c325a1b8c13399c2f0d0542fc518471733ee13d41283",
     "modules/fuel.js": "1b14b3e6aa8ec703631e44911ef26040546b77a5c779371c7e80b4c0ff51bf93",
     "modules/invoice.js": "909eaa90c5adacc52a8495af2515853ca4a76e645855c5f150e35716a6a03b84",
@@ -55,9 +55,9 @@
     "modules/navigator.js": "13e1c1a84e06589382a6c882be9c5cecf32480b0379959e7ff362ed07eb86634",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
     "modules/preferences.js": "7d1092f1d079f187b8e8ea93ab01ef501c2b41ee91298b49c9c1b43b04307b1c",
-    "modules/pti.js": "5a7f225353cff46c70c9234c642aa454ea29e508075516bb02358fcbfb3b36ac",
+    "modules/pti.js": "2ce21b2ce87ac0b6aa0ef02062a70101aef5b7c67a7785d598b500e1c7c958c0",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
-    "modules/revenue.js": "a0fe28bd07083d48b0bfb352d3aacb06ca076142a4f569e76275084dd77551d6",
+    "modules/revenue.js": "0a8c3873c44eaca82ac5b559019d00027ddf572bf8dabda29f1f63797a198df6",
     "modules/subscription.js": "694b586116f2c9dcee3507042ce329493be928046132fef86d03b614f9990719",
     "sw.js": "f2f39bfe0e6163fde855c2e8e4c4d036434c331900b9626a17d9c64968cbef1b"
   }

@@ -1107,7 +1107,11 @@
         endOdo: parseFloat(s.endOdo) > 0 ? parseFloat(s.endOdo) : null,
         odoKm: (window.App && App._odoDailyKm) ? App._odoDailyKm(s) : null,
         liveKm: (typeof s.liveKm === 'number') ? s.liveKm : null,
-        milesStatus: s.milesStatus || null
+        milesStatus: s.milesStatus || null,
+        /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the ticket photo
+           the End-shift sheet stamped on the session (app.js
+           v143) rides the projection — the day detail shows it. */
+        ticketPhoto: s.ticketPhoto || null
       });
     });
     var fuel = [];
@@ -1128,7 +1132,15 @@
       var sd = '';
       if (typeof d.scheduledAt === 'string') { var mm = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt); if (mm) sd = mm[1]; }
       if ((sd || d.date) !== ds) return;
-      dispatches.push({ jobSite: d.jobSite || d.pickup || 'Dispatch', status: d.status || '', ticketNo: d.ticketNo || '' });
+      /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the dispatch's
+         ticket photos ride along — resolved the dispatch
+         module's own way (every ticket's photo, else the
+         top-level photo) — so the day detail shows the day's
+         haul-ticket picture with the ticket it belongs to. */
+      var dphotos = [];
+      (d.tickets || []).forEach(function (t) { if (t && t.photo) dphotos.push(t.photo); });
+      if (!dphotos.length && d.photo) dphotos.push(d.photo);
+      dispatches.push({ jobSite: d.jobSite || d.pickup || 'Dispatch', status: d.status || '', ticketNo: d.ticketNo || '', photos: dphotos });
     });
     return {
       date: ds, hours: agg.hours, amount: agg.amount, extrasAmt: agg.extrasAmt, live: !!agg.live,
@@ -1260,14 +1272,18 @@
     function money(v) { var n = parseFloat(v); return isFinite(n) ? '$' + n.toFixed(2) : ''; }
     var h = '<button class="btn small ghost" id="rv_audit_back" style="margin-bottom:10px">‹ Back</button>';
     h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Revenue entries</h3>' +
-      '<p class="note" style="margin-top:0">Every entry in this book, newest first — ' + ents.length + ' record' + (ents.length === 1 ? '' : 's') + '.</p>' +
+      '<p class="note" style="margin-top:0">Every entry in this book, newest first — ' + ents.length + ' record' + (ents.length === 1 ? '' : 's') + '. Tap one to open its day — the details and the haul-ticket photo are on the day.</p>' +
       (ents.length ? ents.map(function (e) {
         var bits = [];
         var hrs = parseFloat(e.hours);
         if (isFinite(hrs) && hrs > 0) bits.push(hrs + ' h');
         if (e.note) bits.push(String(e.note));
         if (e.label) bits.push(String(e.label));
-        return '<div class="listitem"><div class="a">' + esc(e.date || '') + ' · ' + money(e.amount) + '</div>' +
+        /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the row carries
+           its DATE — the day is the record's own detail door
+           (the face's rows open it the same way, v75). */
+        return '<div class="listitem" data-rvday="' + esc(e.date || '') + '" style="cursor:pointer"><div class="a">' + esc(e.date || '') + ' · ' + money(e.amount) +
+          '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
           (bits.length ? '<div class="b">' + esc(bits.join(' · ')) + '</div>' : '') + '</div>';
       }).join('') : '<div class="empty">No entries on file.</div>') + '</div>';
     h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Extras</h3>' +
@@ -1276,7 +1292,8 @@
         var bits = [];
         if (x.type) bits.push(String(x.type));
         if (x.note) bits.push(String(x.note));
-        return '<div class="listitem"><div class="a">' + esc(x.date || '') + ' · ' + money(x.amount) + '</div>' +
+        return '<div class="listitem" data-rvday="' + esc(x.date || '') + '" style="cursor:pointer"><div class="a">' + esc(x.date || '') + ' · ' + money(x.amount) +
+          '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
           (bits.length ? '<div class="b">' + esc(bits.join(' · ')) + '</div>' : '') + '</div>';
       }).join('') : '<div class="empty">No extras on file.</div>') + '</div>';
     body.innerHTML = h;
@@ -1284,6 +1301,24 @@
       auditView = false;
       api.render(body);
     };
+    /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8, owner Nov 8, 2026
+       12:24 CST — "Audit has to have a way to click on a record
+       and open its details and the picture!"): a tap on an audit
+       row opens the SAME day detail the face's rows open (v75),
+       and remembers it came from the audit so the detail's Back
+       returns here (dayFromAudit — the documents.js viewFrom
+       pattern). View-only wiring: the audit adds no edit door
+       of its own; the detail it lands on is the module's own. */
+    body.querySelectorAll('[data-rvday]').forEach(function (el) {
+      el.onclick = function () {
+        var ds = el.getAttribute('data-rvday');
+        if (!ds) return;
+        dayFromAudit = true;
+        auditView = false;
+        dayDetailDate = ds;
+        api.render(body);
+      };
+    });
   }
   function renderDayDetail(body) {
     var ds = dayDetailDate;
@@ -1477,6 +1512,11 @@
           if (s.odoKm !== null && s.odoKm !== undefined) rows += '<div class="kv"><span>Odometer distance</span><b>🛣 ' + (+s.odoKm.toFixed(1)) + ' km</b></div>';
           if (s.liveKm !== null) rows += '<div class="kv"><span>Live GPS distance</span><b>' + (+s.liveKm.toFixed(1)) + ' km</b></div>';
           if (s.milesStatus) rows += '<div class="kv"><span>Miles check</span><b>' + (s.milesStatus === 'confirmed' ? '✓ Matches odometer' : '⚠️ Differs from odometer') + '</b></div>';
+          /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the session's
+             ticket photo, on the day's record — the same img +
+             download-door markup the Dispatch face uses. */
+          if (s.ticketPhoto) rows += '<img src="' + s.ticketPhoto + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
+            (App._photoDl ? App._photoDl(s.ticketPhoto, 'ticket-' + ds) : '');
           /* v319 (SESSION-RECORD-NO-DELETE): the session record
              gets the same Delete door the day's entries/extras
              carry (hidden while an edit form is open, like
@@ -1500,7 +1540,14 @@
         if (x.status) b.push(x.status);
         if (x.ticketNo) b.push('ticket #' + x.ticketNo);
         return '<div class="listitem"><div class="a">' + esc(x.jobSite) + '</div>' +
-          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') + '</div>';
+          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') +
+          /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the ticket
+             photo(s) under the dispatch they were filed on —
+             the picture the audit tap promised. */
+          (x.photos && x.photos.length ? x.photos.map(function (p) {
+            return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
+              (App._photoDl ? App._photoDl(p, 'ticket-' + ds) : '');
+          }).join('') : '') + '</div>';
       }).join('') + '</div>';
     }
     if (!d.entries.length && !(d.evidence && d.evidence.length) && !d.extras.length && !d.sessions.length && !d.fuel.length && !d.dispatches.length) {
@@ -1508,7 +1555,12 @@
     }
     body.innerHTML = h;
     body.querySelector('#rv_day_back').onclick = function () {
+      /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): a detail opened from
+         the audit list returns to it, not to the face. */
+      var fromAudit = dayFromAudit;
       dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
+      dayFromAudit = false;
+      if (fromAudit) auditView = true;
       api.render(body);
     };
     /* v116: the evidence card's show/hide. */
@@ -1672,6 +1724,7 @@
   var dayDetailDate = null; // v47: date whose Day Details are showing, or null for the normal Revenue view
   var formView = null; // v201 REV-CLEAN: 'manual' | 'extras' — the form opened from the top tabs, or null for the Revenue face
   var auditView = false; // v340 AUDIT-BUTTON-EVERY-MODULE: the complete-history view is open
+  var dayFromAudit = false; // v378 AUDIT-ENTRY-NOT-OPENABLE-NOV8: the day detail on screen was opened FROM the audit list — its Back returns there
   var asOpen = false; // v201 REV-CLEAN: the auto-start menu panel on the Revenue face (collapsed until its button is tapped)
   /* v75: the entry/extra being edited inside Day Details
      ({kind:'entry'|'extra', index} into the FULL stored list), the
@@ -1809,7 +1862,7 @@
         el.onclick = function (ev) {
           if (ev && ev.target && ev.target.closest &&
               ev.target.closest('[data-rxdel]')) return;
-          dayDetailDate = el.getAttribute('data-day-link');
+          dayFromAudit = false; dayDetailDate = el.getAttribute('data-day-link');
           api.render(body);
         };
       });
@@ -2048,6 +2101,16 @@
        period live in the store — those are the main view's own
        settings, not a sub-view, and stay.) */
     back: function () {
+      /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): a day detail opened
+         FROM the audit list returns to the audit list — the same
+         unwind the plain detail gets below, then the audit
+         stands again instead of the face. */
+      if (dayDetailDate && dayFromAudit) {
+        dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
+        dayDetailDate = null; dayFromAudit = false; auditView = true;
+        if (lastBody) api.render(lastBody);
+        return true;
+      }
       /* v340: Back from the Audit view returns to the face. */
       if (auditView) {
         auditView = false;
@@ -2062,7 +2125,7 @@
     },
     resetView: function () {
       dayDetailDate = null; dayEdit = null; dayEditErr = ''; dayErr = ''; dayEditDraft = null; dayEditAmtCustom = false;
-      auditView = false;
+      auditView = false; dayFromAudit = false;
     },
     render: function (body) {
       lastBody = body;
@@ -2312,7 +2375,7 @@
           var gt = graphTap(graphSel, dates[i]);
           if (gt.open) {
             graphSel = null;
-            dayDetailDate = gt.open;
+            dayFromAudit = false; dayDetailDate = gt.open;
             api.render(body);
           } else {
             graphSel = gt.sel;
@@ -2351,7 +2414,7 @@
           var gt = graphTap(graphSel, b.getAttribute('data-day'));
           if (gt.open) {
             graphSel = null;
-            dayDetailDate = gt.open;
+            dayFromAudit = false; dayDetailDate = gt.open;
             api.render(body);
             return;
           }
@@ -2436,7 +2499,7 @@
         el.onclick = function (ev) {
           if (ev && ev.target && ev.target.closest &&
               ev.target.closest('[data-rvdel],[data-rxdel]')) return;
-          dayDetailDate = el.getAttribute('data-day-link');
+          dayFromAudit = false; dayDetailDate = el.getAttribute('data-day-link');
           api.render(body);
         };
       });

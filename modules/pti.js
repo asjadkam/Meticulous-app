@@ -852,7 +852,12 @@
     };
     body.querySelectorAll('[data-pti-open]').forEach(function (elx) {
       elx.onclick = function () {
-        view = { mode: 'report', id: elx.getAttribute('data-pti-open') };
+        /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): a report opened
+           FROM the audit list remembers it — its Back returns
+           to the audit list, not the form (the documents.js
+           viewFrom pattern; the history rows' own wiring at
+           wireForm does not set this). */
+        view = { mode: 'report', id: elx.getAttribute('data-pti-open'), fromAudit: true };
         Meticulous.modules.pti.render(body);
       };
     });
@@ -1322,8 +1327,9 @@
     var bk = body.querySelector('#pti_back');
     if (bk) bk.onclick = function () {
       /* in Inspection Mode, Back returns to the officer's list —
-         never to the driver's form */
-      view = view.fromDot ? { mode: 'dot', id: null } : { mode: 'form', id: null, justFiled: false };
+         never to the driver's form; v378: a report opened from
+         the audit list returns to it */
+      view = view.fromDot ? { mode: 'dot', id: null } : (view.fromAudit ? { mode: 'audit', id: null } : { mode: 'form', id: null, justFiled: false });
       Meticulous.modules.pti.render(body);
     };
   }
@@ -1429,7 +1435,9 @@
     resetView: function () { view = { mode: 'form', id: null, justFiled: false }; },
     back: function () {
       if (view.mode === 'report' && view.id) {
-        view = view.fromDot ? { mode: 'dot', id: null } : { mode: 'form', id: null, justFiled: false };
+        /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): a report opened
+           from the audit list returns to it. */
+        view = view.fromDot ? { mode: 'dot', id: null } : (view.fromAudit ? { mode: 'audit', id: null } : { mode: 'form', id: null, justFiled: false });
         if (lastBody) Meticulous.modules.pti.render(lastBody);
         return true;
       }

@@ -1250,6 +1250,15 @@
   var pipeSent = null;    // last listSent()
   var pipeFlash = '';     // one-shot arrival note (driver side)
   var pipeSendMsg = '';   // one-shot line inside the send card
+  /* v378 (DISPATCH-SEND-SCREEN-NOV8): the send compose's pin state
+     + driver-dropdown fold state. Module vars, not form fields, so
+     a repaint of the card (the validation re-render, the sent-list
+     refresh) never loses a pin the dispatcher already landed; the
+     hidden inputs in sendHtml merely mirror them. Cleared on a
+     fully-successful send and on the ＋ New dispatch door — the
+     two moments a compose is genuinely finished. */
+  var pipeSendPin = { lat: '', lng: '', dumpLat: '', dumpLng: '' };
+  var pipeSendPickOpen = null; // null = default fold (open at <= 1 driver)
 
   function pipeMoney(v) { return (v === null || v === undefined) ? '—' : '$' + Number(v).toFixed(2); }
   function pipeTicks(s) {
@@ -1386,6 +1395,18 @@
   function peerDrives(c) {
     return !!c && (c.face === 'driver' || c.face === 'both');
   }
+  /* v378: the send compose's pin line — the same words the own
+     form's pin painter uses (modules/dispatch.js paintPinLine),
+     naming the pair(s) that will ride the pipe doc, so the
+     dispatcher sees at a glance which pin(s) landed. No Navigate
+     button: this face composes for other men's trucks. */
+  function sendPinLine() {
+    var p = pipeSendPin;
+    if (!p.lat || !p.lng) return '';
+    var s = '📍 Map pin set (' + esc(p.lat) + ', ' + esc(p.lng) + ')';
+    if (p.dumpLat && p.dumpLng) s += ' · dump pin set (' + esc(p.dumpLat) + ', ' + esc(p.dumpLng) + ')';
+    return s;
+  }
   function sendHtml() {
     var peers = ConnectPipe.connectedPeers();
     if (!peers.length) {
@@ -1404,25 +1425,148 @@
        the card has never had a select-all pattern, and a crew-wide
        send stays a deliberate tick per driver — except a sender
        with exactly ONE driver, whose box starts ticked (the old
-       dropdown always had him picked). */
+       dropdown always had him picked).
+       v378 (DISPATCH-SEND-SCREEN, owner Nov 8, 2026 12:29 CST —
+       "There should be 1 dispatch screen with a drop down with
+       all the drivers connected and should just check which
+       drivers to send that dispatch... And + 1 sign underneath to
+       make more dispatches"): three changes to this same card.
+       (1) The check-off list becomes the DROPDOWN he asked for: a
+       toggle button whose label always states the tick count (no
+       look-twice), folding the same checkbox list. It starts open
+       for a one-driver sender (nothing to fold) and closed for a
+       crew, where the count on the button is the state. (2) The
+       compose gains the PIN/LINK fields the own-record form has
+       always had — hidden lat/lng + dump-pin fields (mirroring
+       pipeSendPin) filled by pasting a Maps link or the dispatch
+       message through the same PinLinks door as v358; the pipe
+       doc has carried the pins since v220, the card simply never
+       offered a way to attach them, so a pinned job had to be
+       written twice. (3) A "＋ New dispatch" button under Send:
+       one tap discards the current compose and starts a fresh
+       one without leaving the screen. */
+    var pickOpen = pipeSendPickOpen === null ? drivers.length <= 1 : !!pipeSendPickOpen;
+    var ticked0 = drivers.length === 1 ? 1 : 0;
     return '<label class="f">Drivers — tick everyone this dispatch goes to</label>' +
+      '<button type="button" class="btn ghost" id="dp_send_pick_btn" style="width:100%">' +
+        '👥 Drivers — ' + (ticked0 ? ticked0 + ' ticked' : 'none ticked') + (pickOpen ? ' ▴' : ' ▾') + '</button>' +
+      '<div id="dp_send_pick"' + (pickOpen ? '' : ' style="display:none"') + '>' +
       drivers.map(function (c) {
         return '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" class="dp_send_chk" value="' +
           esc(c.uid) + '"' + (drivers.length === 1 ? ' checked' : '') + '> ' + esc(c.name) + '</label>';
       }).join('') +
+      '</div>' +
       '<div class="row"><div><label class="f">Date</label><input type="date" id="dp_send_date" value="' + esc(tom) + '"></div>' +
       '<div><label class="f">Start time</label><input type="time" id="dp_send_time" value="08:00"></div></div>' +
       '<label class="f">Job site</label><input id="dp_send_site" placeholder="e.g. Maple Ridge">' +
+      '<div id="dp_send_pin" style="font-size:13px;margin:2px 0 6px;">' + sendPinLine() + '</div>' +
+      '<input type="hidden" id="dp_send_lat" value="' + esc(pipeSendPin.lat) + '"><input type="hidden" id="dp_send_lng" value="' + esc(pipeSendPin.lng) + '">' +
+      '<input type="hidden" id="dp_send_dumplat" value="' + esc(pipeSendPin.dumpLat) + '"><input type="hidden" id="dp_send_dumplng" value="' + esc(pipeSendPin.dumpLng) + '">' +
+      '<label class="f">Map pins — paste a Maps link or the dispatch message</label>' +
+      '<textarea id="dp_send_link" rows="2" placeholder="Paste here — the pins are read from it" style="width:100%"></textarea>' +
+      '<div style="display:flex;gap:10px;margin:2px 0 6px;"><button type="button" class="btn secondary" id="dp_send_link_btn" style="flex:1;">Read the pins</button>' +
+      '<button type="button" class="btn ghost" id="dp_send_pin_clear" style="flex:1;">Clear pins</button></div>' +
       '<div class="row"><div><label class="f">Material</label><input id="dp_send_mat" placeholder="Optional"></div>' +
       '<div><label class="f">Truck / equipment</label><input id="dp_send_eq" placeholder="Optional"></div></div>' +
       '<label class="f">Notes</label><input id="dp_send_notes" placeholder="Optional">' +
       (pipeSendMsg ? '<p class="note" style="color:#2e7d32;font-weight:600;margin-top:6px">' + esc(pipeSendMsg) + '</p>' : '') +
       '<button class="btn primary" id="dp_send_btn" style="margin-top:8px">📤 Send dispatch</button>' +
+      '<button type="button" class="btn ghost" id="dp_send_new" style="width:100%;margin-top:8px">＋ New dispatch</button>' +
       '<div id="dp_sentlist">' + sentHtml() + '</div>';
   }
   function wirePipe(body) {
     /* v163: the set-pay wiring is gone with its button — the
        boss never sets a connected driver's pay rate. */
+    /* v378 (DISPATCH-SEND-SCREEN): the driver DROPDOWN — the
+       toggle folds the check-off list; its label always restates
+       the tick count, folded or not, so the send's reach is never
+       a look-twice. Ticks re-count live. */
+    var pickBtn = body.querySelector('#dp_send_pick_btn');
+    var pickBox = body.querySelector('#dp_send_pick');
+    function paintPickBtn() {
+      if (!pickBtn) return;
+      var n = 0;
+      body.querySelectorAll('.dp_send_chk').forEach(function (ch) { if (ch && ch.checked) n++; });
+      var open = !pickBox || pickBox.style.display !== 'none';
+      pickBtn.textContent = '👥 Drivers — ' + (n ? n + ' ticked' : 'none ticked') + (open ? ' ▴' : ' ▾');
+    }
+    if (pickBtn && pickBox) pickBtn.onclick = function () {
+      var open = pickBox.style.display !== 'none';
+      pickBox.style.display = open ? 'none' : '';
+      pipeSendPickOpen = !open;
+      paintPickBtn();
+    };
+    body.querySelectorAll('.dp_send_chk').forEach(function (ch) {
+      if (ch && ch.addEventListener) ch.addEventListener('change', paintPickBtn);
+    });
+    /* v378: the PIN door — paste a Maps link or the whole dispatch
+       message; readable pins land through PinLinks.extractPins,
+       short links through the same rewriteText server door the
+       own form's paste box uses (v358). First pin = the job pin,
+       second = the dump pin, exactly as a two-pin message files
+       on the own form. Only the pin line repaints — ticks and
+       typed fields are never disturbed. A link that cannot be
+       read says so plainly and the dispatch sends without a pin;
+       nothing is ever invented. */
+    var linkBtn = body.querySelector('#dp_send_link_btn');
+    if (linkBtn) linkBtn.onclick = function () {
+      var pinEl = body.querySelector('#dp_send_pin');
+      var setHidden = function () {
+        var set = function (id, v) { var n = body.querySelector(id); if (n) n.value = v; };
+        set('#dp_send_lat', pipeSendPin.lat); set('#dp_send_lng', pipeSendPin.lng);
+        set('#dp_send_dumplat', pipeSendPin.dumpLat); set('#dp_send_dumplng', pipeSendPin.dumpLng);
+      };
+      var applyPins = function (pins) {
+        if (pins && pins.length) {
+          pipeSendPin = {
+            lat: String(pins[0].lat), lng: String(pins[0].lng),
+            dumpLat: pins[1] ? String(pins[1].lat) : '', dumpLng: pins[1] ? String(pins[1].lng) : ''
+          };
+          setHidden();
+          if (pinEl) pinEl.innerHTML = sendPinLine();
+        } else if (pinEl) {
+          pinEl.innerHTML = 'That link could not be read — the dispatch will send without a pin.';
+        }
+      };
+      var ta = body.querySelector('#dp_send_link');
+      var txt = ta ? String(ta.value || '') : '';
+      try {
+        if (window.PinLinks && PinLinks.extractPins) {
+          var ex = PinLinks.extractPins(txt);
+          if (ex.pins && ex.pins.length) { applyPins(ex.pins); return; }
+          if (ex.unresolved && ex.unresolved.length && PinLinks.rewriteText) {
+            linkBtn.disabled = true; linkBtn.textContent = 'Reading the pins…';
+            PinLinks.rewriteText(txt).then(function (out) {
+              linkBtn.disabled = false; linkBtn.textContent = 'Read the pins';
+              applyPins(PinLinks.extractPins(out).pins);
+            }, function () {
+              linkBtn.disabled = false; linkBtn.textContent = 'Read the pins';
+              applyPins([]);
+            });
+            return;
+          }
+        }
+      } catch (e) {}
+      applyPins([]);
+    };
+    var pinClear = body.querySelector('#dp_send_pin_clear');
+    if (pinClear) pinClear.onclick = function () {
+      /* in place, like the pin landing — the compose is untouched */
+      pipeSendPin = { lat: '', lng: '', dumpLat: '', dumpLng: '' };
+      var set = function (id) { var n = body.querySelector(id); if (n) n.value = ''; };
+      set('#dp_send_lat'); set('#dp_send_lng'); set('#dp_send_dumplat'); set('#dp_send_dumplng');
+      var pinEl2 = body.querySelector('#dp_send_pin');
+      if (pinEl2) pinEl2.innerHTML = '';
+    };
+    /* v378: the ＋ door — discard this compose (fields, ticks,
+       pins, result line) and start a fresh one in place, without
+       leaving the screen. */
+    var newBtn = body.querySelector('#dp_send_new');
+    if (newBtn) newBtn.onclick = function () {
+      pipeSendMsg = '';
+      pipeSendPin = { lat: '', lng: '', dumpLat: '', dumpLng: '' };
+      var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
+    };
     var sendBtn = body.querySelector('#dp_send_btn');
     if (sendBtn) sendBtn.onclick = function () {
       /* v230 (DSP-MULTI-SEND): Send fans out to EVERY ticked
@@ -1453,6 +1597,11 @@
       ConnectPipe.sendDispatchToMany(uids, {
         date: date, scheduledAt: dspComposeSched(date, time, date),
         jobSite: site,
+        /* v378: the compose's pins ride the doc (the pipe has
+           carried lat/lng + dump pins since v220) — 0 when unset,
+           the doc's own "no pin" shape. */
+        lat: Number(pipeSendPin.lat) || 0, lng: Number(pipeSendPin.lng) || 0,
+        dumpLat: Number(pipeSendPin.dumpLat) || 0, dumpLng: Number(pipeSendPin.dumpLng) || 0,
         material: (body.querySelector('#dp_send_mat') || {}).value || '',
         equipment: (body.querySelector('#dp_send_eq') || {}).value || '',
         notes: (body.querySelector('#dp_send_notes') || {}).value || ''
@@ -1476,6 +1625,10 @@
           pipeSendMsg = 'Sent to ' + sentNames.join(', ') + ' ✓ — NOT sent to ' + failNames.join(', ') +
             ': check the connection, then tick ' + (failNames.length === 1 ? 'him' : 'them') + ' and send again.';
         }
+        /* v378: a fully-sent compose is finished — its pins clear
+           with it. A partial or failed send keeps the pins landed,
+           so the retry-him send carries the same pins. */
+        if (!failNames.length) pipeSendPin = { lat: '', lng: '', dumpLat: '', dumpLng: '' };
         var w = body.querySelector('#dp_send'); if (w) { w.innerHTML = sendHtml(); wirePipe(body); }
         ConnectPipe.listSent().then(function (sent) {
           pipeSent = sent;
@@ -1705,6 +1858,26 @@
          accounts keep their tools exactly as before. */
       var dspDriverAcct = false;
       try { dspDriverAcct = (App._store.get('onboarding', {}) || {}).accountType === 'Driver'; } catch (e) {}
+      /* v378 (DISPATCH-SEND-SCREEN, owner Nov 8, 2026 12:29 CST —
+         "this is a owner and fleet manager thing only... Drivers
+         don't have to be bothered about dispatching others"): the
+         pipe surface is now a POSITIVE entitlement. The v186 gate
+         was negative — anything whose local onboarding record did
+         not hold the exact string 'Driver' passed the account
+         half, and the role half passed on 'both', the stored
+         answer of every working owner-driver (the owner's own
+         included) — so one local string was the whole barrier,
+         and on Nov 8 the boss cards stood on his Driver phone
+         again with himself as the only "driver" offered. Now the
+         cards exist only where the account type IS an owner type;
+         !dspDriverAcct stays in the conjunction as the independent
+         driver guard, and the v132 role term is retired for this
+         gate — the account type is the whole law, as ruled. */
+      var dspSenderAcct = false;
+      try {
+        var dspAcctType = (App._store.get('onboarding', {}) || {}).accountType;
+        dspSenderAcct = (dspAcctType === 'Owner-Operator' || dspAcctType === 'Fleet Manager');
+      } catch (e) {}
       /* v56: the form's draft is resolved BEFORE the HTML is built —
          a draft carrying editId means the form opens in EDIT mode for
          that record (title, single "Save changes" button). If the
@@ -2019,8 +2192,11 @@
          Office + owner-operator only. The board aggregates each
          connected driver's TODAY from the shared day records; the
          send card delivers a dispatch down the pipe. Both paint
-         async into their containers (wiring at render end). */
-      if (!dspDriverAcct && (App.userRole ? App.userRole() : 'driver') !== 'driver' && window.ConnectPipe) {
+         async into their containers (wiring at render end).
+         v378: gated on the POSITIVE owner-type entitlement
+         (dspSenderAcct, above) — never on the absence of a
+         Driver stamp. */
+      if (dspSenderAcct && !dspDriverAcct && window.ConnectPipe) {
         h += '<div class="card"><h3>👥 Crew today</h3><div id="dp_crew">' + crewHtml() + '</div></div>';
         h += '<div class="card"><h3>📤 Send a dispatch</h3><div id="dp_send">' + sendHtml() + '</div></div>';
       }
@@ -3923,7 +4099,9 @@
             }
           });
           ConnectPipe.markSeen(list());
-          if (!dspDriverAcct && (App.userRole ? App.userRole() : 'driver') !== 'driver') {
+          /* v378: same positive gate as the render above — a
+             driver account fetches no crew and wires no send. */
+          if (dspSenderAcct && !dspDriverAcct) {
             ConnectPipe.fetchCrew(App._today()).then(function (days) {
               pipeDays = days;
               var w = body.querySelector('#dp_crew');
