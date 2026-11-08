@@ -643,6 +643,12 @@
            block) — one more quiet line in the same pattern; stays
            empty unless the shell reports a real widget build. */
         '<p class="note" id="pf_widgetdiag"></p>' +
+        /* v78 (PIP-BUBBLE-STILL-NOT-APPEARING-NOV7): the session
+           bubble's own ledger, from the SAME status() result
+           (its bubble block) — one more quiet line in the same
+           pattern; stays empty on an older APK whose status
+           carries no bubble block. */
+        '<p class="note" id="pf_bubblediag"></p>' +
         /* v54 (owner, Oct 14): Notifications row — plumbing a user
            doesn't click daily, so it lives here in Advanced, in the
            same pattern as the cloud-sync troubleshooting row below.
@@ -1445,6 +1451,22 @@
                 ' · chronometer ' + (wg.buildChrono ? 'on' : 'off') +
                 ' · built ' + bh + ':' + (bm < 10 ? '0' : '') + bm + ' ' + ap +
                 ' · face ' + (wg.faceSig || '—');
+            }
+            /* v78: the bubble ledger line (same status() result,
+               its bubble block; older APKs carry none and the
+               line stays empty). leaves vs shows names whether
+               the bubble ever rose; deferred counts the leaves
+               whose session record lagged the arm at a fresh
+               start — the v78 gate — and deferred shows how
+               many of those the deferred show completed. */
+            var bg = r.bubble;
+            var bn = body.querySelector('#pf_bubblediag');
+            if (bn && bg) {
+              bn.textContent = 'Bubble: leaves ' + (bg.leaves || 0) +
+                ' · shows ' + (bg.shows || 0) +
+                ' · dismissals ' + (bg.dismissals || 0) +
+                ' · deferred ' + (bg.deferred || 0) +
+                ' · deferred shows ' + (bg.deferredShows || 0);
             }
           }, function () {});
         }

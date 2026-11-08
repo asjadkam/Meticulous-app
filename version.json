@@ -1,8 +1,8 @@
 {
   "version": 58,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v58.apk",
-  "webVersion": 373,
-  "notes": "Web 373 (Nov 7, 2026) \u2014 two Navigator fixes, CSS only (css/style.css); approved by Asjad Nov 7, 20:28. (1) NAV-SEARCH-BAR-SHOWS-GO-NOV7: the Navigator's top bar showed only a full-width 'Go' \u2014 the search input rendered 0px wide because the global .btn{width:100%} rule gave the Go button a 100% flex base inside the .nv-mapsearch flex row while the input's flex:1 base is 0. Fix: .nv-mapsearch .btn{flex:none;width:auto} \u2014 Go takes its natural width and the search box fills the bar, the v348 design intent. (2) NAV-HEADER-WHITE-ON-WHITE-NOV7: the Navigator header buttons carried white labels on their near-white ghost pills (white on white), and the same width poison swelled each pill to ~half the bar so the centred title landed on the Back pill. Fix: .nv-shell-head .btn{flex:none;width:auto;color:var(--navy)} \u2014 pills hug their labels, take the standard ghost pairing (navy text on the pale pill), and the centred title clears both. Markup and JS unchanged; Job A (NAV-LINK-DIRECT-DOOR) NOT in this release \u2014 its pastebar CSS was set aside before the commit and restored after, uncommitted and untouched. No native change; no data touched. Proof: tools/nav-mapfirst-corners-v343-test.js identical with and without the fix (38 passed / 3 failed \u2014 the 3 are stale era ?v=343 pins, pre-existing). Native holds at gen 58 (v77, versionCode 52 / 1.50).",
+  "webVersion": 374,
+  "notes": "Web 374 (Nov 7, 2026) \u2014 the web half of PIP-BUBBLE-STILL-NOT-APPEARING-NOV7: Preferences \u2192 Advanced gains one quiet 'Bubble:' line (modules/preferences.js \u2014 pf_bubblediag in the pf_pipdiag/pf_widgetdiag pattern), rendered from the native status() bubble block (leaves \u00b7 shows \u00b7 dismissals \u00b7 deferred \u00b7 deferred shows). Feature-detected: the line stays empty on any APK whose status() carries no bubble block; the native half (BubbleOverlay's deferred show + the counters themselves) ships in gen 59 (v78). The conviction: at a fresh start the session RECORD lags the session arm \u2014 a quick leave was judged against the still-IDLE record, the overlay showed and hid in the same call, and no later path could raise it; gen 59 remembers the leave and completes the show when the record lands, every gate re-judged against the landed record. Proof: tools/bubble-gate-v78-test.js 24/24; tools/widget-arm-v77-test.js extended (section E pins gen 59's widget re-offer for WIDGET-ZERO-SESSION-NOT-CLIMBING-NOV7) 53/53. Job A (NAV-LINK-DIRECT-DOOR) NOT in this release \u2014 its uncommitted files (the css/style.css pastebar hunk, js/deeplink.js, modules/navigator.js, tools/navlink-directdoor-v368-test.js) were never staged and stay uncommitted; the fuel round-4 bench test file (tools/fuel-photo-save-drop-v373-test.js) likewise stays uncommitted. No data touched. Native holds at gen 58 (v77, versionCode 52 / 1.50) until gen 59 lands.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -16,7 +16,7 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "c734dc1f4741feb2fb0f72c4d0dec489a5f6472c5e6d27d2d7fcf28f62f3606f",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "0b4372126390ab6a4c398d009475a4a3910e103c233693704e3a9ed84f31944a",
+    "index.html": "d4c7718c2c7ce1c74eccc541fe15f85bea1ba95e929154a33184c705f2be339b",
     "js/app.js": "3edb7629c69a9d5c9dba3a7b82fb4f1a6e2c65bf92eefa9022dcf21024fef40b",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -54,7 +54,7 @@
     "modules/navigation.js": "6f049a62b46ffbf8d2777f2ce10b2043c29bfb76a54d8b46badf819435fe4b8e",
     "modules/navigator.js": "a12a1ab20f49a625ed080432788fa128fb2347a8a4dedbb79ff87dece2214152",
     "modules/pnl.js": "c0097e167aeb3ce1e6165d8d20a69c7e9977ccfed58fa92d7e3eb43dcf12bb52",
-    "modules/preferences.js": "f984bc3892f4c4753fdc1c396d8bce7672711d92ec0f4a8e794ff77ff48d37d2",
+    "modules/preferences.js": "7d1092f1d079f187b8e8ea93ab01ef501c2b41ee91298b49c9c1b43b04307b1c",
     "modules/pti.js": "5a7f225353cff46c70c9234c642aa454ea29e508075516bb02358fcbfb3b36ac",
     "modules/reminders.js": "8c0c56181c3ba2cf583354ba9d65f972f353f4f47aeb7ca5f2b4e727c388f5c6",
     "modules/revenue.js": "a0fe28bd07083d48b0bfb352d3aacb06ca076142a4f569e76275084dd77551d6",

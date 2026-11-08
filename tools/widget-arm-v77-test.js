@@ -245,5 +245,235 @@ ok(/versionCode 52/.test(gradle) && /versionName "1\.50"/.test(gradle),
 ok(/var APK_VERSION = 58;/.test(appJs),
    'D2 js/app.js APK_VERSION = 58 (release prep)');
 
+/* ============ E. v78 — WIDGET-ZERO-SESSION-NOT-CLIMBING-NOV7 ============
+ * Round 6 (Nov 7, 20:27, his home-screen clip): the widget reads
+ * "Working…", loads 5, 0 km, elapsed 00:00:00 — and the seconds
+ * NEVER climb ("This widget trying to go up is happening
+ * again!"). The record behind that face is the zero twin of the
+ * Round-5 record: { RUNNING, elapsedBase 0, segStartMs 0 } — the
+ * shape the web layer's settled start write produces when its
+ * segment stamp does not survive into the record (sessionFacts
+ * sends startTs = t.startTs || 0; his 15:04 record carried
+ * segStartMs 0 with a bank, tonight's carries it with none).
+ * The arm decision (section A) already fires for this shape;
+ * what fails is the arm's DELIVERY: faceSignature's runsec form
+ * is CONSTANT when the derivation cannot advance, so every
+ * driver after the first computes the identical signature and
+ * refreshFromRecord gates the re-offer away — one dropped arm
+ * build strands the text face at the bank for the life of the
+ * record. The v78 fix (TrackerWidget only): while a RUNNING
+ * record carries no segment start, the WALL second rides the
+ * signature (the runsec0 form), restoring the v76 re-offer
+ * guarantee for exactly this shape; and buildViews anchors the
+ * seg0 Chronometer base per record state (rev + updatedAt +
+ * bank) so the re-offers cannot reset a landed clock. Mirrors
+ * below are transcribed from the shipped gen-58 code (V77) and
+ * the fixed code (V78). */
+// TrackerWidget.faceSignature — the RUNNING branch, gen 58 (pre-fix).
+function faceSignatureV77(rec, status, secondary, idlePrimary, now) {
+  if (rec == null || rec.rev === 0) return "none";
+  if (rec.status === 'running') {
+    if (rec.segStartMs > now) return "armed|" + status + "|" + secondary;
+    return "runsec|" + elapsedSec(rec, now) + "|"
+        + chronoFormatM(elapsedSec(rec, now)) + "|" + status + "|" + secondary;
+  }
+  if (rec.status === 'paused') {
+    return "pause|" + rec.elapsedBase + "|" + status + "|" + secondary;
+  }
+  return "idle|" + status + "|" + idlePrimary + "|" + secondary;
+}
+// TrackerWidget.faceSignature — the RUNNING branch, v78 (post-fix).
+function faceSignatureV78(rec, status, secondary, idlePrimary, now) {
+  if (rec == null || rec.rev === 0) return "none";
+  if (rec.status === 'running') {
+    if (rec.segStartMs > now) return "armed|" + status + "|" + secondary;
+    if (rec.segStartMs === 0) {
+      return "runsec0|" + Math.floor(now / 1000) + "|" + elapsedSec(rec, now) + "|"
+          + chronoFormatM(elapsedSec(rec, now)) + "|" + status + "|" + secondary;
+    }
+    return "runsec|" + elapsedSec(rec, now) + "|"
+        + chronoFormatM(elapsedSec(rec, now)) + "|" + status + "|" + secondary;
+  }
+  if (rec.status === 'paused') {
+    return "pause|" + rec.elapsedBase + "|" + status + "|" + secondary;
+  }
+  return "idle|" + status + "|" + idlePrimary + "|" + secondary;
+}
+// TrackerWidget.chronoFormat mirror.
+function chronoFormatM(elapsedSecV) {
+  const h = Math.floor(elapsedSecV / 3600);
+  if (h <= 0) return "00:%s";
+  if (h < 10) return "0%s";
+  return "%s";
+}
+// refreshFromRecord's delivery gate, mirrored: an offer whose
+// signature equals the stored one is gated away; a differing
+// one delivers a build (and stores the signature — even when
+// the launcher then drops the update, which is the strand).
+function offersDelivered(sigFn, rec, times, dropFirst) {
+  let stored = "", delivered = 0, first = true;
+  for (const t of times) {
+    const sig = sigFn(rec, "Working…", "🚛 5 loads", "", t);
+    if (sig === stored) continue;
+    stored = sig;
+    if (first && dropFirst) { first = false; continue; }
+    first = false;
+    delivered++;
+  }
+  return delivered;
+}
+// TrackerWidget.seg0AnchorBase mirror (widget prefs as a plain
+// object): the first arm for a record state stamps its base;
+// later builds for the same state reuse it.
+function seg0AnchorBaseM(store, rec, freshBase) {
+  const key = rec.rev + "|" + rec.updatedAt + "|" + rec.elapsedBase;
+  if (key === store.seg0_anchor_key) return store.seg0_anchor_base;
+  store.seg0_anchor_key = key;
+  store.seg0_anchor_base = freshBase;
+  return freshBase;
+}
+// A Chronometer's displayed elapsed (seconds) at wall time T
+// for a base built as elapsedRealtime − elapsedMsOf (the model
+// clock: elapsedRealtime advances 1:1 with wall time).
+function chronoShowsAt(base, T) { return Math.max(0, Math.floor((T - base) / 1000)); }
+
+const SEC5 = "🚛 5 loads";
+// E1: tonight's shape — the derivation is pinned at zero.
+{
+  const rec = { rev: 9, status: 'running', elapsedBase: 0, segStartMs: 0, updatedAt: T0 };
+  let pinned = true;
+  for (const dt of [0, 1000, 30000, 65000, 3600000]) {
+    if (elapsedSec(rec, T0 + dt) !== 0) pinned = false;
+  }
+  ok(pinned, 'E1 tonight\'s record {RUNNING, 0, segStartMs 0}: derivation pinned at 00:00:00');
+  ok(armV77(rec, T0) === true,
+     'E1 the v77 arm DECISION already fires for tonight\'s shape (the failure is delivery, not the gate)');
+}
+// E2: PRE-FIX — the signature is constant, so after the first
+// (dropped) build no offer ever delivers again: the strand,
+// reproduced end to end over 65 s of 1-s offers.
+{
+  const rec = { rev: 9, status: 'running', elapsedBase: 0, segStartMs: 0, updatedAt: T0 };
+  const times = [];
+  for (let s = 0; s <= 65; s++) times.push(T0 + s * 1000);
+  const sigs = new Set(times.map(t => faceSignatureV77(rec, "Working…", SEC5, "", t)));
+  ok(sigs.size === 1, 'E2 pre-fix signature is CONSTANT across 65 s of offers (runsec|0 forever)');
+  ok(offersDelivered(faceSignatureV77, rec, times, true) === 0,
+     'E2 pre-fix: one dropped arm build strands the face — zero further deliveries (his clip, reproduced)');
+  ok(offersDelivered(faceSignatureV77, rec, times, false) === 1,
+     'E2 pre-fix control: with no drop, exactly one delivery ever happens (the single-shot arm)');
+}
+// E3: POST-FIX — the same record re-offers on every offer; a
+// dropped first build is repaired by the very next second.
+{
+  const rec = { rev: 9, status: 'running', elapsedBase: 0, segStartMs: 0, updatedAt: T0 };
+  const times = [];
+  for (let s = 0; s <= 65; s++) times.push(T0 + s * 1000);
+  const sigs = new Set(times.map(t => faceSignatureV78(rec, "Working…", SEC5, "", t)));
+  ok(sigs.size === times.length, 'E3 post-fix signature differs on EVERY offer (runsec0 carries the wall second)');
+  ok(offersDelivered(faceSignatureV78, rec, times, true) === times.length - 1,
+     'E3 post-fix: a dropped first build is re-offered on the next second and every second after');
+  ok(faceSignatureV78(rec, "Working…", SEC5, "", T0).indexOf('runsec0|') === 0,
+     'E3 the seg0 form names itself in the signature (status() faceSig reads the shape in one glance)');
+}
+// E4: the BANKED seg0 twin (his 15:04 record, 14529) — the same
+// delivery guarantee now covers the shape gen 58 fixed the arm for.
+{
+  const rec = { rev: 41, status: 'running', elapsedBase: 14529, segStartMs: 0, updatedAt: T0 };
+  const times = [T0, T0 + 1000, T0 + 30000, T0 + 65000];
+  const pre = new Set(times.map(t => faceSignatureV77(rec, "Working…", SEC5, "", t)));
+  const post = new Set(times.map(t => faceSignatureV78(rec, "Working…", SEC5, "", t)));
+  ok(pre.size === 1 && post.size === times.length,
+     'E4 banked seg0 record: pre-fix signature constant, post-fix re-offers every offer');
+}
+// E5: a genuinely just-started session WITH its segment stamp
+// (the healthy start) — the v78 form is the v77 form, byte for
+// byte, and it advances on its own. No regression.
+{
+  const rec = { rev: 9, status: 'running', elapsedBase: 0, segStartMs: T0, updatedAt: T0 };
+  let same = true, advancing = true, prev = null;
+  for (const dt of [0, 1000, 2000, 65000]) {
+    const a = faceSignatureV77(rec, "Working…", SEC5, "", T0 + dt);
+    const b = faceSignatureV78(rec, "Working…", SEC5, "", T0 + dt);
+    if (a !== b) same = false;
+    if (prev !== null && a === prev) advancing = false;
+    prev = a;
+  }
+  ok(same && advancing,
+     'E5 fresh start with a live segment: signature unchanged from gen 58 and advancing per second');
+}
+// E6: the 16:22 CONFIRMED long-session shape (bank + live
+// segment) — signature and arm untouched by v78.
+{
+  const rec = { rev: 30, status: 'running', elapsedBase: 14529, segStartMs: T0, updatedAt: T0 };
+  let same = true;
+  for (const dt of [0, 1000, 30000, 20996000]) {
+    if (faceSignatureV77(rec, "Working…", SEC5, "", T0 + dt)
+        !== faceSignatureV78(rec, "Working…", SEC5, "", T0 + dt)) same = false;
+  }
+  ok(same && armV77(rec, T0 + 20996000) === true,
+     'E6 the confirmed 16:22 long-session shape: v78 changes neither its signature nor its arm');
+}
+// E7: the designed armed-not-yet-started shape keeps its
+// "armed|" text-face signature under v78 (the exception is
+// a buildViews decision; the signature form is preserved too).
+{
+  const rec = { rev: 3, status: 'running', elapsedBase: 0, segStartMs: T0 + 3600000, updatedAt: T0 };
+  ok(faceSignatureV78(rec, "Working…", SEC5, "", T0) === faceSignatureV77(rec, "Working…", SEC5, "", T0)
+     && faceSignatureV78(rec, "Working…", SEC5, "", T0).indexOf('armed|') === 0,
+     'E7 armed-not-yet-started: signature form preserved (static 00:00:00 text face by design)');
+}
+// E8: the seg0 anchor — a landed arm is NOT reset by the
+// re-offers. Without an anchor each rebuild re-derives
+// base = now − bank, so at every build instant the face reads
+// exactly the bank (the reset, reproduced); with the anchor
+// the face counts up from the bank across rebuilds, and a
+// record change (rev / updatedAt / bank) re-anchors.
+{
+  const rec = { rev: 9, status: 'running', elapsedBase: 0, segStartMs: 0, updatedAt: T0 };
+  const store = {};
+  const armT = T0 + 2000;
+  const base1 = seg0AnchorBaseM(store, rec, armT - elapsedMsOf(rec, armT));
+  let anchoredOk = chronoShowsAt(base1, armT) === 0;
+  for (const dt of [1000, 30000, 65000]) {
+    const t = armT + dt;
+    const b = seg0AnchorBaseM(store, rec, t - elapsedMsOf(rec, t));
+    if (b !== base1) anchoredOk = false;
+    if (chronoShowsAt(b, t) !== Math.floor(dt / 1000)) anchoredOk = false;
+  }
+  ok(anchoredOk, 'E8 anchored seg0 arm: rebuilds reuse the first base — the face climbs 0 → 65 s across re-offers');
+  let resetSeen = true;
+  for (const dt of [1000, 30000, 65000]) {
+    const t = armT + dt;
+    if (chronoShowsAt(t - elapsedMsOf(rec, t), t) !== 0) resetSeen = false;
+  }
+  ok(resetSeen, 'E8 control: WITHOUT the anchor every rebuild resets the face to the bank (the reset the anchor exists to kill)');
+  const rec2 = { rev: 10, status: 'running', elapsedBase: 0, segStartMs: 0, updatedAt: T0 + 70000 };
+  const t2 = T0 + 72000;
+  ok(seg0AnchorBaseM(store, rec2, t2 - elapsedMsOf(rec2, t2)) === t2,
+     'E8 a record change (new rev + write stamp) re-anchors to the new state\'s first arm');
+}
+// E9: the banked seg0 anchor — the face counts up FROM the
+// bank (gen 58's chosen semantics for this shape), anchored.
+{
+  const rec = { rev: 41, status: 'running', elapsedBase: 14529, segStartMs: 0, updatedAt: T0 };
+  const store = {};
+  const armT = T0 + 5000;
+  const base1 = seg0AnchorBaseM(store, rec, armT - elapsedMsOf(rec, armT));
+  ok(chronoShowsAt(base1, armT) === 14529
+     && chronoShowsAt(seg0AnchorBaseM(store, rec, armT + 65000 - elapsedMsOf(rec, armT + 65000)), armT + 65000) === 14529 + 65,
+     'E9 banked seg0 record: anchored face reads the bank at arm time and bank+65 a minute later');
+}
+// E10: source pins — the shipped fix IS this code.
+ok(tw.includes('return "runsec0|" + (now / 1000L) + "|" + s.elapsedSec(now) + "|"\n                        + chronoFormat(s.elapsedSec(now)) + "|" + status + "|" + secondary;')
+   || tw.includes('return "runsec0|" + (now / 1000L) + "|" + s.elapsedSec(now) + "|"'),
+   'E10 TrackerWidget.faceSignature carries the v78 runsec0 form (wall second for the seg0 shape)');
+ok(tw.includes('private static long seg0AnchorBase(SharedPreferences sp,')
+   && tw.includes('base = seg0AnchorBase(sp, cs, base);')
+   && tw.includes('putString("seg0_anchor_key", key)'),
+   'E10 buildViews anchors the seg0 Chronometer base per record state');
+ok(tw.includes('if (s.segStartMs == 0) {') && tw.includes('WIDGET-ZERO-SESSION-NOT-CLIMBING-NOV7'),
+   'E10 the v78 repair is present and named in TrackerWidget');
+
 console.log(`widget-arm-v77: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
