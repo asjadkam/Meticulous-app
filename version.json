@@ -1,8 +1,8 @@
 {
   "version": 58,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v58.apk",
-  "webVersion": 371,
-  "notes": "Web 371 (Nov 7, 2026) \u2014 FUEL-PHOTO-SAVE-DROP-NOV7 round 2: the photo-fit ladder. Web 370's per-record doc guarantee held \u2014 the photo survived in the account copy \u2014 but at this book's real size even the 1280px storage rendition does not fit beside the book in the device store, so the save shed it locally and the web-350 graft, persisting through the same verified save, could never land it on the device: safe in the account, permanently invisible on the phone (live survival test failed Nov 7). Fix: modules/fuel.js photoFitLadder (rungs 960px \u2192 640px via the new TicketOCR.shrinkDataUrl in js/ticket-ocr.js) \u2014 the graft and the fill-add / fill-edit / expense-add fallbacks step the ON-DEVICE copy down until it fits and repaint saying the photo was kept at a smaller size; the per-record account doc always keeps the full storage rendition. When no rung fits, web-370 behaviour stands exactly. No native change; no data touched. Proof: tools/fuel-photo-graft-wall-v371-test.js 23/23 (pre-fix 12/23 against the shipped 370 code, failure reproduced); round-1 tools/fuel-photo-save-drop-v370-test.js still 29/29; neighbours zero regressions. Native holds at gen 58 (v77, versionCode 52 / 1.50).",
+  "webVersion": 372,
+  "notes": "Web 372 (Nov 7, 2026) \u2014 FUEL-PHOTO-SAVE-DROP-NOV7 round 3: the reclaim. Rounds 370/371 shipped and two live survival tests still failed (web 370 at 19:10, web 371 at 19:25\u201319:33, the second on code proven byte-identical to the shipped 371). This round drove the real shipped code end to end and measured the device store: the origin's localStorage sits at its ceiling \u2014 the photo reaches its per-record account document every time, but no rendition fits in the local verified write (even the ladder's 640px rung was over by ~10.6K bytes), so the web-350 graft and the web-371 ladder both died at the same write. Fix (modules/fuel.js only; js/ticket-ocr.js unchanged): when photoFitLadder exhausts its rungs, the book's largest stored photo is written IN FULL to its own per-record account document and that write is awaited \u2014 only then is its local copy re-encoded at 960px through a verified save, freeing room; the ladder retries, largest first. If the account write rejects, that photo is never shrunk. Every account doc keeps its full rendition; the v289 shed law, the dedupe law, OCR autofill and the v349/v350/v354 protections stand. No native change; no data touched. Proof: tools/fuel-photo-save-drop-v372-test.js 17/17 (pre-fix its realistic model reproduces the live failure exactly); round-2 tools/fuel-photo-graft-wall-v371-test.js still 23/23; round-1 tools/fuel-photo-save-drop-v370-test.js still 29/29; neighbours zero regressions. Native holds at gen 58 (v77, versionCode 52 / 1.50).",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -16,7 +16,7 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "8dfa23dd3229f76c097394c8911a0834c72e92d83071743225c188ba27ae266b",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "79d0fd2b288e1c1c4fa63ac5e88caedaae37e2f484b0596190db1fabd7e03538",
+    "index.html": "a11baef04ff70118274b702bfeb2e40b0f485773a68ec94a142fcdd991ffa3bc",
     "js/app.js": "3edb7629c69a9d5c9dba3a7b82fb4f1a6e2c65bf92eefa9022dcf21024fef40b",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -47,7 +47,7 @@
     "modules/damage.js": "368b434eb9ed8cf9f986636892bf442a44c62017fe458241dbef7147897e4299",
     "modules/dispatch.js": "14b086ee78658952ba9e6bd9772191aa928d91b1e4b4ec769f2a1179f6afd4db",
     "modules/documents.js": "cdb0128669f678463057c325a1b8c13399c2f0d0542fc518471733ee13d41283",
-    "modules/fuel.js": "33fa6047cb7547611185742fca229ec94de95d3e0315d785c2c9522b89c57837",
+    "modules/fuel.js": "b138a428ed1314a57a3baec3ee523c349b80ebfda6399a4040e77b529f5c88f5",
     "modules/invoice.js": "909eaa90c5adacc52a8495af2515853ca4a76e645855c5f150e35716a6a03b84",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
     "modules/manifest.js": "b694c2cbbaf0b50216d57f07f7fd61725c7c9c5846935890cd5ee525dbb87f60",

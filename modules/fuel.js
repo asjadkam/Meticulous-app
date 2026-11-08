@@ -259,24 +259,126 @@
     }
     return false;
   }
+  /* Replace the photo stack of the record in the CURRENT book
+     that `keyRec` names with a SMALLER stack and persist
+     through the verified save; true when it landed. The mirror
+     of applyPhotoStack for a record that HAS photos (the
+     reclaim below) — a failed save restores the record's own
+     fields, so the stored book is left exactly as it was. */
+  function applyShrunkStack(isFill, keyRec, stack) {
+    var list = isFill ? fills() : S('expenses', []);
+    var srcKeys = isFill ? fillMatchKeys(keyRec) : [expensePhotoDocKey(keyRec)];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (!r || !fillPhotos(r).length) continue;
+      var lk = isFill ? fillMatchKeys(r) : [expensePhotoDocKey(r)];
+      if (!keysMeet(lk, srcKeys)) continue;
+      var oldPhoto = r.photo, oldPhotos = r.photos, oldPhoto2 = r.photo2;
+      r.photo = stack[0];
+      if (stack.length > 1) r.photos = stack.slice(); else delete r.photos;
+      delete r.photo2;
+      var okSave = isFill ? saveFillsVerified(list) : saveExpensesVerified(list);
+      if (okSave) return true;
+      r.photo = oldPhoto;
+      if (oldPhotos) r.photos = oldPhotos; else delete r.photos;
+      if (oldPhoto2) r.photo2 = oldPhoto2; else delete r.photo2;
+      return false;
+    }
+    return false;
+  }
+  /* web 372 (FUEL-PHOTO-SAVE-DROP-NOV7, round 3 — the web 370
+     AND web 371 survival tests both failed live, Nov 7, 2026):
+     the instrumented trace (tools/fuel-photo-save-drop-v372-
+     test.js, the real store + module + rendition code over
+     measured photo sizes) convicted the hop the first two
+     rounds modelled away. On a fully-restored store the
+     origin sits within a few thousand characters of the
+     browser's localStorage ceiling — a ceiling the browser
+     counts in UTF-16 BYTES over the WHOLE origin (the book,
+     the live-miles trails, the sessions, everything), not in
+     characters over the fuel keys alone. At that wall the
+     verified write refuses the book + a photo at EVERY size:
+     the 1280px storage rendition, the ladder's 960 and even
+     its 640 rung (the 640 write missed by ~10 KB) — while
+     photo-less writes, which do not grow the store, keep
+     landing, so figures saved, "All synced" showed, and the
+     photo vanished silently at the save, at the ladder and
+     at the graft alike. The per-record document WAS written
+     and the graft DID find it; there was simply no room to
+     put the photo down. Shrinking the NEW photo cannot
+     create room that does not exist — the room has to be
+     FREED. THE RECLAIM: when the ladder exhausts its rungs,
+     the book's largest stored photo is written IN FULL to
+     its own per-record account document FIRST (the write is
+     awaited — the local copy is shrunk only once the full
+     copy is confirmed in the account), then re-encoded at
+     960px on this device, freeing hundreds of thousands of
+     characters; the ladder retries. Largest first, one at a
+     time, until the photo lands or nothing stored can free
+     anything — where the web 370/371 behaviour stands
+     exactly (the photo lives in its account document). The
+     account documents always keep the full renditions; only
+     this device's copies of OLD photos get smaller, and
+     never before their full copy is safe in the account. */
+  var PHOTO_RECLAIM_MAX = 960;
+  function reclaimOnePhoto(isFill, targetRec, tried, cb) {
+    var list = isFill ? fills() : S('expenses', []);
+    var targetKeys = isFill ? fillMatchKeys(targetRec) : [expensePhotoDocKey(targetRec)];
+    var best = null, bestTotal = 0;
+    list.forEach(function (r) {
+      if (!r) return;
+      var ps = fillPhotos(r);
+      if (!ps.length) return;
+      var lk = isFill ? fillMatchKeys(r) : [expensePhotoDocKey(r)];
+      if (keysMeet(lk, targetKeys)) return;
+      var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
+      if (tried[dk]) return;
+      var total = 0;
+      ps.forEach(function (u) { total += u.length; });
+      /* a stack no bigger than its re-encode cannot free
+         anything worth having */
+      if (total > 20000 && total > bestTotal) { best = { rec: r, stack: ps, key: dk }; bestTotal = total; }
+    });
+    if (!best) { cb(false); return; }
+    tried[best.key] = 1;
+    var p = null;
+    try { if (window.FB && FB.saveDoc) p = FB.saveDoc('fuel', best.key, photoDocPayload(best.rec, best.stack)); } catch (e) { p = null; }
+    if (!p || !p.then) { cb(false); return; }
+    p.then(function () {
+      shrinkPhotoStack(best.stack, PHOTO_RECLAIM_MAX, function (small) {
+        if (!small) { cb(false); return; }
+        cb(applyShrunkStack(isFill, best.rec, small));
+      });
+    }, function () { cb(false); });
+  }
   /* Retry applyPhotoStack with the photo re-encoded at each
-     rung, largest first; onLanded fires (once) when a rung
+     rung, largest first; when no rung fits, free room from
+     the book's own stored photos (the reclaim above) and try
+     the rungs again. onLanded fires (once) when a rung
      persists. Async: the facts of the save that shed are never
      blocked on it. */
   function photoFitLadder(isFill, keyRec, stack, onLanded) {
     if (!(stack && stack.length)) return;
     if (!(window.TicketOCR && TicketOCR.shrinkDataUrl)) return;
-    var rungs = PHOTO_FIT_RUNGS.slice();
-    function next() {
-      if (!rungs.length) return;
-      var max = rungs.shift();
-      shrinkPhotoStack(stack, max, function (small) {
-        if (!small) { next(); return; }
-        if (applyPhotoStack(isFill, keyRec, small)) { if (onLanded) onLanded(small); return; }
-        next();
-      });
+    var triedReclaim = {};
+    function attempt() {
+      var rungs = PHOTO_FIT_RUNGS.slice();
+      (function next() {
+        if (!rungs.length) {
+          reclaimOnePhoto(isFill, keyRec, triedReclaim, function (freed) {
+            if (freed) attempt();
+          });
+          return;
+        }
+        var max = rungs.shift();
+        shrinkPhotoStack(stack, max, function (small) {
+          if (!small) { next(); return; }
+          if (applyPhotoStack(isFill, keyRec, small)) { if (onLanded) onLanded(small); return; }
+          next();
+        });
+      })();
     }
-    next();
+    attempt();
   }
   var photoGraftRan = false;
   function healPhotoGrafts(body) {
