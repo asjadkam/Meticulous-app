@@ -13,7 +13,11 @@
  * What v330 builds:
  *  (1) the planning sheet starts COLLAPSED to one slim handle,
  *      so the opening screen is the map; the handle unfolds the
- *      same sheet, and setting any destination unfolds it too.
+ *      same sheet. (v330 also made setting any destination
+ *      unfold it — RETIRED Nov 8, 2026 by
+ *      NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8: the sheet now opens
+ *      ONLY on the driver's own tap of the handle; the flipped
+ *      pin below carries the new law.)
  *  (2) verified, not built: the map click already drops a pin
  *      (pinTap → setDest + reverse-geocode name) — pinned here
  *      so it cannot silently vanish.
@@ -97,8 +101,9 @@ ok('CSS hides the collapsed sheet body', cssSrc.indexOf('.nv-sheet-collapsed #nv
 ok('the handle is wired to fold/unfold', /nv_sheet_toggle[\s\S]{0,200}sheetOpen = !sheetOpen/.test(navSrc));
 ok('paintSheet repaints the class and resizes the map',
   navSrc.indexOf('function paintSheet()') !== -1 && navSrc.indexOf('invalidateSize') !== -1);
-ok('setting a destination unfolds the sheet',
-  /function setDest\(latlng, label, goNow\) \{[\s\S]{0,400}sheetOpen = true; paintSheet\(\)/.test(navSrc));
+ok('setting a destination NEVER unfolds the sheet (Nov 8 law: handle tap only)',
+  !/function setDest\(latlng, label, goNow\) \{[\s\S]{0,900}sheetOpen = true/.test(navSrc) &&
+  navSrc.indexOf('NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8') !== -1);
 
 /* ---------------- (2) drop-a-pin (verified present) ---------------- */
 ok('the map click drops a pin', /S\.map\.on\('click', function \(e\) \{\s*pinTap\(/.test(navSrc));

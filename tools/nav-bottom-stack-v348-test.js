@@ -349,7 +349,7 @@ function prepRender(w) {
   w.mapHandlers.click({ latlng: { lat: 51.1, lng: -114.0 } });
   await tick();
   ok('a tap on the plain map drops the pin as before (dest marker painted)', w.calls.markers.length === before0.markers + 1);
-  ok('setting the destination unfolded the sheet', reg.nv_sheet.className === 'nv-sheet');
+  ok('setting the destination leaves the sheet folded (Nov 8, 2026: NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8 — the v330 auto-open is retired)', reg.nv_sheet.className !== 'nv-sheet');
   ok('the destination line names the dropped pin', String(reg.nv_destnote.textContent).indexOf('Dropped pin') >= 0);
 
   console.log('— B. interaction: picking a place still works exactly as now —');

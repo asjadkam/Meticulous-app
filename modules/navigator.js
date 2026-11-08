@@ -2792,9 +2792,10 @@
          starts COLLAPSED to one slim handle, so opening the
          module is a map with a banner, not a search-box page.
          The handle expands the same sheet (Destination, places,
-         Directions) unchanged; setting a destination — a search
-         pick, a map tap, a hand-off, a sent pin — expands it on
-         its own (see paintSheet / setDest). */
+         Directions) unchanged. It is the ONLY door that opens
+         it: setting a destination — a search pick, a map tap, a
+         hand-off, a sent pin — never unfolds it (owner, Nov 8,
+         2026: NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8; see setDest). */
       h += '<div class="nv-sheet nv-sheet-collapsed" id="nv_sheet">' +
         '<button type="button" class="btn ghost" id="nv_sheet_toggle" style="width:100%;text-align:left">📍 Destination, places &amp; directions — tap to open ▾</button>' +
         '<div id="nv_sheet_body">';
@@ -3047,12 +3048,17 @@
       function setDest(latlng, label, goNow) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
-        /* v330: a destination existing is what the sheet is FOR —
-           setting one (search pick, map tap, hand-off, sent pin)
-           unfolds the sheet so Route / Drive / Directions are in
-           reach; the map-first opening only governs the
-           nothing-set-yet state. */
-        if (!sheetOpen) { sheetOpen = true; paintSheet(); }
+        /* NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8 (owner, Nov 8,
+           2026: "Once I drop a pin... The menu from under covers
+           up the entire screen. I should see the direction...
+           Not navigation"): setting a destination NEVER unfolds
+           the sheet. The v330 auto-open that stood here is
+           retired — the map and the direction banner are what
+           he drives by (the webs 343/348 map-first law); the
+           sheet opens only on his own tap of its handle. Route
+           and Drive stay reachable without it: the route is
+           automatic (maybeAutoRoute below) and Drive opens
+           itself on go-now flows (maybeAutoEnterDrive). */
         if (S.map) {
           if (S.destMarker) S.destMarker.setLatLng(latlng);
           else S.destMarker = L.marker(latlng).addTo(S.map);
@@ -4901,6 +4907,11 @@
       function startDrive() {
         if (!S.plan || !S.line) { note('Get a route first — Drive opens on an active route.'); return; }
         if (S.drive) return;
+        /* NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8 (owner, Nov 8,
+           2026): a drive starting folds the sheet — he drives
+           by the map and the banner, and when the drive screen
+           closes the map owns the shell again, not the panel. */
+        if (sheetOpen) { sheetOpen = false; paintSheet(); }
         /* v338 (NAV-SPEED-MISREADS): a new drive never opens
            wearing the PREVIOUS drive's speed limit — the badge
            starts unknown and the first fetch of this drive
