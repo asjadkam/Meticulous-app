@@ -408,7 +408,15 @@ label.chk input{width:18px;height:18px;}
    same 4px inset mirrored on both sides — and the title is
    centred on the bar itself, not left floating after Back. */
 .nv-shell-head{position:relative;display:flex;align-items:center;gap:10px;background:#1F3764;color:#fff;padding:8px 4px;flex:0 0 auto;}
-.nv-shell-head .btn{color:#fff;}
+/* NAV-HEADER-WHITE-ON-WHITE-NOV7: the head's buttons are .btn —
+   the global .btn{width:100%} is a 100% flex base, so in this
+   flex row each pill swelled to half the bar and the centred
+   title landed on the Back pill; and the v101 white-text
+   override sat on the ghost pill's near-white #eef1f8 ground —
+   white on white. Rescue, same shape as .chat-row/.nv-drive-bar:
+   natural width, and the standard ghost pairing (navy text on
+   the pale pill). */
+.nv-shell-head .btn{flex:none;width:auto;color:var(--navy);}
 .nv-shell-title{font-weight:700;font-size:17px;position:absolute;left:50%;transform:translateX(-50%);pointer-events:none;}
 .nv-mapzone{position:relative;flex:1 1 auto;min-height:0;}
 /* v348 (NAV-YOU-ARE-HERE-PEEK): ONE bottom stack for the map
@@ -440,6 +448,12 @@ label.chk input{width:18px;height:18px;}
 .nv-map-top{position:absolute;top:10px;left:10px;right:10px;z-index:6;display:flex;flex-direction:column;gap:6px;}
 .nv-mapsearch{display:flex;gap:6px;background:rgba(255,255,255,.97);border-radius:10px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.3);}
 .nv-mapsearch input{border:0;background:transparent;min-width:0;}
+/* NAV-SEARCH-BAR-SHOWS-GO-NOV7: same .btn{width:100%} flex-base
+   poison — the Go button's base was the whole bar while the
+   input (flex:1, base 0) resolved to 0px wide, so the bar
+   showed only a full-width Go and no text box at all. Natural
+   width for the button; the input's flex:1 takes the rest. */
+.nv-mapsearch .btn{flex:none;width:auto;}
 .nv-kindrow{display:flex;gap:6px;align-items:center;}
 .nv-kindrow .btn{background:rgba(255,255,255,.93);box-shadow:0 2px 8px rgba(0,0,0,.25);}
 .nv-kindrow .btn.navy{background:#1F3764;color:#fff;}
