@@ -33,6 +33,244 @@
   function active() { return S('active', null); } // current active dispatch
   function uid() { return 'd' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
 
+  /* v380 (ROUTE-SHEET-FILE-UPLOAD-NOV8, owner Nov 8, 2026):
+     the route-sheet intake lives HERE, in Dispatch (16:43 CST —
+     "It should be In the Dispatch": the sheet is part of the
+     day's dispatch, and Dispatch is where the driver looks for
+     it). It MOVED from Preferences, where v355 addendum 5 built
+     it on the Pay card; that card is removed — this is the only
+     intake. The Photograph doors stay per run (a photo is of one
+     printed sheet — AM or PM). The FILE door is ONE door (16:38
+     CST — "just like there is a text I can copy paste there has
+     to be an option to upload the file!"; 16:47 CST — "If file
+     has them both"; 16:48 CST — "Why would a user upload 2
+     separate"): the bus company sends ONE file, the driver
+     uploads it ONCE, and the app sorts the runs itself — a file
+     carrying both runs fills BOTH routes, a file carrying one
+     run fills that run only, and a file whose runs cannot be
+     told apart says so plainly and saves nothing. The sorting is
+     the pure block below (RouteSheetFile.runsFromText): the
+     sheet's own shift sections first (the company's export marks
+     them "AM Shift" / "NOON Shift" / "PM Shift" — Nirojini's
+     CBE-0574 sheet is one such file: 9 pages WITH a text layer
+     carrying all three runs; the app's route model has AM/PM
+     only, so NOON is never saved), and for a sheet with no
+     sections, each stop's own AM/PM time marking. Three reads,
+     one path:
+       - an image file goes through the haul-card reader
+         (TicketOCR) exactly as the photo does;
+       - a PDF with a text layer is read as text and sorted;
+       - a PDF with no text layer is a scan: its pages are
+         rendered and read by the same OCR the photo door uses,
+         and that text is sorted the same way.
+     Every read lands through SplitShift.setRouteSheet with the
+     same note behaviour as the photo path; a new sheet replaces
+     a run's route. A read that finds no stops — or runs it
+     cannot tell apart — says so plainly on the note line and
+     saves nothing: setRouteSheet is never called with a guess,
+     and a saved route is never touched by a failed read. */
+  /* ROUTE-SHEET-FILE-BEGIN — pure: plain data in, plain data
+     out; no DOM, no store. linesFromItems rebuilds a page's
+     lines from the items a PDF text read hands back (rows by
+     baseline, left to right, a space where the print gaps);
+     sliceShift cuts one run's section out of a multi-shift
+     file (null = the file carries no shift headers at all, ''
+     = it carries some but not this run's — an honest nothing);
+     distill keeps the timed stop lines and drops the sheet's
+     furniture — check-in, pre-trip, start run, arrive-at-school,
+     checked & empty, check-out — while the student rows, care
+     plans and direction lines never carry a leading time and
+     fall away on their own. What shapePdfText returns is
+     reader text in exactly the shape the photo path hands
+     setRouteSheet: one "time place" line per stop, in order.
+     runsFromText is the ONE-door sorter (owner, Nov 8 16:48
+     CST): given a whole file's text it returns { am, pm,
+     marked, ambiguous } — each run's shaped stop text, or ''
+     for a run the file does not carry. Shift sections win when
+     the file carries them; a sectionless file is sorted by
+     each stop's own AM/PM marking (a 24-hour time sorts by its
+     hour); a stop whose time carries neither marking nor an
+     unambiguous hour makes the whole file ambiguous — the
+     caller refuses it plainly and saves nothing, rather than
+     guessing which run a stop belongs to. */
+  var RouteSheetFile = {
+    /* Non-space characters a whole PDF must yield before it
+       counts as carrying a text layer; below this it is a
+       scan and its pages go through the photo reader. */
+    TEXT_MIN: 40,
+    isPdfFile: function (f) {
+      if (!f) return false;
+      if (f.type && /pdf/i.test(f.type)) return true;
+      return /\.pdf$/i.test(String(f.name || ''));
+    },
+    linesFromItems: function (items) {
+      var rows = [];
+      (items || []).forEach(function (it) {
+        if (!it || typeof it.str !== 'string') return;
+        var x = it.transform ? it.transform[4] : 0;
+        var y = it.transform ? it.transform[5] : 0;
+        var row = null;
+        for (var i = 0; i < rows.length; i++) {
+          if (Math.abs(rows[i].y - y) <= 2) { row = rows[i]; break; }
+        }
+        if (!row) { row = { y: y, items: [] }; rows.push(row); }
+        row.items.push({ str: it.str, x: x, w: it.width || 0, h: it.height || 0 });
+      });
+      rows.sort(function (a, b) { return b.y - a.y; });
+      return rows.map(function (row) {
+        row.items.sort(function (a, b) { return a.x - b.x; });
+        var s = '', prev = null;
+        row.items.forEach(function (it) {
+          if (prev) {
+            var gap = it.x - (prev.x + prev.w);
+            if (gap > 0.3 * Math.max(prev.h, 6) && !/\s$/.test(s) && !/^\s/.test(it.str)) s += ' ';
+          }
+          s += it.str;
+          prev = it;
+        });
+        return s.replace(/\s+/g, ' ').trim();
+      }).filter(function (l) { return l.length; });
+    },
+    sliceShift: function (text, block) {
+      var lines = String(text || '').split(/\r?\n/);
+      var heads = [];
+      lines.forEach(function (l, i) {
+        var m = /^\s*(AM|NOON|PM)\s+Shift\b/i.exec(l);
+        if (m) heads.push({ kind: m[1].toLowerCase(), at: i });
+      });
+      if (!heads.length) return null;
+      var want = block === 'pm' ? 'pm' : 'am';
+      for (var i = 0; i < heads.length; i++) {
+        if (heads[i].kind === want) {
+          var end = (i + 1 < heads.length) ? heads[i + 1].at : lines.length;
+          return lines.slice(heads[i].at, end).join('\n');
+        }
+      }
+      return '';
+    },
+    distill: function (text) {
+      var out = [];
+      var FURN = /^(check[-\s]?in|check[-\s]?out|pre[-\s]?trip|start run|end run|checked\b|arrive|depart|leave)\b/i;
+      String(text || '').split(/\r?\n/).forEach(function (raw) {
+        var m = /^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\s+(.+)$/.exec(raw.trim());
+        if (!m) return;
+        var hh = +m[1], mm = +m[2];
+        if (mm > 59) return;
+        if (m[3] ? (hh < 1 || hh > 12) : (hh > 23)) return;
+        var rest = m[4].trim();
+        if (FURN.test(rest)) return;
+        if (rest.length < 3 || !/[A-Za-z]/.test(rest)) return;
+        out.push(m[1] + ':' + m[2] + (m[3] ? ' ' + m[3].toUpperCase() : '') + ' ' + rest);
+      });
+      return out.join('\n');
+    },
+    shapePdfText: function (text, block) {
+      var sec = RouteSheetFile.sliceShift(text, block);
+      return RouteSheetFile.distill(sec === null ? text : sec);
+    },
+    runsFromText: function (text) {
+      if (RouteSheetFile.sliceShift(text, 'am') !== null) {
+        return {
+          am: RouteSheetFile.shapePdfText(text, 'am'),
+          pm: RouteSheetFile.shapePdfText(text, 'pm'),
+          marked: true, ambiguous: false
+        };
+      }
+      var am = [], pm = [], ambiguous = false;
+      RouteSheetFile.distill(text).split('\n').forEach(function (l) {
+        if (!l) return;
+        var m = /^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\s+/.exec(l);
+        if (!m) { ambiguous = true; return; }
+        if (m[3]) { (m[3].toUpperCase() === 'AM' ? am : pm).push(l); return; }
+        var hh = +m[1];
+        if (hh === 0) am.push(l);
+        else if (hh >= 12) pm.push(l);
+        else ambiguous = true;
+      });
+      if (ambiguous) return { am: '', pm: '', marked: false, ambiguous: true };
+      return { am: am.join('\n'), pm: pm.join('\n'), marked: false, ambiguous: false };
+    }
+  };
+  /* ROUTE-SHEET-FILE-END */
+
+  /* The PDF reader itself (PDF.js), loaded lazily from the
+     same CDN shelf as the OCR reader, only when a PDF is
+     actually uploaded. */
+  var dpPdfJsPromise = null;
+  function dpPdfJs() {
+    var worker = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    if (window.pdfjsLib) {
+      try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = worker; } catch (e) {}
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (dpPdfJsPromise) return dpPdfJsPromise;
+    dpPdfJsPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+      s.onload = function () {
+        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = worker; } catch (e) {}
+        resolve(window.pdfjsLib);
+      };
+      s.onerror = function () { reject(new Error('the PDF reader could not be loaded')); };
+      document.head.appendChild(s);
+    });
+    return dpPdfJsPromise;
+  }
+  function dpSheetPdfDoc(file) {
+    return dpPdfJs().then(function (lib) {
+      return file.arrayBuffer().then(function (buf) {
+        return lib.getDocument({ data: new Uint8Array(buf) }).promise;
+      });
+    });
+  }
+  /* The text-layer read: every page's text, rebuilt into
+     lines, plus its non-space character count (the caller's
+     text-layer test). */
+  function dpSheetPdfText(file) {
+    return dpSheetPdfDoc(file).then(function (doc) {
+      var seq = Promise.resolve([]);
+      for (var p = 1; p <= doc.numPages; p++) {
+        (function (pn) {
+          seq = seq.then(function (acc) {
+            return doc.getPage(pn).then(function (page) { return page.getTextContent(); }).then(function (tc) {
+              acc.push(RouteSheetFile.linesFromItems(tc.items).join('\n'));
+              return acc;
+            });
+          });
+        })(p);
+      }
+      return seq.then(function (pages) {
+        var text = pages.join('\n');
+        return { text: text, chars: text.replace(/\s/g, '').length };
+      });
+    });
+  }
+  /* The scanned-PDF read: each page rendered and handed to
+     the same OCR the photo door uses; the pages' text is
+     concatenated in page order — the photo path's input,
+     one sheet later. */
+  function dpSheetPdfOcr(file) {
+    return dpSheetPdfDoc(file).then(function (doc) {
+      var seq = Promise.resolve('');
+      for (var p = 1; p <= doc.numPages; p++) {
+        (function (pn) {
+          seq = seq.then(function (acc) {
+            return doc.getPage(pn).then(function (page) {
+              var vp = page.getViewport({ scale: 2 });
+              var c = document.createElement('canvas');
+              c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+              return page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise.then(function () {
+                if (window.TicketOCR && TicketOCR.recognize) return TicketOCR.recognize(c.toDataURL('image/jpeg', 0.85));
+                return '';
+              }).then(function (t) { return acc + '\n' + (t || ''); });
+            });
+          });
+        })(p);
+      }
+      return seq;
+    });
+  }
+
   /* ================= DSP-SAVE-BEGIN =================
      v48: save integrity. The Oct 13 loss: the user uploaded a dispatch
      photo, tapped "Save & start", and the dispatch was gone next
@@ -1878,6 +2116,13 @@
         var dspAcctType = (App._store.get('onboarding', {}) || {}).accountType;
         dspSenderAcct = (dspAcctType === 'Owner-Operator' || dspAcctType === 'Fleet Manager');
       } catch (e) {}
+      /* v380 (ROUTE-SHEET-FILE-UPLOAD-NOV8): the route-sheet card
+         (below, with today's run) belongs to a split-pattern
+         account's own day — the bus driver's, never the office
+         face; the same terms the Pay card used while the intake
+         lived in Preferences (v355), carried over with the move. */
+      var dspSplitDay = false;
+      try { dspSplitDay = !isOffice && (App._store.get('onboarding', {}) || {}).workPattern === 'split'; } catch (e) {}
       /* v56: the form's draft is resolved BEFORE the HTML is built —
          a draft carrying editId means the form opens in EDIT mode for
          that record (title, single "Save changes" button). If the
@@ -2124,6 +2369,44 @@
           todayItems.map(dspRowHtml).join('') + '</div>';
       }
 
+      /* ---- v380 (ROUTE-SHEET-FILE-UPLOAD-NOV8, owner Nov 8,
+         16:43 CST — "It should be In the Dispatch"): the route
+         sheets stand with the day's run, directly under the
+         Today's dispatch card — the sheet IS the bus driver's
+         run plan for the day. One photo of the printed route
+         detail sheet fills that run's route — every named stop
+         in order — through the same reader the haul cards use
+         (TicketOCR); the AM and PM Photograph doors stay per
+         run, because a photo is of one printed sheet. Under
+         them stands ONE Upload door for the sheet FILE itself
+         (the PDF the company sends, or an image from storage):
+         the company sends one file, she uploads it once, and
+         the app sorts the runs itself — both runs when the
+         file has both, the one run when it has only one. A
+         new sheet replaces a run's route, and the day's GPS
+         matching follows the sheet. The intake MOVED here from
+         Preferences in this same fix (v355 addendum 5 built it
+         on the Pay card; the Pay card copy is removed — this is
+         the only one). Split-pattern accounts only, exactly the
+         faces that saw it in Preferences. ---- */
+      if (dspSplitDay) {
+        var sheetInfo380 = { am: 0, pm: 0 };
+        try { if (window.SplitShift && SplitShift.routeSheetInfo) sheetInfo380 = SplitShift.routeSheetInfo(); } catch (e) {}
+        h += '<div class="card" id="dp_sheet_card"><h3>🚌 Route sheets</h3>' +
+          '<label class="f">Morning route sheet</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_am" style="flex:1">📷 Photograph the AM route sheet</button></div>' +
+          '<input type="file" id="dp_sheet_am_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<p class="note" id="dp_sheet_am_note">' + (sheetInfo380.am ? 'Route saved — ' + sheetInfo380.am + ' stops. Photograph or upload a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet, or upload the sheet file below, and the app fills in the whole route.') + '</p>' +
+          '<label class="f">Afternoon route sheet</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_pm" style="flex:1">📷 Photograph the PM route sheet</button></div>' +
+          '<input type="file" id="dp_sheet_pm_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<p class="note" id="dp_sheet_pm_note">' + (sheetInfo380.pm ? 'Route saved — ' + sheetInfo380.pm + ' stops. Photograph or upload a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet, or upload the sheet file below, and the app fills in the whole route.') + '</p>' +
+          '<label class="f">Route sheet file</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_file" style="flex:1">📄 Upload the route sheet file</button></div>' +
+          '<input type="file" id="dp_sheet_file_in" accept="application/pdf,image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<p class="note" id="dp_sheet_file_note">The company sends one file — upload it once and the app sorts the morning and afternoon runs itself.</p></div>';
+      }
+
       /* ---- v218 (DSP-HISTORY-FUTURE, owner, Oct 21, 2026
          19:02 MDT, his screenshot + words): tomorrow's
          dispatch (2026-10-22, saved) stood as the FIRST
@@ -2348,6 +2631,91 @@
           (dspHistAll ? 'Show less' : 'Show full history (' + histShown.length + ')') + '</button>' : '') + '</div>';
 
       body.innerHTML = h;
+
+      /* ---- v380 (ROUTE-SHEET-FILE-UPLOAD-NOV8): the route-sheet
+         doors' wiring — the photo wiring is the v355 addendum-5
+         wiring carried over unchanged from Preferences (the
+         photo goes through the haul-card reader, TicketOCR; the
+         read text becomes the run's route in the split engine;
+         the note reports plainly what was read — zero stops read
+         says so, never a silent nothing). The ONE file door
+         below it takes the file the company sent: an image file
+         takes the photo reader; a PDF with a text layer is read
+         as text; a PDF with no text layer is a scan — its pages
+         are rendered and read by the same OCR. Whatever text a
+         read produces, RouteSheetFile.runsFromText sorts it
+         into the runs IT carries and each carried run is saved
+         through the same setRouteSheet the photo path uses; a
+         file carrying no readable run — or runs that cannot be
+         told apart — saves nothing and says so plainly. ---- */
+      try {
+        [['am', '#dp_sheet_am', '#dp_sheet_am_in', '#dp_sheet_am_note', 'Morning'],
+         ['pm', '#dp_sheet_pm', '#dp_sheet_pm_in', '#dp_sheet_pm_note', 'Afternoon']].forEach(function (cfg) {
+          var btn = body.querySelector(cfg[1]), inp = body.querySelector(cfg[2]), note = body.querySelector(cfg[3]);
+          if (!btn || !inp) return;
+          btn.onclick = function () { inp.click(); };
+          inp.onchange = function () {
+            var f = inp.files && inp.files[0];
+            if (!f) return;
+            if (note) note.textContent = 'Reading the route sheet…';
+            var done = function (text) {
+              var n = 0;
+              try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(cfg[0], text || ''); } catch (e) {}
+              if (note) note.textContent = n > 0
+                ? (cfg[4] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.')
+                : 'That photo could not be read as a route sheet — try a closer, straight-on shot of the printed sheet.';
+            };
+            if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+              TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
+            } else done('');
+          };
+        });
+      } catch (e) {}
+      try {
+        var dpFileBtn = body.querySelector('#dp_sheet_file'),
+            dpFileIn = body.querySelector('#dp_sheet_file_in'),
+            dpFileNote = body.querySelector('#dp_sheet_file_note');
+        if (dpFileBtn && dpFileIn) {
+          dpFileBtn.onclick = function () { dpFileIn.click(); };
+          dpFileIn.onchange = function () {
+            var f = dpFileIn.files && dpFileIn.files[0];
+            dpFileIn.value = '';
+            if (!f) return;
+            if (dpFileNote) dpFileNote.textContent = 'Reading the route sheet…';
+            var done = function (text) {
+              var runs = RouteSheetFile.runsFromText(text || '');
+              if (runs.ambiguous) {
+                if (dpFileNote) dpFileNote.textContent = 'That file’s runs could not be told apart — nothing was saved. Photograph each printed sheet above instead.';
+                return;
+              }
+              var saved = [];
+              [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Afternoon', '#dp_sheet_pm_note']].forEach(function (rc) {
+                if (!runs[rc[0]]) return;
+                var n = 0;
+                try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]]); } catch (e) {}
+                if (n > 0) {
+                  saved.push(rc[1] + ' ' + n + ' stops');
+                  var rn = body.querySelector(rc[2]);
+                  if (rn) rn.textContent = rc[1] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.';
+                }
+              });
+              if (dpFileNote) dpFileNote.textContent = saved.length === 2
+                ? 'Both routes saved — ' + saved[0] + ', ' + saved[1].charAt(0).toLowerCase() + saved[1].slice(1) + ', in order. The day’s route follows this sheet.'
+                : (saved.length === 1
+                  ? saved[0].split(' ')[0] + ' route saved — ' + saved[0].split(' ').slice(1).join(' ') + ', in order. The day’s route follows this sheet.'
+                  : 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.');
+            };
+            if (RouteSheetFile.isPdfFile(f)) {
+              dpSheetPdfText(f).then(function (res) {
+                if (res && res.chars >= RouteSheetFile.TEXT_MIN) done(res.text);
+                else dpSheetPdfOcr(f).then(done).catch(function () { done(''); });
+              }).catch(function () { done(''); });
+            } else if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+              TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
+            } else done('');
+          };
+        }
+      } catch (e) {}
 
       /* ---- v65: ingestion card (suggestions + paste box) ----
          Rebuilt in place by paintIngest so Dismiss / paste feedback

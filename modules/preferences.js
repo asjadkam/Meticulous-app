@@ -290,24 +290,6 @@
         h += '<label class="f">Split-shift rate ($/hour)</label><input id="pf_splitrate" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.splitRate || '') + '">' +
           '<p class="note">For split-shift days only: the day pays its two blocks at this rate. Blank = your pay rate above.</p>';
       }
-      if (!pfOfficeFace && o.workPattern === 'split') {
-        /* v355 (addendum 5): the route-sheet doors. One photo of
-           the printed route detail sheet fills the whole route —
-           every named stop in order — through the same reader
-           the haul cards use (TicketOCR). AM and PM sheets are
-           separate routes; a new photo replaces that run's
-           route, and the day's GPS matching follows the sheet. */
-        var sheetInfo355 = { am: 0, pm: 0 };
-        try { if (window.SplitShift && SplitShift.routeSheetInfo) sheetInfo355 = SplitShift.routeSheetInfo(); } catch (e) {}
-        h += '<label class="f">Morning route sheet</label>' +
-          '<div class="row"><button type="button" class="btn secondary" id="pf_sheet_am" style="flex:1">📷 Photograph the AM route sheet</button></div>' +
-          '<input type="file" id="pf_sheet_am_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-          '<p class="note" id="pf_sheet_am_note">' + (sheetInfo355.am ? 'Route saved — ' + sheetInfo355.am + ' stops. Photograph a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet and the app fills in the whole route.') + '</p>' +
-          '<label class="f">Afternoon route sheet</label>' +
-          '<div class="row"><button type="button" class="btn secondary" id="pf_sheet_pm" style="flex:1">📷 Photograph the PM route sheet</button></div>' +
-          '<input type="file" id="pf_sheet_pm_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-          '<p class="note" id="pf_sheet_pm_note">' + (sheetInfo355.pm ? 'Route saved — ' + sheetInfo355.pm + ' stops. Photograph a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet and the app fills in the whole route.') + '</p>';
-      }
       h += '</div>';
 
       /* v242 (WORK-PROFILES, owner, Fri Oct 23, 2026 evening —
@@ -1247,35 +1229,6 @@
           ob.odoDailyPhotos = odoTgl.checked;
           App._store.set('onboarding', ob);
         };
-      } catch (e) {}
-      /* v355 (addendum 5): the route-sheet doors. The photo goes
-         through the haul-card reader (TicketOCR); the read text
-         becomes the run's route in the split engine
-         (SplitShift.setRouteSheet parses the named stops, in
-         order). The note reports plainly what was read — zero
-         stops read says so, never a silent nothing. */
-      try {
-        [['am', '#pf_sheet_am', '#pf_sheet_am_in', '#pf_sheet_am_note', 'Morning'],
-         ['pm', '#pf_sheet_pm', '#pf_sheet_pm_in', '#pf_sheet_pm_note', 'Afternoon']].forEach(function (cfg) {
-          var btn = body.querySelector(cfg[1]), inp = body.querySelector(cfg[2]), note = body.querySelector(cfg[3]);
-          if (!btn || !inp) return;
-          btn.onclick = function () { inp.click(); };
-          inp.onchange = function () {
-            var f = inp.files && inp.files[0];
-            if (!f) return;
-            if (note) note.textContent = 'Reading the route sheet…';
-            var done = function (text) {
-              var n = 0;
-              try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(cfg[0], text || ''); } catch (e) {}
-              if (note) note.textContent = n > 0
-                ? (cfg[4] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.')
-                : 'That photo could not be read as a route sheet — try a closer, straight-on shot of the printed sheet.';
-            };
-            if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
-              TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
-            } else done('');
-          };
-        });
       } catch (e) {}
       /* v355 (addendum 7): the VIN door. The photo is read by the
          same machinery; the 17 VIN characters are pulled from its
