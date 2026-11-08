@@ -405,6 +405,20 @@
     if (typeof window !== 'undefined' && window.Mirror && Mirror.officeOnly && Mirror.officeOnly()) {
       el.classList.add('hidden'); el.innerHTML = ''; return;
     }
+    /* START-SHIFT-PROMPT-WHILE-RUNNING-NOV8: a morning ask that
+       outlived its moment must never render beside a live session.
+       The engine already refuses to FIRE it while a session runs
+       (arrivalEval gates on ctx.sessionActive), but the card is a
+       persisted UI state: restore() revives it verbatim, and the
+       only cleanup — pollTracker dismissing it on an idle→active
+       edge — is blind after any page reload, because lastTracker
+       restarts at null and the first poll adopts the already-
+       running status as its baseline (no edge is ever seen). So
+       gate the RENDER on the same fact the tracker face itself
+       keys off (App.tracker.status, via trackerActive()): while
+       RUNNING or PAUSED the ask counts as answered — the same
+       dismiss the start edge performs — and is cleared for good. */
+    if (card === 'morning' && trackerActive()) { card = null; persist(); }
     if (!card || !place) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     var morning = card === 'morning';
     el.innerHTML = '';

@@ -228,6 +228,7 @@ function mkWorld(opts) {
     addEventListener: function () {}
   };
   if (!opts.noPlugin) sb.Capacitor = { Plugins: { LocalNotifications: lnStub } };
+  if (opts.trackerStatus) sb.App.tracker.status = opts.trackerStatus;
   vm.createContext(sb);
   vm.runInContext(src, sb);
   return {
@@ -312,6 +313,41 @@ function flush() { return new Promise(function (r) { setTimeout(r, 10); }); }
     w.setNow(D(14, 7, 31, 10)); w.feed(fxP(D(14, 7, 31, 10)));
     await flush();
     ok(w.scheduled.length === 0 && !w.parkCard._cls.has('hidden'), 'B5: the ask still lands — as the in-app card only');
+  }
+  /* B6–B9 (START-SHIFT-PROMPT-WHILE-RUNNING-NOV8): a morning card
+     persisted in park_state, restored by a page that boots with the
+     session ALREADY live (the reload/install case: pollTracker's
+     start edge is never seen, so nothing dismisses the card). The
+     render gate must suppress it while RUNNING or PAUSED, clear it
+     for good, and leave the idle render untouched. */
+  const seedMorningCard = {
+    park_place: { lat: P.lat, lng: P.lng, learnedAt: D(13, 8, 0), source: 'learned', points: 4, days: 2 },
+    park_state: { learner: { points: [] }, det: null, card: 'morning', dis: { date: '', morning: false, evening: false } }
+  };
+  /* B6: restored morning card + session RUNNING → never renders */
+  {
+    const w = mkWorld({ now: D(14, 9, 13, 0), seed: seedMorningCard, trackerStatus: 'running' });
+    await flush();
+    ok(w.parkCard._cls.has('hidden') && w.parkCard.children.length === 0, 'B6: session RUNNING — the restored "Start your shift?" card never renders');
+    ok(w.store.get('park_state', {}).card === null, 'B6: the gate clears the stranded card from park_state (answered, persisted)');
+    /* B9: when the session later stops, the answered ask stays answered */
+    w.sb.App.tracker.status = 'idle'; w.PP.paint();
+    ok(w.parkCard._cls.has('hidden'), 'B9: session stopped later — the morning ask does not resurrect');
+  }
+  /* B7: restored morning card + session PAUSED → never renders */
+  {
+    const w = mkWorld({ now: D(14, 9, 13, 0), seed: seedMorningCard, trackerStatus: 'paused' });
+    await flush();
+    ok(w.parkCard._cls.has('hidden') && w.parkCard.children.length === 0, 'B7: session PAUSED — the restored "Start your shift?" card never renders');
+    ok(w.store.get('park_state', {}).card === null, 'B7: the gate clears the stranded card from park_state');
+  }
+  /* B8: restored morning card + NO session → renders exactly as before */
+  {
+    const w = mkWorld({ now: D(14, 9, 13, 0), seed: seedMorningCard });
+    await flush();
+    ok(!w.parkCard._cls.has('hidden') && w.parkCard.children.length >= 2, 'B8: no session live — the morning card still renders');
+    ok(w.parkCard.children[0].textContent.indexOf('Start your shift?') >= 0, 'B8: and still asks "Start your shift?"');
+    ok(w.store.get('park_state', {}).card === 'morning', 'B8: the idle render leaves the card state untouched');
   }
 
   /* ================= Part C: statics ================= */
