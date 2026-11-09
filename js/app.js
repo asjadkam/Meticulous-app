@@ -1903,6 +1903,32 @@
           if (typeof rkm === 'number' && isFinite(rkm) && rkm >= 0) milesM = Math.round(rkm * 1000);
         }
       } catch (e) {}
+      /* v389 (BUBBLE-KM-MISSING-IN-HANDS-NOV9, the named web
+         residual): recordKmFor reads the PERSISTED record for the
+         session key — while that record has no fix-backed total
+         it returns null and the facts carried -1, so the native
+         record sat miles-less all day (Nov 9) even though the
+         page's own engine held the day's km (the widget showed
+         16.7 km off its pushed string while the record-derived
+         bubble honestly showed none). Fall back to the live
+         engine's fix-backed total — LiveMiles.currentKm(), the
+         very total the tracker hero paints — so the facts carry
+         the km the page itself displays. currentKm() is null
+         until a fix is accepted anywhere: with no fix-backed
+         total in either source the miles stay unset (-1). No
+         number is invented, and a landed recordKmFor total
+         (0 included) is never overridden. recordKmFor itself is
+         NOT changed: its keyed contract serves the stop-time
+         and finalize readers, which must not inherit the live
+         engine's day. */
+      if (milesM < 0) {
+        try {
+          if (window.LiveMiles && LiveMiles.currentKm) {
+            var ckm = LiveMiles.currentKm();
+            if (typeof ckm === 'number' && isFinite(ckm) && ckm >= 0) milesM = Math.round(ckm * 1000);
+          }
+        } catch (e) {}
+      }
     }
     return {
       status: idle ? 'idle' : t.status,
