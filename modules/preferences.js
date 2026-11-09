@@ -448,25 +448,15 @@
            v241 nothing in the app wrote onboarding.plate at all,
            so every PTI's plate field pre-filled blank. */
         '<label class="f">Licence plate</label><input id="pf_plate" value="' + esc(o.plate || o.plateNo || '') + '">';
-      /* v355 (addendum 7, owner Nov 6, 05:46): every vehicle is
-         different. The VIN — typed, or photographed off the dash
-         plate / door sticker (the wiring below reads the 17
-         characters with the haul-card reader) — decodes to the
-         vehicle (make / model / year / body), and its dimensions
-         are confirmed ONCE by the driver and saved with the
-         vehicle. Nothing here guesses a size: the decode names
-         the vehicle, the driver confirms its measurements. */
-      h += '<label class="f">VIN</label>' +
-        '<div style="display:flex;gap:8px;margin:6px 0;">' +
-        '<input id="pf_vin" value="' + esc(o.vin || '') + '" placeholder="17 characters" maxlength="17" style="flex:1;text-transform:uppercase">' +
-        '<button type="button" class="btn secondary" id="pf_vin_cam">📷 Snap VIN</button></div>' +
-        '<input type="file" id="pf_vin_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-        '<div id="pf_vin_status" class="note">' + (o.vehDesc ? 'Vehicle: <b>' + esc(o.vehDesc) + '</b>' : 'Photograph the VIN plate or type the VIN — the app names the vehicle from it.') + '</div>' +
-        '<input type="hidden" id="pf_vdesc" value="' + esc(o.vehDesc || '') + '">' +
-        '<div class="row"><div><label class="f">Height (m)</label><input id="pf_vheight" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.vehHeightM || '') + '"></div>' +
-        '<div><label class="f">Length (m)</label><input id="pf_vlength" type="number" inputmode="decimal" min="0" step="0.1" value="' + esc(o.vehLengthM || '') + '"></div>' +
-        '<div><label class="f">Weight (kg)</label><input id="pf_vweight" type="number" inputmode="numeric" min="0" step="10" value="' + esc(o.vehWeightKg || '') + '"></div></div>' +
-        '<p class="note">Check the height, length and weight once against your vehicle — they save with it.</p>';
+      /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8 (owner, Nov 8,
+         2026 18:21 CST): the v355 VIN block that stood here —
+         the VIN field, the Snap VIN photo door and the
+         height / length / weight fields — MOVED to the
+         Navigator's own settings (its ⚙️ gear menu, the
+         "Your truck" section), for every driver kind. The
+         vehicle record itself did not move: vin / vehDesc /
+         vehHeightM / vehLengthM / vehWeightKg stay on the
+         onboarding record, written and read there now. */
       /* v76 (F6, boss QA Oct 14): the odometer-baseline photo flow and
          the Daily-odometer-photos tracker toggle are DRIVER tools —
          hidden for office-only users (a man who never starts a tracker
@@ -704,11 +694,11 @@
             if ((v = gv('pf_cont')) !== null) oo.contractingCo = v;
             if ((v = gv('pf_tnum')) !== null) oo.truckNo = v;
             if ((v = gv('pf_plate')) !== null) oo.plate = v;
-            if ((v = gv('pf_vin')) !== null) oo.vin = v.toUpperCase();
-            if ((v = gv('pf_vdesc')) !== null) oo.vehDesc = v;
-            if ((v = gv('pf_vheight')) !== null) oo.vehHeightM = v;
-            if ((v = gv('pf_vlength')) !== null) oo.vehLengthM = v;
-            if ((v = gv('pf_vweight')) !== null) oo.vehWeightKg = v;
+            /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: the vehicle
+               record's flush lines (vin / vehDesc / vehHeightM /
+               vehLengthM / vehWeightKg) stood here; the fields
+               are gone from this form — the Navigator's settings
+               own them now, and the stored values survive. */
             if ((v = gv('pf_wagerate')) !== null) oo.ownWageRate = v;
             if ((v = gv('pf_nextinv')) !== null) oo.nextInvoiceNo = v;
             var tc = body.querySelector('#pf_taxincl'); if (tc) oo.rateIncludesTax = tc.checked;
@@ -822,14 +812,11 @@
         var pfKindEl = body.querySelector('#pf_kind'); if (pfKindEl) o.driverKind = pfKindEl.value;
         var pfPatEl = body.querySelector('#pf_pattern'); if (pfPatEl) o.workPattern = pfPatEl.value;
         var pfSrEl = body.querySelector('#pf_splitrate'); if (pfSrEl) o.splitRate = pfSrEl.value.trim();
-        /* v355 (addendum 7): the vehicle identity + dimensions
-           save on the truck record, guarded like the plate (an
-           office save never reaches for them). */
-        if (body.querySelector('#pf_vin')) o.vin = g('pf_vin').toUpperCase();
-        if (body.querySelector('#pf_vdesc')) o.vehDesc = g('pf_vdesc');
-        if (body.querySelector('#pf_vheight')) o.vehHeightM = g('pf_vheight');
-        if (body.querySelector('#pf_vlength')) o.vehLengthM = g('pf_vlength');
-        if (body.querySelector('#pf_vweight')) o.vehWeightKg = g('pf_vweight');
+        /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: the v355
+           vehicle save lines stood here; the fields are gone
+           from this form — the Navigator's settings own the
+           vehicle record now, and a Save here never reaches
+           for it, so the stored profile survives untouched. */
         o.baseLocation = g('pf_base'); o.homeProvince = body.querySelector('#pf_prov').value; o.companyName = g('pf_cname');
         o.gst = g('pf_gst'); o.companyAddr = g('pf_caddr'); o.contractingCo = g('pf_cont'); o.contractingAddr = g('pf_contaddr');
         o.nextInvoiceNo = g('pf_nextinv');
@@ -1230,57 +1217,11 @@
           App._store.set('onboarding', ob);
         };
       } catch (e) {}
-      /* v355 (addendum 7): the VIN door. The photo is read by the
-         same machinery; the 17 VIN characters are pulled from its
-         text. A VIN — read or typed — decodes through the public
-         NHTSA vPIC decoder to the vehicle's make / model / year /
-         body, which fills the vehicle line and saves at once; the
-         dimensions stay the driver's to confirm. Any failure
-         names itself in the status line and the typed VIN still
-         saves — the decoder is a helper, never a gate. */
-      try {
-        var vinEl = body.querySelector('#pf_vin'),
-            vinCam = body.querySelector('#pf_vin_cam'),
-            vinIn = body.querySelector('#pf_vin_in'),
-            vinSt = body.querySelector('#pf_vin_status');
-        var decodeVin355 = function (vin) {
-          vin = String(vin || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '');
-          if (vinEl && vinEl.value !== vin) vinEl.value = vin;
-          if (vin.length !== 17) { if (vinSt) vinSt.textContent = 'A VIN is 17 characters — check what is typed.'; return; }
-          if (typeof fetch !== 'function') { if (vinSt) vinSt.textContent = 'VIN noted. (The vehicle decoder is not reachable from here.)'; return; }
-          if (vinSt) vinSt.textContent = 'Reading the VIN…';
-          fetch('https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/' + encodeURIComponent(vin) + '?format=json')
-            .then(function (r) { return r.json(); })
-            .then(function (j) {
-              var row = j && j.Results && j.Results[0];
-              var desc = '';
-              if (row) desc = [row.ModelYear, row.Make, row.Model, row.BodyClass].filter(function (x) { return x && x !== 'Not Applicable'; }).join(' · ');
-              var vd = body.querySelector('#pf_vdesc'); if (vd && desc) vd.value = desc;
-              var ob = App._store.get('onboarding', {}) || {};
-              ob.vin = vin; if (desc) ob.vehDesc = desc;
-              App._store.set('onboarding', ob);
-              if (vinSt) vinSt.innerHTML = desc
-                ? ('Vehicle: <b>' + esc(desc) + '</b> — now check the height, length and weight once, and Save.')
-                : 'That VIN did not return vehicle details — the number itself is saved.';
-            })
-            .catch(function () { if (vinSt) vinSt.textContent = 'The vehicle decoder could not be reached — the VIN is saved as typed.'; });
-        };
-        if (vinCam && vinIn) vinCam.onclick = function () { vinIn.click(); };
-        if (vinIn) vinIn.onchange = function () {
-          var f = vinIn.files && vinIn.files[0];
-          if (!f) return;
-          if (vinSt) vinSt.textContent = 'Reading the VIN photo…';
-          var fail = function () { if (vinSt) vinSt.textContent = 'No VIN could be read from that photo — type it in, or try a closer shot of the plate.'; };
-          if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
-            TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(function (txt) {
-              var raw = String(txt || '').toUpperCase();
-              var m = /[A-HJ-NPR-Z0-9]{17}/.exec(raw) || /[A-HJ-NPR-Z0-9]{17}/.exec(raw.replace(/\s+/g, ''));
-              if (m) decodeVin355(m[0]); else fail();
-            }).catch(fail);
-          } else fail();
-        };
-        if (vinEl) vinEl.onchange = function () { decodeVin355(vinEl.value); };
-      } catch (e) {}
+      /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: the VIN door's
+         wiring stood here (decodeVin355 + the photo door); it
+         moved with its card into the Navigator's ⚙️ settings
+         (the Your truck section), where the same flow now
+         lives. */
       /* v127: the economy-unit select also persists the moment it
          changes — Fuel and Maintenance read it live next render. */
       try {

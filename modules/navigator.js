@@ -1608,7 +1608,7 @@
 
   /* v356 (DIMENSION-AWARE ROUTING — addendum 7's routing half,
      owner Nov 6, 08:32 MDT: "Why parked... Start now"): the
-     saved VEHICLE profile (Preferences -> Truck / onboarding:
+     saved VEHICLE profile (Navigator settings -> Your truck / the onboarding record:
      the VIN record's vehHeightM / vehLengthM / vehWeightKg,
      confirmed once by the driver) is where route dimensions
      come from. vehicleDimsFromOnboarding reads that record
@@ -1887,7 +1887,7 @@
        over the Navigator profile here, so the one profile
        object every route request is built from carries the
        vehicle's real height / length / weight whenever they
-       are saved (Preferences -> Truck, the VIN record). Width,
+       are saved (Navigator settings -> Your truck, the VIN record). Width,
        axle load, axles and hazmat still come from the
        Navigator profile above. No vehicle dimensions saved ->
        the profile is exactly what it always was, and the
@@ -6571,6 +6571,11 @@
          toggles show/hide at once. */
       function nvSettingsHTML() {
         var st = S.settings, p = st.profile;
+        /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: the vehicle
+           record (the onboarding store's vin / vehDesc) paints
+           the VIN block in the Your truck section below. */
+        var obV = {};
+        try { obV = App._store.get('onboarding', {}) || {}; } catch (e) {}
         function seg(id, val, opts) {
           return '<div class="row" id="' + id + '" style="gap:6px">' + opts.map(function (o) {
             return '<button class="btn small ' + (val === o[0] ? 'navy' : 'ghost') + '" data-seg="' + o[0] + '" style="flex:1">' + o[1] + '</button>';
@@ -6592,19 +6597,38 @@
           '<p class="note" id="nvs_voicenote" style="margin-top:4px">Tap Test my voice — you should hear the guidance speak out loud.</p>' +
           '<label class="chk" style="display:block;margin-top:6px"><input type="checkbox" id="nvs_grades"' + (st.gradeAlerts ? ' checked' : '') + '> Announce hills and steep grades ahead</label>' +
           '<h3 style="margin:16px 0 4px">🚛 Your truck</h3>' +
-          /* v356: when the saved VEHICLE profile carries
-             dimensions, height / length / weight ARE the
-             vehicle's — they show here locked, with the door
-             named, because Preferences -> Truck is where they
-             are confirmed and changed. Width, axles and hazmat
-             stay this menu's own. */
-          '<p class="note" style="margin-top:0">' + (st.vehicleDims
-            ? 'Height, length and weight come from your vehicle (Preferences → Truck) and ride on every route. Width, axles and hazmat are set here.'
-            : 'Routes keep you legal for a truck of this size and weight.') + '</p>' +
-          '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '"' + (st.vehicleDims && st.vehicleDims.height ? ' disabled' : '') + '>' +
+          /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8 (owner, Nov 8,
+             2026 18:21 CST: "I don't think it should be kept in
+             the preferences.. it should be kept in navigator
+             prefernces... this feature should be app wide!"):
+             the VEHICLE profile lives HERE now — the VIN block
+             below moved out of Preferences (the old Truck card)
+             into this menu, for every account that has the
+             Navigator, because the vehicle is what navigation
+             routes around. The RECORD did not move: the VIN,
+             its decoded description and the confirmed dimensions
+             stay on the onboarding record (vin / vehDesc /
+             vehHeightM / vehLengthM / vehWeightKg), so a profile
+             saved before the move reads whole. (v356 had these
+             fields showing locked here, pointing back to
+             Preferences -> Truck; the lock is gone — this menu
+             IS the door now.) Height / length / weight below
+             are the vehicle's fields: they show the effective
+             numbers — the merged profile every route is built
+             from — and save onto the vehicle record (see
+             saveVehicleDims). Width, axles and hazmat stay the
+             Navigator profile's own. */
+          '<p class="note" style="margin-top:0">The VIN names your vehicle. Its height, length and weight ride on every route — a low bridge is checked against your real size.</p>' +
+          '<label class="f">VIN</label>' +
+          '<div style="display:flex;gap:8px;margin:6px 0;">' +
+          '<input id="nvs_vin" value="' + esc(obV.vin || '') + '" placeholder="17 characters" maxlength="17" style="flex:1;text-transform:uppercase">' +
+          '<button type="button" class="btn secondary" id="nvs_vin_cam">📷 Snap VIN</button></div>' +
+          '<input type="file" id="nvs_vin_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<div id="nvs_vin_status" class="note">' + (obV.vehDesc ? 'Vehicle: <b>' + esc(obV.vehDesc) + '</b>' : 'Photograph the VIN plate or type the VIN — the app names the vehicle from it.') + '</div>' +
+          '<label class="f">Height (m)</label><input id="nvs_height" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.height) + '">' +
           '<label class="f">Width (m)</label><input id="nvs_width" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.width) + '">' +
-          '<label class="f">Length (m)</label><input id="nvs_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.length) + '"' + (st.vehicleDims && st.vehicleDims.length ? ' disabled' : '') + '>' +
-          '<label class="f">Weight (tonnes)</label><input id="nvs_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.weight) + '"' + (st.vehicleDims && st.vehicleDims.weight ? ' disabled' : '') + '>' +
+          '<label class="f">Length (m)</label><input id="nvs_length" type="number" inputmode="decimal" step="0.1" min="0" value="' + esc(p.length) + '">' +
+          '<label class="f">Weight (tonnes)</label><input id="nvs_weight" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.weight) + '">' +
           '<label class="f">Axle load (tonnes)</label><input id="nvs_axleload" type="number" inputmode="decimal" step="0.5" min="0" value="' + esc(p.axleLoad) + '">' +
           '<label class="f">Axles</label><input id="nvs_axles" type="number" inputmode="numeric" step="1" min="1" value="' + esc(p.axles) + '">' +
           '<label class="chk" style="display:block;margin-top:10px"><input type="checkbox" id="nvs_hazmat"' + (p.hazmat ? ' checked' : '') + '> ☣️ I haul hazardous goods (placarded)</label>' +
@@ -6739,9 +6763,15 @@
         }
         var gr = panel.querySelector('#nvs_grades');
         if (gr) gr.onchange = function () { S.settings.gradeAlerts = !!gr.checked; saveSettings({ gradeAlerts: S.settings.gradeAlerts }); };
-        var profIds = { height: 'nvs_height', width: 'nvs_width', length: 'nvs_length', weight: 'nvs_weight', axleLoad: 'nvs_axleload', axles: 'nvs_axles' };
+        var profIds = { width: 'nvs_width', axleLoad: 'nvs_axleload', axles: 'nvs_axles' };
         function saveProfile() {
           var cur = S.settings.profile, p = {}, k, el;
+          /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: height /
+             length / weight are the VEHICLE's fields now
+             (saveVehicleDims below) — the profile's own values
+             for them ride through untouched as the underlay
+             the v356 merge reads. */
+          p.height = cur.height; p.length = cur.length; p.weight = cur.weight;
           for (k in profIds) {
             el = panel.querySelector('#' + profIds[k]);
             if (el && el.value !== '') p[k] = Number(el.value);
@@ -6761,6 +6791,91 @@
         });
         var hzEl = panel.querySelector('#nvs_hazmat');
         if (hzEl) hzEl.onchange = saveProfile;
+        /* VIN-PROFILE-TO-NAVIGATOR-APPWIDE-NOV8: the vehicle's
+           own numbers. Height / length are metres on both
+           sides; the weight field speaks tonnes (this menu's
+           unit) and the record stores kilograms — the record's
+           shape is unchanged. A change saves onto the
+           onboarding vehicle record at once (the save-at-once
+           the VIN decode below uses); a cleared box clears the
+           vehicle's field, and the profile underlay shows
+           through again. S.settings is rebuilt through
+           loadSettings, so the merged profile the routes are
+           built from — and the height the clearance second
+           look checks against — is the new one immediately. */
+        function saveVehicleDims() {
+          var hEl = panel.querySelector('#nvs_height'),
+              lEl = panel.querySelector('#nvs_length'),
+              wEl = panel.querySelector('#nvs_weight');
+          var ob = {};
+          try { ob = App._store.get('onboarding', {}) || {}; } catch (e) {}
+          if (hEl) ob.vehHeightM = hEl.value === '' ? '' : Number(hEl.value);
+          if (lEl) ob.vehLengthM = lEl.value === '' ? '' : Number(lEl.value);
+          if (wEl) ob.vehWeightKg = wEl.value === '' ? '' : Math.round(Number(wEl.value) * 1000);
+          try { App._store.set('onboarding', ob); } catch (e) {}
+          S.settings = loadSettings();
+          var n = panel.querySelector('#nvs_note');
+          if (n) n.textContent = '✓ Saved — routes now use this truck.';
+          if (S.dest && S.plan) doRoute();
+        }
+        ['nvs_height', 'nvs_length', 'nvs_weight'].forEach(function (id) {
+          var el = panel.querySelector('#' + id);
+          if (el) el.onchange = saveVehicleDims;
+        });
+        /* The VIN door — the Preferences card's own wiring,
+           moved with it: the photo is read by the haul-card
+           reader and the 17 characters pulled from its text; a
+           VIN — read or typed — decodes through the public
+           NHTSA vPIC decoder to the vehicle's make / model /
+           year / body and saves at once; the dimensions stay
+           the driver's to confirm. Any failure names itself in
+           the status line and the typed VIN still saves — the
+           decoder is a helper, never a gate. */
+        var vinEl = panel.querySelector('#nvs_vin'),
+            vinCam = panel.querySelector('#nvs_vin_cam'),
+            vinIn = panel.querySelector('#nvs_vin_in'),
+            vinSt = panel.querySelector('#nvs_vin_status');
+        var decodeVin = function (vin) {
+          vin = String(vin || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '');
+          if (vinEl && vinEl.value !== vin) vinEl.value = vin;
+          if (vin.length !== 17) { if (vinSt) vinSt.textContent = 'A VIN is 17 characters — check what is typed.'; return; }
+          var ob0 = {};
+          try { ob0 = App._store.get('onboarding', {}) || {}; } catch (e) {}
+          ob0.vin = vin;
+          try { App._store.set('onboarding', ob0); } catch (e) {}
+          if (typeof fetch !== 'function') { if (vinSt) vinSt.textContent = 'VIN noted. (The vehicle decoder is not reachable from here.)'; return; }
+          if (vinSt) vinSt.textContent = 'Reading the VIN…';
+          fetch('https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/' + encodeURIComponent(vin) + '?format=json')
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              var row = j && j.Results && j.Results[0];
+              var desc = '';
+              if (row) desc = [row.ModelYear, row.Make, row.Model, row.BodyClass].filter(function (x) { return x && x !== 'Not Applicable'; }).join(' · ');
+              var ob = {};
+              try { ob = App._store.get('onboarding', {}) || {}; } catch (e) {}
+              ob.vin = vin; if (desc) ob.vehDesc = desc;
+              try { App._store.set('onboarding', ob); } catch (e) {}
+              if (vinSt) vinSt.innerHTML = desc
+                ? ('Vehicle: <b>' + esc(desc) + '</b> — now check the height, length and weight once; they save as you change them.')
+                : 'That VIN did not return vehicle details — the number itself is saved.';
+            })
+            .catch(function () { if (vinSt) vinSt.textContent = 'The vehicle decoder could not be reached — the VIN is saved as typed.'; });
+        };
+        if (vinCam && vinIn) vinCam.onclick = function () { vinIn.click(); };
+        if (vinIn) vinIn.onchange = function () {
+          var f = vinIn.files && vinIn.files[0];
+          if (!f) return;
+          if (vinSt) vinSt.textContent = 'Reading the VIN photo…';
+          var fail = function () { if (vinSt) vinSt.textContent = 'No VIN could be read from that photo — type it in, or try a closer shot of the plate.'; };
+          if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+            TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(function (txt) {
+              var raw = String(txt || '').toUpperCase();
+              var m = /[A-HJ-NPR-Z0-9]{17}/.exec(raw) || /[A-HJ-NPR-Z0-9]{17}/.exec(raw.replace(/\s+/g, ''));
+              if (m) decodeVin(m[0]); else fail();
+            }).catch(fail);
+          } else fail();
+        };
+        if (vinEl) vinEl.onchange = function () { decodeVin(vinEl.value); };
       }
       var gearBtn = body.querySelector('#nv_gear');
       if (gearBtn) gearBtn.onclick = function () { openNavSettings(false); };

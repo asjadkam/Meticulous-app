@@ -5356,12 +5356,14 @@
       h += '<label class="f">Truck number</label><input id="ob_tnum" value="' + esc(o.truckNo || '') + '" placeholder="e.g. 007">' +
         '<label class="f">Load / trailer type</label><input id="ob_ttype" value="' + esc(o.truckType || '') + '" placeholder="e.g. Tandem dump">' +
         /* v355 (addendum 7): every vehicle is different — the VIN
-           is asked once, here at vehicle setup. In Preferences
+           is asked once, here at vehicle setup. In the
+           Navigator's settings (VIN-PROFILE-TO-NAVIGATOR-
+           APPWIDE-NOV8 moved the door there from Preferences)
            the driver can photograph it instead, the app decodes
            it (make / model / year / body) and the vehicle's
            dimensions are confirmed once and saved with it. */
         '<label class="f">VIN (optional)</label><input id="ob_vin" value="' + esc(o.vin || '') + '" placeholder="17 characters — on the dash plate or door sticker" maxlength="17" style="text-transform:uppercase">' +
-        '<p class="note">Every vehicle is different: the VIN tells the app which vehicle this is, and its size is saved with it in Preferences.</p>';
+        '<p class="note">Every vehicle is different: the VIN tells the app which vehicle this is, and its size is saved with it in the Navigator’s settings.</p>';
     } else if (st.type === 'odometer') {
       h += '<div style="display:flex;gap:10px;margin:10px 0;">' +
         '<button type="button" class="btn secondary" id="ob_odo_cam" style="flex:1;">📷 Take photo</button>' +
