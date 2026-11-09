@@ -59,6 +59,39 @@
  *    span (its counted trail) so pre-upgrade ground cannot be
  *    counted twice — that span can over-claim at most the one
  *    join segment the old join path once skipped inside it.
+ *  - GAP-BRIDGE (LIVE-MILES-LEG-EATEN-NOV9, owner Nov 9, 2026:
+ *    "It ate my live miles again!" — the 08:30 session counted
+ *    leg 1 in full, then the watch died for the whole second
+ *    leg and the relaunch join booked the leg as 0.00 km:
+ *    16.1 live km against ~40 road km): the join law above is
+ *    amended for gaps BOUNDED BY TWO REAL FIXES IN THE SAME
+ *    RECORD. When the first fix after a dead stretch lands,
+ *    the gap counts its STRAIGHT-LINE FLOOR — the haversine
+ *    between the last counted anchor and that fix. That is an
+ *    ESTIMATE and the record says so: bridged metres are kept
+ *    apart (`bridgedM`, spans in `bridges`) from observed
+ *    metres, the crumb gap still shows in the gap finder, and
+ *    the bridge is PROVISIONAL — if an observed run (native
+ *    crumbs) later folds over the same span, its real segments
+ *    replace the chord slice-for-slice, exactly once, so the
+ *    total converges to the observed road, never above it.
+ *    Gates (a bridge is refused, and the old zero-join stands,
+ *    unless ALL hold): the chord is at least STILL_RADIUS_M
+ *    (below that it is site wander, not a leg); the implied
+ *    average speed across the gap is at most MAX_SPEED_KMH
+ *    (a faster jump is a bad fix, not a drive); both endpoints
+ *    are accuracy-passed fixes already in this record (the
+ *    anchor when it was set, the arrival fix at ingest). The
+ *    road distance is NEVER guessed — the chord is a floor,
+ *    and the day still settles from the odometer. Settlement
+ *    when observed ground later folds over a bridged span: an
+ *    observed chain SEEDED FROM the span's own join origin that
+ *    reaches the span's end replaces the chord wholesale (it
+ *    demonstrably drove the journey); any other observed
+ *    coverage replaces only the slice it covers, pro-rated by
+ *    time, and the rest of the estimate stands, still labelled.
+ *    Bridges never stack: a new bridge books only the time
+ *    slices no earlier bridge already spans.
  */
 (function () {
   'use strict';
@@ -159,6 +192,129 @@
       return false;
     }
 
+    /* GAP-BRIDGE (see the header note): the straight-line floor
+       across a dead stretch, between two real fixes of THIS
+       record. Returns the metres actually booked (0 when a gate
+       refuses). The chord is booked into the total AND registered
+       as provisional spans in S.bridges — deliberately NOT in
+       S.segs: observed coverage may still replace it. Ground an
+       earlier bridge already spans is carved out first (pro-rated
+       by time), so two bridges can never book the same stretch
+       twice — e.g. an ingest-join bridge and a later merge-door
+       bridge over the same leg. */
+    function bridgeBetween(a, b) {
+      if (!a || !b || !(b.time > a.time)) return 0;
+      var d = haversineM(a.latitude, a.longitude, b.latitude, b.longitude);
+      if (d < STILL_RADIUS_M) return 0;              // site wander, not a leg
+      var dtH = (b.time - a.time) / 3600000;
+      if ((d / 1000) / dtH > MAX_SPEED_KMH) return 0; // a jump, not a drive
+      var spanMs = b.time - a.time;
+      // Uncovered sub-intervals of [a.time, b.time]:
+      var free = [[a.time, b.time]];
+      for (var i = 0; i < S.bridges.length; i++) {
+        var br = S.bridges[i], next = [];
+        for (var j = 0; j < free.length; j++) {
+          var u0 = free[j][0], u1 = free[j][1];
+          if (br.t <= u0 || br.f >= u1) { next.push(free[j]); continue; }
+          if (br.f > u0) next.push([u0, br.f]);
+          if (br.t < u1) next.push([br.t, u1]);
+        }
+        free = next;
+      }
+      var booked = 0;
+      for (var k = 0; k < free.length; k++) {
+        var m = d * ((free[k][1] - free[k][0]) / spanMs);
+        if (m <= 0) continue;
+        // a/o: the chord's end point (crumb field names) — the
+        // settlement's "reached the end" test is a place as well
+        // as a time (see settleBridges).
+        S.bridges.push({ f: free[k][0], t: free[k][1], m: m, a: b.latitude, o: b.longitude });
+        booked += m;
+      }
+      S.totalM += booked;
+      S.bridgedM += booked;
+      return booked;
+    }
+    /* Settle the provisional bridges against the observed spans
+       ONE merge counted (called once, at the end of mergeCrumbs).
+       A bridge retires pro-rata by the counted coverage of its
+       span — EXCEPT the connected case: when the merge's chain
+       was seeded from this record's join origin (preserved by
+       the join law), its seed pair was consumed by counted or
+       already-counted ground — never refused: a refused seed
+       join is the one step observed by nobody, and it breaks
+       the chain — and the chain reaches the span's end, the
+       observed journey demonstrably CONNECTS the chord's two
+       endpoints, and the estimate is replaced wholesale. A chain
+       that starts mid-span only ever replaces
+       the slice it actually observed; the unobserved remainder
+       keeps its labelled slice of the chord. Returns the metres
+       retired (the caller subtracts them from the total and the
+       merge result). Spans left over are re-cut to their
+       un-covered time slices with their share of the estimate. */
+    function settleBridges(covered, connectedFrom, joinOriginTime, chainEnd) {
+      var retiredTotal = 0;
+      var out = [];
+      for (var i = 0; i < S.bridges.length; i++) {
+        var br = S.bridges[i];
+        var spanMs = br.t - br.f;
+        var covMs = 0, endsReached = false, maxEnd = 0;
+        for (var j = 0; j < covered.length; j++) {
+          var c0 = covered[j][0], c1 = covered[j][1];
+          var o0 = Math.max(br.f, c0), o1 = Math.min(br.t, c1);
+          if (o1 > o0) {
+            covMs += o1 - o0;
+            if (c1 > maxEnd) maxEnd = c1;
+            if (c1 >= br.t) endsReached = true;
+          }
+        }
+        /* "Reached the end" is a place as well as a time: an
+           observed chain whose last counted point IS the chord's
+           end point (the truck demonstrably arrived where the
+           wake fix later landed), no more than one OBS_GAP
+           before the span's end time, has completed the journey
+           the chord estimated. */
+        if (!endsReached && chainEnd && isFinite(br.a) && isFinite(br.o) &&
+            maxEnd >= br.t - OBS_GAP_MAX_MS &&
+            haversineM(chainEnd.latitude, chainEnd.longitude, br.a, br.o) <= STILL_RADIUS_M) {
+          endsReached = true;
+        }
+        if (!covMs || spanMs <= 0) { out.push(br); continue; }
+        var connected = connectedFrom && endsReached &&
+          (joinOriginTime === null || br.f >= joinOriginTime);
+        var cut = connected ? br.m : br.m * (covMs / spanMs);
+        retiredTotal += cut;
+        var leftM = br.m - cut;
+        if (leftM > 0.5) {
+          // Re-cut the un-covered slices of the span.
+          var free = [[br.f, br.t]];
+          for (var q = 0; q < covered.length; q++) {
+            var nx = [];
+            for (var w = 0; w < free.length; w++) {
+              var s0 = free[w][0], s1 = free[w][1];
+              if (covered[q][1] <= s0 || covered[q][0] >= s1) { nx.push(free[w]); continue; }
+              if (covered[q][0] > s0) nx.push([s0, covered[q][0]]);
+              if (covered[q][1] < s1) nx.push([covered[q][1], s1]);
+            }
+            free = nx;
+          }
+          var freeMs = 0;
+          for (var z = 0; z < free.length; z++) freeMs += free[z][1] - free[z][0];
+          for (var y = 0; y < free.length; y++) {
+            if (freeMs > 0) {
+              var part = { f: free[y][0], t: free[y][1], m: leftM * ((free[y][1] - free[y][0]) / freeMs) };
+              if (isFinite(br.a) && isFinite(br.o)) { part.a = br.a; part.o = br.o; }
+              out.push(part);
+            }
+          }
+        }
+      }
+      S.bridges = out;
+      S.bridgedM -= retiredTotal;
+      if (S.bridgedM < 0) S.bridgedM = 0;
+      return retiredTotal;
+    }
+
     return {
       /* saved: a previous snapshot() for the same session key (relaunch
          resume). On resume the saved anchor is kept but the JOIN segment
@@ -169,8 +325,21 @@
         S = {
           key: key, active: true, totalM: 0, anchor: null,
           crumbs: [], hasFix: false, joinZero: false,
-          segs: [], joinFrom: null, still: null
+          segs: [], joinFrom: null, still: null,
+          bridgedM: 0, bridges: []
         };
+        if (saved && saved.bridges && saved.bridges.length) {
+          for (var bi = 0; bi < saved.bridges.length; bi++) {
+            var bp = saved.bridges[bi];
+            if (bp && isFinite(+bp.f) && isFinite(+bp.t) && isFinite(+bp.m) &&
+                +bp.t > +bp.f && +bp.m > 0) {
+              var nb = { f: +bp.f, t: +bp.t, m: +bp.m };
+              if (isFinite(+bp.a) && isFinite(+bp.o)) { nb.a = +bp.a; nb.o = +bp.o; }
+              S.bridges.push(nb);
+              S.bridgedM += +bp.m;
+            }
+          }
+        }
         if (saved && saved.still && isFinite(saved.still.latitude) && isFinite(saved.still.longitude)) {
           S.still = { latitude: saved.still.latitude, longitude: saved.still.longitude };
         }
@@ -257,14 +426,19 @@
         if (f.time <= S.anchor.time) return { accepted: false, why: 'stale' };
         var d = haversineM(S.anchor.latitude, S.anchor.longitude, f.latitude, f.longitude);
         if (S.joinZero) {
-          // First fix after a relaunch: re-anchor WITHOUT counting the
-          // unobserved join segment (no double-count, no invented miles).
+          // First fix after a relaunch: re-anchor at the new fix.
           // v126: the origin point is PRESERVED as joinFrom — the
           // anchor teleports, but a native crumb run drained later
           // can still connect through the origin and count the
           // stretch the service genuinely observed (mergeCrumbs).
           // The earliest unconsumed origin wins: a second relaunch
           // must not orphan an older unfilled join.
+          // GAP-BRIDGE (LIVE-MILES-LEG-EATEN-NOV9): the stretch
+          // itself now counts its straight-line floor between the
+          // two real fixes that bound it (bridgeBetween's gates
+          // decide; a refused bridge keeps the old zero-join).
+          // The chord is provisional: a later observed fold over
+          // the same span replaces it slice-for-slice.
           if (!S.joinFrom) {
             S.joinFrom = {
               time: S.anchor.time,
@@ -272,11 +446,13 @@
               longitude: S.anchor.longitude
             };
           }
+          var jb = bridgeBetween(S.anchor, f);
+          if (jb > 0) S.still = null; // the truck demonstrably moved
           S.anchor = f;
           S.joinZero = false;
           S.hasFix = true;
           maybeCrumb(f);
-          return { accepted: true, addedM: 0, joined: true };
+          return { accepted: true, addedM: jb, joined: true, bridgedM: jb };
         }
         /* v352: stillness. While the truck sits parked, fixes
            keep wandering around the spot, and every wander hop
@@ -338,7 +514,7 @@
             gap finder still reports it).
          Returns { accepted, addedM, skipped, gapJoins }. */
       mergeCrumbs: function (crumbsIn) {
-        var res = { accepted: 0, addedM: 0, skipped: 0, gapJoins: 0 };
+        var res = { accepted: 0, addedM: 0, skipped: 0, gapJoins: 0, bridgedM: 0 };
         if (!crumbsIn || !crumbsIn.length) return res;
         if (!S || !S.active) { res.skipped = crumbsIn.length; return res; }
         var list = [];
@@ -364,6 +540,16 @@
           chain = seed;
           seedPair = true;
         }
+        /* GAP-BRIDGE settlement state: the spans this walk counts,
+           and whether its chain is CONNECTED from the record's
+           join origin (the connection test in settleBridges):
+           seeded from the origin, with the seed pair consumed by
+           counted or already-counted ground — never by the
+           refused-join branch below, which is the one step that
+           breaks the chain (its stretch was observed by nobody). */
+        var countedSpans = [];
+        var chainConnected = !!(seedPair && S.joinFrom);
+        var joinOriginTime = S.joinFrom ? S.joinFrom.time : null;
         for (var j = 0; j < list.length; j++) {
           var f = list[j];
           if (f.accuracy !== null && f.accuracy !== undefined && f.accuracy > ACC_MAX_M) {
@@ -392,9 +578,16 @@
             continue;
           }
           if (seedPair && joinOutstanding && f.time - chain.time > OBS_GAP_MAX_MS) {
-            // The join stretch was observed by NOBODY: report it,
-            // start the chain at this crumb, count nothing for it.
+            // The join stretch was observed by NOBODY: report it
+            // as a gap join — and (GAP-BRIDGE, LIVE-MILES-LEG-
+            // EATEN-NOV9) count its straight-line floor between
+            // the seed and this crumb, the two real fixes that
+            // bound it. The chord stays provisional in `bridges`;
+            // the observed run behind this crumb counts as usual.
             res.gapJoins++;
+            chainConnected = false; // this step was observed by nobody
+            var gb = bridgeBetween(chain, f);
+            if (gb > 0) res.bridgedM += gb;
             seedPair = false;
             chain = f;
             res.accepted++; // adopted as the chain start (like ingest's join)
@@ -417,6 +610,11 @@
           if (d < MIN_STEP_M) { res.skipped++; continue; } // jitter: chain stays (accumulates)
           var dtH = (f.time - chain.time) / 3600000;
           if ((d / 1000) / dtH > MAX_SPEED_KMH) { res.skipped++; continue; } // teleport: point dropped
+          /* GAP-BRIDGE: the segment counts in full here; the
+             provisional chords it covers are settled once, after
+             the walk (settleBridges) — the total converges to the
+             observed road and no stretch is counted twice. */
+          countedSpans.push([chain.time, f.time]);
           S.totalM += d;
           segAdd(S.segs, chain.time, f.time);
           res.accepted++;
@@ -442,6 +640,18 @@
         if (S.joinFrom && segCoversPoint(S.segs, S.joinFrom.time) &&
             S.anchor && segCoversPoint(S.segs, S.anchor.time)) {
           S.joinFrom = null;
+        }
+        /* GAP-BRIDGE settlement: retire the provisional chords
+           this walk's observed spans replace (see settleBridges
+           for the connected / pro-rata rules). */
+        if (countedSpans.length && S.bridges.length) {
+          var settled = settleBridges(countedSpans, chainConnected, joinOriginTime,
+            chain ? { latitude: chain.latitude, longitude: chain.longitude } : null);
+          if (settled) {
+            S.totalM -= settled;
+            if (S.totalM < 0) S.totalM = 0;
+            res.addedM -= settled;
+          }
         }
         return res;
       },
@@ -479,10 +689,23 @@
           // the old pair shape, so records already on phones and
           // in the cloud keep their spans.
           segs: S.segs.map(function (p) { return { f: p[0], t: p[1] }; }),
-          joinFrom: S.joinFrom ? { time: S.joinFrom.time, latitude: S.joinFrom.latitude, longitude: S.joinFrom.longitude } : null
+          joinFrom: S.joinFrom ? { time: S.joinFrom.time, latitude: S.joinFrom.latitude, longitude: S.joinFrom.longitude } : null,
+          // GAP-BRIDGE: the provisional estimate still standing in
+          // the total, and its spans — same { f, t } map discipline
+          // as segs (the cloud store refuses nested arrays), plus
+          // the chord metres under `m`. begin() restores them, so
+          // a bridged leg survives the same kills the total does
+          // and a later observed fold can still replace it.
+          bridgedM: Math.round(S.bridgedM),
+          bridges: S.bridges.map(function (p) {
+            var q = { f: p.f, t: p.t, m: Math.round(p.m) };
+            if (isFinite(p.a) && isFinite(p.o)) { q.a = p.a; q.o = p.o; }
+            return q;
+          })
         };
       },
       totalM: function () { return S ? S.totalM : 0; },
+      bridgedM: function () { return S ? S.bridgedM : 0; },
       hasFix: function () { return !!(S && S.hasFix); },
       isActive: function () { return !!(S && S.active); },
       key: function () { return S ? S.key : null; },
