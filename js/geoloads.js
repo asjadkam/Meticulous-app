@@ -608,6 +608,22 @@
     var accBar = cfg.accMaxM || ACC_MAX_M;
     var seedLoad = isCoord(cfg.load) ? { lat: +cfg.load.lat, lng: +cfg.load.lng } : null;
     var seedDump = isCoord(cfg.dump) ? { lat: +cfg.dump.lat, lng: +cfg.dump.lng } : null;
+    /* v392 (LOADS-MISSED-AFTER-REPEG-NOV9) DECLARATION SEEDING:
+       cfg.presence / cfg.presenceT carry where the truck physically
+       was when the glue (re)built this counter — the peg tap's own
+       fix. A FRESH begin (moved peg, key mismatch) used to discard
+       that evidence and start zone 'out' / armed=false, so a driver
+       who pegged the pickup and rolled at once never armed the
+       machine and the cycle's tip was swallowed (Nov 9: pickup
+       re-pegged 16:18, "re-pegged and kept moving", the load had to
+       be hand-tapped +1). Seeded instead: the counter begins with
+       the posture the declaration + position prove — standing at
+       the pickup = at-load and armed; standing at the dump =
+       at-dump, unarmed. Only a fresh begin seeds; a real saved
+       state always wins, and callers passing no presence (the
+       engine suites) are unchanged. */
+    var cfgPresence = isCoord(cfg.presence) ? { lat: +cfg.presence.lat, lng: +cfg.presence.lng } : null;
+    var cfgPresenceT = (typeof cfg.presenceT === 'number') ? cfg.presenceT : 0;
     /* the day's site frame, from the seeds alone */
     var site = null;
     if (seedLoad && seedDump) {
@@ -690,7 +706,31 @@
         };
         expectRole = 'load';
         if (!inner) return null;
-        var k = inner.begin(key, saved);
+        /* v392 declaration seeding: on a FRESH begin (no saved
+           state for this key) with the truck's position supplied,
+           the counter is born with the posture that position
+           proves against the seed fences — the peg tap itself is
+           the dwell evidence. Presence inside BOTH fences (a
+           same-place pair) reads as the nearer centre; inside
+           neither, the counter begins as before. */
+        var effSaved = saved;
+        if (!(saved && saved.sitesKey === key) && cfgPresence) {
+          var pFence = (typeof cfg.radiusM === 'number' && cfg.radiusM > 0) ? cfg.radiusM : PEG_FENCE_M;
+          var pdL = cen.load ? haversineM(cfgPresence.lat, cfgPresence.lng, cen.load.lat, cen.load.lng) : Infinity;
+          var pdD = cen.dump ? haversineM(cfgPresence.lat, cfgPresence.lng, cen.dump.lat, cen.dump.lng) : Infinity;
+          var pz = null;
+          if (pdL <= pFence && pdD <= pFence) pz = (pdL <= pdD) ? 'load' : 'dump';
+          else if (pdL <= pFence) pz = 'load';
+          else if (pdD <= pFence) pz = 'dump';
+          if (pz) {
+            effSaved = {
+              sitesKey: key, count: 0, events: [],
+              zone: pz, phase: (pz === 'load') ? 'at-load' : 'at-dump',
+              armed: (pz === 'load'), lastT: cfgPresenceT
+            };
+          }
+        }
+        var k = inner.begin(key, effSaved);
         /* resume the drift itself: centres + the event trail
            ride the snapshot, keyed like the counter's own state */
         if (saved && saved.sitesKey === key) {
@@ -708,6 +748,16 @@
           if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
           var dbg = inner.debug ? inner.debug() : null;
           expectRole = (dbg && dbg.armed) ? 'dump' : 'load';
+        }
+        if (effSaved && effSaved !== saved) {
+          /* v392: the seeded posture waits on the other end */
+          expectRole = effSaved.armed ? 'dump' : 'load';
+          /* the declaration IS the pickup confirmation — log it,
+             or the event trail (the manifest's place names) loses
+             the pickup the counter was born carrying */
+          if (effSaved.zone === 'load' && cfgPresence) {
+            onEvent('load', cfgPresenceT, cfgPresence);
+          }
         }
         return k;
       },
@@ -2029,6 +2079,12 @@
      day roll or a reconfigure can never strand a peg the record
      holds. pegArmed: the live counter is the peg counter. */
   var pegsNow = { load: null, dump: null };
+  /* v392: a pickup re-pegged at least this far from the swap
+     window's dump peg is a genuinely declared pair again — the
+     role-swap window closes and the cycle law resumes. Below it
+     the "pair" is still one place, and no counter could separate
+     its ends anyway. */
+  var SWAP_PAIR_MIN_M = 20;
   var pegArmed = false;
 
   function normalizePegs(p) {
@@ -2535,6 +2591,67 @@
     var prevPegDay = recordFor(curDate);
     pegsNow = normalizePegs(prevPegDay && prevPegDay.pegs);
     pegArmed = false;
+    /* v392 (LOADS-MISSED-AFTER-REPEG-NOV9) ROLE-SWAP WINDOW: the
+       day's sites swapped roles mid-day — the pickup place became
+       the dump (Nov 9: dump re-pegged 15:02 ON the standing load
+       peg's ground; the pickup re-peg did not land until 16:18).
+       setPeg marked the swap (pegRoleSwap) from the outgoing
+       counter's own confirmed 'load' zone at that place. While
+       the record pair still names that one place as BOTH ends,
+       the cycle machine is the wrong tool: twin fences on one
+       spot classify by jitter, and its 200 m site frame starves
+       the zone machine for the whole inter-site leg, so visits
+       freeze mid-candidate and dump visits vanish (two full tips
+       in the Nov 9 window counted zero). The dump peg IS a
+       declared dump site — the v324 VISIT law counts its visits
+       until the pickup is re-pegged somewhere genuinely else
+       (>= SWAP_PAIR_MIN_M away), when the cycle branch below
+       takes over with the day's count banked as usual. The tip
+       in progress at the swap peg itself stays the baseline
+       (the v369-pinned peg-moment rule): the window counter
+       begins mid-visit with that presence already spent. */
+    var swapWin = false;
+    if (pegsNow.load && pegsNow.dump && prevPegDay && prevPegDay.pegRoleSwap &&
+        prevPegDay.pegRoleSwap.dumpT === pegsNow.dump.t) {
+      var swapT = prevPegDay.pegRoleSwap.t || 0;
+      var loadDeclared = (pegsNow.load.t || 0) > swapT &&
+        ENGINE.haversineM(pegsNow.load.lat, pegsNow.load.lng,
+          pegsNow.dump.lat, pegsNow.dump.lng) >= SWAP_PAIR_MIN_M;
+      if (!loadDeclared) swapWin = true;
+    }
+    if (swapWin) {
+      curSites = {
+        load: null,
+        dump: { lat: pegsNow.dump.lat, lng: pegsNow.dump.lng, label: 'Dump peg', src: 'peg' }
+      };
+      curLoad = null;
+      var swapKey = sitesKeyFor('pegswap', curSites.dump, curSites.dump);
+      var sameSwap = !!(prevPegDay && prevPegDay.sessionKey === sessionKey);
+      var savedSwap = (sameSwap && prevPegDay.state && prevPegDay.state.sitesKey === swapKey) ? prevPegDay.state : null;
+      var savedSwapCount = (savedSwap && typeof savedSwap.count === 'number') ? savedSwap.count : 0;
+      baseCount = prevPegDay ? Math.max(0, (prevPegDay.count || 0) - savedSwapCount) : 0;
+      baseEvents = (prevPegDay && prevPegDay.events && (!sameSwap || !savedSwap)) ? prevPegDay.events.slice() : [];
+      corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
+      handCarry = !!(prevPegDay && prevPegDay.handCarry);
+      counter = ENGINE.createDumpVisitCounter({
+        dump: curSites.dump, others: [], learnedOthers: savedLearnedOthers()
+      });
+      var swapSaved = savedSwap;
+      if (!swapSaved && lastFixSeen &&
+          ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, curSites.dump.lat, curSites.dump.lng) <= VISIT_PRESENCE_M) {
+        swapSaved = {
+          sitesKey: swapKey, count: 0, events: [],
+          points: [{ lat: curSites.dump.lat, lng: curSites.dump.lng }],
+          present: true, visitCounted: true,
+          lastT: lastFixSeen.t || 0
+        };
+      }
+      counter.begin(swapKey, swapSaved);
+      visitSource = true;
+      pegArmed = true;
+      persist(true);
+      return true;
+    }
     if (pegsNow.load && pegsNow.dump) {
       curSites = {
         load: { lat: pegsNow.load.lat, lng: pegsNow.load.lng, label: 'Pickup peg', src: 'peg' },
@@ -2572,7 +2689,13 @@
          cycle machine was the wrong tool: dispatch pins, a lone
          peg of either kind, taught/learned dumps, proven pattern
          pairs and navigated dumps. */
-      counter = ENGINE.createPegCounter({ load: curSites.load, dump: curSites.dump });
+      counter = ENGINE.createPegCounter({
+        load: curSites.load, dump: curSites.dump,
+        /* v392: the truck's position at this (re)build — a fresh
+           counter seeds its posture from it (see createPegCounter) */
+        presence: lastFixSeen ? { lat: lastFixSeen.lat, lng: lastFixSeen.lng } : null,
+        presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0
+      });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
       persist(true);
@@ -3675,8 +3798,29 @@
       var rec = recordFor(curDate) || blankDay(curDate);
       var pegs = normalizePegs(rec.pegs);
       var t = (typeof f.t === 'number' && f.t > 0) ? f.t : Date.now();
+      /* v392 (LOADS-MISSED-AFTER-REPEG-NOV9): ROLE-SWAP evidence.
+         A dump peg planted on the standing LOAD peg's ground,
+         while the machine's own books say he is AT the load place
+         (confirmed zone, or a load candidate building), is a role
+         swap: that place stops being the pickup and becomes the
+         dump. configure() reads the mark and runs the dump-VISIT
+         law there until the pickup is re-pegged somewhere else.
+         A dump peg planted anywhere else — or at a place the
+         machine never confirmed as the load end — marks nothing:
+         a genuine same-place pair keeps the cycle law. */
+      var roleSwap = false;
+      if (kind === 'dump' && pegs.load && counter) {
+        var oz = null, oc = null;
+        try { oz = counter.zone ? counter.zone() : null; } catch (e) { oz = null; }
+        try { var odbg = counter.debug ? counter.debug() : null; oc = odbg ? odbg.candZone : null; } catch (e) { oc = null; }
+        if ((oz === 'load' || oc === 'load') &&
+            ENGINE.haversineM(f.lat, f.lng, pegs.load.lat, pegs.load.lng) <= PEG_FENCE_M) {
+          roleSwap = true;
+        }
+      }
       pegs[kind] = { lat: f.lat, lng: f.lng, t: t };
       rec.pegs = pegs;
+      if (roleSwap) rec.pegRoleSwap = { t: t, dumpT: t };
       rec.pegLog = (Array.isArray(rec.pegLog) ? rec.pegLog : []).concat([{ kind: kind, t: t, lat: f.lat, lng: f.lng }]);
       rec.updatedAt = Date.now();
       writeDay(rec);
