@@ -751,6 +751,29 @@
   CL.reconcile = function () {
     if (CL._reconciling) return Promise.resolve(false);
     CL._reconciling = true;
+    /* CONNECT-SEARCH-COLLAPSE-NOV8: the pass is judged by its NET
+       effect on con_list, snapshotted here and compared at the
+       end. The request-doc upserts below and the v155 directory
+       heal read two different snapshots of a peer's identity —
+       the doc froze at send time, the directory is his current
+       word — and when they disagree (the v155 comment's own
+       case: his setup moved after the snapshot froze), every
+       pass flips the entry snapshot->directory and BOTH legs
+       report a change, so the pass resolves true FOREVER. A
+       caller that repaints on `changed` (Connect's refreshLive)
+       then repaints the whole screen every few seconds for as
+       long as it stands open — and re-arms the next pass: the
+       owner's Nov 8 recording, the search box losing its text,
+       focus and keyboard on every cycle. The heal still runs
+       last, so the stored list ends every pass exactly as it
+       does today (the directory's word); only the signal is
+       honest now — a tug-of-war pass that nets to the list it
+       started with resolves FALSE, while a real landing (a pair
+       forming, a status or kind move, the one-time sweep) still
+       nets a difference and resolves true. */
+    var _st0 = store();
+    var _before = null;
+    try { _before = _st0 ? JSON.stringify(_st0.get('con_list', []) || []) : null; } catch (e) {}
     return CL.listMine().then(function (r) {
       var changed = false;
       /* v148: an accepted doc whose one-time end is already
@@ -788,6 +811,19 @@
           }
         } catch (e) {}
         CL._reconciling = false;
+        /* CONNECT-SEARCH-COLLAPSE-NOV8: the net judgment (see the
+           snapshot at the head of this pass). Every leg of the
+           pass writes con_list and nothing else, so the net diff
+           is the whole truth of "anything changed"; the gross
+           sum below survives only as the fallback for a store
+           that could not be snapshotted. */
+        if (_before !== null) {
+          try {
+            var _st1 = store() || _st0;
+            var _after = _st1 ? JSON.stringify(_st1.get('con_list', []) || []) : null;
+            if (_after !== null) return _after !== _before;
+          } catch (e) {}
+        }
         return changed || healed || swept || deduped;
       });
     }).catch(function () { CL._reconciling = false; return false; });

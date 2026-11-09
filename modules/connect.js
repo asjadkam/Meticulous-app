@@ -120,6 +120,7 @@
   var uiShareBlock = '';    // v243: why queueShare refused (the profile fence), surfaced as the flash
   var uiResults = null;     // last directory search results (v131)
   var uiSearchMsg = '';     // general line under the search box (v131)
+  var uiQuery = '';         // CONNECT-SEARCH-COLLAPSE-NOV8: the search box's text, held in state — a repaint rebuilds the box, so the text it hands back must live here, not only in the DOM node
   var uiPeerNote = null;    // {uid, name} the results tail is ABOUT (v145)
   var uiReqs = null;        // last requests load {incoming, outgoing} (v131)
   var uiKindPick = null;    // v148: {peer, kind} — the kind picker open under a search result
@@ -980,7 +981,7 @@
       var h = '<div class="card"><h3>🔎 Find people</h3>';
       if (CL) {
         h += '<div class="row"><div style="flex:1"><label class="f">Name or business</label>' +
-          '<input id="cn_q" placeholder="e.g. a person or business"></div>' +
+          '<input id="cn_q" placeholder="e.g. a person or business" value="' + esc(uiQuery) + '"></div>' +
           '<button class="btn primary" id="cn_search" style="align-self:flex-end">Search</button></div>' +
           '<div id="cn_results">' + resultsHtml() + '</div>';
       } else {
@@ -1227,7 +1228,35 @@
          wiped on the next open. */
       var rerender = function () {
         try { var mk = window.App && App._modKey; if (mk && mk !== 'connect') return; } catch (e) {}
+        /* CONNECT-SEARCH-COLLAPSE-NOV8: a repaint rebuilds the
+           search box — without its text and focus handed back,
+           one landing while the user is typing in Find people
+           collapses the search under him (text gone, keyboard
+           dismissed, page snapped; owner's recording, Nov 8
+           2026). The shell's PTR leg has held the opposite law
+           for every screen since v145 — typing is never blown
+           away — and this funnel holds it here: capture the
+           box's live text before the repaint (it repaints from
+           uiQuery) and, when the box held focus, hand focus
+           straight back to its successor, caret at the end. */
+        var qEl = null, qFocus = false;
+        try {
+          qEl = body.querySelector('#cn_q');
+          if (qEl) {
+            uiQuery = qEl.value;
+            qFocus = !!(typeof document !== 'undefined' && document && document.activeElement === qEl);
+          }
+        } catch (e) {}
         Meticulous.modules.connect.render(body);
+        if (qFocus) {
+          try {
+            var nq = body.querySelector('#cn_q');
+            if (nq && nq.focus) {
+              nq.focus();
+              if (nq.setSelectionRange) { var ln = (nq.value || '').length; nq.setSelectionRange(ln, ln); }
+            }
+          } catch (e) {}
+        }
       };
       var addBtn = body.querySelector('#cn_add');
       if (addBtn) addBtn.onclick = function () { uiAdd = true; uiAddErr = ''; rerender(); };
@@ -1776,6 +1805,11 @@
       if (searchBtn) searchBtn.onclick = runSearch;
       var qInput = body.querySelector('#cn_q');
       if (qInput) qInput.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } };
+      /* CONNECT-SEARCH-COLLAPSE-NOV8: keep the state copy of the
+         search text live as he types, so any repaint — even one
+         that slips past the funnel's own capture — hands the
+         text back */
+      if (qInput) qInput.oninput = function () { uiQuery = qInput.value; };
       wireResults();
       wireRequests();
       if (CL) {
