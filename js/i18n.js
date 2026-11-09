@@ -27,6 +27,16 @@
  * - The choice persists on the 'app_lang' store key the
  *   moment it is made (no Save button — the Preferences
  *   live-apply pattern).
+ *
+ * Amendment (web 391, LANGUAGES-IN-PREFERENCES-NOV9, owner
+ * Nov 9, 2026 16:37 MST: "all the languages I am adding
+ * make sure they make it to languages in preferences as
+ * well"): Tamil (ta) and Portuguese (pt) join the registry,
+ * synced with his channel language list. The registry now
+ * carries 15 entries covering his 14 languages — Punjabi
+ * still in BOTH scripts, per the Oct 23 ruling above.
+ * Data only: no rule, fallback or direction behaviour
+ * changes.
  */
 (function () {
   'use strict';
@@ -45,7 +55,9 @@
     { code: 'fr',    name: 'Français',            dir: 'ltr' },
     { code: 'bs',    name: 'Bosanski',            dir: 'ltr' },
     { code: 'zh',    name: '中文',                 dir: 'ltr' },
-    { code: 'ja',    name: '日本語',               dir: 'ltr' }
+    { code: 'ja',    name: '日本語',               dir: 'ltr' },
+    { code: 'ta',    name: 'தமிழ்',               dir: 'ltr' },
+    { code: 'pt',    name: 'Português',           dir: 'ltr' }
   ];
 
   /* The v252 pack surface: the dashboard module names +
@@ -142,6 +154,20 @@
       'mod.pti': 'PTI', 'mod.damage': '損傷と事故', 'mod.manifest': 'マニフェスト / 日次ログ',
       'mod.invoice': '請求書', 'mod.paystub': '給与明細', 'mod.connect': '接続',
       'prefs.language': '言語'
+    },
+    ta: {
+      'mod.revenue': 'வருவாய்', 'mod.dispatch': 'அனுப்புதல்', 'mod.navigator': 'நேவிகேட்டர்',
+      'mod.fuel': 'எரிபொருள் மற்றும் செலவு', 'mod.pnl': 'P&L', 'mod.maintenance': 'பராமரிப்பு',
+      'mod.pti': 'PTI', 'mod.damage': 'சேதம் மற்றும் சம்பவம்', 'mod.manifest': 'மேனிஃபெஸ்ட் / தினசரி பதிவு',
+      'mod.invoice': 'விலைப்பட்டியல்', 'mod.paystub': 'சம்பள சீட்டு', 'mod.connect': 'இணைப்பு',
+      'prefs.language': 'மொழி'
+    },
+    pt: {
+      'mod.revenue': 'Receita', 'mod.dispatch': 'Despacho', 'mod.navigator': 'Navegador',
+      'mod.fuel': 'Combustível e despesas', 'mod.pnl': 'P&L', 'mod.maintenance': 'Manutenção',
+      'mod.pti': 'PTI', 'mod.damage': 'Danos e incidentes', 'mod.manifest': 'Manifesto / registro diário',
+      'mod.invoice': 'Fatura', 'mod.paystub': 'Contracheque', 'mod.connect': 'Conectar',
+      'prefs.language': 'Idioma'
     }
   };
 
