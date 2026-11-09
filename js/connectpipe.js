@@ -198,6 +198,9 @@
          only to its driver and its named viewers; I am not him);
        sharedbilling/{peer}_{me} — exists (it names him as its
          driver and me as its viewer outright).
+       sharedmanifests/{peer}_{me} — exists (v390: the one doc
+         a Limited peer's driver publishes FOR her; it names him
+         as driver and me as viewer outright).
      Asymmetric by construction: an owner's docs never carry me
      as their driver, so an account I only SEND to can never be
      named. Queries are filtered on .driver (a shareddays doc
@@ -223,12 +226,23 @@
         .then(function (snap) {
           if (snap && snap.exists) {
             var d = snap.data() || {};
-            if (d.driver === p.uid && CP.kindFor(p.uid) !== 'limited') found[p.uid] = true;
+            /* v390: a LIMITED peer whose approver ticked records
+               modules publishes a records doc my client reads
+               (fetchRecords' section strip governs what paints)
+               — that doc proves direction for her too. */
+            if (d.driver === p.uid && (CP.kindFor(p.uid) !== 'limited' || CP.limitedNeedsRecords(p.uid))) found[p.uid] = true;
           }
         }));
       jobs.push(job(f.db.collection('sharedbilling').doc(p.uid + '_' + me).get())
         .then(function (snap) {
           if (snap && snap.exists && CP.kindFor(p.uid) !== 'limited') found[p.uid] = true;
+        }));
+      /* v390: the manifests doc — published ONLY for a limited
+         peer (buildManifests), so its existence is direction
+         evidence for exactly the peers the picker now serves. */
+      jobs.push(job(f.db.collection('sharedmanifests').doc(p.uid + '_' + me).get())
+        .then(function (snap) {
+          if (snap && snap.exists) found[p.uid] = true;
         }));
     });
     return Promise.all(jobs).then(function () { return found; });
@@ -305,7 +319,41 @@
     });
   };
 
+  /* v390 (MARIA-HAUL-CARDS-LIMITED-NOV9, owner Nov 9, 2026):
+     the DAY-doc audience. A LIMITED peer whose approver ticked
+     DISPATCH is a viewer of the driver's day docs in her own
+     right — the dispatch grant names the day docs (dispatches
+     + close facts), exactly what the mirror's Dispatch face
+     serves (the LAST 14 DAYS — the range the mirror has always
+     read). She joins dayPeers ONLY: the records doc keeps its
+     own audience (sharePeers), so a dispatch grant never widens
+     the records door by one field. */
+  CP.dayPeers = function () {
+    var out = CP.sharePeers();
+    CP.connectedPeers().forEach(function (c) {
+      if (CP.kindFor(c.uid) === 'limited' && CP.allowsModule(c.uid, 'dispatch') &&
+          !out.some(function (x) { return x.uid === c.uid; })) out.push(c);
+    });
+    return out;
+  };
+
   /* ---------------- the shared day record ---------------- */
+
+  /* v390: the haul-card key. One key per ticket photo, computed
+     from facts both sides hold — the day doc CARRIES the key and
+     the rendition doc is filed under it; the picture bytes never
+     ride the day doc. The tag is the ticket's own number when it
+     has one, else its position; 'disp' is the dispatch's own
+     photo; 'close' is the day-close haul card (the winning close
+     entry's ticketPhoto). Sanitised to doc-id-safe characters. */
+  CP._tkTag = function (t, i) {
+    var no = t && (t.cardNumber || t.ticketNo);
+    return no ? String(no) + '-' + i : 't' + i;
+  };
+  CP.ticketKey = function (dateStr, dispId, tag) {
+    return ('tk-' + String(dateStr || '') + '-' + String(dispId || '') + '-' + String(tag || ''))
+      .replace(/[^a-zA-Z0-9]+/g, '-');
+  };
 
   /* One dispatch, as facts. Mirrors the rungs the app itself
      trusts: hours from the ticket summary (TicketOCR.
@@ -366,7 +414,7 @@
       travelBillable: !!d.travelBillable,
       loads: loads,
       netWeight: tkWeight > 0 ? r2(tkWeight) : (parseFloat(d.netWeight) || 0),
-      tickets: tickets.map(function (t) {
+      tickets: tickets.map(function (t, ti) {
         return {
           no: String((t && (t.cardNumber || t.ticketNo)) || ''),
           material: String((t && t.material) || ''),
@@ -375,10 +423,16 @@
           netWeight: parseFloat(t && t.netWeight) || 0,
           /* a REFERENCE, never the image: the photo itself stays
              in the driver's own tree (his kv copy of dsp_list) */
-          photoRef: !!(t && t.photo)
+          photoRef: !!(t && t.photo),
+          /* v390: the KEY its rendition is filed under (bytes
+             cross only in sharedphotos, only for the dispatch-
+             ticked limited viewers — publishTicketPhotos) */
+          photoKey: (t && t.photo)
+            ? CP.ticketKey(CP.recordDate(d), d.id, CP._tkTag(t, ti)) : null
         };
       }),
-      photoRef: !!(d.photo || tickets.some(function (t) { return !!(t && t.photo); }))
+      photoRef: !!(d.photo || tickets.some(function (t) { return !!(t && t.photo); })),
+      photoKey: d.photo ? CP.ticketKey(CP.recordDate(d), d.id, 'disp') : null
     };
   };
 
@@ -508,6 +562,34 @@
     };
   };
 
+  /* v390: the winning close ENTRY's ticket photo for a date —
+     read off the same winning group buildCloseFacts prices from
+     (dispatch > entry > tracker), the first entry in it carrying
+     a ticketPhoto. Facts still come from buildCloseFacts; this
+     only names WHICH entry's haul card the day closed on. Null
+     when the day's close carries no haul card. */
+  CP.closeTicketPhoto = function (dateStr) {
+    var st = store();
+    if (!st || !dateStr) return null;
+    var groups = { dispatch: [], entry: [], tracker: [] };
+    (st.get('rev_entries', []) || []).forEach(function (e) {
+      if (!e || e.date !== dateStr) return;
+      var s = CP.entrySource(e);
+      (groups[s] || groups.entry).push(e);
+    });
+    var win = null;
+    if (groups.dispatch.length) win = groups.dispatch;
+    else if (groups.entry.length) win = groups.entry;
+    else if (groups.tracker.length === 1) win = groups.tracker;
+    if (!win) return null;
+    for (var i = 0; i < win.length; i++) {
+      if (win[i].ticketPhoto) {
+        return { photo: win[i].ticketPhoto, ticketNo: String(win[i].ticketNo || '') };
+      }
+    }
+    return null;
+  };
+
   /* v242 (WORK-PROFILES — the CONNECT FENCE): a day worked
      under a non-main profile must NEVER publish to his main
      carrier's connections (Umar / the boss at Ai Trucking see
@@ -570,6 +652,14 @@
        buildCloseFacts) — whichever record actually closed the
        day carries the split the payer prices. */
     var close = CP.buildCloseFacts(dateStr, session.hours);
+    /* v390: the day's haul-card KEY rides the close facts when
+       the winning close entry carries a ticket photo — the key
+       only; the rendition itself crosses in sharedphotos for
+       the dispatch-ticked limited viewers (publishTicketPhotos). */
+    if (close) {
+      var ctp = CP.closeTicketPhoto(dateStr);
+      close.photoKey = ctp ? CP.ticketKey(dateStr, 'close', ctp.ticketNo || 'card') : null;
+    }
     if (!dispatches.length && !(session.hours > 0) && !session.active && !close) return null;
     var idn = { name: '', business: '' };
     try { if (window.ConnectLive) idn = ConnectLive.identity(); } catch (e) {}
@@ -584,7 +674,9 @@
       date: dateStr,
       driverName: idn.name || '',
       driverBusiness: idn.business || '',
-      viewers: CP.sharePeers().map(function (c) { return c.uid; }),
+      /* v390: the day audience is dayPeers — a dispatch-ticked
+         LIMITED peer is named here in her own right */
+      viewers: CP.dayPeers().map(function (c) { return c.uid; }),
       session: session,
       dispatches: dispatches,
       close: close,
@@ -2228,6 +2320,12 @@
               return CP.publishDamagePhotos(doc).then(function (b) { return a || b; });
             })
           : CP.clearPhotoViewers())
+          /* v390: the ticket renditions ride EVERY records pass —
+             their audience (dispatch-ticked limited peers) is not
+             the records audience, so the pass runs on both arms */
+          .then(function (ph) {
+            return CP.publishTicketPhotos().then(function (tk) { return ph || tk; });
+          })
           .then(function (ph) { return wroteAny || !!ph; });
       });
     });
@@ -2384,11 +2482,142 @@
     return Promise.all(jobs).then(function () { return photoWrites > 0; });
   };
 
+  /* v390 (MARIA-HAUL-CARDS-LIMITED-NOV9, owner Nov 9, 2026):
+     every haul-card photo in the local books over the LAST 14
+     DAYS — the range the mirror's Dispatch face serves —
+     dsp_list + the active dispatch (their ticket photos and
+     each dispatch's own photo) plus each day's winning close
+     entry (its ticketPhoto — the end-shift haul card). Keys are
+     recomputed with the same helpers buildDay stamps into the
+     day docs, so a key the reader holds always names the doc
+     this pass files. */
+  CP._ticketScan = function () {
+    var st = store();
+    if (!st) return [];
+    var days = [];
+    var todayStr = '';
+    try { todayStr = App._today() || ''; } catch (e) {}
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(todayStr)) {
+      var nd = new Date();
+      todayStr = nd.getFullYear() + '-' + String(nd.getMonth() + 1).padStart(2, '0') +
+        '-' + String(nd.getDate()).padStart(2, '0');
+    }
+    var tp = todayStr.split('-');
+    var baseMs = Date.UTC(+tp[0], (+tp[1] || 1) - 1, +tp[2] || 1);
+    for (var i = 0; i < 14; i++) {
+      var s = new Date(baseMs - i * 86400000);
+      days.push(s.getUTCFullYear() + '-' +
+        String(s.getUTCMonth() + 1).padStart(2, '0') + '-' +
+        String(s.getUTCDate()).padStart(2, '0'));
+    }
+    var out = [], seen = {};
+    function push(key, photo, date) {
+      if (!key || !photo || seen[key]) return;
+      seen[key] = 1;
+      out.push({ key: key, photo: photo, date: date });
+    }
+    function collect(d) {
+      if (!d) return;
+      var day = CP.recordDate(d);
+      if (days.indexOf(day) === -1) return;
+      (d.tickets || []).forEach(function (t, ti) {
+        if (t && t.photo) push(CP.ticketKey(day, d.id, CP._tkTag(t, ti)), t.photo, day);
+      });
+      if (d.photo) push(CP.ticketKey(day, d.id, 'disp'), d.photo, day);
+    }
+    (st.get('dsp_list', []) || []).forEach(collect);
+    collect(st.get('dsp_active', null));
+    days.forEach(function (day) {
+      var ctp = CP.closeTicketPhoto(day);
+      if (ctp) push(CP.ticketKey(day, 'close', ctp.ticketNo || 'card'), ctp.photo, day);
+    });
+    return out;
+  };
+
+  /* v390: the haul-card RENDITIONS. For every LIMITED peer whose
+     approver ticked DISPATCH — and only those peers (a Full
+     peer's faces are byte-unchanged; she never held a ticket
+     rendition) — the scanned ticket photos are published as
+     sharedphotos docs keyed by the day docs' photoKeys, so her
+     Dispatch detail can resolve them through CP.fetchPhoto.
+     The rendition is CP._rendition — the same downscale the
+     fuel/damage pictures ride (max 900px JPEG; the records
+     facts in the app hold a 1280px copy, the SHARE size has
+     always been this one). The original-resolution bytes never
+     cross: the day doc carries keys only, and only the
+     rendition is ever written here. Renditions whose ticket
+     left the 14-day window are pruned by their owner, the
+     damage pass's discipline; when the last dispatch-ticked
+     limited peer goes away, the docs' viewers are emptied on
+     this same pass (the rules' pair check is the second door). */
+  CP.publishTicketPhotos = function () {
+    var f = fb(), st = store();
+    if (!f || !st) return Promise.resolve(false);
+    var viewers = CP.connectedPeers().filter(function (c) {
+      return CP.kindFor(c.uid) === 'limited' && CP.allowsModule(c.uid, 'dispatch');
+    }).map(function (c) { return c.uid; });
+    var col = f.db.collection('sharedphotos');
+    if (!viewers.length) {
+      return col.where('driver', '==', f.user.uid).get()
+        .then(function (snap) {
+          var jobs = [];
+          snap.forEach(function (d) {
+            var v = d.data() || {};
+            if (v.tkKey && (v.viewers || []).length) {
+              jobs.push(col.doc(d.id).update({ viewers: [] }).catch(function () {}));
+            }
+          });
+          return Promise.all(jobs).then(function () { return jobs.length > 0; });
+        })
+        .catch(function () { return false; });
+    }
+    var scan = CP._ticketScan();
+    var currentKeys = {};
+    scan.forEach(function (s) { currentKeys[s.key] = true; });
+    var viewersKey = viewers.slice().sort().join(',');
+    var jobs = [];
+    scan.forEach(function (s) {
+      var ck = 'tk:' + s.key;
+      var guard = s.key + '|' + viewersKey + '|' + String(s.photo).length +
+        '|' + String(s.photo).slice(-24);
+      if (CP._photoCache[ck] === guard) return;
+      CP._photoCache[ck] = guard;
+      jobs.push(CP._rendition(s.photo).then(function (url) {
+        if (!url) { CP._photoCache[ck] = ''; return false; }
+        var doc = {
+          driver: f.user.uid, viewers: viewers.slice(),
+          tkKey: s.key, date: s.date, photo: url, updatedAt: Date.now()
+        };
+        return col.doc(f.user.uid + '_' + s.key).set(doc)
+          .then(function () { return true; })
+          .catch(function () { CP._photoCache[ck] = ''; return false; });
+      }));
+    });
+    var photoWrites = jobs.length;
+    jobs.push(col.where('driver', '==', f.user.uid).get()
+      .then(function (snap) {
+        var dels = [];
+        snap.forEach(function (d) {
+          var v = d.data() || {};
+          if (v.tkKey && !currentKeys[v.tkKey]) {
+            delete CP._photoCache['tk:' + v.tkKey];
+            dels.push(col.doc(d.id).delete().catch(function () {}));
+          }
+        });
+        return Promise.all(dels);
+      })
+      .catch(function () {}));
+    return Promise.all(jobs).then(function () { return photoWrites > 0; });
+  };
+
   /* When my LAST peer goes away, my receipt renditions must not
      keep naming viewers who can no longer see the records doc:
      empty their viewers lists too (the docs themselves stay —
      they are unreachable facts without a records doc pointing at
-     their keys, and the driver may re-share them later). */
+     their keys, and the driver may re-share them later).
+     v390: ticket renditions (tkKey) are NOT emptied here — their
+     audience belongs to the dispatch grant and is governed by
+     publishTicketPhotos on the same publishAll cycle. */
   CP.clearPhotoViewers = function () {
     var f = fb();
     if (!f) return Promise.resolve(false);
@@ -2397,6 +2626,7 @@
         var jobs = [];
         snap.forEach(function (d) {
           var v = d.data() || {};
+          if (v.tkKey) return;   /* v390: the ticket pass owns these */
           if ((v.viewers || []).length) {
             jobs.push(f.db.collection('sharedphotos').doc(d.id).update({ viewers: [] })
               .catch(function () {}));
@@ -2567,15 +2797,18 @@
     return chain;
   };
 
-  /* The trigger: any share peer not in the persisted known set
-     runs the sweep once, then joins the set. The FIRST pass
-     after this ships treats every current peer as new — a pair
-     formed before the fix (his own first pair included) gets
-     its missing history on the next launch. */
+  /* The trigger: any day-audience peer not in the persisted
+     known set runs the sweep once, then joins the set. The
+     FIRST pass after this ships treats every current peer as
+     new — a pair formed before the fix (his own first pair
+     included) gets its missing history on the next launch.
+     v390: the trigger set is dayPeers — a dispatch-ticked
+     LIMITED peer who becomes a day viewer runs the same sweep,
+     so the days her Dispatch face serves name her too. */
   CP.publishHistoryIfNewPeers = function () {
     var f = fb(), st = store();
     if (!f || !st) return Promise.resolve(false);
-    var now = CP.sharePeers().map(function (c) { return c.uid; }).sort();
+    var now = CP.dayPeers().map(function (c) { return c.uid; }).sort();
     if (!now.length) return Promise.resolve(false);
     var known = st.get('cp_hist_peers', null);
     var fresh = !Array.isArray(known)
@@ -2595,6 +2828,12 @@
   CP.publishAll = function () {
     return CP.publishRecent()
       .then(function () { return CP.publishRecords(); })
+      /* v390: the ticket pass also rides the full cycle itself,
+         so a peer whose ONLY grant is dispatch still lands her
+         renditions even on a pass where the records doc is
+         silent (publishRecords' own tail calls it too — the
+         write guard makes the repeat a no-op) */
+      .then(function () { return CP.publishTicketPhotos(); })
       .then(function () { return CP.publishHistoryIfNewPeers(); })
       .catch(function () { return false; });
   };

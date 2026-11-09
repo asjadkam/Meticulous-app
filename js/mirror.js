@@ -61,6 +61,25 @@
  * docs prove he shares TO this account (CP.receivingFrom), and
  * a driver-only account gets no picker at all. See M.drivers.
  *
+ * v390 — THE PICKER FOR LIMITED (MARIA-HAUL-CARDS-LIMITED-NOV9,
+ * owner Nov 9, 2026 12:08–12:09 MST: "Build it — haul cards
+ * cross to Maria on her Limited seat" + "The picker should
+ * show up in limited access as well."): a LIMITED peer now
+ * appears in the picker too, and picking her driver opens the
+ * mirror faces for ONLY the modules ticked on her pair (face ->
+ * module map at FACE_MODULE: dispatch / manifest / pti /
+ * navigator / damage / fuel / maintenance, revenue on the
+ * invoices tick). Unticked faces never render — the module
+ * door (js/app.js) answers an honest "not shared" empty rather
+ * than her own book under his name (M.blocks). P&L is never a
+ * mirror face and never crosses on a Limited pair. The pipe
+ * follows the same ticks on the publish side: a dispatch-
+ * ticked limited peer is a day-doc viewer in her own right
+ * (CP.dayPeers) and the haul-card (ticket) photo renditions are
+ * published for her (CP.publishTicketPhotos) — on her Dispatch
+ * face the rows open a detail carrying the haul-card photo
+ * (the Audit-law pattern). Full-access behaviour is unchanged.
+ *
  * SAFETY LAW (the Nov 7 zeros were a whose-book confusion):
  *  - a persistent banner names the driver on EVERY screen while
  *    mirroring, and every mirrored module opens with the same
@@ -71,12 +90,14 @@
  *  - mirror browsing writes NO book data anywhere: the single
  *    store write is the payer's own picker memory (mirror_view =
  *    {uid}), the app's standing pick-persistence pattern;
- *  - scope: ONLY kind 'all' peers, plus 'once' peers while the
- *    pair lives (connectedPeers already drops ended pairs).
- *    LIMITED peers never appear in the picker and keep exactly
- *    today's surfaces (sharedmanifests + the dispatch pipe) —
- *    and the pipe's own reader gates (fetchCrewRange /
- *    fetchRecords strip limited drivers) stay underneath.
+ *  - scope: kind 'all' peers, plus 'once' peers while the
+ *    pair lives (connectedPeers already drops ended pairs),
+ *    plus (v390) LIMITED peers — for a Limited peer the picker
+ *    offers ONLY the faces her approver ticked; unticked faces
+ *    never render and never fall through to her own book
+ *    (M.blocks); P&L never appears on a driver share at all.
+ *    The pipe's own reader gates (fetchCrewRange / the
+ *    fetchRecords section strip) stay underneath, unchanged.
  *  - manifest hours in the mirror follow the standing manifest
  *    law: hours come from the day's REVENUE-record facts (the
  *    ticket close / day close the driver published), NEVER the
@@ -181,11 +202,13 @@
     return M._recv;
   };
 
-  /* The pickable drivers: my connected peers at Connect All
-     scope WHO SHARE TO ME. Kind is read live on every call
-     (CP.kindFor), so a pair flipped to Limited — or a one-time
-     pair that ended — falls out of the mirror the moment it
-     happens; direction is the v364 evidence above. */
+  /* The pickable drivers: my connected peers WHO SHARE TO ME.
+     Kind is read live on every call (CP.kindFor), so a pair
+     whose kind or ticks change narrows (or falls out) the
+     moment it happens; direction is the v364 evidence above.
+     v390: a LIMITED peer is pickable when her pair ticks at
+     least one module the mirror has a face for (faceTicked) —
+     her faces are then exactly those ticks, never more. */
   M.drivers = function () {
     var cp = CP();
     if (!cp || !cp.connectedPeers) return [];
@@ -193,7 +216,9 @@
     var list = cp.connectedPeers().filter(function (c) {
       if (!Object.prototype.hasOwnProperty.call(recv, c.uid)) return false;
       var k = cp.kindFor(c.uid);
-      return k === 'all' || k === 'once';
+      if (k === 'all' || k === 'once') return true;
+      if (k === 'limited') return anyFaceTicked(c.uid);
+      return false;
     }).map(function (c) {
       return { uid: c.uid, name: String(c.name || c.business || 'Connected driver'), kind: cp.kindFor(c.uid) };
     });
@@ -227,7 +252,57 @@
     return '';
   };
 
-  M.covers = function (key) { return !!COVERS[key]; };
+  /* v390: the face -> Connect module map for a LIMITED viewer.
+     A face shows for her ONLY when the pair ticks the module
+     the face is made of. Revenue rides the invoices tick (the
+     billing doc is what crosses for her — and P&L, the pnl
+     module, is NEVER a face and never crosses on a Limited
+     pair). Documents has no tick at all (nothing crosses —
+     DOCS-NOT-PUBLISHED), so it can never appear for a Limited
+     peer. The fuel face also answers an expenses-only tick —
+     Fuel & Expense is one face; the records strip still serves
+     only the ticked sections inside it. */
+  var FACE_MODULE = {
+    dispatch: 'dispatch', manifest: 'manifest', pti: 'pti',
+    navigator: 'navigation', damage: 'damage',
+    maintenance: 'maintenance', revenue: 'invoices',
+    documents: 'documents'
+  };
+  function faceTicked(uid, key) {
+    var cp = CP();
+    if (!cp || !cp.allowsModule) return false;
+    if (key === 'fuel') return cp.allowsModule(uid, 'fuel') || cp.allowsModule(uid, 'expenses');
+    var mk = FACE_MODULE[key];
+    return !!mk && cp.allowsModule(uid, mk);
+  }
+  function anyFaceTicked(uid) {
+    return Object.keys(COVERS).some(function (k) { return faceTicked(uid, k); });
+  }
+
+  /* Does the mirror render this module's face for the picked
+     driver? All / once viewers: every covered face, as always
+     (the v357 contract — covers() answers for the KEY; the
+     app.js door separately requires an active pick). A picked
+     LIMITED viewer: only her ticked faces (faceTicked). */
+  M.covers = function (key) {
+    if (!COVERS[key]) return false;
+    var cp = CP(), u = curUid();
+    if (u && cp && cp.kindFor && cp.kindFor(u) === 'limited') return faceTicked(u, key);
+    return true;
+  };
+
+  /* v390: while a LIMITED driver's book is picked, an unticked
+     book face must NOT fall through to the viewer's OWN module
+     under the driver's banner (the whose-book law) — the door
+     in js/app.js answers with an honest "not shared" empty
+     instead. All / once viewers never block: their uncovered
+     modules open exactly as before. */
+  M.blocks = function (key) {
+    if (!COVERS[key]) return false;
+    var cp = CP(), u = curUid();
+    if (!u || !cp || !cp.kindFor || cp.kindFor(u) !== 'limited') return false;
+    return !faceTicked(u, key);
+  };
 
   /* v358 (ROLE GATE, owner corrected Nov 7, 2026 08:24 MDT):
      should THIS account's own dashboard carry the live work
@@ -250,8 +325,9 @@
   };
 
   /* Switch whose book is on screen. A uid that is not a live
-     Connect All / One-Time peer is refused (falls back to Mine)
-     — the picker can never point at a Limited peer. */
+     pickable peer (M.drivers — All, live One-Time, or v390 a
+     Limited peer with a ticked face) is refused (falls back
+     to Mine). */
   M.setView = function (uid) {
     if (uid) {
       var ok = M.drivers().some(function (d) { return d.uid === uid; });
@@ -269,8 +345,10 @@
   /* ---------------- the chrome: picker + banner ---------------- */
 
   /* The dashboard picker: ONE control above the module cards.
-     No Connect All peer -> no picker at all (the dashboard is
-     byte-identical to before for everyone else). */
+     No pickable peer (All / live One-Time / v390 Limited with
+     a ticked face, sharing TO this account) -> no picker at
+     all (the dashboard is byte-identical to before for
+     everyone else). */
   M.paintBar = function () {
     var bar = el('mirrorBar');
     if (!bar) return;
@@ -380,9 +458,9 @@
       };
     });
   }
-  function photoBtn(key) {
+  function photoBtn(key, label) {
     return '<div class="mr-photowrap"><button type="button" class="btn small ghost mr-photo" data-mrphoto="' +
-      esc(key) + '">📷 Receipt photo</button><div class="mr-slot"></div></div>';
+      esc(key) + '">' + esc(label || '📷 Receipt photo') + '</button><div class="mr-slot"></div></div>';
   }
 
   function statusText(sd) {
@@ -401,6 +479,12 @@
 
   function renderDispatch(body, uid, name) {
     var cp = CP(), t = today();
+    /* v390: the tap-to-open detail door exists only on the seat
+       it was ordered for — a LIMITED viewer whose pair ticks
+       dispatch. All / once faces keep the plain rows below,
+       byte for byte. */
+    var door = false;
+    try { door = !!(cp && cp.kindFor && cp.kindFor(uid) === 'limited' && cp.allowsModule(uid, 'dispatch')); } catch (e) {}
     var from = cp && cp.dateShift ? cp.dateShift(t, -13) : t;
     return cp.fetchCrewRange(from, t).then(function (days) {
       if (!stillMine(uid)) return false;
@@ -413,14 +497,21 @@
         return true;
       }
       h += '<div class="card"><h3>📋 His dispatches — last 14 days</h3>';
-      days.forEach(function (day) {
+      days.forEach(function (day, di) {
         var f = M.dayFacts(day);
         h += '<div style="margin:12px 0 2px;font-weight:700">' + esc(day.date) + '</div>';
-        (day.dispatches || []).forEach(function (sd) {
-          h += '<div class="kv"><span>' + esc(sd.jobSite || 'Dispatch') +
+        (day.dispatches || []).forEach(function (sd, si) {
+          var rowInner = '<span>' + esc(sd.jobSite || 'Dispatch') +
             (sd.equipment ? ' · ' + esc(sd.equipment) : '') +
             (timeText(sd.scheduledAt) ? ' · ' + esc(timeText(sd.scheduledAt)) : '') +
-            '</span><b>' + esc(statusText(sd)) + '</b></div>';
+            '</span><b>' + esc(statusText(sd)) + '</b>';
+          if (door) {
+            h += '<button type="button" class="kv mrowbtn" data-mrdisp="' + di + ':' + si +
+              '" style="display:flex;width:100%;background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left">' +
+              rowInner + '</button>';
+          } else {
+            h += '<div class="kv">' + rowInner + '</div>';
+          }
           var bits = [];
           if (sd.material) bits.push('Material: ' + esc(sd.material));
           if (sd.ticketNo) bits.push('Ticket #' + esc(sd.ticketNo));
@@ -440,12 +531,79 @@
           h += '<div style="padding-left:14px;color:#555;font-size:13px;margin:1px 0 4px">Ticket #' +
             esc(day.close.ticketNo) + (day.close.material ? ' · ' + esc(day.close.material) : '') + '</div>';
         }
+        /* v390: the day's haul card, one tap from the face
+           itself — a day closed without a dispatch row still
+           offers its card here */
+        if (door && day.close && day.close.photoKey) {
+          h += photoBtn(day.close.photoKey,
+            '📷 Haul card' + (day.close.ticketNo ? ' — ticket ' + day.close.ticketNo : ''));
+        }
         h += '<div class="kv"><span style="padding-left:14px"><b>Day total</b></span><b>' +
           num(f.loads, 0) + ' loads · ' + num(f.hours) + ' h</b></div>';
       });
       body.innerHTML = h + '</div>';
+      if (door) {
+        wirePhotos(body, uid);
+        Array.prototype.forEach.call(body.querySelectorAll('.mrowbtn'), function (btn) {
+          btn.onclick = function () {
+            var parts = String(btn.getAttribute('data-mrdisp') || '').split(':');
+            var day = days[parseInt(parts[0], 10)];
+            var sd = day && (day.dispatches || [])[parseInt(parts[1], 10)];
+            if (day && sd) paintDispatchDetail(body, uid, name, day, sd);
+          };
+        });
+      }
       return true;
     });
+  }
+
+  /* v390: one dispatch, opened — the Audit-law pattern (rows
+     open the record detail, picture included). Facts off the
+     published day doc; the haul cards resolve through
+     CP.fetchPhoto, which answers only for a named rendition
+     viewer — on this seat that is exactly the dispatch-ticked
+     limited peer the renditions were published for. Read-only:
+     the only controls are Back and the photo fetches. */
+  function paintDispatchDetail(body, uid, name, day, sd) {
+    function kv(k, v) {
+      return '<div class="kv"><span>' + esc(k) + '</span><b>' + esc(v) + '</b></div>';
+    }
+    var h = headHtml(name);
+    h += '<div class="card"><button type="button" class="btn small ghost mr-back">‹ All dispatches</button>' +
+      '<h3>📋 ' + esc(sd.jobSite || 'Dispatch') + ' — ' + esc(day.date) + '</h3>';
+    h += kv('Status', statusText(sd));
+    if (sd.equipment) h += kv('Equipment', sd.equipment);
+    if (timeText(sd.scheduledAt)) h += kv('Start', timeText(sd.scheduledAt));
+    if (sd.material) h += kv('Material', sd.material);
+    if (sd.ticketNo) h += kv('Ticket #', sd.ticketNo);
+    if (parseFloat(sd.foremanHours) > 0) h += kv('Foreman hours', num(sd.foremanHours) + ' h');
+    if (parseFloat(sd.travelHours) > 0) h += kv('Travel', num(sd.travelHours) + ' h' + (sd.travelBillable ? ' (billable)' : ''));
+    if (parseFloat(sd.loads) > 0) h += kv('Loads', num(sd.loads, 0));
+    if (parseFloat(sd.netWeight) > 0) h += kv('Net weight', num(sd.netWeight));
+    if (sd.notes) h += '<p class="note" style="margin-top:6px">' + esc(sd.notes) + '</p>';
+    var anyPhoto = false;
+    (sd.tickets || []).forEach(function (tk) {
+      if (!tk) return;
+      var line = 'Ticket' + (tk.no ? ' ' + tk.no : '') +
+        (parseFloat(tk.loads) > 0 ? ' · ' + num(tk.loads, 0) + ' loads' : '') +
+        (parseFloat(tk.foremanHours) > 0 ? ' · ' + num(tk.foremanHours) + ' h foreman' : '');
+      h += '<div style="margin:10px 0 2px;font-weight:700">' + esc(line) + '</div>';
+      if (tk.photoKey) { h += photoBtn(tk.photoKey, '📷 Haul card'); anyPhoto = true; }
+      else if (tk.photoRef) h += '<p class="note">Haul card photo not published for this ticket.</p>';
+    });
+    if (sd.photoKey) { h += photoBtn(sd.photoKey, '📷 Dispatch photo'); anyPhoto = true; }
+    if (day.close && day.close.photoKey) {
+      h += photoBtn(day.close.photoKey,
+        '📷 Haul card' + (day.close.ticketNo ? ' — ticket ' + day.close.ticketNo : ''));
+      anyPhoto = true;
+    }
+    if (!anyPhoto && !(sd.tickets || []).length) {
+      h += '<div class="empty">No haul card photo on this dispatch.</div>';
+    }
+    body.innerHTML = h + '</div>';
+    wirePhotos(body, uid);
+    var back = body.querySelector('.mr-back');
+    if (back) back.onclick = function () { M.render('dispatch', body); };
   }
 
   function renderRevenue(body, uid, name) {

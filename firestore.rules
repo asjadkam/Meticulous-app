@@ -274,10 +274,20 @@ service cloud.firestore {
     // (an edited or deleted fill) is pruned by its owner.
     match /sharedphotos/{photoId} {
       // v148: same kind gates as the records they belong to.
+      // v390 (MARIA-HAUL-CARDS-LIMITED-NOV9): a TICKET rendition
+      // (it carries tkKey) is a DISPATCH share, not a records
+      // share — a limited viewer whose pair ticks dispatch reads
+      // the ticket renditions that name her, even when her pair
+      // ticks no records module. Fuel/damage renditions carry
+      // no tkKey and keep the records door below, unchanged.
       allow read: if request.auth != null
         && (request.auth.uid == resource.data.driver
           || (request.auth.uid in resource.data.viewers
             && !pairLimitedNoRecords(resource.data.driver, request.auth.uid)
+            && !pairEnded(resource.data.driver, request.auth.uid))
+          || (request.auth.uid in resource.data.viewers
+            && resource.data.get('tkKey', '') != ''
+            && pairAllows(resource.data.driver, request.auth.uid, 'dispatch')
             && !pairEnded(resource.data.driver, request.auth.uid)));
       allow create, update: if request.auth != null
         && request.auth.uid == request.resource.data.driver

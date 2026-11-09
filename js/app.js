@@ -1464,6 +1464,9 @@
       /* v357: a mirrored face has no sub-views of its own — Back
          always falls through to the dashboard. */
       if (window.Mirror && Mirror.active() && Mirror.covers(App._modKey)) return false;
+      /* v390: the same for a "not shared" empty (Mirror.blocks)
+         — the real module never rendered there either. */
+      if (window.Mirror && Mirror.active() && Mirror.blocks && Mirror.blocks(App._modKey)) return false;
       var m = App._modKey && Meticulous.modules[App._modKey];
       if (m && typeof m.back === 'function') return !!m.back();
     } catch (e) {}
@@ -1507,6 +1510,26 @@
       var mbody = el('modBody');
       mbody.innerHTML = '';
       try { Mirror.render(key, mbody); } catch (e) { mbody.innerHTML = '<div class="empty">Could not load module.</div>'; console.error(e); }
+      try { App.ptrNoteRepainted(); } catch (e) {}
+      window.scrollTo(0, 0);
+      return;
+    }
+    /* v390 (MARIA-HAUL-CARDS-LIMITED-NOV9): a LIMITED viewer
+       picked a driver; an unticked book face never falls
+       through to her OWN module under his banner — the door
+       answers honestly instead. All / once viewers never block
+       (Mirror.blocks is false for them), so their uncovered
+       modules open exactly as before. */
+    if (window.Mirror && Mirror.active() && Mirror.blocks && Mirror.blocks(key)) {
+      if (App._modKey !== key) teardownModule();
+      App._modKey = key;
+      el('dashView').classList.add('hidden');
+      el('modView').classList.remove('hidden');
+      el('modTitle').textContent = moduleTitle(key) + ' — ' + Mirror.name();
+      el('modBody').innerHTML = '<div class="card" style="border:2px solid #b45309;background:#fff8e6">' +
+        '<b>👁 Viewing: ' + esc(Mirror.name()) + ' — read-only</b></div>' +
+        '<div class="card"><div class="empty">' + esc(Mirror.name()) + ' has not shared ' +
+        esc(moduleTitle(key)) + ' on this connection.</div></div>';
       try { App.ptrNoteRepainted(); } catch (e) {}
       window.scrollTo(0, 0);
       return;
