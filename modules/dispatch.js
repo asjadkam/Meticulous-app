@@ -2717,7 +2717,11 @@
          into the runs IT carries and each carried run is saved
          through the same setRouteSheet the photo path uses; a
          file carrying no readable run — or runs that cannot be
-         told apart — saves nothing and says so plainly. ---- */
+         told apart — saves nothing and says so plainly.
+         ROUTE-SHEET-UPLOAD-CONFIRMATION-NOV8 addendum: the file
+         door's saves no longer land on the read — they land on
+         her tap, after the confirmation staged below shows her
+         what was read (see the dpPendingSheet block). ---- */
       try {
         [['am', '#dp_sheet_am', '#dp_sheet_am_in', '#dp_sheet_am_note', 'Morning'],
          ['pm', '#dp_sheet_pm', '#dp_sheet_pm_in', '#dp_sheet_pm_note', 'Afternoon']].forEach(function (cfg) {
@@ -2741,6 +2745,144 @@
           };
         });
       } catch (e) {}
+
+      /* ---- ROUTE-SHEET-UPLOAD-CONFIRMATION-NOV8 (owner Nov 8,
+         2026 19:24 CST, watching Nirojini use the upload —
+         "There should be a confirmation step!"): until today
+         the file door's read saved every carried run the moment
+         the read finished — setRouteSheet ran inside the read's
+         own completion — and the first thing the driver ever
+         saw of the read was the "saved" note, after it had
+         already become her standing route. Now a successful
+         read STAGES: the confirmation below stands in the Route
+         sheets card's place, showing each run it carried — its
+         stops in order, by their sheet names, and the kid count
+         its roster carries — and nothing is written until she
+         taps "✓ Save this route". "Cancel" writes nothing and
+         the route she had stands untouched. A read that sorts
+         to nothing, or whose runs cannot be told apart, never
+         reaches the card: it refuses plainly, exactly as
+         before. The preview is built from the split engine's
+         OWN pure parsers (parseRouteSheet / parseRouteRoster
+         over the very texts Save will hand setRouteSheet), so
+         the card shows precisely what a save would write —
+         never a second reading of the sheet.
+         THE PENDING READ'S LIFETIME is this render's closure:
+         dpPendingSheet is declared HERE, inside render, never
+         at module scope. Leaving the module, any repaint, or a
+         relaunch discards it with the paint that staged it —
+         no later paint can see it, and the only road from it
+         to the store is the Save button wired beside it in
+         this same closure, on the card the same paint built.
+         (A read that finishes after she has already left lands
+         on the old paint's detached card, invisible and
+         unsavable — the fresh paint never hears of it.)
+         NAMED CHOICES (owner's to veto): the stop list stands
+         IN FULL on the card, scrollable when long — a
+         confirmation she cannot inspect is no confirmation;
+         ONE confirmation covers every run the file carried
+         (the one-upload law), never one prompt per run; the
+         wording is the bench's, his to change.
+         OUT OF SCOPE, parked by name in the queue: the per-run
+         PHOTOGRAPH doors still save the moment their read
+         lands — the same standing route, the same silent way.
+         Whether they gain the same step is his call, not this
+         fix's. ---- */
+      var dpPendingSheet = null;
+      function dpSheetPreviewRun(block, shaped, sec) {
+        var eng = null;
+        try { eng = (window.SplitShift && SplitShift._engine) || null; } catch (e) {}
+        if (!eng || typeof eng.parseRouteSheet !== 'function') return null;
+        var stops = [];
+        try { stops = eng.parseRouteSheet(shaped || ''); } catch (e) { stops = []; }
+        if (!stops.length) return null;
+        var kids = 0;
+        if (sec && typeof eng.parseRouteRoster === 'function') {
+          try {
+            var roster = eng.parseRouteRoster(sec, stops), seenK = {};
+            (roster || []).forEach(function (r) {
+              ((r && r.up) || []).concat((r && r.down) || []).forEach(function (nm) { seenK[nm] = 1; });
+            });
+            kids = Object.keys(seenK).length;
+          } catch (e) { kids = 0; }
+        }
+        return { block: block, stops: stops, kids: kids };
+      }
+      function dpPaintSheetConfirm() {
+        var card = body.querySelector('#dp_sheet_card');
+        if (!card || !dpPendingSheet) return;
+        var h = '<h3>🚌 Check this route sheet</h3>' +
+          '<p class="note">This is what the app read. Nothing is saved yet — it becomes the standing route only when you tap Save this route.</p>';
+        dpPendingSheet.preview.forEach(function (pv) {
+          var label = pv.block === 'am' ? 'Morning route' : 'Afternoon route';
+          h += '<label class="f">' + label + ' — ' + pv.stops.length + ' stops' +
+            (pv.kids ? ' · ' + pv.kids + (pv.kids === 1 ? ' kid' : ' kids') : '') + '</label>' +
+            '<div style="max-height:220px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:6px 10px;margin-bottom:8px">' +
+            pv.stops.map(function (st, i) {
+              return '<div style="padding:2px 0">' + (i + 1) + '. ' +
+                (st.time ? esc(st.time) + ' — ' : '') + esc(st.name) + '</div>';
+            }).join('') + '</div>';
+        });
+        h += '<div class="row"><button type="button" class="btn ghost" id="dp_sheet_cancel" style="flex:1">Cancel</button></div>' +
+          '<div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="dp_sheet_confirm" style="flex:1">✓ Save this route</button></div>';
+        card.innerHTML = h;
+        var cBtn = card.querySelector('#dp_sheet_cancel'),
+            sBtn = card.querySelector('#dp_sheet_confirm');
+        if (cBtn) cBtn.onclick = function () { dpCancelPendingSheet(); };
+        if (sBtn) sBtn.onclick = function () { dpSavePendingSheet(); };
+      }
+      function dpSavePendingSheet() {
+        var pend = dpPendingSheet;
+        dpPendingSheet = null;
+        if (!pend) return;
+        var text = pend.text, runs = pend.runs;
+        var saved = [], runNotes = [];
+        [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Afternoon', '#dp_sheet_pm_note']].forEach(function (rc) {
+          if (!runs[rc[0]]) return;
+          var n = 0;
+          /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
+             run's own SECTION of the file rides along — it
+             carries the sheet's named students, and the
+             split engine reads the run's roster from it.
+             A sectionless file passes '' — its route saves
+             without a roster, plainly (the roster attaches
+             from the file's own shift sections, or from a
+             photographed sheet). */
+          var sec382 = '';
+          try { sec382 = RouteSheetFile.sliceShift(text || '', rc[0]) || ''; } catch (e) { sec382 = ''; }
+          try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]], sec382); } catch (e) {}
+          if (n > 0) {
+            saved.push(rc[1] + ' ' + n + ' stops');
+            runNotes.push([rc[2], rc[1] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.']);
+          }
+        });
+        var fileNote = saved.length === 2
+          ? 'Both routes saved — ' + saved[0] + ', ' + saved[1].charAt(0).toLowerCase() + saved[1].slice(1) + ', in order. The day’s route follows this sheet.'
+          : (saved.length === 1
+            ? saved[0].split(' ')[0] + ' route saved — ' + saved[0].split(' ').slice(1).join(' ') + ', in order. The day’s route follows this sheet.'
+            : 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.');
+        /* The confirmation stood in the card's place, notes
+           and all — the module repaints (its own established
+           refresh), and today's exact saved-notes are laid on
+           the fresh card. */
+        api.render(body);
+        runNotes.forEach(function (rn2) {
+          var el = body.querySelector(rn2[0]);
+          if (el) el.textContent = rn2[1];
+        });
+        var fn = body.querySelector('#dp_sheet_file_note');
+        if (fn) fn.textContent = fileNote;
+      }
+      function dpCancelPendingSheet() {
+        dpPendingSheet = null;
+        api.render(body);
+        var had = { am: 0, pm: 0 };
+        try { if (window.SplitShift && SplitShift.routeSheetInfo) had = SplitShift.routeSheetInfo(); } catch (e) {}
+        var fn = body.querySelector('#dp_sheet_file_note');
+        if (fn) fn.textContent = (had.am || had.pm)
+          ? 'Nothing was changed — that read was not saved, and your saved route still stands.'
+          : 'Nothing was changed — that read was not saved.';
+      }
       try {
         var dpFileBtn = body.querySelector('#dp_sheet_file'),
             dpFileIn = body.querySelector('#dp_sheet_file_in'),
@@ -2758,32 +2900,29 @@
                 if (dpFileNote) dpFileNote.textContent = 'That file’s runs could not be told apart — nothing was saved. Photograph each printed sheet above instead.';
                 return;
               }
-              var saved = [];
-              [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Afternoon', '#dp_sheet_pm_note']].forEach(function (rc) {
-                if (!runs[rc[0]]) return;
-                var n = 0;
-                /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
-                   run's own SECTION of the file rides along — it
-                   carries the sheet's named students, and the
-                   split engine reads the run's roster from it.
-                   A sectionless file passes '' — its route saves
-                   without a roster, plainly (the roster attaches
-                   from the file's own shift sections, or from a
-                   photographed sheet). */
-                var sec382 = '';
-                try { sec382 = RouteSheetFile.sliceShift(text || '', rc[0]) || ''; } catch (e) { sec382 = ''; }
-                try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]], sec382); } catch (e) {}
-                if (n > 0) {
-                  saved.push(rc[1] + ' ' + n + ' stops');
-                  var rn = body.querySelector(rc[2]);
-                  if (rn) rn.textContent = rc[1] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.';
-                }
+              /* ROUTE-SHEET-UPLOAD-CONFIRMATION-NOV8: a read
+                 that produced runs is STAGED for her check,
+                 never saved on the spot — the preview is built
+                 from the engine's own parsers over the very
+                 texts Save will write, a run whose stops parse
+                 to nothing is not carried (exactly the run
+                 setRouteSheet would have refused), and only a
+                 read with nothing confirmable at all keeps the
+                 plain refusal below. */
+              var preview = [];
+              ['am', 'pm'].forEach(function (block) {
+                if (!runs[block]) return;
+                var secP = '';
+                try { secP = RouteSheetFile.sliceShift(text || '', block) || ''; } catch (e) { secP = ''; }
+                var pv = dpSheetPreviewRun(block, runs[block], secP);
+                if (pv) preview.push(pv);
               });
-              if (dpFileNote) dpFileNote.textContent = saved.length === 2
-                ? 'Both routes saved — ' + saved[0] + ', ' + saved[1].charAt(0).toLowerCase() + saved[1].slice(1) + ', in order. The day’s route follows this sheet.'
-                : (saved.length === 1
-                  ? saved[0].split(' ')[0] + ' route saved — ' + saved[0].split(' ').slice(1).join(' ') + ', in order. The day’s route follows this sheet.'
-                  : 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.');
+              if (!preview.length) {
+                if (dpFileNote) dpFileNote.textContent = 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.';
+                return;
+              }
+              dpPendingSheet = { text: text || '', runs: runs, preview: preview };
+              dpPaintSheetConfirm();
             };
             /* ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: the file is
                routed by what it IS, not by what the picker called

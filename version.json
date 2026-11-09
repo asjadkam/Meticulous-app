@@ -1,8 +1,8 @@
 {
   "version": 63,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v63.apk",
-  "webVersion": 384,
-  "notes": "Web 384 — ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: the route-sheet file upload that refused Nirojini's sheet on her phone tonight (\"That file could not be read as a route sheet — nothing was saved\") is fixed. (1) The PDF reader (PDF.js 3.11.174) now ships WITH the app — js/vendor/pdf.min.js + js/vendor/pdf.worker.min.js, same-origin, tried FIRST; the CDN copy remains only as a backstop, and a failed reader load is no longer cached, so the next upload tries fresh instead of replaying a dead reader for the life of the page. A phone's dead network moment or a blocked CDN can no longer kill the read outright. (2) A file is routed by what it IS, not by what the picker called it: RouteSheetFile.sniffKind reads the first bytes (%PDF / JPEG / PNG / GIF / WebP magic) and only an unrecognised file falls back to the picker's labels — a PDF forwarded through a message app or drive picker with an empty type and a bare-number name now reaches the PDF reader instead of dying in the photo reader. (3) A PDF text read that fails no longer dead-ends at the refusal: the pages are tried through the photo (OCR) reader before anything is refused. A genuinely unreadable file still refuses plainly, and a failed read still never touches a saved route. modules/dispatch.js + the two new vendor files only; version stays 63.",
+  "webVersion": 385,
+  "notes": "Web 385 — ROUTE-SHEET-UPLOAD-CONFIRMATION-NOV8: the route-sheet file upload now asks before it saves. Until today the file door's read saved every run it carried the moment the read finished — the first thing the driver saw was the \"saved\" note, after the read had already become her standing route. Now a successful read STAGES: a confirmation card stands in the Route sheets card's place — \"\\U0001F68C Check this route sheet\" — showing each run the file carried, its stops in order by their sheet names with their sheet times, and the kid count its roster carries (on her sheet: Morning 8 stops · 6 kids, Afternoon 8 stops · 6 kids), with the words \"Nothing is saved yet\". A quiet Cancel writes nothing and the route she had stands untouched; the one primary \"\\u2713 Save this route\", last and full-width, writes through the same save loop as before and speaks the same saved notes. The preview is built from the split engine's own parsers over the very texts Save will write, so the card shows precisely what a save would write. A read that sorts to nothing, or whose runs cannot be told apart, never reaches the card — it refuses plainly, exactly as before. The pending read lives only in the paint that staged it: leaving the module, any repaint, or a relaunch discards it unsaved. modules/dispatch.js only; js/splitshift.js untouched; version stays 63.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -16,7 +16,7 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "a4e964aba271ce32915e8c83dcba734353934da99befdb882c1adbbb9a3d8f59",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "a79c603698a99b2439519a78a1e4184ae5304ab45ae86d080e94c632a8be3a96",
+    "index.html": "dc83b9c1e45a0650dbdf3397cfc0faf572109dd819c08b73557bc30899d8a16a",
     "js/app.js": "83cf821705884220bbf034085c06f9e5607691ba0b3f13069e33362923a88777",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -47,7 +47,7 @@
     "modules/billing.js": "5027d7d3fad18d698c819aad4168d763fd5346c78b4daa5a5ebce1fb70c53aeb",
     "modules/connect.js": "07245c9066153591aee15d624bf35602f27186043247eee34b4997bd48c2d756",
     "modules/damage.js": "368b434eb9ed8cf9f986636892bf442a44c62017fe458241dbef7147897e4299",
-    "modules/dispatch.js": "8b0308f0663c65638230f6a6e1a3b27dfb5b57250dc8f033d44a06386c07c48f",
+    "modules/dispatch.js": "269ca3a90e7df212c0e54ba1d673bb37be73338c0f18835f5fac19692ce8a87a",
     "modules/documents.js": "cdb0128669f678463057c325a1b8c13399c2f0d0542fc518471733ee13d41283",
     "modules/fuel.js": "1b14b3e6aa8ec703631e44911ef26040546b77a5c779371c7e80b4c0ff51bf93",
     "modules/invoice.js": "909eaa90c5adacc52a8495af2515853ca4a76e645855c5f150e35716a6a03b84",
