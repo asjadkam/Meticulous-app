@@ -103,6 +103,28 @@
       if (f.type && /pdf/i.test(f.type)) return true;
       return /\.pdf$/i.test(String(f.name || ''));
     },
+    /* ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: what a file IS is
+       read off its own first bytes, never off the picker's labels
+       alone. A phone's file picker speaks for the provider that
+       stored the file, and providers lie by omission all the time:
+       a PDF forwarded through a message app or a drive picker can
+       arrive with an empty type and a name that is a bare number
+       with no ".pdf" on it — isPdfFile says no, the bytes went to
+       the photo reader, the photo reader cannot decode PDF bytes
+       as an image, and a good sheet refused. The reverse happens
+       too (an image wearing a .pdf name). sniffKind answers from
+       the magic bytes: 'pdf', 'image', or '' (nothing recognised —
+       the caller falls back to the label test above). */
+    sniffKind: function (b) {
+      if (!b || b.length < 4) return '';
+      if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'pdf'; /* %PDF */
+      if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'image'; /* JPEG */
+      if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'image'; /* PNG */
+      if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image'; /* GIF8 */
+      if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+          b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image'; /* RIFF....WEBP */
+      return '';
+    },
     linesFromItems: function (items) {
       var rows = [];
       (items || []).forEach(function (it) {
@@ -193,27 +215,53 @@
   };
   /* ROUTE-SHEET-FILE-END */
 
-  /* The PDF reader itself (PDF.js), loaded lazily from the
-     same CDN shelf as the OCR reader, only when a PDF is
-     actually uploaded. */
+  /* The PDF reader itself (PDF.js 3.11.174), loaded lazily, only
+     when a PDF is actually uploaded.
+     ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: the reader used to
+     come from a CDN shelf at upload time, and on a phone that
+     fetch is a hop too many — a dead network moment, a blocked
+     CDN, or the worker script failing each killed the read
+     outright, and the wiring's refusal was the only door left.
+     The reader now ships WITH the app (js/vendor/, the same two
+     files the bench validates) and is tried FIRST: same-origin,
+     no network, and its worker is same-origin too, so the parse
+     runs in a real worker with no cross-origin wrapper. The CDN
+     copy remains as the backstop if the bundled one ever fails
+     to load. A load failure is never cached: the promise is
+     forgotten, so the next upload tries fresh instead of
+     replaying a dead reader for the life of the page. */
+  var DP_PDF_LOCAL = { lib: 'js/vendor/pdf.min.js', worker: 'js/vendor/pdf.worker.min.js' };
+  var DP_PDF_CDN = {
+    lib: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+    worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+  };
   var dpPdfJsPromise = null;
-  function dpPdfJs() {
-    var worker = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-    if (window.pdfjsLib) {
-      try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = worker; } catch (e) {}
-      return Promise.resolve(window.pdfjsLib);
-    }
-    if (dpPdfJsPromise) return dpPdfJsPromise;
-    dpPdfJsPromise = new Promise(function (resolve, reject) {
+  function dpPdfLoadFrom(srcs) {
+    return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+      s.src = srcs.lib;
       s.onload = function () {
-        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = worker; } catch (e) {}
+        if (!window.pdfjsLib) { reject(new Error('the PDF reader could not be loaded')); return; }
+        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = srcs.worker; } catch (e) {}
         resolve(window.pdfjsLib);
       };
       s.onerror = function () { reject(new Error('the PDF reader could not be loaded')); };
       document.head.appendChild(s);
     });
+  }
+  function dpPdfJs() {
+    if (window.pdfjsLib) {
+      try {
+        if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = DP_PDF_LOCAL.worker;
+        }
+      } catch (e) {}
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (dpPdfJsPromise) return dpPdfJsPromise;
+    dpPdfJsPromise = dpPdfLoadFrom(DP_PDF_LOCAL)
+      .catch(function () { return dpPdfLoadFrom(DP_PDF_CDN); })
+      .catch(function (e) { dpPdfJsPromise = null; throw e; });
     return dpPdfJsPromise;
   }
   function dpSheetPdfDoc(file) {
@@ -2737,14 +2785,35 @@
                   ? saved[0].split(' ')[0] + ' route saved — ' + saved[0].split(' ').slice(1).join(' ') + ', in order. The day’s route follows this sheet.'
                   : 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.');
             };
-            if (RouteSheetFile.isPdfFile(f)) {
-              dpSheetPdfText(f).then(function (res) {
-                if (res && res.chars >= RouteSheetFile.TEXT_MIN) done(res.text);
-                else dpSheetPdfOcr(f).then(done).catch(function () { done(''); });
-              }).catch(function () { done(''); });
-            } else if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
-              TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
-            } else done('');
+            /* ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: the file is
+               routed by what it IS, not by what the picker called
+               it — the first bytes are sniffed (RouteSheetFile.
+               sniffKind), and only an unrecognised file falls back
+               to the picker's labels. And a PDF text read that
+               FAILS (reader trouble, a text layer that will not
+               extract) no longer dead-ends at the refusal: the
+               pages are tried through the photo reader before
+               anything is refused. A genuinely unreadable file
+               still refuses plainly below, and a failed read still
+               never touches a saved route. */
+            var dpSniff = (f && typeof f.slice === 'function' && typeof f.arrayBuffer === 'function')
+              ? f.slice(0, 16).arrayBuffer()
+                  .then(function (buf) { return RouteSheetFile.sniffKind(new Uint8Array(buf)); })
+                  .catch(function () { return ''; })
+              : Promise.resolve('');
+            dpSniff.then(function (kind) {
+              var asPdf = kind ? (kind === 'pdf') : RouteSheetFile.isPdfFile(f);
+              if (asPdf) {
+                dpSheetPdfText(f).then(function (res) {
+                  if (res && res.chars >= RouteSheetFile.TEXT_MIN) done(res.text);
+                  else dpSheetPdfOcr(f).then(done).catch(function () { done(''); });
+                }).catch(function () {
+                  dpSheetPdfOcr(f).then(done).catch(function () { done(''); });
+                });
+              } else if (window.TicketOCR && TicketOCR.recognizeWithRotation) {
+                TicketOCR.recognizeWithRotation(URL.createObjectURL(f)).then(done).catch(function () { done(''); });
+              } else done('');
+            });
           };
         }
       } catch (e) {}
