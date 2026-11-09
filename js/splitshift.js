@@ -798,6 +798,14 @@
                              // kids): [{up: [names], down:
                              // [names]}] aligned with routeSheets
                              // by index; replaced with the sheet
+  var routeName = '';        // the SHEET's own route id, read
+                             // off the file that carried the
+                             // route (ROUTE-STOP-KID-NAMES-TRIP-
+                             // PREVIEW-NOV8 — "save the entire
+                             // route by name on her map"): the
+                             // bare id ('CBE-0574'); '' when the
+                             // sheet named none — faces then use
+                             // the plain Morning/Evening words
   var dayAbsent = { date: '', keys: {} }; // per-day absent kids:
                              // keys 'sheet:<block>:<idx>:<up|
                              // down>:<n>' — that day only, the
@@ -829,6 +837,7 @@
         dayStopsDate: dayStopsDate,
         routeSheets: routeSheets,
         routeRoster: routeRoster,
+        routeName: routeName,
         sheetUsed: sheetUsed,
         daySkips: daySkips,
         dayAbsent: dayAbsent,
@@ -914,6 +923,7 @@
         rec.daySkips.keys && typeof rec.daySkips.keys === 'object') {
       daySkips = { date: String(rec.daySkips.date || ''), keys: rec.daySkips.keys };
     }
+    routeName = (typeof rec.routeName === 'string') ? rec.routeName : '';
     if (rec.machine && rec.machineKey) {
       machine = ENGINE.createDayMachine(rec.machine);
       sessionKey = rec.machineKey;
@@ -999,24 +1009,101 @@
     var amLen = (routeSheets.am || []).length;
     return (amLen && progAm >= amLen && (routeSheets.pm || []).length) ? 'pm' : 'am';
   }
+  /* The day's absent truth BY NAME (ROUTE-EDIT-AND-DAILY-
+     SKIP-NOV8): the absent marks are positional (each keys a
+     roster slot), but a KID is a person, not a slot — the
+     same name rides the morning roster (on at home) and the
+     evening roster (off at home). Resolving the day's marks
+     through the roster gives the set of kids who are not
+     coming today, whichever run's chip she tapped. */
+  function absentNamesToday() {
+    var out = {};
+    if (dayAbsent.date !== ENGINE.dayStr(Date.now())) return out;
+    Object.keys(dayAbsent.keys).forEach(function (k) {
+      if (!dayAbsent.keys[k]) return;
+      var m = /^sheet:(am|pm):(\d+):(up|down):(\d+)$/.exec(k);
+      if (!m) return;
+      var r = (routeRoster[m[1]] || [])[+m[2]];
+      var nm = (r && r[m[3]]) ? r[m[3]][+m[4]] : '';
+      if (nm) out[nm] = true;
+    });
+    return out;
+  }
+  /* A stop the bus need not make today: the sheet gives the
+     stop kids, and EVERY one of them is absent today. A stop
+     with no kids (a timing point, a yard) never auto-drops;
+     a stop with even one kid still coming never auto-drops. */
+  function stopAllAbsent(block, idx, names) {
+    var r = (routeRoster[block] || [])[idx];
+    if (!r) return false;
+    var kids = (r.up || []).concat(r.down || []);
+    if (!kids.length) return false;
+    for (var i = 0; i < kids.length; i++) if (!names[kids[i]]) return false;
+    return true;
+  }
+  /* Today's AUTO skips: the stops that drop out of today's
+     walk because every kid they serve is absent — computed
+     from the day's marks, never stored (the marks are the
+     day's; tomorrow they are gone and the whole route
+     stands again). */
+  function autoSkipKeys() {
+    var out = {};
+    var names = absentNamesToday();
+    if (!Object.keys(names).length) return out;
+    ['am', 'pm'].forEach(function (b) {
+      (routeSheets[b] || []).forEach(function (st, i) {
+        if (stopAllAbsent(b, i, names)) out['sheet:' + b + ':' + i] = true;
+      });
+    });
+    return out;
+  }
+  /* Why a stop stands skipped today: 'marked' when her own
+     skip tap made it so, 'absent' when it dropped because
+     its kids are all absent, '' when it runs. */
+  function skipWhy(key, direct, auto) {
+    if (direct && direct[key]) return 'marked';
+    if (auto && auto[key]) return 'absent';
+    return '';
+  }
+  /* The walk's skip truth for today: her direct marks PLUS
+     the auto drops — the plan steps over both, so a stop
+     whose kids are all absent leaves the day's walk on BOTH
+     runs from the one absent tap (the ruling's own words:
+     morning pickup and evening drop-off alike). The GPS
+     record's positional naming does NOT read this set — if
+     she drives a dropped stop anyway, the record still names
+     it served, with its kids absent (see recordRouteStop). */
   function planSkipKeys() {
     var day = planDay(), today = ENGINE.dayStr(Date.now());
-    return (daySkips.date === day || daySkips.date === today) ? daySkips.keys : {};
+    var keys = {};
+    if (daySkips.date === day || daySkips.date === today) {
+      Object.keys(daySkips.keys).forEach(function (k) { keys[k] = daySkips.keys[k]; });
+    }
+    var auto = autoSkipKeys();
+    Object.keys(auto).forEach(function (k) { keys[k] = true; });
+    return keys;
   }
   function absentKeys() {
     return (dayAbsent.date === ENGINE.dayStr(Date.now())) ? dayAbsent.keys : {};
   }
   /* One stop's kid truth: the sheet's roster for the stop with
      today's absent marks laid over it — expected, absent, and
-     the day's count (expected minus absent) per direction. */
+     the day's count (expected minus absent) per direction.
+     The marks are stored positionally (each chip keys a
+     roster slot), but the day's TRUTH is by NAME
+     (ROUTE-EDIT-AND-DAILY-SKIP-NOV8): a kid marked absent
+     on the morning roster is absent for the day — the
+     evening row, the counts and the names the faces speak
+     all read the same absence, which is also what drops
+     his stops out of both runs' walks (autoSkipKeys). */
   function kidLine(block, idx) {
     var r = (routeRoster[block] || [])[idx] || { up: [], down: [] };
-    var ak = absentKeys();
+    var an = absentNamesToday();
     var key0 = 'sheet:' + block + ':' + idx;
     function side(dir, names) {
       var kids = (names || []).map(function (nm, k) {
         var key = key0 + ':' + dir + ':' + k;
-        return { key: key, name: nm, absent: !!ak[key] };
+        return { key: key, name: nm, absent: !!an[nm] };
       });
       var abs = 0;
       kids.forEach(function (x) { if (x.absent) abs++; });
@@ -1024,6 +1111,28 @@
     }
     var up = side('up', r.up), down = side('down', r.down);
     return { up: up, down: down, absent: up.abs + down.abs };
+  }
+  /* The route's name as faces speak it: the sheet's own id
+     with its plain word — 'Route CBE-0574' — or '' when the
+     sheet named none (faces then fall back to the Morning /
+     Evening words alone; NAMED CHOICE, owner's to veto:
+     ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8). */
+  function displayRouteName() {
+    return routeName ? 'Route ' + routeName : '';
+  }
+  /* One stop's kids BY NAME, as the day expects them: the
+     sheet's roster for the stop with today's absent marks laid
+     over it (the roster-minus-absents law) — the names the
+     plan card and the trip preview speak. Names come only
+     from the sheet; a stop the sheet names nobody at gets two
+     empty lists. */
+  function stopKids(block, idx) {
+    var kl = kidLine(block, idx);
+    function present(side) {
+      return (side.kids || []).filter(function (k) { return !k.absent; })
+        .map(function (k) { return k.name; });
+    }
+    return { up: present(kl.up), down: present(kl.down) };
   }
   function subscribe() {
     if (subscribed) return;
@@ -1414,6 +1523,18 @@
          midnight keeps its record honest. */
       var skipKeys = (daySkips.date === today || daySkips.date === ENGINE.dayStr(Date.now()))
         ? daySkips.keys : {};
+      /* The record names what was skipped today — her direct
+         marks AND the stops that dropped because every kid
+         they serve is absent (ROUTE-EDIT-AND-DAILY-SKIP-
+         NOV8): an unserved auto-dropped stop rides the
+         record below flagged skipped WITH its reason, never
+         silently vanished. A stop she DID drive keeps its
+         served entry unflagged — the record is what
+         happened (its kids read absent there, carried 0). */
+      var effKeys = {};
+      Object.keys(skipKeys).forEach(function (k) { effKeys[k] = true; });
+      var autoKeys = autoSkipKeys();
+      Object.keys(autoKeys).forEach(function (k) { effKeys[k] = true; });
       var served = {};
       var out = dayStops.map(function (s) {
         served[s.key] = true;
@@ -1435,8 +1556,10 @@
       ['am', 'pm'].forEach(function (b) {
         (routeSheets[b] || []).forEach(function (st, i) {
           var key = 'sheet:' + b + ':' + i;
-          if (skipKeys[key] && !served[key]) {
-            out.push({ key: key, name: st.name, at: 0, skipped: true });
+          if (effKeys[key] && !served[key]) {
+            var o2 = { key: key, name: st.name, at: 0, skipped: true };
+            if (!skipKeys[key]) o2.absentSkip = true;
+            out.push(o2);
           }
         });
       });
@@ -1488,13 +1611,23 @@
         if (s && !s.skipped) servedMap[s.key] = s;
       });
       var out = {};
+      var absNames = absentNamesToday();
       ['am', 'pm'].forEach(function (b) {
         var t = { expectedUp: 0, expectedDown: 0, absent: 0, boarded: 0, alighted: 0 };
+        /* Absent counts KIDS, not stop-slots (ROUTE-EDIT-
+           AND-DAILY-SKIP-NOV8): one absent kid bites at his
+           pickup AND his drop-off, but he is one absent kid —
+           the run's absent total is the distinct absent
+           names on its roster. */
+        var rosterNames = {};
+        (routeRoster[b] || []).forEach(function (r) {
+          (r.up || []).concat(r.down || []).forEach(function (nm) { rosterNames[nm] = true; });
+        });
+        Object.keys(absNames).forEach(function (nm) { if (rosterNames[nm]) t.absent++; });
         (routeSheets[b] || []).forEach(function (st, i) {
           var kl = kidLine(b, i);
           t.expectedUp += kl.up.exp;
           t.expectedDown += kl.down.exp;
-          t.absent += kl.absent;
           var sv = servedMap['sheet:' + b + ':' + i];
           if (sv && sv.kids) { t.boarded += sv.kids.up || 0; t.alighted += sv.kids.down || 0; }
         });
@@ -1511,6 +1644,7 @@
       restore();
       var today = ENGINE.dayStr(Date.now());
       var skipKeys = (daySkips.date === today) ? daySkips.keys : {};
+      var autoKeys = autoSkipKeys();
       var served = {};
       dayStops.forEach(function (s) { served[s.key] = s; });
       function rows(block) {
@@ -1521,6 +1655,14 @@
           return {
             key: key, name: st.name, time: st.time || '', block: block,
             skipped: !!skipKeys[key],
+            /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: a stop can
+               also stand skipped because every kid it serves
+               is absent today — the face says so plainly,
+               with the reason (skipWhy), and a stop she
+               drove anyway still reads done in the state
+               below: the record is what happened. */
+            autoSkipped: !!autoKeys[key],
+            skipWhy: skipWhy(key, skipKeys, autoKeys),
             doneAt: doneAt,
             /* The day measured against the known route: done,
                skipped (her mark only), or ahead — a stop never
@@ -1528,7 +1670,7 @@
                as not reached once the day closes; it is never
                relabelled. deltaMin is her real arrival against
                the sheet's printed time, when both exist. */
-            state: skipKeys[key] ? 'skipped' : (doneAt ? 'done' : 'ahead'),
+            state: skipKeys[key] ? 'skipped' : (doneAt ? 'done' : (autoKeys[key] ? 'skipped' : 'ahead')),
             deltaMin: (doneAt && sheetMin !== null)
               ? ENGINE.minOfDay(doneAt) - sheetMin : null,
             kids: kidLine(block, i)
@@ -1610,12 +1752,19 @@
        (a photographed sheet IS one run's text). A new sheet
        replaces the roster with it and retires the run's placed
        points, its plan cursor and its absent marks: they all
-       belonged to the old sheet. */
-    setRouteSheet: function (block, text, rosterText) {
+       belonged to the old sheet. nameMark — the sheet's own
+       route id as the FILE door read it off the file — rides
+       only from that door: passed (a string, '' when the file
+       named none) it becomes the route's name; left undefined
+       (the photograph doors) the name stands untouched, since
+       one photographed run says nothing about the route's
+       name. */
+    setRouteSheet: function (block, text, rosterText, nameMark) {
       restore();
       if (block !== 'am' && block !== 'pm') return 0;
       var stops = ENGINE.parseRouteSheet(text);
       if (!stops.length) return 0;
+      if (nameMark !== undefined) routeName = String(nameMark || '').trim();
       routeSheets[block] = stops;
       var rtext = (rosterText === undefined) ? text : rosterText;
       routeRoster[block] = rtext
@@ -1662,13 +1811,19 @@
       var sk = planSkipKeys();
       var walk = ENGINE.planWalk(stops, prog, sk, block);
       var outStops = stops.map(function (st, i) {
+        /* The stop's kids ride WITH it, by name (ROUTE-STOP-
+           KID-NAMES-TRIP-PREVIEW-NOV8 — "Kid count and name
+           with the stop"): who gets on and who gets off here
+           today, the sheet's roster minus today's absents. */
+        var kd = stopKids(block, i);
         return {
           key: 'sheet:' + block + ':' + i,
           name: st.name, time: st.time || '',
           state: sk['sheet:' + block + ':' + i] ? 'skipped'
             : ((walk.done || i < prog || (walk.current >= 0 && i < walk.current)) ? 'done'
               : (i === walk.current ? 'current' : 'ahead')),
-          placed: st.ps === 'ok'
+          placed: st.ps === 'ok',
+          up: kd.up, down: kd.down
         };
       });
       var chain = [];
@@ -1680,6 +1835,7 @@
       }
       return {
         block: block, total: stops.length, stops: outStops,
+        routeName: displayRouteName(),
         current: walk.current, done: walk.done,
         target: walk.target >= 0 ? {
           idx: walk.target, key: 'sheet:' + block + ':' + walk.target,
@@ -1689,6 +1845,231 @@
         passedNames: walk.passed.map(function (i) { return stops[i].name; }),
         offRoute: off
       };
+    },
+
+    /* The WHOLE trip, to look at (ROUTE-STOP-KID-NAMES-TRIP-
+       PREVIEW-NOV8 — "Preview the entire trip with her"): one
+       run's stops in the sheet's order, each with its time,
+       its placed point when it carries one (unplaced stops
+       stand in the list BY NAME, passed over on the map —
+       never dropped), and its kids by name. A VIEW, strictly:
+       it reads the route record as it stands — no placement
+       pass (placements are the plan's business, behind the
+       glass), no persist, no record changes. null when the
+       account is not a split account or the run is unknown. */
+    routePreview: function (block) {
+      restore();
+      if (!enabled()) return null;
+      if (block !== 'am' && block !== 'pm') return null;
+      var stops = routeSheets[block] || [];
+      if (!stops.length) return null;
+      /* Today's adjustments ride the view (ROUTE-EDIT-AND-
+         DAILY-SKIP-NOV8): each stop carries its skip truth
+         for today — 'marked' (her own skip tap), 'absent'
+         (it dropped because its kids are all absent) or ''
+         (it runs) — and when any skip stands in this run,
+         the preview IS today's adjusted trip, not the
+         standing route; the faces label it so. Still a
+         view: the marks it reads are the day's own, and
+         reading them writes nothing. */
+      var direct = (daySkips.date === ENGINE.dayStr(Date.now())) ? daySkips.keys : {};
+      var auto = autoSkipKeys();
+      var adjusted = false;
+      var outStops = stops.map(function (st, i) {
+        var kd = stopKids(block, i);
+        var why = skipWhy('sheet:' + block + ':' + i, direct, auto);
+        if (why) adjusted = true;
+        return {
+          key: 'sheet:' + block + ':' + i,
+          name: st.name, time: st.time || '',
+          placed: st.ps === 'ok',
+          lat: (st.ps === 'ok') ? st.lat : null,
+          lng: (st.ps === 'ok') ? st.lng : null,
+          up: kd.up, down: kd.down,
+          skip: why
+        };
+      });
+      return {
+        block: block,
+        name: displayRouteName(),
+        adjustedToday: adjusted,
+        stops: outStops
+      };
+    },
+
+    /* Deleting the route (ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-
+       NOV8, the covering-route ruling, owner Nov 8, 2026
+       20:18 CST: "she is covering this load! This is not a
+       permanent trip... there has to be a way to delete the
+       route! So it doesn't keep counting it after she
+       stops"): which is 'am', 'pm', or 'all'. The run's stops,
+       its roster and its plan cursor go; the route's name goes
+       when both runs are gone. What deleting NEVER touches:
+       the days already recorded under the route — dayStops,
+       the sessions' run records, the kids already carried —
+       history stands exactly as recorded; deleting the route
+       is not deleting the past. Day-scoped marks for a deleted
+       run are simply orphaned (they key off the sheet's stops,
+       which no longer stand) and expire with their day.
+       Returns the stop counts that stood before the delete. */
+    deleteRoute: function (which) {
+      restore();
+      var gone = { am: 0, pm: 0 };
+      ['am', 'pm'].forEach(function (b) {
+        if (which !== 'all' && which !== b) return;
+        gone[b] = (routeSheets[b] || []).length;
+        if (!gone[b]) return;
+        routeSheets[b] = [];
+        routeRoster[b] = [];
+        navProg[b] = 0;
+        sheetUsed[b] = 0;
+      });
+      if (!(routeSheets.am || []).length && !(routeSheets.pm || []).length) routeName = '';
+      if (gone.am || gone.pm) persist();
+      return gone;
+    },
+
+    /* The route as the editor reads it (ROUTE-EDIT-AND-
+       DAILY-SKIP-NOV8): one run's stops as they STAND —
+       name, time, whether the stop carries a placed point,
+       and its sheet kids by name (read-only in the editor:
+       the kids belong to their stops, and the editor moves
+       stops). A pure read of the record, like the preview:
+       no placement pass, nothing written. null when the run
+       is unknown. The route's name rides as the BARE id —
+       the editor's field edits the id itself. */
+    routeEditData: function (block) {
+      restore();
+      if (block !== 'am' && block !== 'pm') return null;
+      var stops = routeSheets[block] || [];
+      if (!stops.length) return null;
+      return {
+        block: block,
+        name: routeName,
+        stops: stops.map(function (st, i) {
+          var r = (routeRoster[block] || [])[i] || { up: [], down: [] };
+          return {
+            name: st.name, time: st.time || '',
+            placed: st.ps === 'ok',
+            up: (r.up || []).slice(), down: (r.down || []).slice()
+          };
+        })
+      };
+    },
+
+    /* Her own edit of the standing route (ROUTE-EDIT-AND-
+       DAILY-SKIP-NOV8 — "make sure she can edit any portion
+       of the route herself"): ONE deliberate save of a run's
+       edited stop list — this is the route-level change,
+       distinct from the day's skips: the standing route
+       becomes the edited route, and the day's plan follows
+       it from the next plan build. rows: [{name, time,
+       from, lat?, lng?}] — `from` is the index the row CAME
+       from in the standing route (the editor's rows are
+       born from routeEditData), or -1/absent for a stop she
+       added. The kids ride WITH their stop: a row keeps its
+       origin stop's roster through a rename, a reorder and
+       a time fix; a removed stop's roster goes with it; an
+       added stop starts with none (the sheet names kids; a
+       hand-added stop has no sheet). A placed point rides
+       its stop the same way — inherited when the row's name
+       still matches its origin stop, or taken from the row
+       itself when the editor placed it by that name (the
+       Place tap); a renamed stop with no fresh point
+       retires its old point and is placed afresh behind the
+       glass (the renameStop law). nameMark, when passed,
+       is the route's new bare id — the editor's name field
+       rides the same Save; left undefined, the name stands.
+       An edit moves indices, so the run's TODAY marks —
+       its plan cursor, its sheet walk, its absent and skip
+       marks, all index-keyed — are retired with the edit
+       (the setRouteSheet precedent); the other run's marks
+       stand untouched, and the days already recorded are
+       never in an edit's reach. A save with no named stop
+       at all is refused (returns 0) — emptying a route is
+       the Delete door's job, not the editor's. Returns the
+       stop count that now stands. */
+    editRoute: function (block, rows, nameMark) {
+      restore();
+      if (block !== 'am' && block !== 'pm') return 0;
+      if (!Array.isArray(rows)) return 0;
+      var old = routeSheets[block] || [];
+      var oldRoster = routeRoster[block] || [];
+      var usedFrom = {};
+      var stops = [], roster = [];
+      rows.forEach(function (rw) {
+        if (!rw) return;
+        var nm = String(rw.name || '').trim();
+        if (!nm) return;
+        var from = (typeof rw.from === 'number' && rw.from >= 0 && old[rw.from] && !usedFrom[rw.from])
+          ? rw.from : -1;
+        if (from >= 0) usedFrom[from] = true;
+        var st = { name: nm, time: String(rw.time || '').trim() };
+        if (ENGINE.isCoord(rw)) {
+          st.lat = +rw.lat; st.lng = +rw.lng; st.ps = 'ok'; st.src = 'geo';
+        } else if (from >= 0 && old[from].name === nm && old[from].ps) {
+          if (old[from].ps === 'ok') {
+            st.lat = old[from].lat; st.lng = old[from].lng; st.ps = 'ok';
+            if (old[from].src) st.src = old[from].src;
+          } else st.ps = old[from].ps;
+        }
+        stops.push(st);
+        var orr = (from >= 0 && oldRoster[from]) ? oldRoster[from] : { up: [], down: [] };
+        roster.push({ up: (orr.up || []).slice(), down: (orr.down || []).slice() });
+      });
+      if (!stops.length) return 0;
+      if (nameMark !== undefined) routeName = String(nameMark || '').trim();
+      routeSheets[block] = stops;
+      routeRoster[block] = roster;
+      var today = ENGINE.dayStr(Date.now());
+      if (sheetUsed.date === today) sheetUsed[block] = 0;
+      if (navProg.date === today) navProg[block] = 0;
+      var pre = 'sheet:' + block + ':';
+      if (dayAbsent.date === today) {
+        Object.keys(dayAbsent.keys).forEach(function (k) {
+          if (k.indexOf(pre) === 0) delete dayAbsent.keys[k];
+        });
+      }
+      if (daySkips.date === today) {
+        Object.keys(daySkips.keys).forEach(function (k) {
+          if (k.indexOf(pre) === 0) delete daySkips.keys[k];
+        });
+      }
+      persist();
+      ensureRoutePlaced();
+      return stops.length;
+    },
+
+    /* Bring back a stop that dropped because its kids were
+       marked absent (ROUTE-EDIT-AND-DAILY-SKIP-NOV8): the
+       marks ARE the drop, so bringing the stop back clears
+       today's absent marks for the stop's kids — by name,
+       across both runs (the kid marked on the morning
+       roster is the evening's drop-off). Returns how many
+       marks cleared; 0 when the stop's kids carry none —
+       a stop she skipped with her own tap is brought back
+       with toggleSkip, not here. */
+    unabsentStop: function (key) {
+      restore();
+      var m = /^sheet:(am|pm):(\d+)$/.exec(String(key || ''));
+      if (!m) return 0;
+      if (dayAbsent.date !== ENGINE.dayStr(Date.now())) return 0;
+      var r = (routeRoster[m[1]] || [])[+m[2]];
+      if (!r) return 0;
+      var names = {};
+      (r.up || []).concat(r.down || []).forEach(function (nm) { names[nm] = true; });
+      if (!Object.keys(names).length) return 0;
+      var cleared = 0;
+      Object.keys(dayAbsent.keys).forEach(function (k) {
+        if (!dayAbsent.keys[k]) return;
+        var km = /^sheet:(am|pm):(\d+):(up|down):(\d+)$/.exec(k);
+        if (!km) return;
+        var rr = (routeRoster[km[1]] || [])[+km[2]];
+        var nm = (rr && rr[km[3]]) ? rr[km[3]][+km[4]] : '';
+        if (nm && names[nm]) { delete dayAbsent.keys[k]; cleared++; }
+      });
+      if (cleared) persist();
+      return cleared;
     },
 
     /* The manual door: this stop is done — step the plan to
@@ -1728,7 +2109,8 @@
       restore();
       return {
         am: (routeSheets.am || []).length,
-        pm: (routeSheets.pm || []).length
+        pm: (routeSheets.pm || []).length,
+        name: displayRouteName()
       };
     },
 

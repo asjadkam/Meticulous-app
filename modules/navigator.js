@@ -2631,6 +2631,23 @@
           nvFace = 'drive';
         }
       } catch (e) {}
+      /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: the trip-
+         preview hand-off, consumed exactly like the settings
+         flag above — Dispatch (the confirmation card's staged
+         preview, or the standing route's preview doors) parks
+         { block } — or { block, staged } for a read not yet
+         saved — under nav_route_preview; the end-of-render
+         block opens the whole-trip preview off this local.
+         Read-and-clear: a stale hand-off can never fire twice. */
+      var routePreviewSpec = null;
+      try {
+        var rpvFlag = App._store.get('nav_route_preview', null);
+        if (rpvFlag) {
+          App._store.set('nav_route_preview', null);
+          routePreviewSpec = rpvFlag;
+          nvFace = 'drive';
+        }
+      } catch (e) {}
       if (nvFace === 'places') {
         nvPlacesPanelCloser = null; /* v348: the map render that owned the panel is gone */
         teardown();
@@ -2707,7 +2724,16 @@
            plan's hold (see setDest); the plan never overrides
            her. All three stay empty/false on every account
            without a known bus route. */
-        planDestKey: '', planStopKey: '', planOwns: false
+        planDestKey: '', planStopKey: '', planOwns: false,
+        /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: the named
+           route's marks on the map — one layer group holding
+           the run's numbered stop pins + the chain line
+           through them (drawn by drawRouteOnMap, below), its
+           signature so the per-fix plan paint never redraws
+           an unchanged route, and the open preview's data
+           while a preview stands. All stay empty on every
+           account without a known bus route. */
+        routeGroup: null, routeChainKey: '', rpPreviewData: null
       };
 
       /* v101: the Navigator is a FULL-SCREEN view (owner, Oct 16:
@@ -2796,7 +2822,25 @@
            in the markup only when a plan exists (rp0). */
         (rp0 ? '<div id="nv_routeplan" class="nv-banner"><div class="nv-banner-main" id="nv_rp_main"></div>' +
         '<div class="nv-banner-sub" id="nv_rp_sub"></div>' +
-        '<button class="btn small navy" id="nv_rp_next" style="margin-top:6px">Next stop ▸</button></div>' : '') +
+        '<button class="btn small navy" id="nv_rp_next" style="margin-top:6px">Next stop ▸</button>' +
+        '<button class="btn small ghost" id="nv_rp_preview" style="margin-top:6px;margin-left:6px">👁 Preview route</button>' +
+        /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: the plan card's own
+           skip door — the stop she is heading to can be
+           skipped for today from the map itself. Painted
+           hidden; paintRoutePlan shows it only while a
+           current stop stands. */
+        '<button class="btn small ghost hidden" id="nv_rp_skip" style="margin-top:6px;margin-left:6px">⏭ Skip this stop today</button></div>' : '') +
+        /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: the whole-trip
+           preview panel — the run's stops IN ORDER (names,
+           times, kids) beside the map that carries them pinned
+           in order under the route's name. Hidden until opened
+           (the plan card's Preview door, or a Dispatch
+           hand-off); present in the markup only when a plan or
+           a hand-off stands, so accounts without a bus route
+           stay byte-identical. */
+        ((rp0 || routePreviewSpec) ? '<div id="nv_rpv" class="nv-banner hidden"><div class="nv-banner-main" id="nv_rpv_title"></div>' +
+        '<div id="nv_rpv_list" style="max-height:38vh;overflow-y:auto;margin-top:4px"></div>' +
+        '<button class="btn small ghost" id="nv_rpv_close" style="margin-top:6px">✕ Close preview</button></div>' : '') +
         /* v103: Truck/Car + Follow + Sound demoted to ONE small
            quiet row — same controls, same ids, but no loud
            primary styling: they are settings, not steps on the
@@ -3154,29 +3198,54 @@
         try { rp = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rp = null; }
         var mainEl = body.querySelector('#nv_rp_main'),
             subEl = body.querySelector('#nv_rp_sub'),
-            nextBtn = body.querySelector('#nv_rp_next');
+            nextBtn = body.querySelector('#nv_rp_next'),
+            skipBtn = body.querySelector('#nv_rp_skip');
         if (!rp) {
           card.classList.add('hidden');
           S.planOwns = false; S.planDestKey = ''; S.planStopKey = '';
+          clearRouteOnMap();
           return;
         }
         card.classList.remove('hidden');
-        var runWord = (rp.block === 'am') ? 'Morning run' : 'Afternoon run';
+        /* The second run is the EVENING run (owner, Nov 8,
+           2026 20:17 CST — "Morning and evening is daily"). */
+        var runWord = (rp.block === 'am') ? 'Morning run' : 'Evening run';
         if (rp.done || rp.current < 0) {
           if (mainEl) mainEl.textContent = '🚌 Route done';
           if (subEl) subEl.textContent = 'All ' + rp.total + ' stops on the ' + runWord.toLowerCase() + ' are done.';
           if (nextBtn) nextBtn.classList.add('hidden');
+          if (skipBtn) skipBtn.classList.add('hidden');
           return;
         }
         if (nextBtn) nextBtn.classList.remove('hidden');
+        if (skipBtn) skipBtn.classList.remove('hidden');
         var cur = rp.stops[rp.current];
         if (mainEl) mainEl.textContent = '🚌 Next stop: ' + cur.name;
-        var sub = 'Stop ' + (rp.current + 1) + ' of ' + rp.total + ' — ' + runWord + '.';
+        /* The route stands BY NAME on her map, and the stop
+           she is heading to carries its kids BY NAME (ROUTE-
+           STOP-KID-NAMES-TRIP-PREVIEW-NOV8): who gets on and
+           who gets off here rides the card she is already
+           looking at — no extra tap stands between her and
+           the names. */
+        var sub = 'Stop ' + (rp.current + 1) + ' of ' + rp.total + ' — ' + runWord +
+          (rp.routeName ? ' · ' + rp.routeName : '') + '.';
+        var curBits = [];
+        if (cur.up && cur.up.length) curBits.push('On: ' + cur.up.join(', '));
+        if (cur.down && cur.down.length) curBits.push('Off: ' + cur.down.join(', '));
+        if (curBits.length) sub += ' 🧒 ' + curBits.join(' · ') + '.';
         if (rp.target && rp.passedNames && rp.passedNames.length) {
           sub += ' ' + rp.passedNames.join(', ') + ' isn’t on the map yet — heading to ' + rp.target.name + '.';
         } else if (!rp.target) {
           sub += ' This stop isn’t on the map yet — tap Next stop when you’ve done it.';
         }
+        /* Today's adjustments are spoken on the card
+           (ROUTE-EDIT-AND-DAILY-SKIP-NOV8): a stop that
+           vanished from her walk says why it went — it was
+           skipped for today, by her tap or by absent kids —
+           never silently dropped. */
+        var skippedN = 0;
+        rp.stops.forEach(function (s) { if (s.state === 'skipped') skippedN++; });
+        if (skippedN) sub += ' ' + skippedN + (skippedN === 1 ? ' stop' : ' stops') + ' skipped today.';
         if (rp.offRoute) sub = 'You’re off the route. ' + sub;
         if (subEl) subEl.textContent = sub;
         if (rp.target && (!S.dest || S.planOwns)) {
@@ -3186,6 +3255,189 @@
             setDest([rp.target.lat, rp.target.lng], rp.target.name);
           }
         }
+        /* The route stands on the map AS the route — its
+           placed stops pinned in order under its name — not
+           as one loose destination pin. */
+        paintRouteChain(rp);
+      }
+
+      /* ---- ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: the
+         named route on the map + the whole-trip preview ----
+         One layer group carries a run's stops as THAT route:
+         a numbered pin per placed stop, in the sheet's order,
+         with the chain line drawn through them in order. The
+         plan paints its own run's chain (signature-guarded —
+         the per-fix plan paint never redraws an unchanged
+         route, and never moves the view); the PREVIEW paints
+         the run being looked at and fits the view to it. An
+         unplaced stop is passed over on the map and NAMED in
+         the list — never dropped (the web-382 law). Nothing
+         here writes anything: the preview is a view. */
+      function clearRouteOnMap() {
+        if (S.routeGroup && S.map) { try { S.map.removeLayer(S.routeGroup); } catch (e) {} }
+        S.routeGroup = null;
+        S.routeChainKey = '';
+      }
+      function drawRouteOnMap(stops, fit) {
+        clearRouteOnMap();
+        if (!S.map || !window.L || typeof L.layerGroup !== 'function') return 0;
+        var pts = [];
+        var g = L.layerGroup();
+        (stops || []).forEach(function (st, i) {
+          /* A stop skipped for today (ROUTE-EDIT-AND-DAILY-
+             SKIP-NOV8) is not part of today's trip: no pin,
+             and the chain does not run through it — it stands
+             in the preview LIST, named as skipped, never
+             silently vanished. Views that carry no skip
+             marks (a staged read, the standing route with
+             nothing skipped) draw exactly as before. */
+          if (!st || st.skip) return;
+          if (!st.placed || typeof st.lat !== 'number' || typeof st.lng !== 'number') return;
+          pts.push([st.lat, st.lng]);
+          var icon = null;
+          try {
+            icon = L.divIcon({
+              className: 'nv-route-stop',
+              html: '<div style="background:#1F3764;color:#fff;border:2px solid #fff;border-radius:50%;width:20px;height:20px;line-height:20px;text-align:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.4)">' + (i + 1) + '</div>',
+              iconSize: [22, 22], iconAnchor: [11, 11]
+            });
+          } catch (e) { icon = null; }
+          try { L.marker([st.lat, st.lng], icon ? { icon: icon, keyboard: false } : { keyboard: false }).addTo(g); } catch (e) {}
+        });
+        if (pts.length > 1) {
+          try { L.polyline(pts, { color: '#1F3764', weight: 3, opacity: 0.75 }).addTo(g); } catch (e) {}
+        }
+        if (pts.length) {
+          try { g.addTo(S.map); S.routeGroup = g; } catch (e) {}
+          if (fit) { try { S.map.fitBounds(pts, { padding: [30, 30] }); } catch (e) {} }
+        }
+        return pts.length;
+      }
+      function paintRouteChain(rp) {
+        if (!S.map || !rp) return;
+        if (S.rpPreviewData) return;   // a preview stands — it owns the group
+        var pv = null;
+        try { pv = (window.SplitShift && SplitShift.routePreview) ? SplitShift.routePreview(rp.block) : null; } catch (e) { pv = null; }
+        if (!pv) { clearRouteOnMap(); return; }
+        var key = rp.block + '|' + pv.stops.map(function (st) {
+          /* The day's skips ride the signature (ROUTE-EDIT-
+             AND-DAILY-SKIP-NOV8): a skip or bring-back
+             repaints the chain as today's adjusted trip. */
+          return (st.placed ? (st.lat.toFixed(5) + ',' + st.lng.toFixed(5)) : '·') + (st.skip ? 's' : '');
+        }).join('|');
+        if (key === S.routeChainKey && S.routeGroup) return;
+        S.routeChainKey = key;
+        drawRouteOnMap(pv.stops, false);
+        S.routeChainKey = key;   // drawRouteOnMap clears it; the signature is this paint's
+      }
+      function paintRoutePreviewPanel(data) {
+        var panel = body.querySelector('#nv_rpv');
+        if (!panel || !data) return;
+        var title = body.querySelector('#nv_rpv_title');
+        if (title) title.textContent = '🚌 ' + (data.name ? data.name + ' — ' : '') +
+          (data.block === 'am' ? 'Morning run' : 'Evening run') +
+          /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: the preview says
+             WHICH trip it is showing — today's adjusted trip
+             when a skip stands in this run for today, the
+             standing route when none does. A staged (not yet
+             saved) read carries no adjustedToday at all: it
+             is neither, and takes neither label. */
+          (data.adjustedToday ? ' — today’s trip, adjusted'
+            : (data.adjustedToday === false ? ' — the standing route' : ''));
+        var list = body.querySelector('#nv_rpv_list');
+        if (list) {
+          list.innerHTML = data.stops.map(function (st, i) {
+            var bits = [];
+            if (st.up && st.up.length) bits.push('On: ' + st.up.map(esc).join(', '));
+            if (st.down && st.down.length) bits.push('Off: ' + st.down.map(esc).join(', '));
+            /* A skipped stop stays IN the list, named, with
+               its reason (never silently vanished) — and, on
+               a saved run's preview, its own tap adjusts
+               today right here: skip it, or bring it back
+               (an absent-drop is brought back on its absent
+               marks — the delegated handler below). */
+            var skipTag = st.skip === 'marked'
+              ? ' <span style="color:#b45309">⏭ skipped today</span>'
+              : (st.skip === 'absent'
+                ? ' <span style="color:#b45309">⏭ skipped today — kids absent</span>' : '');
+            var skipBtn = '';
+            if (data.canSkip && st.key) {
+              skipBtn = st.skip === 'absent'
+                ? ' <button type="button" class="btn small ghost" data-nv-unabsent="' + esc(st.key) + '">↩ Bring back</button>'
+                : (st.skip === 'marked'
+                  ? ' <button type="button" class="btn small ghost" data-nv-skip="' + esc(st.key) + '">↩ Bring back</button>'
+                  : ' <button type="button" class="btn small ghost" data-nv-skip="' + esc(st.key) + '">⏭ Skip today</button>');
+            }
+            return '<div style="padding:2px 0' + (st.skip ? ';opacity:.62' : '') + '">' + (i + 1) + '. ' +
+              (st.time ? esc(st.time) + ' — ' : '') + esc(st.name) +
+              (st.placed ? '' : ' <span style="color:#888">(not on the map yet)</span>') +
+              skipTag +
+              (bits.length ? '<div style="color:#555;font-size:12px">🧒 ' + bits.join(' · ') + '</div>' : '') +
+              (skipBtn ? '<div style="margin:2px 0 4px">' + skipBtn + '</div>' : '') +
+              '</div>';
+          }).join('');
+        }
+        panel.classList.remove('hidden');
+      }
+      /* Open the whole-trip preview. spec: { block } for a
+         SAVED run (its data is SplitShift.routePreview's), or
+         { block, staged: { name, stops, kids } } for the
+         confirmation card's not-yet-saved read — staged stops
+         carry no points (nothing is saved), so their names
+         are placed through the app's geocode door FOR THE
+         VIEW ONLY: the answers paint this preview, and are
+         never written anywhere. */
+      function openRoutePreview(spec) {
+        var panel = body.querySelector('#nv_rpv');
+        if (!panel || !spec) return;
+        if (spec.staged) {
+          var data = {
+            block: spec.block,
+            name: spec.staged.name || '',
+            stops: (spec.staged.stops || []).map(function (st, i) {
+              var k = (spec.staged.kids || [])[i] || { up: [], down: [] };
+              return {
+                name: st.name, time: st.time || '', placed: false, lat: null, lng: null,
+                up: k.up || [], down: k.down || []
+              };
+            })
+          };
+          S.rpPreviewData = data;
+          paintRoutePreviewPanel(data);
+          var geo = null;
+          try { geo = window.MeticulousGeo || null; } catch (e) {}
+          if (geo && typeof geo.geocode === 'function') {
+            data.stops.forEach(function (st) {
+              if (!st.name) return;
+              geo.geocode(st.name).then(function (pt) {
+                if (S.rpPreviewData !== data || !pt) return;
+                st.placed = true; st.lat = pt.latitude; st.lng = pt.longitude;
+                drawRouteOnMap(data.stops, true);
+                paintRoutePreviewPanel(data);
+              }).catch(function () {});
+            });
+          }
+          return;
+        }
+        var saved = null;
+        try { saved = (window.SplitShift && SplitShift.routePreview) ? SplitShift.routePreview(spec.block) : null; } catch (e) { saved = null; }
+        if (!saved) return;
+        /* A SAVED run's preview is today's trip surface
+           (ROUTE-EDIT-AND-DAILY-SKIP-NOV8): its stops carry
+           the day's skip taps. A staged read never does —
+           nothing about it is saved, and today has no such
+           route to adjust. */
+        saved.canSkip = true;
+        S.rpPreviewData = saved;
+        paintRoutePreviewPanel(saved);
+        drawRouteOnMap(saved.stops, true);
+      }
+      function closeRoutePreview() {
+        var panel = body.querySelector('#nv_rpv');
+        if (panel) panel.classList.add('hidden');
+        S.rpPreviewData = null;
+        S.routeChainKey = '';
+        paintRoutePlan();   // restores the plan's own chain (or clears it)
       }
 
       /* v101 door 3: tap-the-map pin (owner, Oct 16: anyone not
@@ -6353,6 +6605,52 @@
         try { if (window.SplitShift && SplitShift.navAdvance) SplitShift.navAdvance(); } catch (e) {}
         paintRoutePlan();
       };
+      /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: the plan
+         card's Preview door (the whole trip for the run the
+         plan is walking) + the preview panel's close door. */
+      var rpPrevBtn = body.querySelector('#nv_rp_preview');
+      if (rpPrevBtn) rpPrevBtn.onclick = function () {
+        var rpNow = null;
+        try { rpNow = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rpNow = null; }
+        if (rpNow) openRoutePreview({ block: rpNow.block });
+      };
+      var rpvClose = body.querySelector('#nv_rpv_close');
+      if (rpvClose) rpvClose.onclick = function () { closeRoutePreview(); };
+      /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: the plan card's own
+         skip door — the stop she is heading to can be skipped
+         for today without leaving the map; the plan steps to
+         the next stop, and the route itself is untouched
+         (tomorrow it stands whole). */
+      var rpSkipBtn = body.querySelector('#nv_rp_skip');
+      if (rpSkipBtn) rpSkipBtn.onclick = function () {
+        var rpNow2 = null;
+        try { rpNow2 = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rpNow2 = null; }
+        if (rpNow2 && rpNow2.current >= 0 && rpNow2.stops[rpNow2.current]) {
+          try { if (window.SplitShift && SplitShift.toggleSkip) SplitShift.toggleSkip(rpNow2.stops[rpNow2.current].key); } catch (e) {}
+        }
+        paintRoutePlan();
+      };
+      /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: the preview list's
+         skip taps — ONE delegated handler on the list itself,
+         so it survives the panel's repaints. A tap adjusts
+         TODAY only (her skip mark, or the absent marks
+         behind an auto drop), then the preview and the plan
+         repaint on the adjusted trip; the standing route is
+         never in a tap's reach. */
+      var rpvListEl = body.querySelector('#nv_rpv_list');
+      if (rpvListEl) rpvListEl.onclick = function (ev) {
+        var t = ev && ev.target;
+        if (!t || typeof t.getAttribute !== 'function') return;
+        var sk = t.getAttribute('data-nv-skip'), un = t.getAttribute('data-nv-unabsent');
+        if (!sk && !un) return;
+        try {
+          if (sk && window.SplitShift && SplitShift.toggleSkip) SplitShift.toggleSkip(sk);
+          if (un && window.SplitShift && SplitShift.unabsentStop) SplitShift.unabsentStop(un);
+        } catch (e) {}
+        var blk = S.rpPreviewData && S.rpPreviewData.block;
+        if (blk) openRoutePreview({ block: blk });
+        paintRoutePlan();
+      };
       paintRoutePlan();
       var driveBtn = body.querySelector('#nv_drive');
       if (driveBtn) driveBtn.onclick = startDrive;
@@ -6886,6 +7184,11 @@
          it used to be read only here, where the places face never
          arrives); open the same menu off that local. */
       if (openSettingsWanted) { try { openNavSettings(false); } catch (e) {} }
+      /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8: a Dispatch
+         hand-off (nav_route_preview, consumed at the head of
+         this render) opens the whole-trip preview now that
+         the face, the map and the panel all stand. */
+      if (routePreviewSpec) { try { openRoutePreview(routePreviewSpec); } catch (e) {} }
       paintSpeedOverlay();
 
       /* v103: the mode pair lives in the quiet row — the active

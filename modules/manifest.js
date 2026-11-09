@@ -1903,7 +1903,7 @@
               h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #26314d">' +
                 '<div style="flex:1;min-width:0"><b>' + esc(r.name) + '</b>' +
                 (r.time ? ' <span class="note">' + esc(r.time) + '</span>' : '') +
-                (r.skipped ? ' <span class="note" style="color:#f0b35e">skipped today</span>' : (r.doneAt ? ' <span class="note" style="color:#7dd87d">✓ done</span>' : '')) +
+                (r.skipped ? ' <span class="note" style="color:#f0b35e">skipped today</span>' : (r.doneAt ? ' <span class="note" style="color:#7dd87d">✓ done</span>' : (r.autoSkipped ? ' <span class="note" style="color:#f0b35e">skipped today — kids absent</span>' : ''))) +
                 /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
                    day measured against the sheet's clock — her
                    real arrival beside the printed time. */
@@ -1913,7 +1913,15 @@
                    has marked absent today. */
                 (r.kids && (r.kids.up.exp || r.kids.down.exp) ? ' <span class="note">🧒 ' + (r.kids.up.exp + r.kids.down.exp) + ((r.kids.up.exp + r.kids.down.exp) === 1 ? ' kid' : ' kids') + (r.kids.absent ? ' · ' + r.kids.absent + ' absent' : '') + '</span>' : '') +
                 '</div>' +
-                '<button type="button" class="btn ' + (r.skipped ? 'ghost' : 'primary') + '" data-split-skip="' + esc(r.key) + '" style="min-width:132px;padding:12px 10px;font-size:15px">' + (r.skipped ? '↩ Bring back' : '⏭ Skip today') + '</button></div>';
+                /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: a stop that
+                   dropped because its kids are all absent gets
+                   its Bring back on the ABSENT marks themselves
+                   (the drop IS the marks — SplitShift.
+                   unabsentStop), never a direct skip laid over
+                   them; her own skips keep the toggle above. */
+                (r.autoSkipped && !r.skipped && !r.doneAt
+                  ? '<button type="button" class="btn ghost" data-split-unabsent="' + esc(r.key) + '" style="min-width:132px;padding:12px 10px;font-size:15px">↩ Bring back</button></div>'
+                  : '<button type="button" class="btn ' + (r.skipped ? 'ghost' : 'primary') + '" data-split-skip="' + esc(r.key) + '" style="min-width:132px;padding:12px 10px;font-size:15px">' + (r.skipped ? '↩ Bring back' : '⏭ Skip today') + '</button></div>');
               /* v382: the absent door — one tap per kid, today
                  only (SplitShift.toggleAbsent). The roster is
                  the sheet's; the mark is the day's. */
@@ -1945,7 +1953,7 @@
             return '<span data-split-stop="' + esc(s.key || '') + '" style="text-decoration:underline dotted;cursor:pointer">' + esc(s.name) + '</span>';
           }).join(' · ') + '</p><p class="note" style="margin:0 0 6px">Tap a stop’s name to fix it — the fixed name sticks for that stop.</p>';
         }
-        if (skippedH.length) h += '<div class="kv"><span>Skipped</span><b>' + skippedH.map(function (s) { return esc(s.name); }).join(' · ') + '</b></div>';
+        if (skippedH.length) h += '<div class="kv"><span>Skipped</span><b>' + skippedH.map(function (s) { return esc(s.name) + (s.absentSkip ? ' (kids absent)' : ''); }).join(' · ') + '</b></div>';
         /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the day's
            kid count stands on the run record — boarded and set
            down at the stops actually served, absents named as
@@ -2150,6 +2158,16 @@
       body.querySelectorAll('[data-split-absent]').forEach(function (b) {
         b.onclick = function () {
           try { if (window.SplitShift && SplitShift.toggleAbsent) SplitShift.toggleAbsent(b.getAttribute('data-split-absent')); } catch (e) {}
+          Meticulous.modules.manifest.render(body);
+        };
+      });
+      /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8: Bring back for a stop
+         that dropped on absent kids — one tap clears the
+         day's absent marks for that stop's kids (both runs),
+         the stop stands in today's walk again, repaint. */
+      body.querySelectorAll('[data-split-unabsent]').forEach(function (b) {
+        b.onclick = function () {
+          try { if (window.SplitShift && SplitShift.unabsentStop) SplitShift.unabsentStop(b.getAttribute('data-split-unabsent')); } catch (e) {}
           Meticulous.modules.manifest.render(body);
         };
       });

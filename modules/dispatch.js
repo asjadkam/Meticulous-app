@@ -211,6 +211,21 @@
       });
       if (ambiguous) return { am: '', pm: '', marked: false, ambiguous: true };
       return { am: am.join('\n'), pm: pm.join('\n'), marked: false, ambiguous: false };
+    },
+    /* The route's NAME, as the sheet itself carries it
+       (ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8 — "save the
+       entire route by name on her map"): the company's sheet
+       heads every page "Route Details + CBE-0574" — the id
+       after the header is the route's name. A sheet that
+       carries no such id names nothing: '' comes back and the
+       faces fall back to the plain Morning / Evening words
+       (NAMED CHOICE, owner's to veto). Pure: text in, the
+       bare id out ('CBE-0574'), never a decoration. */
+    routeNameOf: function (text) {
+      var t = String(text || '');
+      var m = /Route\s+Details\s*\+\s*([A-Za-z]{2,}-[0-9]{3,})/i.exec(t) ||
+        /\b([A-Z]{2,}-[0-9]{3,})\b/.exec(t);
+      return m ? m[1].toUpperCase() : '';
     }
   };
   /* ROUTE-SHEET-FILE-END */
@@ -2432,9 +2447,17 @@
         if (routeInfo382.am || routeInfo382.pm) {
           var runs382 = [];
           if (routeInfo382.am) runs382.push('Morning run — ' + routeInfo382.am + ' stops');
-          if (routeInfo382.pm) runs382.push('Afternoon run — ' + routeInfo382.pm + ' stops');
+          /* The second run is the EVENING run (owner, Nov 8,
+             2026 20:17 CST: "Morning and evening is daily") —
+             the sheet's PM run is her evening work; "afternoon"
+             in this house names the midday NOON run, which is
+             NOT daily and has no home in the app. */
+          if (routeInfo382.pm) runs382.push('Evening run — ' + routeInfo382.pm + ' stops');
           h += '<div class="card" id="dp_today_card"><h3>🚛 Today\'s dispatch</h3>' +
-            '<p class="note" style="margin:2px 0">🚌 <b>Your route is today’s dispatch</b> — ' + runs382.join(' · ') + '. ' +
+            '<p class="note" style="margin:2px 0">🚌 <b>Your route is today’s dispatch</b> — ' +
+            /* The route stands BY NAME (ROUTE-STOP-KID-NAMES-
+               TRIP-PREVIEW-NOV8) when the sheet named it. */
+            (routeInfo382.name ? routeInfo382.name + ' · ' : '') + runs382.join(' · ') + '. ' +
             'The same fixed route every day — it stands until a new sheet replaces it.</p></div>';
         }
       }
@@ -2464,17 +2487,59 @@
         try { if (window.SplitShift && SplitShift.routeSheetInfo) sheetInfo380 = SplitShift.routeSheetInfo(); } catch (e) {}
         h += '<div class="card" id="dp_sheet_card"><h3>🚌 Route sheets</h3>' +
           '<label class="f">Morning route sheet</label>' +
-          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_am" style="flex:1">📷 Photograph the AM route sheet</button></div>' +
+          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_am" style="flex:1">📷 Photograph the morning route sheet</button></div>' +
           '<input type="file" id="dp_sheet_am_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
           '<p class="note" id="dp_sheet_am_note">' + (sheetInfo380.am ? 'Route saved — ' + sheetInfo380.am + ' stops. Photograph or upload a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet, or upload the sheet file below, and the app fills in the whole route.') + '</p>' +
-          '<label class="f">Afternoon route sheet</label>' +
-          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_pm" style="flex:1">📷 Photograph the PM route sheet</button></div>' +
+          '<label class="f">Evening route sheet</label>' +
+          '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_pm" style="flex:1">📷 Photograph the evening route sheet</button></div>' +
           '<input type="file" id="dp_sheet_pm_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
           '<p class="note" id="dp_sheet_pm_note">' + (sheetInfo380.pm ? 'Route saved — ' + sheetInfo380.pm + ' stops. Photograph or upload a new sheet when the route changes.' : 'No sheet yet — photograph the printed route sheet, or upload the sheet file below, and the app fills in the whole route.') + '</p>' +
           '<label class="f">Route sheet file</label>' +
           '<div class="row"><button type="button" class="btn secondary" id="dp_sheet_file" style="flex:1">📄 Upload the route sheet file</button></div>' +
           '<input type="file" id="dp_sheet_file_in" accept="application/pdf,image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
-          '<p class="note" id="dp_sheet_file_note">The company sends one file — upload it once and the app sorts the morning and afternoon runs itself.</p></div>';
+          '<p class="note" id="dp_sheet_file_note">The company sends one file — upload it once and the app sorts the morning and evening runs itself.</p>' +
+          /* ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8 + the
+             covering-route ruling (owner, Nov 8, 2026 20:16–
+             20:18 CST): the route on file can be PREVIEWED
+             whole — the entire trip on her map, from here, any
+             time — and it can be DELETED: she may be COVERING
+             this route for someone else, and when she stops,
+             the route must stop standing as her dispatch and
+             stop counting. The preview doors stand with the
+             route; the delete doors stand BELOW them, fenced
+             off by their own divider and heading, quiet ghost
+             buttons away from every primary action — and a tap
+             only STAGES the delete confirm (the confirmation
+             law), it never deletes on the tap. Days already
+             recorded under the route are never touched. */
+          (sheetInfo380.am || sheetInfo380.pm ?
+            '<div style="border-top:1px solid #ddd;margin-top:10px;padding-top:8px">' +
+            '<label class="f">🗺 The route on file' + (sheetInfo380.name ? ' — ' + esc(sheetInfo380.name) : '') + '</label>' +
+            '<div class="row">' +
+            (sheetInfo380.am ? '<button type="button" class="btn ghost" id="dp_route_preview_am" style="flex:1">👁 Preview the morning route</button>' : '') +
+            (sheetInfo380.pm ? '<button type="button" class="btn ghost" id="dp_route_preview_pm" style="flex:1">👁 Preview the evening route</button>' : '') +
+            '</div>' +
+            /* ROUTE-EDIT-AND-DAILY-SKIP-NOV8 (owner, Nov 8,
+               2026 20:41 CST — "make sure she can edit any
+               portion of the route herself"): the EDIT doors
+               stand with the preview doors, where she manages
+               the route. A tap only STAGES the editor in the
+               card (the staged-face pattern the confirmation
+               and the delete use); the standing route changes
+               only on the editor's own Save. */
+            '<div class="row" style="margin-top:6px">' +
+            (sheetInfo380.am ? '<button type="button" class="btn ghost" id="dp_route_edit_am" style="flex:1">✏️ Edit the morning route</button>' : '') +
+            (sheetInfo380.pm ? '<button type="button" class="btn ghost" id="dp_route_edit_pm" style="flex:1">✏️ Edit the evening route</button>' : '') +
+            '</div>' +
+            '<div style="border-top:1px solid #ddd;margin-top:10px;padding-top:8px">' +
+            '<label class="f">Delete the route</label>' +
+            '<p class="note" style="margin:2px 0 6px">Covering this route for someone else? When you stop running it, delete it — it stops standing as your dispatch and stops counting. Days you already ran stay in your records, exactly as recorded.</p>' +
+            '<div class="row">' +
+            (sheetInfo380.am ? '<button type="button" class="btn ghost small" id="dp_route_del_am" style="flex:1">Delete morning route</button>' : '') +
+            (sheetInfo380.pm ? '<button type="button" class="btn ghost small" id="dp_route_del_pm" style="flex:1">Delete evening route</button>' : '') +
+            (sheetInfo380.am && sheetInfo380.pm ? '<button type="button" class="btn ghost small" id="dp_route_del_all" style="flex:1">Delete the whole route</button>' : '') +
+            '</div></div></div>' : '') +
+          '</div>';
       }
 
       /* ---- v218 (DSP-HISTORY-FUTURE, owner, Oct 21, 2026
@@ -2724,7 +2789,7 @@
          what was read (see the dpPendingSheet block). ---- */
       try {
         [['am', '#dp_sheet_am', '#dp_sheet_am_in', '#dp_sheet_am_note', 'Morning'],
-         ['pm', '#dp_sheet_pm', '#dp_sheet_pm_in', '#dp_sheet_pm_note', 'Afternoon']].forEach(function (cfg) {
+         ['pm', '#dp_sheet_pm', '#dp_sheet_pm_in', '#dp_sheet_pm_note', 'Evening']].forEach(function (cfg) {
           var btn = body.querySelector(cfg[1]), inp = body.querySelector(cfg[2]), note = body.querySelector(cfg[3]);
           if (!btn || !inp) return;
           btn.onclick = function () { inp.click(); };
@@ -2796,32 +2861,59 @@
         var stops = [];
         try { stops = eng.parseRouteSheet(shaped || ''); } catch (e) { stops = []; }
         if (!stops.length) return null;
-        var kids = 0;
+        var kids = 0, roster = stops.map(function () { return { up: [], down: [] }; });
         if (sec && typeof eng.parseRouteRoster === 'function') {
           try {
-            var roster = eng.parseRouteRoster(sec, stops), seenK = {};
-            (roster || []).forEach(function (r) {
+            /* The roster rides the preview stop for stop
+               (ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8): the
+               confirmation speaks each stop's kids BY NAME,
+               and the map preview of the staged read carries
+               the same names — the very roster Save writes. */
+            roster = eng.parseRouteRoster(sec, stops) || roster;
+            var seenK = {};
+            roster.forEach(function (r) {
               ((r && r.up) || []).concat((r && r.down) || []).forEach(function (nm) { seenK[nm] = 1; });
             });
             kids = Object.keys(seenK).length;
           } catch (e) { kids = 0; }
         }
-        return { block: block, stops: stops, kids: kids };
+        return { block: block, stops: stops, kids: kids, roster: roster };
       }
       function dpPaintSheetConfirm() {
         var card = body.querySelector('#dp_sheet_card');
         if (!card || !dpPendingSheet) return;
-        var h = '<h3>🚌 Check this route sheet</h3>' +
+        /* The route stands BY NAME from the first look
+           (ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8): when the
+           sheet named its route, the check card carries the
+           name — she confirms a named route, not a guess. */
+        var h = '<h3>🚌 Check this route sheet' +
+          (dpPendingSheet.routeName ? ' — Route ' + esc(dpPendingSheet.routeName) : '') + '</h3>' +
           '<p class="note">This is what the app read. Nothing is saved yet — it becomes the standing route only when you tap Save this route.</p>';
         dpPendingSheet.preview.forEach(function (pv) {
-          var label = pv.block === 'am' ? 'Morning route' : 'Afternoon route';
+          var label = pv.block === 'am' ? 'Morning route' : 'Evening route';
           h += '<label class="f">' + label + ' — ' + pv.stops.length + ' stops' +
             (pv.kids ? ' · ' + pv.kids + (pv.kids === 1 ? ' kid' : ' kids') : '') + '</label>' +
             '<div style="max-height:220px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:6px 10px;margin-bottom:8px">' +
             pv.stops.map(function (st, i) {
+              /* Kid count AND NAME with the stop (the ruling):
+                 who gets on and who gets off here, by the
+                 sheet's own names, readable at a glance — no
+                 extra tap stands between her and the names. */
+              var kr = (pv.roster && pv.roster[i]) || { up: [], down: [] };
+              var bits = [];
+              if ((kr.up || []).length) bits.push('On: ' + kr.up.map(esc).join(', '));
+              if ((kr.down || []).length) bits.push('Off: ' + kr.down.map(esc).join(', '));
               return '<div style="padding:2px 0">' + (i + 1) + '. ' +
-                (st.time ? esc(st.time) + ' — ' : '') + esc(st.name) + '</div>';
-            }).join('') + '</div>';
+                (st.time ? esc(st.time) + ' — ' : '') + esc(st.name) +
+                (bits.length ? '<div class="note" style="margin:0 0 2px">🧒 ' + bits.join(' · ') + '</div>' : '') +
+                '</div>';
+            }).join('') + '</div>' +
+            /* PREVIEW THE ENTIRE TRIP, before Save: the whole
+               run on her map — every stop pinned in order with
+               the list beside it. The hand-off also parks the
+               staged read (see dpStageRead's note): looking at
+               the map never costs her the read. */
+            '<div class="row" style="margin-bottom:8px"><button type="button" class="btn ghost" id="dp_sheet_preview_' + pv.block + '" style="flex:1">👁 Preview the ' + (pv.block === 'am' ? 'morning' : 'evening') + ' trip on the map</button></div>';
         });
         h += '<div class="row"><button type="button" class="btn ghost" id="dp_sheet_cancel" style="flex:1">Cancel</button></div>' +
           '<div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="dp_sheet_confirm" style="flex:1">✓ Save this route</button></div>';
@@ -2830,6 +2922,65 @@
             sBtn = card.querySelector('#dp_sheet_confirm');
         if (cBtn) cBtn.onclick = function () { dpCancelPendingSheet(); };
         if (sBtn) sBtn.onclick = function () { dpSavePendingSheet(); };
+        dpPendingSheet.preview.forEach(function (pv) {
+          var pBtn = card.querySelector('#dp_sheet_preview_' + pv.block);
+          if (pBtn) pBtn.onclick = function () { dpPreviewPendingRun(pv); };
+        });
+      }
+      /* The map hand-off for a STAGED run: the Navigator opens
+         its trip preview on the staged stops + roster (nothing
+         saved — the preview is a view), and the staged read
+         itself is parked in the store under dp_pending_sheet
+         so the return render re-stages this same confirmation
+         (consumed once, in the wiring below). Without the
+         park, looking at the map would discard the read with
+         the paint that staged it, and she would have to upload
+         again to reach Save — the preview would eat the very
+         confirmation it serves. The park changes nothing else
+         about the pending read's lifetime: it is written only
+         by this tap, read only by the next Dispatch render,
+         and cleared as it is read. */
+      function dpPreviewPendingRun(pv) {
+        var pend = dpPendingSheet;
+        if (!pend || !pv) return;
+        try {
+          if (window.App && App._store) {
+            App._store.set('dp_pending_sheet', { text: pend.text, runs: pend.runs });
+            App._store.set('nav_route_preview', {
+              block: pv.block,
+              staged: {
+                name: pend.routeName ? 'Route ' + pend.routeName : '',
+                stops: pv.stops.map(function (st) { return { name: st.name, time: st.time || '' }; }),
+                kids: pv.roster || []
+              }
+            });
+          }
+        } catch (e) {}
+        try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {}
+      }
+      /* Stage a finished read for her check — the ONE staging
+         door, used by the file read itself (in the wiring
+         below) and by the preview round-trip's restage (the
+         dp_pending_sheet park dpPreviewPendingRun leaves). It
+         builds the confirmation from the engine's own parsers
+         over the very texts Save will write, reads the sheet's
+         route name off the file, and reports whether anything
+         confirmable stood at all. */
+      function dpStageRead(text, runs) {
+        var preview = [];
+        ['am', 'pm'].forEach(function (block) {
+          if (!runs[block]) return;
+          var secP = '';
+          try { secP = RouteSheetFile.sliceShift(text || '', block) || ''; } catch (e) { secP = ''; }
+          var pv = dpSheetPreviewRun(block, runs[block], secP);
+          if (pv) preview.push(pv);
+        });
+        if (!preview.length) return false;
+        var routeName = '';
+        try { routeName = RouteSheetFile.routeNameOf(text || ''); } catch (e) { routeName = ''; }
+        dpPendingSheet = { text: text || '', runs: runs, preview: preview, routeName: routeName };
+        dpPaintSheetConfirm();
+        return true;
       }
       function dpSavePendingSheet() {
         var pend = dpPendingSheet;
@@ -2837,7 +2988,7 @@
         if (!pend) return;
         var text = pend.text, runs = pend.runs;
         var saved = [], runNotes = [];
-        [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Afternoon', '#dp_sheet_pm_note']].forEach(function (rc) {
+        [['am', 'Morning', '#dp_sheet_am_note'], ['pm', 'Evening', '#dp_sheet_pm_note']].forEach(function (rc) {
           if (!runs[rc[0]]) return;
           var n = 0;
           /* v382 (ROUTE-SHEET-DRIVES-NAVIGATION-NOV8): the
@@ -2850,7 +3001,13 @@
              photographed sheet). */
           var sec382 = '';
           try { sec382 = RouteSheetFile.sliceShift(text || '', rc[0]) || ''; } catch (e) { sec382 = ''; }
-          try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]], sec382); } catch (e) {}
+          /* The sheet's own route id rides the save (ROUTE-
+             STOP-KID-NAMES-TRIP-PREVIEW-NOV8): the route is
+             saved BY NAME — pend.routeName is the id the file
+             carried ('' when it carried none, which clears a
+             stale name rather than leaving the old route's
+             name on a new route). */
+          try { if (window.SplitShift && SplitShift.setRouteSheet) n = SplitShift.setRouteSheet(rc[0], runs[rc[0]], sec382, pend.routeName); } catch (e) {}
           if (n > 0) {
             saved.push(rc[1] + ' ' + n + ' stops');
             runNotes.push([rc[2], rc[1] + ' route saved — ' + n + ' stops, in order. The day’s route follows this sheet.']);
@@ -2902,27 +3059,17 @@
               }
               /* ROUTE-SHEET-UPLOAD-CONFIRMATION-NOV8: a read
                  that produced runs is STAGED for her check,
-                 never saved on the spot — the preview is built
-                 from the engine's own parsers over the very
-                 texts Save will write, a run whose stops parse
-                 to nothing is not carried (exactly the run
-                 setRouteSheet would have refused), and only a
-                 read with nothing confirmable at all keeps the
-                 plain refusal below. */
-              var preview = [];
-              ['am', 'pm'].forEach(function (block) {
-                if (!runs[block]) return;
-                var secP = '';
-                try { secP = RouteSheetFile.sliceShift(text || '', block) || ''; } catch (e) { secP = ''; }
-                var pv = dpSheetPreviewRun(block, runs[block], secP);
-                if (pv) preview.push(pv);
-              });
-              if (!preview.length) {
+                 never saved on the spot — dpStageRead builds
+                 the preview from the engine's own parsers over
+                 the very texts Save will write (a run whose
+                 stops parse to nothing is not carried, exactly
+                 the run setRouteSheet would have refused), and
+                 only a read with nothing confirmable at all
+                 keeps the plain refusal below. */
+              if (!dpStageRead(text || '', runs)) {
                 if (dpFileNote) dpFileNote.textContent = 'That file could not be read as a route sheet — nothing was saved. Upload the sheet file the company sent, or photograph the printed sheet.';
                 return;
               }
-              dpPendingSheet = { text: text || '', runs: runs, preview: preview };
-              dpPaintSheetConfirm();
             };
             /* ROUTE-SHEET-UPLOAD-FAILS-ON-PHONE-NOV8: the file is
                routed by what it IS, not by what the picker called
@@ -2955,6 +3102,261 @@
             });
           };
         }
+      } catch (e) {}
+
+      /* Preview round-trip restage (ROUTE-STOP-KID-NAMES-TRIP-
+         PREVIEW-NOV8): the confirmation's map preview parked
+         the staged read under dp_pending_sheet on its way to
+         the Navigator; this render consumes the park (reads it
+         once, clears it) and re-stages the same confirmation,
+         so looking at the trip never costs her the read. A
+         render with no park behaves exactly as before — a
+         pending read still dies with the paint that staged it
+         (the web-385 lifetime law stands everywhere else). */
+      try {
+        var dpRestage = null;
+        if (window.App && App._store) {
+          dpRestage = App._store.get('dp_pending_sheet', null);
+          if (dpRestage) App._store.set('dp_pending_sheet', null);
+        }
+        if (dpRestage && dpRestage.runs) dpStageRead(dpRestage.text || '', dpRestage.runs);
+      } catch (e) {}
+
+      /* The route on file: preview doors + the fenced delete
+         doors (ROUTE-STOP-KID-NAMES-TRIP-PREVIEW-NOV8).
+         Preview hands the Navigator the saved run — a view,
+         nothing written. Delete STAGES its confirm in the
+         card (the confirmation law): the tap never deletes;
+         "Keep it" leaves the route standing untouched, and only
+         "Yes, delete it" runs SplitShift.deleteRoute, after
+         which the face repaints on the route-less state — no
+         standing dispatch, no plan, no counting — while every
+         day already recorded under the route stands. */
+      var dpPendingDelete = null;
+      function dpPaintDeleteConfirm() {
+        var card = body.querySelector('#dp_sheet_card');
+        if (!card || !dpPendingDelete) return;
+        var d = dpPendingDelete;
+        var what = d.which === 'all' ? 'the whole route' :
+          (d.which === 'am' ? 'the morning route' : 'the evening route');
+        var counts = d.which === 'all'
+          ? 'Morning ' + d.counts.am + ' stops · Evening ' + d.counts.pm + ' stops'
+          : (d.counts[d.which] + ' stops');
+        var h = '<h3>🗑 Delete ' + what + '?</h3>' +
+          '<p class="note">' + counts + '. The route comes off your map, stops standing as your dispatch, and the app stops counting its kids from now on. ' +
+          'Days you already ran stay in your records, exactly as recorded.</p>' +
+          '<div class="row"><button type="button" class="btn ghost" id="dp_del_keep" style="flex:1">Keep it</button>' +
+          '<button type="button" class="btn" id="dp_del_yes" style="flex:1;background:#b3261e;color:#fff;border-color:#b3261e">Yes, delete it</button></div>';
+        card.innerHTML = h;
+        var kBtn = card.querySelector('#dp_del_keep'), yBtn = card.querySelector('#dp_del_yes');
+        if (kBtn) kBtn.onclick = function () {
+          dpPendingDelete = null;
+          api.render(body);
+          var fn = body.querySelector('#dp_sheet_file_note');
+          if (fn) fn.textContent = 'Nothing was changed — the route still stands.';
+        };
+        if (yBtn) yBtn.onclick = function () {
+          var gone = null;
+          try { if (window.SplitShift && SplitShift.deleteRoute) gone = SplitShift.deleteRoute(d.which); } catch (e) {}
+          dpPendingDelete = null;
+          api.render(body);
+          var fn2 = body.querySelector('#dp_sheet_file_note');
+          if (fn2) fn2.textContent = d.which === 'all'
+            ? 'The route was deleted. It no longer stands as your dispatch.'
+            : ((d.which === 'am' ? 'Morning' : 'Evening') + ' route deleted. It no longer stands as your dispatch.');
+        };
+      }
+      try {
+        [['am', '#dp_route_preview_am'], ['pm', '#dp_route_preview_pm']].forEach(function (pd) {
+          var pBtn = body.querySelector(pd[1]);
+          if (pBtn) pBtn.onclick = function () {
+            try { if (window.App && App._store) App._store.set('nav_route_preview', { block: pd[0] }); } catch (e) {}
+            try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {}
+          };
+        });
+        [['am', '#dp_route_del_am'], ['pm', '#dp_route_del_pm'], ['all', '#dp_route_del_all']].forEach(function (dd) {
+          var dBtn = body.querySelector(dd[1]);
+          if (dBtn) dBtn.onclick = function () {
+            var info = { am: 0, pm: 0 };
+            try { if (window.SplitShift && SplitShift.routeSheetInfo) info = SplitShift.routeSheetInfo(); } catch (e) {}
+            dpPendingDelete = { which: dd[0], counts: { am: info.am || 0, pm: info.pm || 0 } };
+            dpPaintDeleteConfirm();
+          };
+        });
+      } catch (e) {}
+
+      /* The route EDITOR (ROUTE-EDIT-AND-DAILY-SKIP-NOV8 —
+         "make sure she can edit any portion of the route
+         herself"): staged in the card exactly like the
+         confirmation and the delete. The Edit tap reads the
+         standing run through SplitShift.routeEditData and
+         stages its rows HERE, in the render closure — typing
+         changes nothing, moving/taking off/adding repaints
+         from the staged rows (read back first, so no typed
+         word is ever lost to a repaint), and only the one
+         primary Save hands the rows to SplitShift.editRoute:
+         the standing route becomes the edited route, name
+         field and all. Cancel repaints with nothing written.
+         The Place tap geocodes the row's CURRENT name
+         through the app's own door and holds the point on
+         the staged row until Save — placing is part of the
+         edit, never a side save. */
+      var dpEditRoute = null;
+      function dpEditReadBack() {
+        if (!dpEditRoute) return;
+        var card = body.querySelector('#dp_sheet_card');
+        if (!card) return;
+        var nameIn = card.querySelector('#dp_edit_name');
+        if (nameIn) dpEditRoute.name = nameIn.value;
+        dpEditRoute.rows.forEach(function (row, i) {
+          var nIn = card.querySelector('#dp_edit_sname_' + i);
+          var tIn = card.querySelector('#dp_edit_stime_' + i);
+          if (nIn) row.name = nIn.value;
+          if (tIn) row.time = tIn.value;
+        });
+      }
+      function dpPaintRouteEdit(note) {
+        var card = body.querySelector('#dp_sheet_card');
+        if (!card || !dpEditRoute) return;
+        var ed = dpEditRoute;
+        var h = '<h3>✏️ Edit the ' + (ed.block === 'am' ? 'morning' : 'evening') + ' route</h3>' +
+          '<label class="f">Route name</label>' +
+          '<input id="dp_edit_name" value="' + esc(ed.name || '') + '" placeholder="The sheet’s route name — e.g. CBE-0574" style="width:100%">' +
+          '<p class="note">The stops, in order. Fix a name or a time, move a stop, place it on the map, take it off, or add one. The kids ride with their stop. Nothing changes until you tap Save the route.</p>' +
+          (note ? '<p class="note" style="color:#b3261e">' + esc(note) + '</p>' : '');
+        ed.rows.forEach(function (row, i) {
+          var bits = [];
+          if ((row.up || []).length) bits.push('On: ' + row.up.map(esc).join(', '));
+          if ((row.down || []).length) bits.push('Off: ' + row.down.map(esc).join(', '));
+          h += '<div style="border:1px solid #ddd;border-radius:8px;padding:8px 10px;margin-bottom:8px">' +
+            '<div class="row" style="gap:6px;align-items:center"><b style="min-width:22px">' + (i + 1) + '.</b>' +
+            '<input id="dp_edit_sname_' + i + '" value="' + esc(row.name || '') + '" placeholder="Stop name" style="flex:1">' +
+            '<input id="dp_edit_stime_' + i + '" value="' + esc(row.time || '') + '" placeholder="7:26 AM" style="width:88px"></div>' +
+            (bits.length ? '<div class="note" style="margin:4px 0 0">🧒 ' + bits.join(' · ') + '</div>' : '') +
+            '<div class="note" style="margin:4px 0 0">' + (row.placed ? '📍 On the map' : 'Not on the map yet') + '</div>' +
+            '<div class="row" style="gap:6px;margin-top:6px">' +
+            '<button type="button" class="btn ghost small" id="dp_edit_up_' + i + '" style="flex:1">↑ Up</button>' +
+            '<button type="button" class="btn ghost small" id="dp_edit_down_' + i + '" style="flex:1">↓ Down</button>' +
+            '<button type="button" class="btn ghost small" id="dp_edit_place_' + i + '" style="flex:1">📍 ' + (row.placed ? 'Fix its spot' : 'Place it') + '</button>' +
+            '<button type="button" class="btn ghost small" id="dp_edit_off_' + i + '" style="flex:1">✕ Take off</button>' +
+            '</div></div>';
+        });
+        h += '<div class="row"><button type="button" class="btn secondary" id="dp_edit_add" style="flex:1">＋ Add a stop</button></div>' +
+          '<div class="row" style="margin-top:8px"><button type="button" class="btn ghost" id="dp_edit_cancel" style="flex:1">Cancel</button></div>' +
+          '<div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="dp_edit_save" style="flex:1">💾 Save the route</button></div>';
+        card.innerHTML = h;
+        ed.rows.forEach(function (row, i) {
+          var upB = card.querySelector('#dp_edit_up_' + i),
+              dnB = card.querySelector('#dp_edit_down_' + i),
+              plB = card.querySelector('#dp_edit_place_' + i),
+              offB = card.querySelector('#dp_edit_off_' + i);
+          if (upB) upB.onclick = function () { dpEditMove(i, -1); };
+          if (dnB) dnB.onclick = function () { dpEditMove(i, 1); };
+          if (plB) plB.onclick = function () { dpEditPlace(i); };
+          if (offB) offB.onclick = function () { dpEditRemove(i); };
+        });
+        var addB = card.querySelector('#dp_edit_add'),
+            canB = card.querySelector('#dp_edit_cancel'),
+            savB = card.querySelector('#dp_edit_save');
+        if (addB) addB.onclick = function () {
+          dpEditReadBack();
+          dpEditRoute.rows.push({ name: '', time: '', from: -1, placed: false, up: [], down: [] });
+          dpPaintRouteEdit();
+        };
+        if (canB) canB.onclick = function () {
+          dpEditRoute = null;
+          api.render(body);
+          var fn = body.querySelector('#dp_sheet_file_note');
+          if (fn) fn.textContent = 'Nothing was changed — your route stands as it was.';
+        };
+        if (savB) savB.onclick = function () { dpSaveRouteEdit(); };
+      }
+      function dpEditMove(i, dir) {
+        if (!dpEditRoute) return;
+        dpEditReadBack();
+        var rows = dpEditRoute.rows, j = i + dir;
+        if (j < 0 || j >= rows.length) return;
+        var t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+        dpPaintRouteEdit();
+      }
+      function dpEditRemove(i) {
+        if (!dpEditRoute) return;
+        dpEditReadBack();
+        dpEditRoute.rows.splice(i, 1);
+        dpPaintRouteEdit();
+      }
+      function dpEditPlace(i) {
+        if (!dpEditRoute) return;
+        dpEditReadBack();
+        var row = dpEditRoute.rows[i];
+        if (!row || !String(row.name || '').trim()) {
+          dpPaintRouteEdit('Give the stop a name first, then place it.');
+          return;
+        }
+        var g = null;
+        try { g = window.MeticulousGeo || null; } catch (e) {}
+        if (!g || typeof g.geocode !== 'function') {
+          dpPaintRouteEdit('The map lookup is not available right now — the stop stays on the route by name.');
+          return;
+        }
+        var block = dpEditRoute.block, nm = String(row.name).trim();
+        g.geocode(nm).then(function (hit) {
+          if (!dpEditRoute || dpEditRoute.block !== block) return;
+          dpEditReadBack();
+          var r2 = dpEditRoute.rows[i];
+          if (!r2 || String(r2.name || '').trim() !== nm) return;
+          if (hit && isFinite(+hit.latitude) && isFinite(+hit.longitude)) {
+            r2.lat = +hit.latitude; r2.lng = +hit.longitude; r2.placed = true;
+            dpPaintRouteEdit();
+          } else {
+            r2.placed = false; delete r2.lat; delete r2.lng;
+            dpPaintRouteEdit('That name could not be found on the map — the stop stays on the route by name, and the app keeps trying behind the glass.');
+          }
+        }).catch(function () {
+          if (!dpEditRoute || dpEditRoute.block !== block) return;
+          dpPaintRouteEdit('The map lookup did not answer — the stop stays on the route by name.');
+        });
+      }
+      function dpSaveRouteEdit() {
+        if (!dpEditRoute) return;
+        dpEditReadBack();
+        var ed = dpEditRoute;
+        var rows = ed.rows.map(function (row) {
+          var o = { name: row.name, time: row.time, from: row.from };
+          if (row.placed && typeof row.lat === 'number' && typeof row.lng === 'number') {
+            o.lat = row.lat; o.lng = row.lng;
+          }
+          return o;
+        });
+        var n = 0;
+        try { if (window.SplitShift && SplitShift.editRoute) n = SplitShift.editRoute(ed.block, rows, String(ed.name || '').trim()); } catch (e) {}
+        if (!n) {
+          dpPaintRouteEdit('A route needs at least one named stop — add one back, or Cancel and use Delete the route instead.');
+          return;
+        }
+        dpEditRoute = null;
+        api.render(body);
+        var noteEl = body.querySelector(ed.block === 'am' ? '#dp_sheet_am_note' : '#dp_sheet_pm_note');
+        if (noteEl) noteEl.textContent = (ed.block === 'am' ? 'Morning' : 'Evening') +
+          ' route updated — ' + n + ' stops, in order. The day’s route follows your edits.';
+      }
+      try {
+        [['am', '#dp_route_edit_am'], ['pm', '#dp_route_edit_pm']].forEach(function (ed2) {
+          var eBtn = body.querySelector(ed2[1]);
+          if (eBtn) eBtn.onclick = function () {
+            var data = null;
+            try { if (window.SplitShift && SplitShift.routeEditData) data = SplitShift.routeEditData(ed2[0]); } catch (e) {}
+            if (!data) return;
+            dpEditRoute = {
+              block: ed2[0], name: data.name || '',
+              rows: data.stops.map(function (st, i) {
+                return { name: st.name, time: st.time || '', from: i,
+                  placed: !!st.placed, up: st.up || [], down: st.down || [] };
+              })
+            };
+            dpPaintRouteEdit();
+          };
+        });
       } catch (e) {}
 
       /* ---- v65: ingestion card (suggestions + paste box) ----
