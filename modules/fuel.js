@@ -191,13 +191,24 @@
   function saveFillPhotoDoc(rec, stackOverride) {
     try {
       var stack = (stackOverride && stackOverride.length) ? stackOverride : fillPhotos(rec || {});
-      if (window.FB && FB.saveDoc && rec && stack.length) FB.saveDoc('fuel', fillPhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
+      if (window.FB && FB.saveDoc && rec && stack.length) {
+        var p = FB.saveDoc('fuel', fillPhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
+        /* v394: a LANDED account write earns the photo's safe
+           mark — the store's relief may later shed this device's
+           copy on the strength of it, and on no weaker evidence.
+           No rejection handler: a rejected write stays exactly
+           as unhandled as it was before marks existed. */
+        if (p && p.then) { var dk = fillPhotoDocKey(rec); p.then(function () { markPhotoSafe(dk); }); }
+      }
     } catch (e) {}
   }
   function saveExpensePhotoDoc(rec, stackOverride) {
     try {
       var stack = (stackOverride && stackOverride.length) ? stackOverride : fillPhotos(rec || {});
-      if (window.FB && FB.saveDoc && rec && stack.length) FB.saveDoc('fuel', expensePhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
+      if (window.FB && FB.saveDoc && rec && stack.length) {
+        var p2 = FB.saveDoc('fuel', expensePhotoDocKey(rec), stackOverride ? photoDocPayload(rec, stack) : rec);
+        if (p2 && p2.then) { var dk2 = expensePhotoDocKey(rec); p2.then(function () { markPhotoSafe(dk2); }); }
+      }
     } catch (e) {}
   }
   /* web 371 (FUEL-PHOTO-SAVE-DROP-NOV7, round 2 — the web 370
@@ -382,6 +393,10 @@
       try { if (window.FB && FB.saveDoc) p = FB.saveDoc('fuel', best.key, photoDocPayload(best.rec, best.stack)); } catch (e) { p = null; }
       if (!p || !p.then) { next(); return; }
       p.then(function () {
+        /* v394: the reclaim's awaited write just confirmed the
+           full stack in the account — the photo earns its safe
+           mark here too */
+        markPhotoSafe(best.key);
         shrinkPhotoStack(best.stack, PHOTO_RECLAIM_MAX, function (small) {
           if (small && stackTotal(small) < bestTotal) { settle(small); return; }
           shrinkPhotoStack(best.stack, PHOTO_RECLAIM_STEP, function (smaller) {
@@ -426,6 +441,126 @@
     }
     attempt();
   }
+  /* v394 (APP-STORAGE-WALL-NOV9): THE SAFE SET, THE SHEDDER,
+     THE AUDIT. The wall was never the
+     device — it is this origin's localStorage pool (Chromium:
+     10 MiB counted in UTF-16 bytes over the WHOLE origin), and
+     this book's inline photo cache is what fills it: the graft
+     tops the cache up whenever a photo fits beside the book,
+     so the pool sits at the ceiling permanently and every
+     OTHER module's growing save — a signed PTI report, a
+     Documents filing, a day session — dies on the same wall
+     (Nov 9, four surfaces, on a phone with ~118 GB free).
+     Four disciplines, all inside this book's own economy:
+       (a) THE SAFE SET (store key fuel_photo_safe): the doc
+           keys of photos whose FULL stack is confirmed in the
+           record's own account document. A mark is earned ONLY
+           by a landed account write — a save handler's write
+           (above), the reclaim's awaited write, or the audit
+           below. Nothing else earns one.
+       (b) THE SHEDDER, registered with the store (js/app.js):
+           when any write dies on the ceiling, the store asks
+           for room; the shedder drops this device's copies of
+           MARKED photos only, largest first, a margin past the
+           ask. Facts never move; the account keeps the full
+           photo; the graft can heal the copy back when there
+           is room. An UNMARKED photo is never shed — its only
+           full copy may be on this device.
+       (c) THE AUDIT, registered as the store's relief ARM:
+           when a cross-module save dies and relief cannot free
+           enough (too few marks yet), the store arms it — every
+           photo-carrying record without a mark gets its full
+           stack written to its account document, awaited, and
+           is marked only on that write's success — the
+           bootstrap that makes the existing book sheddable
+           without ever shedding on a guess. The driver's own
+           retry of the refused save (the PTI form keeps his
+           inspection, by the v241 design) then finds marks to
+           shed. It deliberately does NOT ride the heal: the
+           graft's write patterns are pinned by their own
+           rounds and gain no new cloud writes from this fix.
+       (d) NO GRAFT CEILING — deliberately. The heal is
+           allowed to keep using the pool's last room, because
+           that room is no longer a one-way ratchet: anything
+           the graft lands becomes sheddable the moment the
+           audit has confirmed it in the account, and relief
+           re-frees it on demand for the driver's own saves.
+           (An earlier draft of this fix capped the graft at a
+           reserve under the ceiling; the round-4 spent book
+           convicted it — the graft legitimately lands photos
+           into room the reclaim just freed, and a usage-based
+           reserve cannot tell that room from the wall.) */
+  function photoSafeMap() { var m = S('photo_safe', {}); return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {}; }
+  function markPhotoSafe(docKey) {
+    if (!docKey) return;
+    var m = photoSafeMap();
+    if (m[docKey]) return;
+    m[docKey] = 1;
+    try { App._store.set('fuel_photo_safe', m); } catch (e) {}
+  }
+  function stackChars(stack) { var t = 0; (stack || []).forEach(function (u) { t += (u && u.length) || 0; }); return t; }
+  function shedMarkedPhotos(needChars) {
+    var safe = photoSafeMap();
+    var target = (needChars || 0) + 150000; /* a margin past the ask, so the next save is not back at the wall at once */
+    var freed = 0;
+    function shedFrom(isFill) {
+      var list = isFill ? fills() : S('expenses', []);
+      var cands = [];
+      list.forEach(function (r) {
+        if (!r) return;
+        var ps = fillPhotos(r);
+        if (!ps.length) return;
+        var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
+        if (!safe[dk]) return;
+        cands.push({ rec: r, size: stackChars(ps) });
+      });
+      cands.sort(function (a, b) { return b.size - a.size; });
+      var listFreed = 0, changed = false;
+      for (var i = 0; i < cands.length && freed + listFreed < target; i++) {
+        delete cands[i].rec.photo; delete cands[i].rec.photos; delete cands[i].rec.photo2;
+        listFreed += cands[i].size; changed = true;
+      }
+      if (!changed) return;
+      var okSave = isFill ? saveFillsVerified(list) : saveExpensesVerified(list);
+      if (okSave) freed += listFreed;
+    }
+    shedFrom(true);
+    if (freed < target) shedFrom(false);
+    return freed;
+  }
+  var photoAuditRan = false;
+  function auditPhotoDocs() {
+    if (photoAuditRan) return Promise.resolve(false);
+    photoAuditRan = true;
+    if (!(window.FB && FB.saveDoc && FB.user)) return Promise.resolve(false);
+    var safe = photoSafeMap();
+    var jobs = [];
+    function consider(isFill, r) {
+      if (!r) return;
+      var ps = fillPhotos(r);
+      if (!ps.length) return;
+      var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
+      if (safe[dk]) return;
+      var doc = photoDocPayload(r, ps);
+      if (JSON.stringify(doc).length > 1000000) return; /* past the Firestore doc cap — the wire/reclaim paths own those stacks */
+      jobs.push({ key: dk, doc: doc });
+    }
+    fills().forEach(function (r) { consider(true, r); });
+    S('expenses', []).forEach(function (r) { consider(false, r); });
+    if (!jobs.length) return Promise.resolve(false);
+    var chain = Promise.resolve(false);
+    jobs.forEach(function (j) {
+      chain = chain.then(function () {
+        var p = null;
+        try { p = FB.saveDoc('fuel', j.key, j.doc); } catch (e) { p = null; }
+        if (!p || !p.then) return false;
+        return p.then(function () { markPhotoSafe(j.key); return true; }, function () { return false; });
+      });
+    });
+    return chain;
+  }
+  try { (window.__mtRelief = window.__mtRelief || []).push({ keys: ['fuel_fills', 'fuel_expenses'], free: shedMarkedPhotos, arm: auditPhotoDocs }); } catch (e) {}
+
   var photoGraftRan = false;
   function healPhotoGrafts(body) {
     if (photoGraftRan) return;
@@ -882,6 +1017,9 @@
 
   Meticulous.modules.fuel = {
     _fillPhotos: fillPhotos, /* v332: the one receipt-stack reader, exported for the suite */
+    _photoAudit: auditPhotoDocs, /* v394: exported for the suite */
+    _healPhotoGrafts: healPhotoGrafts, /* v394: exported for the suite */
+    _shedMarkedPhotos: shedMarkedPhotos, /* v394: exported for the suite */
     _fxPhotoIdx: function () { return fxPhotoIdx; }, /* v346: exported for the suite */
     _auditView: function () { return auditView; }, /* v340: exported for the suite */
     _masterOnSave: masterOnSave,

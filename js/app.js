@@ -107,7 +107,86 @@
        write (e.g. storage full) used to be silently swallowed, making a
        lost save look exactly like a good one. Returning a boolean is
        backward-compatible: existing callers ignore it. */
-    set: function (k, v) { try { localStorage.setItem('mt_' + store.physKey(k), JSON.stringify(v)); return true; } catch (e) { return false; } },
+    _rawSet: function (k, v) { try { localStorage.setItem('mt_' + store.physKey(k), JSON.stringify(v)); return true; } catch (e) { return false; } },
+    /* v394 (APP-STORAGE-WALL-NOV9): THE RELIEF REGISTRY. Every book
+       this app keeps lives in the origin's localStorage, photos
+       inline, and the pool has one ceiling for the whole origin —
+       when it fills, EVERY module's growing save dies on it (the
+       Nov 9 wall: a signed PTI, two Documents filings, the photo
+       dispatch close and both fuel receipt photos, all refused on
+       a phone with ~118 GB free — the device was never the wall).
+       A module that locally CACHES what is provably held elsewhere
+       (Fuel's receipt photos: each has a per-record account
+       document) may register a shedder; when a write dies on the
+       ceiling the store asks each shedder in turn to free room and
+       retries the write. A shedder answers the characters it freed
+       (0 = none) and must drop only what is provably held
+       elsewhere. Shedders are pushed onto window.__mtRelief by any
+       script — modules load before this file — and the store
+       resolves that very array at call time, so registration order
+       never matters. */
+    _reliefOwn: [],
+    _reliefList: function () {
+      try { if (typeof window !== 'undefined' && window.__mtRelief) return window.__mtRelief; } catch (e) {}
+      return store._reliefOwn;
+    },
+    onRelief: function (fn) { if (typeof fn === 'function') store._reliefList().push(fn); },
+    _relieving: false,
+    /* Total characters this app holds in the origin's store
+       (keys + values) — the measure the graft ceiling in
+       modules/fuel.js spends against the ceiling. */
+    usageChars: function () {
+      var t = 0;
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf('mt_') === 0) t += k.length + (localStorage.getItem(k) || '').length;
+        }
+      } catch (e) {}
+      return t;
+    },
+    set: function (k, v) {
+      if (store._rawSet(k, v)) return true;
+      if (store._relieving) return false;
+      var need = 0;
+      try {
+        var pk = 'mt_' + store.physKey(k);
+        var old = localStorage.getItem(pk);
+        need = JSON.stringify(v).length - (old ? old.length : 0);
+        if (need < 0) need = 0;
+      } catch (e) {}
+      store._relieving = true;
+      try {
+        var list = store._reliefList();
+        for (var i = 0; i < list.length; i++) {
+          var h = list[i];
+          var freeFn = (typeof h === 'function') ? h : (h && h.free);
+          if (!freeFn) continue;
+          /* A handler that OWNS the failing key is skipped for
+             it: Fuel's book writes run their own fallback
+             economy (the fit ladder + the reclaim), and relief
+             shedding mid-flow would fight that choreography.
+             Relief exists for the writes that have no economy
+             of their own — PTI, Documents, Dispatch, sessions. */
+          if (h && h.keys && h.keys.indexOf(k) !== -1) continue;
+          var freed = 0;
+          try { freed = freeFn(need) || 0; } catch (e) {}
+          if (freed > 0 && store._rawSet(k, v)) return true;
+        }
+        /* Nothing freed enough: arm the eligible handlers once
+           (fire-and-forget). An arm makes FUTURE relief possible
+           — Fuel's arm is its photo audit, which confirms the
+           book's photos in the account so a later failure has
+           something provably-held to shed. */
+        for (var j = 0; j < list.length; j++) {
+          var h2 = list[j];
+          if (!h2 || typeof h2 === 'function' || !h2.arm) continue;
+          if (h2.keys && h2.keys.indexOf(k) !== -1) continue;
+          try { h2.arm(); } catch (e) {}
+        }
+      } finally { store._relieving = false; }
+      return false;
+    },
     del: function (k) { try { localStorage.removeItem('mt_' + store.physKey(k)); return true; } catch (e) { return false; } }
   };
 

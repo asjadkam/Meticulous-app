@@ -75,13 +75,37 @@
       addedAt: now
     };
   }
-  function addDoc(input) {
-    var rec = buildDoc(input);
-    if (!rec.data) return null;
+  /* v394 (APP-STORAGE-WALL-NOV9): THE ACCOUNT COPY. A document's
+     bytes used to live ONLY in this device's local store — the
+     sync copy sheds `data` whenever the vault outgrows one cloud
+     doc (the v339 law) — so a save the local store refused lost
+     the document everywhere (the Nov 5 CVSA report, twice, on
+     Nov 9), and this module had no ladder and no fallback of any
+     kind. Now every save first writes the FULL record to its own
+     account document (the fuel photo-doc law), so the full page
+     is in the account whatever the local store can hold; the
+     form's save then retries down the fit ladder (960px, 640px —
+     the fuel law again) before it reports failure, and the store's
+     own relief (js/app.js) frees room from provably-held photo
+     caches ahead of all of it. */
+  function writeAccountDoc(rec) {
+    try {
+      if (!(window.FB && FB.saveDoc) || !rec || !rec.id || !rec.data) return;
+      if (JSON.stringify(rec).length > WIRE_MAX) return;
+      FB.saveDoc('documents', rec.id, { label: rec.label, name: rec.name, kind: rec.kind, data: rec.data, addedAt: rec.addedAt });
+    } catch (e) {}
+  }
+  function saveDocRec(rec) {
     var list = items();
     list.unshift(rec);
     if (!saveItemsVerified(list)) return null;
     return rec;
+  }
+  function addDoc(input) {
+    var rec = buildDoc(input);
+    if (!rec.data) return null;
+    writeAccountDoc(rec);
+    return saveDocRec(rec);
   }
   function deleteDoc(id) {
     var list = items().filter(function (x) { return !x || x.id !== id; });
@@ -387,10 +411,28 @@
     if (saveB) saveB.onclick = function () {
       if (!addPending || !addPending.data) { addErr = 'Add the photo or PDF first, then save.'; Meticulous.modules.documents.render(body); return; }
       var nameEl = body.querySelector('#docs_name');
-      var rec = addDoc({ label: addLabel, name: nameEl ? nameEl.value : '', kind: addPending.kind, data: addPending.data });
-      if (!rec) { addErr = 'The document could NOT be saved on this phone — storage may be full. Nothing was saved.'; Meticulous.modules.documents.render(body); return; }
-      addPending = null; addErr = '';
-      Meticulous.modules.documents.render(body);
+      /* v394: build ONCE (one id), write the account copy with
+         the FULL page, then the local save — and on a refusal,
+         the fit ladder (960px, then 640px; the fuel law) before
+         the save is given up. The account copy already holds
+         the full page either way. */
+      var rec0 = buildDoc({ label: addLabel, name: nameEl ? nameEl.value : '', kind: addPending.kind, data: addPending.data });
+      if (!rec0.data) { addErr = 'Add the photo or PDF first, then save.'; Meticulous.modules.documents.render(body); return; }
+      writeAccountDoc(rec0);
+      var done394 = function () { addPending = null; addErr = ''; Meticulous.modules.documents.render(body); };
+      var fail394 = function () { addErr = 'The document could NOT be saved on this phone — storage may be full. Nothing was saved.'; Meticulous.modules.documents.render(body); };
+      if (saveDocRec(rec0)) { done394(); return; }
+      if (rec0.kind === 'image' && window.TicketOCR && TicketOCR.shrinkDataUrl) {
+        TicketOCR.shrinkDataUrl(rec0.data, 960, function (s1) {
+          if (s1 && s1 !== rec0.data && saveDocRec(Object.assign({}, rec0, { data: s1 }))) { done394(); return; }
+          TicketOCR.shrinkDataUrl(rec0.data, 640, function (s2) {
+            if (s2 && s2 !== rec0.data && saveDocRec(Object.assign({}, rec0, { data: s2 }))) { done394(); return; }
+            fail394();
+          });
+        });
+        return;
+      }
+      fail394();
     };
     var moreB = body.querySelector('#docs_more');
     if (moreB) moreB.onclick = function () { docsShowAll = !docsShowAll; Meticulous.modules.documents.render(body); };
