@@ -1451,20 +1451,53 @@
           if (!dconf) return;
           try {
             var confs = (st && st.delConflicts) || [];
-            if (!confs.length) { dconf.innerHTML = ''; return; }
-            dconf.innerHTML = confs.map(function (c, i) {
+            /* web406 (DELETE-PRETOMBSTONE-NOV10): the same card
+               also carries the pre-tombstone disagreements —
+               records a deletion removed from the account
+               before delete-tracking existed (still held here),
+               and records this phone's own sync shadow is
+               holding out of its lists. Same ruling, same two
+               buttons; CloudSync.resolveOrphan carries it out. */
+            var orphs = (st && st.orphans) || [];
+            if (!confs.length && !orphs.length) { dconf.innerHTML = ''; return; }
+            var html = confs.map(function (c, i) {
               return '<div style="border-top:1px solid #e3e3e3;margin-top:12px;padding-top:10px;">' +
                 '<p class="note" style="margin-top:0">⚠️ Deleted on another device, but changed on this phone: ' +
                 escHtml(c.label || 'Record') + '. Keep your copy, or delete it here too?</p>' +
                 '<button class="btn ghost" data-delconf="' + i + '" data-keep="0">Delete it</button> ' +
                 '<button class="btn ghost" data-delconf="' + i + '" data-keep="1">Keep my copy</button></div>';
             }).join('');
+            html += orphs.map(function (c, i) {
+              if (c.kind === 'excluded') {
+                return '<div style="border-top:1px solid #e3e3e3;margin-top:12px;padding-top:10px;">' +
+                  '<p class="note" style="margin-top:0">⚠️ In your account, but this phone is set to delete it: ' +
+                  escHtml(c.label || 'Record') + '. Keep it on this phone, or delete it everywhere?</p>' +
+                  '<button class="btn ghost" data-orphan="' + i + '" data-keep="0">Delete it everywhere</button> ' +
+                  '<button class="btn ghost" data-orphan="' + i + '" data-keep="1">Keep it on this phone</button></div>';
+              }
+              return '<div style="border-top:1px solid #e3e3e3;margin-top:12px;padding-top:10px;">' +
+                '<p class="note" style="margin-top:0">⚠️ Deleted from your account before delete-tracking began, and still on this phone: ' +
+                escHtml(c.label || 'Record') + '. Keep your copy, or delete it here too?</p>' +
+                '<button class="btn ghost" data-orphan="' + i + '" data-keep="0">Delete it</button> ' +
+                '<button class="btn ghost" data-orphan="' + i + '" data-keep="1">Keep my copy</button></div>';
+            }).join('');
+            dconf.innerHTML = html;
             var bs = dconf.querySelectorAll('button[data-delconf]');
             for (var bi = 0; bi < bs.length; bi++) {
               bs[bi].onclick = function () {
                 var c = confs[Number(this.getAttribute('data-delconf'))];
                 if (!c) return;
                 try { if (window.CloudSync && CloudSync.resolveDelConflict) CloudSync.resolveDelConflict(c.key, c.id, this.getAttribute('data-keep') === '1'); } catch (e) {}
+                setTimeout(paint, 400);
+                setTimeout(paint, 2000);
+              };
+            }
+            var os = dconf.querySelectorAll('button[data-orphan]');
+            for (var oi = 0; oi < os.length; oi++) {
+              os[oi].onclick = function () {
+                var c = orphs[Number(this.getAttribute('data-orphan'))];
+                if (!c) return;
+                try { if (window.CloudSync && CloudSync.resolveOrphan) CloudSync.resolveOrphan(c.key, c.id, this.getAttribute('data-keep') === '1'); } catch (e) {}
                 setTimeout(paint, 400);
                 setTimeout(paint, 2000);
               };

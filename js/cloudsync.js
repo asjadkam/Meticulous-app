@@ -2648,8 +2648,11 @@
   /* Process one cloud doc's `del` field against this device:
      accept what settles, surface what doesn't, forget what a
      keeper revoked. rlLocal is the pre-merge local list (the
-     edit test reads OUR copy, never the union winner). */
-  function processCloudDels(key, cloudDel, rlLocal, cloudArr, mergedArr) {
+     edit test reads OUR copy, never the union winner).
+     web406: cloudTs is the doc's own stamp where the caller
+     knows it (the pull does; the push passes 0 = unknown, and
+     unknown never forgets). */
+  function processCloudDels(key, cloudDel, rlLocal, cloudArr, mergedArr, cloudTs) {
     var m = getMeta(), changed = false;
     if (!m.dels) m.dels = {};
     var dels = cloneDelMap(m.dels[key]);
@@ -2694,11 +2697,19 @@
       }
     }
     /* revoke-forget: the record is back in the cloud list and
-       its tombstone is gone — a keeper restored it; forget ours */
+       its tombstone is gone — a keeper restored it; forget ours.
+       web406: only when the doc itself is NEWER than the
+       tombstone — a doc written BEFORE the ruling (the
+       pre-tombstone resurrection a resolveOrphan(delete) is
+       about to overwrite with its own flush) also lacks the
+       entry, and forgetting there would eat the ruling in the
+       same syncNow that carries it. A keeper's restoring push
+       post-dates the tombstone by construction. */
     var cloudIds = {};
     (cloudArr || []).forEach(function (r) { var id2 = recordIdentity(key, r); if (id2) cloudIds[id2] = 1; });
     Object.keys(dels).forEach(function (id) {
-      if (!(cloudDel && cloudDel[id]) && cloudIds[id] && confIdx(id) < 0) {
+      if (!(cloudDel && cloudDel[id]) && cloudIds[id] && confIdx(id) < 0 &&
+          (Number(cloudTs) || 0) > (Number(dels[id].t) || 0)) {
         delete dels[id]; changed = true;
       }
     });
@@ -2809,6 +2820,190 @@
         if (!m.dels[key]) m.dels[key] = {};
         m.dels[key][id] = { t: c.t || Date.now(), fp: c.fp || null };
         var arr = parseJson(lsGetRaw(key), null);
+        if (Array.isArray(arr)) {
+          var kept = arr.filter(function (r) { return recordIdentity(key, r) !== id; });
+          if (kept.length !== arr.length) lsSetRaw(key, JSON.stringify(kept));
+        }
+      }
+      /* stamp the key so the ruling itself ships on this flush */
+      km.t = Date.now(); km.u = S.uid;
+      saveMeta();
+      try { S.syncNow(); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  };
+
+  /* web406 (DELETE-PRETOMBSTONE-NOV10): the disagreements the
+     tombstone layer cannot see, because the deletion PREDATES
+     tombstones. The $695.98 revenue record was deleted Nov 10,
+     08:05 by a pre-404 client: its write carried no del entry,
+     so on the holder's next pull the absence matches NO 404
+     path — processCloudDels reads only the doc's del map
+     (empty), pendingRecordDeletes needs the id PRESENT in the
+     cloud list (it is absent) — and the union's never-lose law
+     re-writes the record into the cloud on the holder's own
+     push: the deletion is silently undone, forever (bench:
+     the world-E replay). A rolled-back cloud copy (world B)
+     presents the IDENTICAL stored signature — local ∧
+     agreed-shadow ∧ ¬cloud, no tombstone — and there is NO
+     distinguishing signal in the stored data; per the owner's
+     ruling (Nov 10, 10:11 — "if they disagree the option to
+     delete has to be there") the CHOICE ITSELF is the
+     resolution: the disagreement is offered on the device
+     that still holds the record (m.orphans → status() →
+     Preferences sync card), nothing is ever auto-deleted,
+     Delete authors the tombstone web 404 would have written,
+     and Keep stands the record (the union already restores
+     it — never-lose honoured by his choice, not by silence).
+     The mirror shape rides the same surface: records the
+     pending-delete honor EXCLUDES (shadow ∧ cloud ∧ ¬local —
+     the Nov 10 Documents case: filed to the account, verified
+     in the cloud book, yet the phone's vault read empty
+     because its shadow remembered them as its own pending
+     deletion and every union kept them out — and a 404 push
+     would tombstone them account-wide without anyone ruling).
+     A fresh deliberate pending delete converges by push
+     within a cycle; one still excluded on a LATER pull has
+     survived a push round, so it is offered the same way:
+     Keep revokes the exclusion (the shadow entry is dropped
+     and the union lands the record), Delete tombstones it.
+     m.orphanKeep { key: { id: ms } } marks a ruled Keep so the
+     same standing absence is not re-offered; the mark clears
+     when the record is back in the cloud list (agreement
+     restored), so a future absence offers afresh.
+     m.pdSeen { key: { id: ms } } is the first-sight book for
+     exclusions (offer only on a repeat sighting). */
+  function detectOrphans(key, rlLocal, cloudArr, cloudDel, shadowIn, kmSIn) {
+    var m = getMeta();
+    var cloudIds = {}, i, id;
+    (cloudArr || []).forEach(function (r) { var rid = recordIdentity(key, r); if (rid) cloudIds[rid] = 1; });
+    var shadowSet = {};
+    (shadowIn || []).forEach(function (sid) { shadowSet[sid] = 1; });
+    var delMap = (m.dels && m.dels[key]) || {};
+    var conf = conflictIdSet(key);
+    var orphans = (m.orphans || []).slice();
+    var dirty = false;
+    function hasOrphan(rid) {
+      for (var j = 0; j < orphans.length; j++) if (orphans[j].key === key && orphans[j].id === rid) return true;
+      return false;
+    }
+    /* keep-marks clear when agreement is restored (the record
+       is back in the cloud list) — a future absence is a new
+       disagreement and offers afresh */
+    if (m.orphanKeep && m.orphanKeep[key]) {
+      Object.keys(m.orphanKeep[key]).forEach(function (kid) {
+        if (cloudIds[kid]) { delete m.orphanKeep[key][kid]; dirty = true; }
+      });
+      if (!Object.keys(m.orphanKeep[key]).length) { delete m.orphanKeep[key]; dirty = true; }
+    }
+    var keepMarks = (m.orphanKeep && m.orphanKeep[key]) || {};
+    /* moot offers clear: a held record the user removed by
+       hand in the module, an excluded record that landed or
+       left the cloud story */
+    orphans = orphans.filter(function (o) {
+      if (!o || o.key !== key) return true;
+      if (o.kind === 'excluded') {
+        if (findRecordById(key, rlLocal, o.id)) { dirty = true; return false; }
+        if (!cloudIds[o.id]) { dirty = true; return false; }
+        return true;
+      }
+      if (!findRecordById(key, rlLocal, o.id)) { dirty = true; return false; }
+      return true;
+    });
+    /* HELD: held here, once agreed, gone from the cloud with
+       no tombstone — the pre-tombstone deletion shape */
+    (rlLocal || []).forEach(function (rec) {
+      var rid = recordIdentity(key, rec);
+      if (!rid || !shadowSet[rid]) return;
+      if (cloudIds[rid]) return;
+      if (cloudDel && cloudDel[rid]) return;   // the tombstone world (web403) owns it
+      if (delMap[rid] || conf[rid]) return;
+      if (keepMarks[rid]) return;               // he ruled keep on this standing absence
+      if (hasOrphan(rid)) return;
+      /* no local edit past the agreed state: an fp identity
+         IS the content fingerprint, so it cannot have been
+         edited; for id/dsp identities an updatedAt newer than
+         the last agreed stamp is the only edit evidence there
+         is — such a record is never offered (the union keeps
+         it; never-lose). */
+      if (rid.indexOf('fp:') !== 0 && typeof rec.updatedAt === 'number' && rec.updatedAt > (kmSIn || 0)) return;
+      orphans.push({ key: key, id: rid, kind: 'held', t: Date.now(),
+                     fp: recordContentFp(key, rec), label: recordLabel(key, rec) });
+      dirty = true;
+    });
+    /* EXCLUDED: in the cloud, once agreed, absent here — the
+       pending-delete honor is keeping it out. Offered only
+       when the exclusion survives to a repeat pull. */
+    var pd = {};
+    if (m.pdSeen && m.pdSeen[key]) Object.keys(m.pdSeen[key]).forEach(function (pid) { pd[pid] = m.pdSeen[key][pid]; });
+    var pdDirty = false, seenNow = {};
+    (cloudArr || []).forEach(function (rec) {
+      var rid = recordIdentity(key, rec);
+      if (!rid || !shadowSet[rid]) return;
+      if (findRecordById(key, rlLocal, rid)) return;
+      if (cloudDel && cloudDel[rid]) return;
+      if (delMap[rid] || conf[rid]) return;
+      seenNow[rid] = 1;
+      if (hasOrphan(rid)) return;
+      if (pd[rid]) {
+        orphans.push({ key: key, id: rid, kind: 'excluded', t: Date.now(),
+                       fp: null, label: recordLabel(key, rec) });
+        dirty = true;
+      } else { pd[rid] = Date.now(); pdDirty = true; }
+    });
+    Object.keys(pd).forEach(function (pid) { if (!seenNow[pid]) { delete pd[pid]; pdDirty = true; } });
+    if (dirty) { if (orphans.length) m.orphans = orphans; else delete m.orphans; }
+    if (pdDirty) {
+      if (!m.pdSeen) m.pdSeen = {};
+      if (Object.keys(pd).length) m.pdSeen[key] = pd; else delete m.pdSeen[key];
+    }
+    if (dirty || pdDirty) saveMeta();
+  }
+
+  /* web406: the user's ruling on one pre-tombstone
+     disagreement. held + keep: the record stands (the union
+     restores it to the cloud — never-lose by his choice) and
+     the absence is marked ruled so it is not re-offered.
+     held + delete: the local copy is dropped here and the
+     tombstone is accepted with the local copy's fingerprint,
+     so every holder drops it and no push resurrects it.
+     excluded + keep: the exclusion is revoked (the shadow
+     entry is dropped) and the next pull's union lands the
+     record on this device. excluded + delete: the tombstone
+     is authored (fp null — no local copy exists to conflict)
+     and the pushes converge the account on deleted. Either
+     way the offer clears and a sync runs. */
+  S.resolveOrphan = function (key, id, keep) {
+    try {
+      if (!RECORD_LIST_KEYS[key]) return false;
+      var m = getMeta();
+      var orphans = (m.orphans || []).slice(), idx = -1;
+      for (var i = 0; i < orphans.length; i++) {
+        if (orphans[i].key === key && orphans[i].id === id) { idx = i; break; }
+      }
+      if (idx < 0) return false;
+      var o = orphans[idx];
+      orphans.splice(idx, 1);
+      if (orphans.length) m.orphans = orphans; else delete m.orphans;
+      var km = keyMeta(key);
+      if (o.kind === 'excluded') {
+        if (km.sh) km.sh = km.sh.filter(function (x) { return x !== id; });
+        if (m.pdSeen && m.pdSeen[key]) delete m.pdSeen[key][id];
+        if (!keep) {
+          if (!m.dels) m.dels = {};
+          if (!m.dels[key]) m.dels[key] = {};
+          m.dels[key][id] = { t: Date.now(), fp: null };
+        }
+      } else if (keep) {
+        if (!m.orphanKeep) m.orphanKeep = {};
+        if (!m.orphanKeep[key]) m.orphanKeep[key] = {};
+        m.orphanKeep[key][id] = Date.now();
+      } else {
+        var arr = parseJson(lsGetRaw(key), null);
+        var rec = Array.isArray(arr) ? findRecordById(key, arr, id) : null;
+        if (!m.dels) m.dels = {};
+        if (!m.dels[key]) m.dels[key] = {};
+        m.dels[key][id] = { t: Date.now(), fp: rec ? recordContentFp(key, rec) : (o.fp || null) };
         if (Array.isArray(arr)) {
           var kept = arr.filter(function (r) { return recordIdentity(key, r) !== id; });
           if (kept.length !== arr.length) lsSetRaw(key, JSON.stringify(kept));
@@ -3010,6 +3205,42 @@
             !(km.u && S.uid && km.u !== S.uid)) {
           var rlLocal = parseJson(raw, undefined);
           if (Array.isArray(rlLocal)) {
+            /* web406: the agreed state as this pull FOUND it —
+               the orphan detector's evidence (the branch tail
+               rewrites km.sh/km.s, so capture both first). */
+            var shadowIn406 = (km.sh || []).slice();
+            var kmSIn406 = km.s || 0;
+            /* web406 (DOCUMENTS-HELD-OUT-NOV10): the shadow the
+               merge may use. The pending-delete honor exists
+               for an IN-FLIGHT delete — a local write this
+               device has not pushed yet, which is exactly a
+               DIRTY key (km.t > km.s; attach()'s store.set
+               wrapper stamps every local write). On a SETTLED
+               key there is no delete in flight, so a shadow id
+               the cloud still holds but the local list lacks
+               is not a pending deletion — it is spent
+               bookkeeping (the Nov 10 shape: the phone's vault
+               read "No documents yet" while its shadow named
+               the two filed CVSA documents, and every union
+               kept them out; a landed push would even have
+               tombstoned them account-wide). Spent ids are
+               pruned from the merge shadow on a settled key,
+               so the union lands the account's records again.
+               A fresh deliberate delete is dirty by
+               construction and is never pruned. */
+            var shadowForMerge406 = shadowIn406;
+            if ((km.t || 0) <= (km.s || 0)) {
+              var cloudIdSet406 = {}, localIdSet406 = {};
+              d.v.forEach(function (r) { var rid = recordIdentity(key, r); if (rid) cloudIdSet406[rid] = 1; });
+              rlLocal.forEach(function (r) { var rid = recordIdentity(key, r); if (rid) localIdSet406[rid] = 1; });
+              var pruned406 = shadowIn406.filter(function (sid) {
+                return !(cloudIdSet406[sid] && !localIdSet406[sid]);
+              });
+              if (pruned406.length !== shadowIn406.length) {
+                shadowForMerge406 = pruned406;
+                km.sh = pruned406.slice();
+              }
+            }
             /* web403 (DELETE-STICKINESS-NOV10): the tombstone
                layer rides the same union. The merge runs with
                its flags out — deletions this merge applies for
@@ -3024,11 +3255,11 @@
                so an undecided cycle stays dirty and the flush's
                own hold-back keeps them out of the write. */
             var delFlags = {};
-            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, km.sh, delFlags);
+            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, shadowForMerge406, delFlags);
             var authP = authoredTombs(key, delFlags, d.v);
             if (authP) acceptDels(key, authP);
             processCloudDels(key, (d.del && typeof d.del === 'object') ? d.del : {},
-              rlLocal, d.v, rlMerged);
+              rlLocal, d.v, rlMerged, cloudTs);
             var rlFinal = applyDelFilter(key, rlMerged, rlLocal);
             var rlView = stripConflictHeld(key, rlFinal);
             if (JSON.stringify(rlFinal) !== JSON.stringify(rlLocal)) {
@@ -3059,6 +3290,18 @@
                  pending delete on a later cycle. */
               km.sh = recordIdList(key, rlFinal);
             }
+            /* web406 (DELETE-PRETOMBSTONE-NOV10): surface the
+               disagreements no tombstone can name — records a
+               pre-tombstone deletion removed from the cloud
+               while this device still holds them, and records
+               this device's own shadow is holding out of its
+               lists. Detection only: the union above already
+               ran exactly as before (never-lose untouched). */
+            try {
+              detectOrphans(key, rlLocal, d.v,
+                (d.del && typeof d.del === 'object') ? d.del : {},
+                shadowIn406, kmSIn406);
+            } catch (e) {}
             return;
           }
         }
@@ -3465,6 +3708,9 @@
          Information only — never a dot input: an undecided
          record must not paint the sync dot red. */
       delConflicts: (m.delConf || []).slice(),
+      /* web406: pre-tombstone disagreements awaiting the
+         user's choice (same card, same two-button ruling). */
+      orphans: (m.orphans || []).slice(),
       lastError: S.lastError, stats: S.stats
     };
   };

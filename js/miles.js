@@ -1212,6 +1212,32 @@
      ground a second time. Returns the floor applied, in metres
      (0 = no floor / nothing to raise). */
   var FLOOR_PIN_SLACK_MS = 5000; // the v361 session-pin jitter family
+  /* web406 (LIVE-MILES-REPIN-NOV10): the restore doors' second
+     identity tier — the DAY. The ±5 s pin family assumes one
+     client minting one pin; Nov 10 ran the account on several
+     faces whose pins for the same session sat minutes apart
+     (dispatch "started 8:03 AM", the app's 8:30 counting pin,
+     an 8:49 native-face anchor at 10:08), so a tracker the
+     seams read after a re-anchor failed the pin test at every
+     seam and neither the floor nor the trail fold ever fired —
+     while every pin-free path (timer, loads, the total-compare
+     reseed) worked. A LIVE tracker whose sessionId falls on
+     the same LOCAL calendar day as the day key is the same
+     day's session: the trail is filed by crumb date and the
+     floor stamp is day-bound, so the day is the sound identity
+     for restoring the day. A different day's session and an
+     idle tracker stay refused exactly as before. */
+  function sameLocalDay(aMs, bMs) {
+    if (!(aMs > 0) || !(bMs > 0)) return false;
+    var a = new Date(aMs), b = new Date(bMs);
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+  }
+  function sessionMatchesKey(sid, keyMs) {
+    if (!sid || !keyMs) return false;
+    if (Math.abs(sid - keyMs) <= FLOOR_PIN_SLACK_MS) return true; // the v361 jitter family
+    return sameLocalDay(sid, keyMs); // web406: the same day's session, re-pinned
+  }
   function cloudFloorFor(key) {
     if (!key || String(key).charAt(0) !== 's') return null; // session records only — the date-keyed day watch takes no floor
     var s = store();
@@ -1224,14 +1250,14 @@
     if (!(m > 0)) return null;
     var sid = Number(t.sessionId) || 0;
     var keyMs = parseInt(String(key).slice(1), 10) || 0;
-    if (!sid || !keyMs || Math.abs(sid - keyMs) > FLOOR_PIN_SLACK_MS) return null; // this session only
+    if (!sessionMatchesKey(sid, keyMs)) return null; // this session only
     var at = (typeof t.liveMilesAt === 'number' && isFinite(t.liveMilesAt)) ? t.liveMilesAt : 0;
     if (!at || at < sid) return null;
     // the stamp must belong to the session's own day — never
-    // another day's miles, never a closed day's echo.
-    var dSess = new Date(sid), dAt = new Date(at);
-    if (dSess.getFullYear() !== dAt.getFullYear() || dSess.getMonth() !== dAt.getMonth() ||
-        dSess.getDate() !== dAt.getDate()) return null;
+    // another day's miles, never a closed day's echo. (web406:
+    // the day is the KEY's day — under a re-pin the stamp was
+    // written for this day's session whichever pin named it.)
+    if (!sameLocalDay(keyMs, at)) return null;
     return { m: Math.round(m), at: at, keyMs: keyMs };
   }
   function applyCloudFloor(key) {
@@ -1303,7 +1329,9 @@
      cloudFloorFor: session records only (the date-keyed day
      watch takes no reconcile, as it takes no floor); the
      tracker must name THIS session live (running/paused,
-     pinned sessionId within the v361 ±5 s family) — an idle
+     pinned sessionId within the v361 ±5 s family — web406:
+     or the same day's re-pinned session, see
+     sessionMatchesKey) — an idle
      tracker is a closed day and presents no trail; crumbs
      file under the session pin's own date, never another
      day's. Returns the metres the fold added (0 = no trail /
@@ -1346,7 +1374,7 @@
     if (t.status !== 'running' && t.status !== 'paused') return 0; // a live session only
     var keyMs = parseInt(String(key).slice(1), 10) || 0;
     var sid = Number(t.sessionId) || 0;
-    if (!sid || !keyMs || Math.abs(sid - keyMs) > FLOOR_PIN_SLACK_MS) return 0; // this session only
+    if (!sessionMatchesKey(sid, keyMs)) return 0; // this session only (web406: pin, or the same day's re-pin)
     var dd = new Date(keyMs);
     var dateStr = dd.getFullYear() + '-' + ('0' + (dd.getMonth() + 1)).slice(-2) + '-' + ('0' + dd.getDate()).slice(-2);
     var trail = dayTrailCrumbs(dateStr);

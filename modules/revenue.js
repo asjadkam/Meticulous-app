@@ -1885,8 +1885,23 @@
     _auditView: function () { return auditView; }, /* v340: exported for the audit suite */
     status: function () {
       var list = entries(), last = null;
-      list.forEach(function (x) {
-        if (x && (!last || String(x.date || '') >= String(last.date || ''))) last = x;
+      /* web406 (TILE-GHOST-STATUS-NOV10): "Last entry" is the
+         last entry OF THE LIST THE MODULE SHOWS — the money
+         set (entryMoneyFlags, the v116 ladder). The raw list
+         also holds the day's not-counted records (a tracker
+         auto entry the builder did not price — the Nov 9
+         $695.98 "Auto from tracker" ghost), which live only
+         in the day detail's Also recorded; reading them here
+         made the dashboard tile report a record the module
+         itself hides, so tile and module disagreed by
+         construction. With no builder the flags fall back to
+         all-money, exactly as the flat list itself does. */
+      var flags = null;
+      try { flags = entryMoneyFlags(); } catch (e) { flags = null; }
+      list.forEach(function (x, xi) {
+        if (!x) return;
+        if (flags && flags[xi] && !flags[xi].money) return;
+        if (!last || String(x.date || '') >= String(last.date || '')) last = x;
       });
       if (!last) return 'No entries yet';
       var o = App._store.get('onboarding', {});
