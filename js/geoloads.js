@@ -244,6 +244,35 @@
  * counted events (pegEvents, with positions) and current
  * centres (pegCentres) ride the record so the Manifest names
  * where loading and dumping actually happened (v283 + v284).
+ *
+ * v405 (Nov 10, 2026 — LOADS-MISSED, ROUND 3): web 393 in the
+ * owner's hands on a DISPATCH-PIN day (no re-peg; the morning's
+ * pickup peg + the dispatch's dump pin): loads #1 and #2 counted
+ * by themselves, load #3 did not, and his 09:53 Advanced card
+ * read the machine clean (phase away, the loop closed after #2)
+ * — the third VISIT itself produced nothing. Conviction: this
+ * day runs the DUMP-VISIT counter (createDumpVisitCounter), and
+ * round 2's VISIT SHADOW was wired only into the PEG cycle
+ * counter — this machine kept two arrival fragilities of its
+ * own. (1) Presence is judged within 250 m of the pin POINT,
+ * and the one door that can adopt a moved work face (the
+ * virgin-face pending branch) is gated to stops MORE than
+ * 500 m out: a tip face in between — the spots move around the
+ * site load to load (v284) — is witnessed by the stop-cluster
+ * and ignored by every branch. (2) The arrival candidate dies
+ * on any witnessed absence chunk past the 25 s grace, with no
+ * wider recovery reach: presence fragmented across the 250 m
+ * line (queue creep, a throttled stream) restarts the 45 s bar
+ * forever — round 2's disease, unfixed here. The fix, inside
+ * createDumpVisitCounter only: the VISIT SHADOW in this
+ * machine's own discipline (recovery reach = presence + 200 m,
+ * stillness-gated by the stop-cluster rule, armed only once the
+ * day's loop has demonstrably moved), and a cluster branch
+ * that counts a tip-grade stop in the dead band (250–500 m) as
+ * the visit, adopting its face. Beyond 500 m the pending rail
+ * is untouched. Bench: tools/loads-missed-dispatchpin-nov10-
+ * test.js — live-404 bytes fail exactly the two convicted
+ * shapes (20 passed / 6 failed); the fix passes all.
  */
 (function () {
   'use strict';
@@ -1048,6 +1077,13 @@
   var VISIT_FACE_MIN_M = 500;   // a foreign dwell must sit at least
                                 // this far from every site point to
                                 // close a visit (fringe is the site)
+  var VISIT_SHADOW_M = VISIT_PRESENCE_M + 200; // v405 (LOADS-
+                                // MISSED, round 3): the visit
+                                // counter's recovery reach — the
+                                // v393 shadow's band, in this
+                                // machine's own terms (presence
+                                // + the 200 m recovery band the
+                                // peg side already trusts)
 
   function createDumpVisitCounter(cfg) {
     var SEED = { lat: +cfg.dump.lat, lng: +cfg.dump.lng };
@@ -1092,6 +1128,34 @@
       return c;
     }
 
+    /* v405: the VISIT SHADOW's accumulation — candStep's gap
+       discipline plus the stop-cluster's stillness discipline.
+       Presence inside the recovery reach accumulates toward the
+       arrival bar, but only while the fixes hold within
+       VISIT_CLUSTER_M of the candidate's running centroid: a
+       queue creep at the face (the Nov 10 shape — witnessed
+       presence split across the presence line by a throttled
+       stream) accumulates; a drive-through's marching fixes
+       restart the candidate at every step and can never build
+       it. A witnessed absence chunk past the grace kills it,
+       exactly as candStep's does. */
+    function shadowStep(c, inNow, lat, lng, t, barMs) {
+      if (inNow) {
+        if (!c) return { since: t, gapMs: 0, awaySince: null, lat: lat, lng: lng, n: 1 };
+        if (c.awaySince) { c.gapMs += t - c.awaySince; c.awaySince = null; }
+        if (haversineM(lat, lng, c.lat, c.lng) > VISIT_CLUSTER_M) {
+          return { since: t, gapMs: 0, awaySince: null, lat: lat, lng: lng, n: 1 };
+        }
+        c.n++; c.lat += (lat - c.lat) / c.n; c.lng += (lng - c.lng) / c.n;
+        if (t - c.since - c.gapMs >= barMs) return 'confirm';
+        return c;
+      }
+      if (!c) return null;
+      if (!c.awaySince) c.awaySince = t;
+      else if (t - c.awaySince > CAND_GRACE_MS) return null;
+      return c;
+    }
+
     return {
       /* marker the glue's correction logic duck-types on */
       visitMode: true,
@@ -1101,7 +1165,7 @@
           points: [{ lat: SEED.lat, lng: SEED.lng }],
           auxPoints: [], othersLearned: CFG_LEARNED.slice(), pending: null,
           present: false, visitCounted: false, closes: 0, everPresent: false,
-          cand: null, depSince: null, otherCand: null,
+          cand: null, shCand: null, otherSeen: false, depSince: null, otherCand: null,
           cluster: null, clusterStage: 0, excMaxKmh: 0,
           lastT: 0, lastLat: null, lastLng: null,
           lastNearM: Infinity, counted: false
@@ -1132,6 +1196,7 @@
           S.present = !!saved.present;
           S.everPresent = !!(saved.everPresent || saved.present);
           S.visitCounted = !!saved.visitCounted;
+          S.otherSeen = !!saved.otherSeen;
           if (typeof saved.closes === 'number') S.closes = saved.closes;
           if (typeof saved.lastT === 'number') S.lastT = saved.lastT;
         }
@@ -1245,6 +1310,37 @@
               }
               clFired = true;
             } else if (!S.visitCounted && !S.present && OTHERS.length &&
+                       (S.closes > 0 || S.everPresent || S.otherSeen) &&
+                       tipGrade && clNearM <= VISIT_FACE_MIN_M) {
+              /* v405 (LOADS-MISSED round 3): a TIP-GRADE stop in
+                 the dead band — beyond the pin's presence circle
+                 (the block's own entry condition) but within
+                 VISIT_FACE_MIN_M of it. Until now this stop was
+                 witnessed by the cluster and ignored by every
+                 branch: too far for presence, too near for the
+                 pending rail below (whose 500 m floor guards the
+                 v220 first-dwell law out on the fringe). On a
+                 declared-pair day whose loop has demonstrably
+                 moved, a stop of a tip's length on the declared
+                 site's own ground IS the visit — the spots move
+                 around the site load to load (the owner's v284
+                 law), and the pin is a point, not the ground.
+                 The face is adopted as a site point and the load
+                 counts now, during the tip — the same landing
+                 the presence arrival makes, so departure and
+                 close discipline run from it unchanged. Beyond
+                 VISIT_FACE_MIN_M the pending rail below keeps
+                 its deferred judgment exactly as before. */
+              S.points.push({ lat: cl.lat, lng: cl.lng });
+              S.count++; S.visitCounted = true; S.counted = true;
+              S.events.push({ t: t, site: 'dump', n: S.count });
+              S.present = true; S.depSince = null; S.cand = null; S.shCand = null;
+              S.excMaxKmh = 0;
+              S.everPresent = true;
+              nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+              inSite = nearM <= VISIT_PRESENCE_M;
+              clFired = true;
+            } else if (!S.visitCounted && !S.present && OTHERS.length &&
                        (S.closes > 0 || S.everPresent) &&
                        clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M &&
                        (slowPath || tipGrade)) {
@@ -1287,10 +1383,36 @@
            it to a full site point. */
         var atAux = !S.visitCounted &&
           nearest(S.auxPoints, lat, lng) <= VISIT_PRESENCE_M;
+        /* v405 VISIT SHADOW: while the visit stands open and
+           the day's loop has demonstrably moved (the same
+           evidence the face-learning branches trust — a counted
+           close, a dump presence, or a witnessed load-end
+           dwell), presence within the recovery reach
+           (VISIT_SHADOW_M) of a site point, and beyond that
+           reach of the other end, accumulates toward the same
+           arrival bar in parallel with the presence candidate.
+           The v393 shadow healed exactly this starvation on the
+           peg cycle machine; the dispatch-pin day's machine
+           never got it, so a tip whose witnessed presence
+           fragmented across the presence line (queue creep, a
+           throttled stream) restarted the 45 s bar forever.
+           Whichever candidate confirms first lands the arrival
+           through the one landing path below — a visit can
+           never count twice. */
+        var shConfirm = false;
+        if (!S.present && !S.visitCounted &&
+            (S.closes > 0 || S.everPresent || S.otherSeen)) {
+          var shIn = nearM <= VISIT_SHADOW_M && otherM > VISIT_SHADOW_M;
+          var shStep = shadowStep(S.shCand, shIn, lat, lng, t, dwellMs);
+          if (shStep === 'confirm') { shConfirm = true; S.shCand = null; }
+          else S.shCand = shStep;
+        } else if (S.shCand) {
+          S.shCand = null;
+        }
         if (!S.present) {
           var step = candStep(S.cand, (inSite || atAux) && !atOther, t, dwellMs);
-          if (step === 'confirm') {
-            S.cand = null;
+          if (step === 'confirm' || shConfirm) {
+            S.cand = null; S.shCand = null;
             if (!inSite && atAux) {
               var bi = -1, bd = Infinity;
               for (var ai = 0; ai < S.auxPoints.length; ai++) {
@@ -1355,6 +1477,10 @@
         var oStep = candStep(S.otherCand, atOther && !inSite, t, dwellMs);
         if (oStep === 'confirm') {
           S.otherCand = null;
+          S.otherSeen = true; /* v405: a witnessed load-end dwell
+             is the loop moving — the wide-reach judgments (the
+             visit shadow, the dead-band face) trust it as such
+             even when no visit stood open to close. */
           if (S.pending) {
             /* the loop completed: the pending stop WAS a tip
                at the site's new face — it counts now, at its
@@ -1389,7 +1515,7 @@
           othersLearned: S.othersLearned.map(function (p) { return { lat: p.lat, lng: p.lng }; }),
           pendingVisit: S.pending ? { lat: S.pending.lat, lng: S.pending.lng, t: S.pending.t } : null,
           present: S.present, visitCounted: S.visitCounted,
-          closes: S.closes, everPresent: S.everPresent, lastT: S.lastT,
+          closes: S.closes, everPresent: S.everPresent, otherSeen: S.otherSeen, lastT: S.lastT,
           zone: S.present ? 'dump' : 'out', phase: phaseOf()
         };
       },
