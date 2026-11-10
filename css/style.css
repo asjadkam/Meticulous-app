@@ -925,6 +925,26 @@ body.mt-driving #chatSheet{z-index:2120;}
 /* v237: in landscape the banner is the compact flex row (~64px
    tall) — the inset's top-right dock rides the line under it. */
 .nv-drive-inset{top:calc(76px + env(safe-area-inset-top));}
+/* web 409 (LANDSCAPE-MODE-NOV10, owner Nov 10, 2026 13:59 CST —
+   "why is the app not working in landscape mode? either on the
+   GPS nor on the application"): the DRIVE face above was only
+   half the landscape story. The PLANNING face's map carries two
+   overlay stacks — .nv-map-top (search + kind row, ~154px) and
+   .nv-map-bottom (banner + mode row, ~157-261px) — needing
+   ~415px of vertical room between them. A landscape phone's
+   mapzone is ~232px tall (915x412 bench), so the stacks met in
+   the middle and buried each other (measured overlap 99-180px;
+   with the paste bar up, the bottom stack spilled over the
+   shell head itself). Portrait's mapzone is ~717px and never
+   collides. Fix: inside THIS landscape block only, each stack
+   is capped and scrolls internally — the top stack at 52% of
+   the mapzone, the bottom at 48% minus the 20px breathing gap
+   — so the two can never meet at any height, every control
+   stays reachable, and at heights where the stacks already fit
+   (Fold open, ~545px mapzone) the caps never bind and nothing
+   changes. Portrait is untouched: the block is landscape-only. */
+.nv-map-top{max-height:52%;overflow-y:auto;}
+.nv-map-bottom{max-height:calc(48% - 20px);overflow-y:auto;}
 }
 /* v107: tile readability — a contrast/saturation lift on the map
    tiles themselves (the lever the OSM tile source leaves us).

@@ -21,7 +21,7 @@
 }
 ],
 "name": "Meticulous",
-"orientation": "portrait",
+"orientation": "any",
 "scope": "/",
 "short_name": "Meticulous",
 "start_url": "/",
