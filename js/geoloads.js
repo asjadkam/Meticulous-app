@@ -316,6 +316,14 @@
     var dwellMs = cfg.dwellMs || DWELL_MS;
     var departMs = cfg.departMs || DEPART_MS;
     var accMaxM = cfg.accMaxM || ACC_MAX_M;
+    /* v393 (LOADS-MISSED-AFTER-REPEG-NOV9, round 2): the peg
+       wrapper may ask for the VISIT SHADOW (see ingest): an
+       armed carry may also be confirmed by visit-grade presence
+       at the dump, because the fence dwell alone starves on a
+       fragmented fix stream. The standard counter (dispatch
+       pairs) never passes it and is unchanged. */
+    var shadowR = (cfg.visitShadow && typeof cfg.shadowRadiusM === 'number' && cfg.shadowRadiusM > 0)
+      ? cfg.shadowRadiusM : 0;
     var S = null;
 
     function classify(lat, lng) {
@@ -364,6 +372,24 @@
       }
     }
 
+    /* v393: the accumulated-dwell candidate discipline (the
+       visit counter's candStep, in miniature) for the visit
+       shadow: presence accumulates toward the bar; a brief
+       excursion (<= CAND_GRACE_MS) is subtracted, never fatal;
+       a longer one restarts the build. */
+    function shadowStep(c, inNow, t, barMs) {
+      if (inNow) {
+        if (!c) return { since: t, gapMs: 0, awaySince: null };
+        if (c.awaySince) { c.gapMs += t - c.awaySince; c.awaySince = null; }
+        if (t - c.since - c.gapMs >= barMs) return 'confirm';
+        return c;
+      }
+      if (!c) return null;
+      if (!c.awaySince) c.awaySince = t;
+      else if (t - c.awaySince > CAND_GRACE_MS) return null;
+      return c;
+    }
+
     return {
       /* saved: a previous snapshot() for the same session + site
          pair. On resume the confirmed zone/phase/count carry over;
@@ -374,7 +400,7 @@
         S = {
           key: key, active: true, zone: 'out', phase: 'away',
           armed: false, count: 0, events: [],
-          cand: null, lastT: 0, lastLat: null, lastLng: null, counted: false
+          cand: null, visitCand: null, lastT: 0, lastLat: null, lastLng: null, counted: false
         };
         if (saved && saved.sitesKey === key) {
           if (typeof saved.count === 'number' && saved.count > 0) S.count = saved.count;
@@ -446,6 +472,51 @@
           };
         }
         // else: inside the grace window — hold the candidate as-is
+
+        /* v393 VISIT SHADOW (peg days only — the wrapper passes
+           cfg.visitShadow; the standard counter never does).
+           Conviction, Nov 9, 2026 round 2: after the 18:04 cold
+           start the post-swap pair counted cycle #10 by itself
+           and silently swallowed #11 — same pair, same driver,
+           adjacent cycles. The fence verdict above demands a
+           continuous fix-witnessed 30 s dwell inside a 70 m
+           fence on a smoothed stream; a tip whose witnessed
+           presence fragments — the fix stream goes dark mid-tip
+           (his phone's location went dark ~25 min that same
+           morning), a short creeping tip, a face at the fence's
+           edge — never confirms, the armed carry never lands,
+           and nothing notices. The dump-VISIT counter next door
+           has counted this shape reliably since v324 precisely
+           because it judges presence wider. So: while the
+           machine is ARMED, sustained presence within the dump's
+           own reach (the wrapper passes fence + recovery band —
+           the reach v300 already trusts for a carrying truck)
+           and outside the load's reach, accumulated under the
+           visit counter's candidate discipline at the visit
+           arrival bar (DWELL_MS), confirms the arrival through
+           confirmZone itself — the same count, the same event,
+           the same disarm. The fence path stays primary (it is
+           checked first, and a fence count disarms before the
+           shadow is consulted, so a visit can never count
+           twice); the shadow only catches what fragmented
+           presence starved. Unarmed presence counts nothing,
+           exactly as before; the candidate is runtime-only and
+           never persisted. */
+        if (shadowR > 0) {
+          if (S.armed && S.zone !== 'dump' && !S.counted) {
+            var shD = haversineM(+fix.latitude, +fix.longitude, DUMP.lat, DUMP.lng);
+            var shL = haversineM(+fix.latitude, +fix.longitude, LOAD.lat, LOAD.lng);
+            var shStep = shadowStep(S.visitCand, shD <= shadowR && shL > shadowR, t, DWELL_MS);
+            if (shStep === 'confirm') {
+              S.visitCand = null;
+              confirmZone('dump', t);
+            } else {
+              S.visitCand = shStep;
+            }
+          } else if (S.visitCand) {
+            S.visitCand = null;
+          }
+        }
         return {
           accepted: true, zone: raw, confirmed: S.zone, phase: S.phase,
           counted: S.counted, count: S.count
@@ -651,6 +722,11 @@
         dwellMs: cfg.dwellMs || PEG_DWELL_MS,
         departMs: cfg.departMs || DEPART_MS,
         accMaxM: accBar,
+        /* v393: the visit shadow judges presence at the dump's
+           own reach for a carrying truck — the fence plus the
+           v300 recovery band */
+        visitShadow: true,
+        shadowRadiusM: PEG_FENCE_M + RECOVERY_BAND_M,
         tieRole: function (dL, dD) {
           if (Math.min(dL, dD) < TIE_MIN_DIST_M) return null;
           return Math.abs(dL - dD) <= TIE_BAND_M ? expectRole : null;
