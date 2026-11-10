@@ -39,18 +39,6 @@ body{
 .topbar h1{font-size:18px;margin:0;flex:1;}
 .iconbtn{background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer;padding:8px;min-width:44px;min-height:44px;}
 
-/* v380 (UPDATE-BANNER-OVERLAPS-HEADER-NOV8): while the native-APK
-   update banner (js/app.js) is on screen, the layout makes room
-   for it — the body gains the banner's measured height in top
-   padding, and the sticky heads stick BELOW the banner instead of
-   sliding under it. The height arrives as --updBannerH, set on
-   <html> by the banner code from the bar's own offsetHeight, so a
-   bar wrapped to two lines on a big-font handset reserves its true
-   size. No banner → no updBannerOn class → none of this applies
-   and the layout is exactly as it was. */
-body.updBannerOn{padding-top:var(--updBannerH,44px);}
-body.updBannerOn .topbar,body.updBannerOn .modhead{top:var(--updBannerH,44px);}
-
 /* ---------- sidebar ---------- */
 #sidebar{position:fixed;top:0;left:0;bottom:0;width:280px;max-width:84vw;background:#fff;z-index:100;
   transform:translateX(-105%);transition:transform .25s ease;box-shadow:4px 0 18px rgba(0,0,0,.18);
@@ -870,12 +858,23 @@ body.mt-driving #fbFab{display:none!important;}
    not a transform (top:calc(50% - 26px)) — the v135
    translateY(-50%) put the docked mic in the same promoted-
    layer class that kept vanishing with the chrome. */
-body.mt-driving #chatFab{top:auto;bottom:calc(96px + env(safe-area-inset-bottom,0px));left:calc(92px + env(safe-area-inset-left,0px));right:auto;width:52px;height:52px;font-size:22px;z-index:2100;}
+/* v396 (NAV-HUD-LAYOUT-NOV10, owner Nov 10, 2026, from live
+   driving: "why are the three speedometer speed limiter and
+   road hand all clumped up together on the left I told you I
+   want the road hand on the right"): the owner's newer order
+   SUPERSEDES the v280 move below. The road hand returns to the
+   RIGHT edge, centred by arithmetic — the exact v135/v139 dock
+   geometry, whose test pins (navigator-v135 K1, navigator-v139)
+   stood failing from the v280 move until this ship repaired
+   them. The bottom-left corner now holds only the speed pair. */
+body.mt-driving #chatFab{top:calc(50% - 26px);bottom:auto;right:calc(6px + env(safe-area-inset-right,0px));width:52px;height:52px;font-size:22px;z-index:2100;}
 /* v280 (NAV-DEMO-FLOATING-CONTROLS-OVER-MAP): the mic's drive dock
    MOVES from the right-edge middle (it floated over the junction /
    road area on the right of his frame) to the bottom-left chrome
    corner, on the speedometer's own line, beside the speed readout —
-   off the driving surface's centre and right side entirely. */
+   off the driving surface's centre and right side entirely.
+   [Placement superseded by v396 above — the owner re-ruled the
+   road hand back to the right on Nov 10, 2026.] */
 /* v280 (NAV-PIP-NO-MIC-BUTTON): in PiP the mic is GONE — no
    microphone button on the PiP map face, his standing PiP law.
    The class is raised by the Navigator's applyPipFace. */
@@ -973,11 +972,26 @@ body.mt-driving #chatSheet{z-index:2120;}
 .nv-drive .nv-settings{z-index:60;}
 /* v177 (F4): speedometer + speed-limit overlays on the drive face,
    bottom-left above the bar; the toggles in the settings menu own
-   their visibility. */
-.nv-drive-speed{position:absolute;left:10px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:4;display:flex;flex-direction:column;align-items:center;gap:6px;}
+   their visibility.
+   v396 (NAV-HUD-LAYOUT-NOV10, owner Nov 10, 2026: "speedometer
+   should be dynamic"): the wrap is ONE dynamic unit in Google
+   Maps' shape — a ROW: the live dial prominent, the limit sign
+   beside it — not the v177 column stack. Bottom-left stays the
+   pair's dock; the third member of the old left clump, the road
+   hand, leaves for the right edge (see the mt-driving dock). */
+.nv-drive-speed{position:absolute;left:10px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:4;display:flex;flex-direction:row;align-items:center;gap:6px;}
 .nv-drive-speedo{background:rgba(13,21,38,.82);color:#fff;border-radius:14px;min-width:74px;text-align:center;padding:8px 10px;font-size:30px;font-weight:800;line-height:1;box-shadow:0 2px 10px rgba(0,0,0,.4);}
 .nv-drive-speedo::after{content:'km/h';display:block;font-size:11px;font-weight:600;color:#D9E1F3;margin-top:3px;}
-.nv-drive-limit{background:#fff;color:#c81e1e;border:4px solid #c81e1e;border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;box-shadow:0 2px 10px rgba(0,0,0,.4);}
+/* v396 (NAV-SPEED-LIMIT-RED-NOV10): the limit sign's standing
+   dress is NEUTRAL — a real speed sign: white face, near-black
+   ring and number. Before v396 its only dress was red (#c81e1e
+   ring + number at every speed), which at a glance reads as
+   "you are speeding" when the driver is under the limit. Red
+   now lives ONLY in .over, which paintSpeedOverlay applies
+   while the shown speed is over the limit (NAVPURE judge:
+   speedOverLimit). */
+.nv-drive-limit{background:#fff;color:#151a24;border:4px solid #151a24;border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;box-shadow:0 2px 10px rgba(0,0,0,.4);}
+.nv-drive-limit.over{color:#c81e1e;border-color:#c81e1e;}
 /* v178 (F2): the turn inset + the route-line chevrons. The inset is
    plain chrome (no transform, no promotion — v139 budget intact);
    the chevron divIcons carry no Leaflet default box. */

@@ -1606,6 +1606,22 @@
     return v;
   }
 
+  /* v396 (NAV-SPEED-LIMIT-RED-NOV10, owner Nov 10, 2026, from
+     live driving: "the speed limiter is always on red, on first
+     glance it seems like the user is driving too fast"): the
+     over-limit judge, NAVPURE so the colour law is testable.
+     The limit sign stays NEUTRAL at or under the limit and
+     turns red ONLY when the speed the dial SHOWS (the rounded
+     km/h the driver reads) is over a known limit — the Google
+     Maps behaviour he named as his reference. Unknown speed or
+     unknown limit is never "over": no data is not a violation,
+     and the badge never borrows a red it did not earn. */
+  function speedOverLimit(shownKmh, limitKmh) {
+    if (shownKmh === null || shownKmh === undefined || !isFinite(shownKmh)) return false;
+    if (limitKmh === null || limitKmh === undefined || !isFinite(limitKmh) || limitKmh <= 0) return false;
+    return shownKmh > limitKmh;
+  }
+
   /* v356 (DIMENSION-AWARE ROUTING — addendum 7's routing half,
      owner Nov 6, 08:32 MDT: "Why parked... Start now"): the
      saved VEHICLE profile (Navigator settings -> Your truck / the onboarding record:
@@ -6087,6 +6103,14 @@
            writer like every other drive-chrome text. */
         var spdEl = body.querySelector('#nvd_speed');
         if (spdEl && S.settings.showSpeed) driveText(spdEl, 'speed', (S.speed !== null && S.speed !== undefined && isFinite(S.speed)) ? String(Math.max(0, Math.round(S.speed * 3.6))) : '–');
+        /* v396 (NAV-SPEED-LIMIT-RED-NOV10): the limit sign's
+           colour is LIVE — the overlay repaints on the same
+           tick that moves the dial, so the sign turns red the
+           moment the shown speed passes the limit and back to
+           neutral the moment it no longer does (before v396
+           the overlay only repainted on a limit fetch or a
+           settings toggle, and the sign was red regardless). */
+        paintSpeedOverlay();
         driveTextKeep(etaSub, 'etaSub', 'Arrive · ' + fmtMin(shownEtaMin) + ' · ' + fmtDist(dp.leftM) + ' left' + trafficStateTxt +
           /* v107: the bar shows the destination's first segment
              only — a full address would crowd the line (the CSS
@@ -6995,6 +7019,12 @@
           var v = (S.settings.showSpeedLimit && S.limitKmh) ? String(S.limitKmh) : '';
           lim.textContent = v;
           lim.classList.toggle('hidden', !v);
+          /* v396 (NAV-SPEED-LIMIT-RED-NOV10): the sign's colour
+             is judged HERE, on the speed the dial shows — the
+             sign wears .over (red) only while the shown speed
+             is over the limit, and stands neutral otherwise. */
+          var shownKmh = (S.speed !== null && S.speed !== undefined && isFinite(S.speed)) ? Math.max(0, Math.round(S.speed * 3.6)) : null;
+          lim.classList.toggle('over', !!v && speedOverLimit(shownKmh, S.limitKmh));
         }
       }
       function openNavSettings(inDrive) {

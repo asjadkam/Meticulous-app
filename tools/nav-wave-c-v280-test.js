@@ -375,8 +375,13 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }
   console.log('— C7: controls docked off the road; truck sized as a vehicle; no mic in PiP —');
   ok('the layers button is moved INTO the drive bar', /nv-drive-bar[\s\S]{0,200}insertBefore|insertBefore[\s\S]{0,120}nvd_layers|appendChild\(layersBtn\)/.test(navSrc));
   const micRule = (css.match(/body\.mt-driving #chatFab\{[^}]*\}/) || [''])[0];
-  ok('the mic docks bottom-left (not floating mid-right over the junction)',
-    /left:calc\(/.test(micRule) && /bottom:calc\(96px/.test(micRule) && !/top:calc\(50%/.test(micRule), micRule);
+  /* NOV10 PIN MOVE (owner's re-ruling, NAV-HUD-LAYOUT-NOV10 —
+     supersedes the v280 placement this suite originally pinned):
+     the road hand goes back on the RIGHT edge, centred by
+     arithmetic (the v135/v139 dock). Proven in
+     tools/nav-hud-v396-test.js; the PiP pins below stand. */
+  ok('the mic docks on the RIGHT edge, centred by arithmetic (Nov 10 re-ruling; the v280 bottom-left perch is superseded)',
+    /right:calc\(6px/.test(micRule) && /top:calc\(50% - 26px\)/.test(micRule) && !/left:calc\(92px/.test(micRule), micRule);
   ok('PiP raises a body class from applyPipFace', navSrc.indexOf("classList.toggle('mt-pip'") >= 0 || navSrc.indexOf('classList.toggle("mt-pip"') >= 0);
   ok('the mic is display:none in PiP (NAV-PIP-NO-MIC-BUTTON)', /body\.mt-pip #chatFab\{[^}]*display:none/.test(css));
   const imgRule = (css.match(/\.nv-drive-you img\{[^}]*\}/) || [''])[0];
