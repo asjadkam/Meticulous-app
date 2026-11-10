@@ -1,8 +1,8 @@
 {
   "version": 74,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v74.apk",
-  "webVersion": 400,
-  "notes": "Web 400 — POINTER REPAIR (no code changes): two ships took web 399 in parallel off the live-398 pointer — dca6ab9 LIVE-MILES-CLOUD-PERSIST-NOV10 (js/app.js + js/miles.js: the running miles ride the cloud-synced session record; a cache wipe can no longer zero them) and 9c659fb FUEL-LIST-PHOTOS-NOV10 (modules/fuel.js: receipt pictures on the fuel records list itself). The fuel ship's index.html was built from the pre-miles 398 base, so it carried the miles files' OLD cache-bust pins (js/app.js?v=398, js/miles.js?v=388) over their NEW bytes — a phone could keep serving the cached pre-fix app.js/miles.js under those URLs, and tools/live-miles-cloud-persist-nov10-test.js's pin-agreement assertion failed on the result. This commit only makes the pointer coherent at 400: index pins js/app.js 398 -> 400, js/miles.js 388 -> 400, modules/fuel.js 399 -> 400; version.json webVersion 399 -> 400 with the files map refreshed for js/app.js + js/miles.js (their committed entries still named the 398-era bytes) + index.html. Both 399 fixes' full records stand in their own commits (dca6ab9, 9c659fb) and in the queue. version 74 + apkUrl meticulous-v74.apk preserved. IN-HANDS VERDICTS OWED (unchanged): web 399's two — after a cache clear the live miles restore from the cloud record; every photo-carrying fill-up shows its receipt picture on its list row.",
+  "webVersion": 401,
+  "notes": "Web 401 — LIVE-MILES-TRAIL-RECONCILE-NOV10 (owner Nov 10, 2026 09:47 CST: the cloud Manifest read 'GPS distance 27.2 km' from today's crumb trail while his phone's live counter read ~5 km — 'it's not on the live kilometers in the app'). Follow-on to web 399's cloud floor: the floor restores the tracker record's liveMilesM stamp, but his Nov 10 wipe (cache cleared 09:20, counter restarted at 0.2 km) predated any stamp, so the floor had nothing to give — while the day's whole distance stood in the synced GPS crumb trail the whole time. THE FIX (js/miles.js only): at the same two seams the floor uses (startDay, reseedFromStore/adoptFromStore), foldDayTrail joins the live session's day trail with the Manifest's own filing rule (every livemiles record, each crumb under its OWN timestamp's day, deduped t|a|o, time order — the v245 join adoptableFragments' record-date filing and the total-only reseed both miss), asks with the Manifest's own ruler (the consecutive chain sum) whether the trail covers MORE than the counter holds, and only then folds it through mergeCrumbs — the engine's own rebuild fold, whose counted-coverage (segs) dedupe books only uncounted ground, under the standing filters, with unobserved joins settling as bridges. It only ever raises; gates mirror the floor (session key only, tracker naming THIS session live within the v361 pin family, crumbs under the pin's own date — an idle/closed day and other sessions/days get nothing); folded metres are labelled trailFoldM on the day record (the bridgedM/cloudFloorM idiom, stamped + preserved in persist). Convicted by tools/live-miles-trail-reconcile-nov10-test.js (failing-first on live 400: T1/T2/T5 fail, counter stands at 0.21 km against a 27.6 km trail; 12/12 here); the miles family and every suite that loads miles.js at pristine-live standings. version.json from live 400: native 74 + meticulous-v74.apk preserved, webVersion 401; index pin js/miles.js 400 -> 401; files map refreshed for js/miles.js + index.html. Job A NOT in this release. IN-HANDS VERDICT OWED: on a day whose trail is already in the cloud, a wiped/young counter reconciles up to the trail figure on relaunch (and when a pull lands the trail mid-day) — the live miles match the Manifest's GPS distance instead of standing at a fraction of it.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -16,7 +16,7 @@
     "assets/media-generation-last-upload-handles.json": "d946164f4c6b504068c00a02138fea8f6203ed96348b17c603d624bf04ec1fff",
     "css/style.css": "c0a81a1e8f10f29354c5fd53fdcf4a7a07c3120852687bc0fe8345fa8ff3118a",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
-    "index.html": "3a2bc40c5379776836028e89db197c05de10341ad3bcf8bfea7b1266aa9bf6c0",
+    "index.html": "5682b19b9debc77325ec9858fe9136a22910ca782e5ad6e84c4cd4a6b8ed8143",
     "js/app.js": "f615ba89f9c088b5978867490fe6a84834710fed37905ab448a0e0478b13e853",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
@@ -29,7 +29,7 @@
     "js/geo.js": "c465b5956bfac79ec7e8837ce7fc14e5ed91a81ee9b1b4b5c7582522fcff6fc1",
     "js/geoloads.js": "96eec515b60f1d49269083ce879959953ee19238b241cb64d57dfb2f4a4a37d7",
     "js/i18n.js": "750ffcf7e64332a9b129aed6dbab815e47a33630a10e3642ff51dac7a00179d1",
-    "js/miles.js": "c34f30ec31a73aa942ebafe010266d16cd136f15c53be0be4d64fbaad88a77ee",
+    "js/miles.js": "d967a43873c5ee61e1878da324b2acc78cebc7ed4f6775a4025d087bd8575376",
     "js/mirror.js": "6bd66da79f04b14480d3ee986a0063a49e82912cd113fb9488de42f02b462f49",
     "js/ota.js": "6c90a4c1ec4780d91f8696bcc734928123c2fbc1c72c9058d668ffa3fa3bad2f",
     "js/parkplace.js": "41687f5964c7c8453918a082fd1ec8c29f55111d4833015f645dd805319dbb12",

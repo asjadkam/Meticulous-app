@@ -1164,6 +1164,17 @@
         typeof snap.cloudFloorM !== 'number') {
       snap.cloudFloorM = existingRec.cloudFloorM;
     }
+    /* v401 (LIVE-MILES-TRAIL-RECONCILE-NOV10): the trail-fold
+       provenance rides the record the same way (see
+       foldDayTrail below) — the fold's own persist carries it,
+       and a snapshot rebuilt by the fold above must not shed
+       it either. */
+    var tfM401 = (trailFoldSession.key === dayKey) ? trailFoldSession.m : 0;
+    var prevTfM401 = (existingRec && typeof existingRec.trailFoldM === 'number' && existingRec.trailFoldM > 0)
+      ? existingRec.trailFoldM : 0;
+    if (Math.max(tfM401, prevTfM401) > 0 && typeof snap.trailFoldM !== 'number') {
+      snap.trailFoldM = Math.max(tfM401, prevTfM401);
+    }
     d.days[dayKey] = snap;
     // prune old session records
     Object.keys(d.days).forEach(function (k) {
@@ -1253,6 +1264,106 @@
     d.days[key] = rec;
     try { s.set(STORE_KEY, d); } catch (e) { return 0; }
     return fl.m;
+  }
+
+  /* v401 (LIVE-MILES-TRAIL-RECONCILE-NOV10, owner Nov 10, 2026
+     09:47 CST — "you're saying it's over 30 kilometers in the
+     cloud, it's not on the live kilometers in the app"): THE
+     DAY-TRAIL RECONCILE — the road home the v399 floor cannot
+     give. The floor restores the tracker record's STAMP; a wipe
+     that predates any stamp (his morning: cache cleared 09:20,
+     the counter restarted at 0.2 km and still read ~4.9 km at
+     09:45) has no stamp to restore. The day's distance was
+     never lost: it stands in the day's GPS CRUMB TRAIL — the
+     cloud Manifest read "GPS distance 27.2 km" from today's
+     trail while the phone's counter read ~5 km. The miles
+     doors missed that trail the way v245 caught the Manifest
+     missing it: adoptableFragments files records by their
+     RECORD's date stamp + hasFix flag, so a restored record
+     whose stamp is wrong or missing hides crumbs every one
+     of which is timestamped on the day — and reseedFromStore,
+     the after-pull seam, compared totals only, never crumbs.
+     The reconcile runs at the same two seams the floor uses
+     (startDay, reseedFromStore):
+       - join the day's crumbs with the Manifest's own filing
+         rule (modules/manifest.js): EVERY livemiles record,
+         each crumb filed under its OWN timestamp's day,
+         deduped t|a|o, in time order;
+       - ask with the Manifest's own ruler — the consecutive
+         chain sum — whether the trail covers MORE than the
+         counter holds (the fold only ever raises);
+       - fold the trail through mergeCrumbs, the engine's own
+         rebuild fold: counted-coverage (segs) dedupe books
+         only the ground the counter has not counted, the
+         standing filters judge every segment, and unobserved
+         joins inside the fold settle as provisional bridges
+         exactly as they do for a native drain.
+     The folded metres are labelled trailFoldM on the day
+     record, after bridgedM and cloudFloorM. Gates mirror
+     cloudFloorFor: session records only (the date-keyed day
+     watch takes no reconcile, as it takes no floor); the
+     tracker must name THIS session live (running/paused,
+     pinned sessionId within the v361 ±5 s family) — an idle
+     tracker is a closed day and presents no trail; crumbs
+     file under the session pin's own date, never another
+     day's. Returns the metres the fold added (0 = no trail /
+     nothing to raise). */
+  var trailFoldSession = { key: null, m: 0 };
+  function noteTrailFold(key, addedM) {
+    if (trailFoldSession.key !== key) trailFoldSession = { key: key, m: 0 };
+    trailFoldSession.m += Math.round(addedM);
+  }
+  function dayTrailCrumbs(dateStr) {
+    var d = loadAll();
+    var seen = {}, out = [];
+    Object.keys(d.days).forEach(function (k) {
+      var rec = d.days[k];
+      if (!rec || !rec.crumbs) return;
+      for (var i = 0; i < rec.crumbs.length; i++) {
+        var cr = rec.crumbs[i];
+        if (!cr) continue;
+        var ct = +cr.t;
+        if (!isFinite(ct) || ct <= 0 || !isFinite(+cr.a) || !isFinite(+cr.o)) continue;
+        var cd = new Date(ct);
+        var cs = cd.getFullYear() + '-' + ('0' + (cd.getMonth() + 1)).slice(-2) + '-' + ('0' + cd.getDate()).slice(-2);
+        if (cs !== dateStr) continue;
+        var ckey = ct + '|' + cr.a + '|' + cr.o;
+        if (seen[ckey]) continue;
+        seen[ckey] = 1;
+        out.push(cr);
+      }
+    });
+    out.sort(function (x, y) { return x.t - y.t; });
+    return out;
+  }
+  function foldDayTrail(key) {
+    if (!key || String(key).charAt(0) !== 's') return 0; // session records only
+    var s = store();
+    if (!s) return 0;
+    var t = null;
+    try { t = s.get('tracker', null); } catch (e) {}
+    if (!t || typeof t !== 'object') return 0;
+    if (t.status !== 'running' && t.status !== 'paused') return 0; // a live session only
+    var keyMs = parseInt(String(key).slice(1), 10) || 0;
+    var sid = Number(t.sessionId) || 0;
+    if (!sid || !keyMs || Math.abs(sid - keyMs) > FLOOR_PIN_SLACK_MS) return 0; // this session only
+    var dd = new Date(keyMs);
+    var dateStr = dd.getFullYear() + '-' + ('0' + (dd.getMonth() + 1)).slice(-2) + '-' + ('0' + dd.getDate()).slice(-2);
+    var trail = dayTrailCrumbs(dateStr);
+    if (trail.length < 2) return 0;
+    var chainM = 0;
+    for (var ci = 1; ci < trail.length; ci++) {
+      chainM += ENGINE.haversineM(+trail[ci - 1].a, +trail[ci - 1].o, +trail[ci].a, +trail[ci].o);
+    }
+    var before = engine.totalM();
+    if (!(chainM > before)) return 0; // the counter already holds the trail
+    try { engine.mergeCrumbs(trail); } catch (e) { return 0; }
+    var added = engine.totalM() - before;
+    if (!(added > 0)) return 0;
+    noteTrailFold(key, added);
+    persist(true);
+    paint();
+    return added;
   }
 
   /* v50: raw-fix subscribers (geofence load counting, js/geoloads.js).
@@ -1482,6 +1593,14 @@
           paint();
         }
       }
+      /* v401 (LIVE-MILES-TRAIL-RECONCILE-NOV10): the day-trail
+         reconcile (see foldDayTrail) — after the fragment
+         adoption, so the engine folds the day's WHOLE trail
+         (the Manifest's join: crumbs a fragment's record stamp
+         hid, crumbs under this record's own key) over whatever
+         the record and the fragments already counted,
+         exactly once. */
+      try { foldDayTrail(key); } catch (e) {}
       g.start(onFix, onGeoError).then(function (ok) {
         if (!ok) { watching = false; broken = true; paint(); }
         else { watchBornAt = Date.now(); }
@@ -1647,10 +1766,20 @@
          hold miles the day record lacks (see applyCloudFloor). */
       try { applyCloudFloor(dayKey); } catch (e) {}
       var saved = recordFor(dayKey);
-      if (!saved || typeof saved.totalM !== 'number') return false;
+      /* v401 (LIVE-MILES-TRAIL-RECONCILE-NOV10): the day-trail
+         reconcile rides this seam too — a pull can land the
+         day's crumb trail (in a sibling record, or under this
+         record's own key) while the stored TOTAL never beats
+         the engine's, so the fold runs on every return path
+         below, after any re-begin has settled the engine. */
+      if (!saved || typeof saved.totalM !== 'number') {
+        try { return foldDayTrail(dayKey) > 0; } catch (e) { return false; }
+      }
       var live = engine.snapshot();
       var liveTotal = live ? (live.totalM || 0) : 0;
-      if (!(saved.totalM > liveTotal)) return false;
+      if (!(saved.totalM > liveTotal)) {
+        try { return foldDayTrail(dayKey) > 0; } catch (e) { return false; }
+      }
       var liveCrumbs = live ? live.crumbs : [];
       engine.begin(dayKey, saved);
       if (liveCrumbs && liveCrumbs.length) {
@@ -1658,6 +1787,7 @@
       }
       persist(true);
       paint();
+      try { foldDayTrail(dayKey); } catch (e) {}
       return true;
     },
 
