@@ -1616,9 +1616,39 @@
      MDT) — while the PTI module's officer view is active (the
      pti_dot store flag, owned by modules/pti.js), the shell
      routes EVERYTHING back to it: no dashboard, no other
-     module, until the driver unlocks with his PIN inside PTI. */
+     module, until the driver unlocks with his PIN inside PTI.
+     v407 (DISPATCH-TAP-ROUTES-TO-PTI-NOV10, owner Nov 10, 2026):
+     the field failure — a pti_dot.active minted days earlier
+     (the Nov 5 roadside stop) sat in the store, or re-landed
+     from the cloud (the record syncs like any other), and the
+     driver's next module tap — Dispatch, on a no-PTI morning —
+     was rewritten to PTI with no on-screen warning; the only
+     exit was the officer view's own button. The lock now binds
+     only a FRESH activation: Begin Inspection stamps `since`
+     (modules/pti.js), and an activation older than
+     DOT_LOCK_MAX_MS — or carrying no stamp at all, the shape
+     every earlier build wrote — is not a roadside stop in
+     progress. The shell clears such a state on sight, so it
+     cannot re-arm, and the module's own dotActive applies the
+     same freshness rule (its copy of this bound). A module tap
+     opens the module tapped; Inspection Mode binds only when
+     the driver deliberately began it on this phone, recently. */
+  var DOT_LOCK_MAX_MS = 12 * 3600000; // 12h — far past any roadside stop, far short of a leftover
   function dotLockActive() {
-    try { var s = App._store.get('pti_dot', null); return !!(s && s.active); } catch (e) { return false; }
+    try {
+      var s = App._store.get('pti_dot', null);
+      if (!s || !s.active) return false;
+      var since = (typeof s.since === 'number' && isFinite(s.since)) ? s.since : 0;
+      if (since > 0 && (Date.now() - since) <= DOT_LOCK_MAX_MS) return true;
+      /* stale or unstamped: heal it away — the cleared state is
+         written back (it syncs, un-arming every client holding
+         the same leftover) and the tap lands where it points. */
+      var healed = {};
+      for (var k in s) { if (Object.prototype.hasOwnProperty.call(s, k)) healed[k] = s[k]; }
+      healed.active = false;
+      try { App._store.set('pti_dot', healed); } catch (e2) {}
+      return false;
+    } catch (e) { return false; }
   }
   App._dotLockActive = dotLockActive;
 

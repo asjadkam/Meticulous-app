@@ -384,7 +384,20 @@
     var s = S('dot', null);
     return (s && typeof s === 'object') ? s : { active: false };
   }
-  function dotActive() { return !!dotState().active; }
+  /* v407 (DISPATCH-TAP-ROUTES-TO-PTI-NOV10): the same freshness
+     rule the shell applies (js/app.js dotLockActive, its copy of
+     this bound): the lock binds only while the activation Begin
+     stamped is fresh — 12h at most. A stale or unstamped state
+     (every build before v407 wrote no stamp, and the record
+     syncs, so an old activation can re-land from the cloud)
+     never paints the officer view over the form. */
+  var DOT_LOCK_MAX_MS = 12 * 3600000;
+  function dotActive() {
+    var s = dotState();
+    if (!s.active) return false;
+    var since = (typeof s.since === 'number' && isFinite(s.since)) ? s.since : 0;
+    return since > 0 && (Date.now() - since) <= DOT_LOCK_MAX_MS;
+  }
   function dayStrOf(d) {
     function z(n) { return ('0' + n).slice(-2); }
     return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
@@ -997,7 +1010,9 @@
        amendment 2); Send builds the 15-day summary PDF. */
     var dotEnter = body.querySelector('#pti_dot_enter');
     if (dotEnter) dotEnter.onclick = function () {
-      var st = dotState(); st.active = true; W('dot', st);
+      /* v407: Begin stamps WHEN it was tapped — the freshness
+         both lock readers (here + the shell) judge it by. */
+      var st = dotState(); st.active = true; st.since = Date.now(); W('dot', st);
       dotDayIdx = 0;
       view = { mode: 'dot', id: null };
       Meticulous.modules.pti.render(body);

@@ -1499,58 +1499,20 @@
             (dayEdit ? '' : '<button class="btn small ghost" data-rxdel="' + x.index + '">Delete</button>') + '</div>') + '</div>';
       }).join('') + '</div>';
     }
-    if (d.sessions.length) {
-      h += '<div class="card"><h3>⏱ Tracker session' + (d.sessions.length > 1 ? 's' : '') + '</h3>' +
-        d.sessions.map(function (s, si) {
-          var rows = '';
-          if (d.sessions.length > 1) rows += '<div class="note" style="margin:8px 0 2px">Session ' + (si + 1) + '</div>';
-          if (s.startMs !== null) rows += '<div class="kv"><span>Started</span><b>' + fmtClockTime(s.startMs) + '</b></div>';
-          if (s.endMs !== null) rows += '<div class="kv"><span>Ended</span><b>' + fmtClockTime(s.endMs) + '</b></div>';
-          if (s.seconds > 0) rows += '<div class="kv"><span>Duration</span><b>' + fmtH(s.seconds / 3600) + 'h</b></div>';
-          if (s.startOdo !== null) rows += '<div class="kv"><span>Start odometer</span><b>' + s.startOdo + ' km</b></div>';
-          if (s.endOdo !== null) rows += '<div class="kv"><span>End odometer</span><b>' + s.endOdo + ' km</b></div>';
-          if (s.odoKm !== null && s.odoKm !== undefined) rows += '<div class="kv"><span>Odometer distance</span><b>🛣 ' + (+s.odoKm.toFixed(1)) + ' km</b></div>';
-          if (s.liveKm !== null) rows += '<div class="kv"><span>Live GPS distance</span><b>' + (+s.liveKm.toFixed(1)) + ' km</b></div>';
-          if (s.milesStatus) rows += '<div class="kv"><span>Miles check</span><b>' + (s.milesStatus === 'confirmed' ? '✓ Matches odometer' : '⚠️ Differs from odometer') + '</b></div>';
-          /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the session's
-             ticket photo, on the day's record — the same img +
-             download-door markup the Dispatch face uses. */
-          if (s.ticketPhoto) rows += '<img src="' + s.ticketPhoto + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
-            (App._photoDl ? App._photoDl(s.ticketPhoto, 'ticket-' + ds) : '');
-          /* v319 (SESSION-RECORD-NO-DELETE): the session record
-             gets the same Delete door the day's entries/extras
-             carry (hidden while an edit form is open, like
-             theirs), bound below through bindTwoTapDelete. */
-          if (!dayEdit) rows += '<div class="row" style="margin-top:6px"><button class="btn small ghost" data-rsdel="' + s.index + '">Delete</button></div>';
-          return rows;
-        }).join('') + '</div>';
-    }
-    if (d.fuel.length) {
-      h += '<div class="card"><h3>⛽ Fuel</h3>' + d.fuel.map(function (f) {
-        var b = [];
-        if (f.litres > 0) b.push(f.litres + ' L');
-        if (f.odo !== null) b.push('odo ' + f.odo);
-        return '<div class="listitem"><div class="a">' + esc(f.station || 'Fill-up') + ' — $' + f.cost.toFixed(2) + '</div>' +
-          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') + '</div>';
-      }).join('') + '</div>';
-    }
-    if (d.dispatches.length) {
-      h += '<div class="card"><h3>🚚 Dispatches (' + d.dispatches.length + ')</h3>' + d.dispatches.map(function (x) {
-        var b = [];
-        if (x.status) b.push(x.status);
-        if (x.ticketNo) b.push('ticket #' + x.ticketNo);
-        return '<div class="listitem"><div class="a">' + esc(x.jobSite) + '</div>' +
-          (b.length ? '<div class="b">' + esc(b.join(' · ')) + '</div>' : '') +
-          /* v378 (AUDIT-ENTRY-NOT-OPENABLE-NOV8): the ticket
-             photo(s) under the dispatch they were filed on —
-             the picture the audit tap promised. */
-          (x.photos && x.photos.length ? x.photos.map(function (p) {
-            return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
-              (App._photoDl ? App._photoDl(p, 'ticket-' + ds) : '');
-          }).join('') : '') + '</div>';
-      }).join('') + '</div>';
-    }
-    if (!d.entries.length && !(d.evidence && d.evidence.length) && !d.extras.length && !d.sessions.length && !d.fuel.length && !d.dispatches.length) {
+    /* v407 (REVENUE-DETAIL-STRIP-NOV10, owner Nov 10, 2026,
+       11:27 CST): the whole-day sections that used to render
+       here — the tracker sessions, the fuel fills, the
+       dispatches, ticket photos included — are GONE from this
+       page on his ruling: "That is exactly the job [of] the
+       Manifest. Delete that from here. I don't want that over
+       here. That's extra information." This detail shows the
+       day's REVENUE items only: the totals above, the money
+       entries, the Also recorded revenue records and the
+       extras. The day's sessions, fuel and dispatches live on
+       the Manifest's own day view, untouched. dayDetailData
+       still assembles those lists (the data benches pin them);
+       this renderer simply never paints them. */
+    if (!d.entries.length && !(d.evidence && d.evidence.length) && !d.extras.length) {
       h += '<div class="card"><div class="empty">Nothing recorded for this day.</div></div>';
     }
     body.innerHTML = h;
@@ -1588,21 +1550,10 @@
       } else { dayErr = ''; }
       api.render(body);
     });
-    /* v319 (SESSION-RECORD-NO-DELETE): remove ONLY the session
-       record — revenue entries are separate records and are
-       never touched here. The record at the rendered index must
-       still be this day's session; if the store moved since the
-       paint, delete nothing and repaint. */
-    bindTwoTapDelete(body, '[data-rsdel]', function (b) {
-      var idx = +b.getAttribute('data-rsdel');
-      var l = (App._store.get('sessions', []) || []).slice();
-      if (!(idx >= 0 && idx < l.length) || !l[idx] || l[idx].date !== ds) { api.render(body); return; }
-      l.splice(idx, 1);
-      if (!saveSessionsVerified(l)) {
-        dayErr = 'That delete did NOT go through — the app storage on your phone looks full, or the write failed, so nothing was removed.';
-      } else { dayErr = ''; }
-      api.render(body);
-    });
+    /* v407: the v319 session Delete binding that stood here is
+       gone with the Sessions section above — its only render
+       site. Session records are the Manifest day's business
+       now, exactly as the ruling puts them. */
     /* v75: open an editor (the form renders at the top of the
        detail, and opening one re-renders — the row it came from
        says "you're editing this one" so the tap's effect is visible

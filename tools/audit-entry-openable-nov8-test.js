@@ -21,11 +21,18 @@
  * This suite pins the fix, against the REAL shipped code, on
  * the v340 suite's harness:
  *  Revenue — audit rows (entries AND extras) carry data-rvday
- *    and open the SAME day detail the face's rows open (v75);
- *    the day detail renders the day's haul-ticket picture(s):
- *    the session's stamped ticketPhoto (app.js v143) AND the
- *    dispatch's ticket photos (the tickets-else-photo
- *    resolution). A photo-less day still opens its details.
+ *    and open the SAME day detail the face's rows open (v75).
+ *    SUPERSESSION (REVENUE-DETAIL-STRIP-NOV10, owner Nov 10,
+ *    2026): the day detail no longer renders the day's
+ *    haul-ticket picture(s) — the whole-day sections (sessions,
+ *    fuel, dispatches, photos) came off the Revenue detail on
+ *    his ruling ("that is exactly the job of the Manifest");
+ *    the picture's home is the Manifest day view, pinned by
+ *    tools/revenue-detail-strip-nov10-test.js. The three
+ *    photo assertions below flipped to ABSENCE under that
+ *    ruling; the door itself (audit row -> day detail, Back
+ *    hygiene) is unchanged and still pinned here. A photo-less
+ *    day still opens its details.
  *    Back — shell back() AND the detail's own ‹ Back — returns
  *    to the AUDIT list; a face-opened detail still returns to
  *    the face (flag hygiene). Rows, order and row text
@@ -179,16 +186,21 @@ section('Revenue — audit rows open the day, picture included', function () {
   rows[0].onclick();
   ok('tap leaves the audit list', M._auditView() === false);
   ok('the SAME day detail the face opens is on screen',
-    body.innerHTML.includes('Dispatches (1)') && body.innerHTML.includes('Aecon Trans'));
-  ok('the dispatch ticket photo renders on the day', body.innerHTML.includes('data:image/jpeg;base64,DSPHOTO'));
-  ok('the session ticket photo renders on the day', body.innerHTML.includes('data:image/jpeg;base64,SESPHOTO'));
-  ok('the picture renders as the ticket photo', body.innerHTML.includes('alt="Ticket photo"'));
+    body.innerHTML.includes('$304.50') && body.innerHTML.includes('Aecon Trans'));
+  /* flipped by REVENUE-DETAIL-STRIP-NOV10 (see header): the
+     Revenue day detail carries no Dispatches section and no
+     ticket photos any more — they live on the Manifest day. */
+  ok('no Dispatches section on the Revenue day detail (Nov 10 ruling)',
+    !body.innerHTML.includes('Dispatches (1)') && !body.innerHTML.includes('🚚 Dispatches'));
+  ok('the dispatch ticket photo does NOT render here any more', !body.innerHTML.includes('data:image/jpeg;base64,DSPHOTO'));
+  ok('the session ticket photo does NOT render here any more', !body.innerHTML.includes('data:image/jpeg;base64,SESPHOTO'));
+  ok('no ticket-photo frame on the Revenue day detail', !body.innerHTML.includes('alt="Ticket photo"'));
 
   ok('shell Back returns to the audit list', M.back() === true && M._auditView() === true);
   ok('the audit list is what is on screen', body.innerHTML.includes('Audit — Revenue entries'));
 
   body.querySelectorAll('[data-rvday]')[0].onclick();
-  ok('day detail open again', body.innerHTML.includes('Dispatches (1)'));
+  ok('day detail open again', body.innerHTML.includes('$304.50'));
   body.querySelector('#rv_day_back').onclick();
   ok("the day detail's own ‹ Back returns to the audit list",
     M._auditView() === true && body.innerHTML.includes('Audit — Revenue entries'));
