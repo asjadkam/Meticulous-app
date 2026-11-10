@@ -677,28 +677,6 @@
                 document.documentElement.style.setProperty('--updBannerH', updH + 'px');
                 document.body.classList.add('updBannerOn');
               } catch (e) {}
-              /* v402 (BANNER-OVERLAP-TOP-NOV10): the landing
-                 measurement is one frame of the bar's life — a
-                 fold/unfold or rotation re-wraps it taller, a late
-                 font swap can grow it, and the one-shot reservation
-                 then under-reserves by the growth and the header
-                 slides back under the bar. Re-measure on every
-                 signal that can change the bar's height and hand
-                 the layout the new number; a same-height read is a
-                 no-op, and the bar never feeds back into its own
-                 size (the var lands on <html>, the padding on
-                 body), so the watchers cannot loop. */
-              var updRemeasure = function () {
-                var h = 0;
-                try { h = bar.offsetHeight || 0; } catch (e) {}
-                if (!(h > 0) || h === updH) return;
-                updH = h;
-                try { document.documentElement.style.setProperty('--updBannerH', updH + 'px'); } catch (e) {}
-              };
-              try { window.addEventListener('resize', updRemeasure); } catch (e) {}
-              try { window.addEventListener('orientationchange', updRemeasure); } catch (e) {}
-              try { if (document.fonts && document.fonts.ready && document.fonts.ready.then) document.fonts.ready.then(updRemeasure); } catch (e) {}
-              try { if (typeof ResizeObserver === 'function') new ResizeObserver(updRemeasure).observe(bar); } catch (e) {}
             }
           })
           .catch(function () {});
@@ -2472,8 +2450,26 @@
        shell and this layer's live session outranks it (the
        ghost-branch principle above, extended). Both heals fire
        ONLY when the branches changed nothing — a genuine tap
-       adoption is never second-guessed. */
-    if (!changed && !loadsChanged && t.status && t.status !== 'idle' &&
+       adoption is never second-guessed.
+       v94 (GEN75-FACE-SPLIT-NOV10, Nov 10, 2026): the gate
+       below no longer counts a LOADS change as "the branches
+       changed something". The loads branch moves no clock
+       input — the pair, the stamps and the session identity
+       it arbitrates are the same whether or not a correction
+       was consumed on the pass — yet a loads change on the
+       relaunch collect suppressed the clock step outright,
+       and when the pass's consume sync was the one that
+       hung (a boot sync whose promise never settles leaves
+       _sessSyncing stuck), nothing ever re-ran it: the
+       record's native re-anchor stood against this layer's
+       pin clock for the whole foreground session (the
+       owner's 09:24 recording: app 00:54:32, glance
+       00:50:02, minutes after relaunch). A STATUS adoption
+       (changed) still suppresses the step, exactly as
+       before — a genuine tap adoption is never
+       second-guessed. Proven in
+       tools/session-relaunch-v94-test.js (R4). */
+    if (!changed && t.status && t.status !== 'idle' &&
         rec.status === t.status && rec.sessionKey && typeof rec.elapsedSec === 'number' &&
         window.ShiftTrack && ShiftTrack.sessionSync) {
       var localKey = '';
@@ -2545,6 +2541,24 @@
             try { trackerPaint(); } catch (e) {}
             try { paintBubble(trackerElapsedSec()); } catch (e) {}
             try { pushWidgetState(lastBubbleFacts()); } catch (e) {}
+            /* v94 (GEN75-FACE-SPLIT-NOV10): landFactsAfterAdopt94
+               — the no-re-sync reasoning above holds for the
+               CLOCK only. The record does NOT hold this layer's
+               fresher FACTS: its milesM is whatever the last
+               landed sync carried (an early LiveMiles
+               checkpoint, 0.5 km on the owner's Nov 10 morning),
+               while this layer's LiveMiles — cloud-backed since
+               web 399 — reads the true total (2.3 km), and no
+               other door ever moves the record's total outside
+               a transition or the minute re-save. So the native
+               faces kept the checkpoint km under the adopted
+               clock indefinitely. One sync on the ADOPTED pair
+               lands the facts (sessionFacts reads the same
+               LiveMiles total the hero paints); the pair is the
+               record's own, so no arbitration can move the
+               clock with it. Proven in
+               tools/session-relaunch-v94-test.js (R1). */
+            try { syncSessionRecord(); } catch (e) {}
           } else {
             try { syncSessionRecord(); } catch (e) {}
           }
@@ -3168,6 +3182,37 @@
        is throttled + change-gated inside (see TILE-HEAL at
        buildDashboard). */
     try { tileHeal(); } catch (e) {}
+    /* v94 (GEN75-FACE-SPLIT-NOV10): tickCollect94 — the
+       standing session-record reconciliation. A native face
+       tap signals this layer live (the pipAction event), but
+       an undeliverable signal used to be dropped on the
+       floor — "reconciled, not replayed" — while the
+       reconciling collects were all lifecycle-bound (init,
+       visibility returns, PiP-exit): a tap landing in the
+       listenerless window after a relaunch, with the app
+       then sitting open, left the record's clock standing
+       against this layer's until some unrelated lifecycle
+       event happened along (the owner's Nov 10, 09:24
+       recording — the split still standing minutes after
+       relaunch, app open). While a session is live and the
+       page is visible, the tick now collects the record on
+       a 15 s cadence (the TILE-HEAL cadence): the collect
+       is a cheap bridge read, adoption is a no-op when the
+       faces already agree, and any divergence converges in
+       seconds instead of at the next lifecycle event.
+       Native gen 75 also stashes undeliverable signals for
+       the lifecycle drains; this cadence is the foreground
+       half of the same guarantee. Proven in
+       tools/session-relaunch-v94-test.js (R6). */
+    try {
+      if (t && t.status && t.status !== 'idle'
+          && document.visibilityState === 'visible'
+          && App.collectSessionRecord
+          && (!trackerTick._sessCollectAt || Date.now() - trackerTick._sessCollectAt > 15000)) {
+        trackerTick._sessCollectAt = Date.now();
+        App.collectSessionRecord();
+      }
+    } catch (e) {}
     // v41: in Miles mode the dial IS the miles display — the small
     // live-miles line would only repeat it.
     if (payMode() === 'Miles') { var mm = el('trkMiles'); if (mm) mm.classList.add('hidden'); }
