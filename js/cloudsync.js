@@ -56,6 +56,40 @@
     /* v307: kept in step with app.js — the received-document
        inbox + its seen book namespace per owner the same way */
     doc_shares: 1, docshare_seen: 1 };
+  /* web403 (DELETE-STICKINESS-NOV10 — the owner's ruling, Nov 10,
+     2026: "Do what you have to — no deletes if the cloud and app
+     both agree... If they disagree the option to delete has to be
+     there!"). A DELIBERATE delete of a record-list entry is
+     tombstoned: the tombstone rides INSIDE the record's own
+     cloud document as the sibling field `del`
+     ({ <recordId>: { t, fp } } — t = when deleted, fp = the
+     agreed record's content fingerprint), so a pull can never
+     see the list without its tombstones. Devices keep their
+     accepted set at the TOP level of the meta (m.dels, per key)
+     — the v276 rule: the pull replaces whole per-key records,
+     so delete state that must survive pulls cannot live inside
+     km. A tombstone binds only an id both sides once agreed in
+     the cloud: it is authored solely from pendingRecordDeletes
+     (shadow-named, locally absent — the agreed-shadow rule), so
+     a record that exists only on one device is never tombstoned
+     away, and a genuinely new record can never collide with one
+     (identities are unique per creation). Where a tombstone
+     meets a record EDITED after the delete (content fingerprint
+     differs from the agreed one), the tombstone cannot settle
+     it: the record is held back from the cloud, listed in
+     m.delConf, and surfaced to the user as a choice (Preferences
+     → Advanced sync card; CloudSync.resolveDelConflict). A
+     KEEP choice revokes the tombstone (m.delRev) — the keeper's
+     next push restores the record and clears the doc's entry,
+     and a pull that finds the record back in the list with no
+     tombstone forgets the accepted one. GC RULE: a tombstone is
+     dropped from a write (and from the accepted set) only when
+     it is older than DEL_GC_MS (90 days) AND its id is absent
+     from both the merged list and the cloud list at that moment
+     — by then every live device has long applied it; a record
+     still present anywhere keeps its tombstone. Records nobody
+     deleted keep the v241/v272 never-lose union untouched. */
+  var DEL_GC_MS = 90 * 24 * 60 * 60 * 1000;
   var DEBOUNCE_MS = 2500;
   var TELEMETRY_PUSH_MIN_MS = 60000;    // v276: min gap between cloud writes of one telemetry key
   var MAX_DOC_BYTES = 900000;           // Firestore ~1MiB/doc limit; stay under
@@ -1487,6 +1521,29 @@
     });
   }
 
+  /* web403: loadCloudDoc's sibling — the record-list push also
+     needs the doc's tombstone field (`del`), which loadCloudDoc
+     narrows away. Same contract otherwise: arr is null when no
+     usable doc exists. */
+  function loadCloudListDoc(key, docId) {
+    if (typeof FB.loadDoc === 'function') {
+      return FB.loadDoc(KV_COLLECTION, docId).then(function (d) {
+        return { arr: (d && Array.isArray(d.v)) ? d.v : null,
+                 del: (d && d.del && typeof d.del === 'object') ? d.del : null };
+      });
+    }
+    return FB.loadDocs(KV_COLLECTION).then(function (docs) {
+      var out = { arr: null, del: null };
+      (docs || []).forEach(function (d) {
+        if ((d.mt || d.id) === key) {
+          if (Array.isArray(d.v)) out.arr = d.v;
+          if (d.del && typeof d.del === 'object') out.del = d.del;
+        }
+      });
+      return out;
+    });
+  }
+
   /* v276 (SPARK-QUOTA): an urgent flush — telemetry rides NOW,
      ahead of its coalesce window. Raised by the tracker
      pause/stop stamps in the wrapped store.set, and by the
@@ -1620,34 +1677,75 @@
         try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
         return done(false);
       };
-      var rlSave = function (arr) {
+      var rlSave = function (arr, delMap, writeDel, acceptedAfter) {
         /* v289: write the sync copy (facts-complete; photos ride
            only while the whole book fits the doc cap). A copy that
            STILL exceeds the cap fails honestly — the key stays
            dirty and the failure is named — never the old silent
            seal that froze the cloud at Oct 22. The shadow advances
            from the full merged array: fuel identities never read
-           the photo, so the identity set is the same either way. */
+           the photo, so the identity set is the same either way.
+           web403: the tombstone map rides the same write (the
+           `del` field), so the list and its tombstones can never
+           be seen apart; acceptedAfter persists this device's
+           accepted set only once the write has landed. */
         var copy = recordSyncCopy(key, arr);
         if (JSON.stringify(copy).length > MAX_DOC_BYTES) {
           try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': the record list exceeds the cloud document size limit even without receipt photos' }); } catch (e) {}
           return Promise.resolve(done(false));
         }
-        return FB.saveDoc(KV_COLLECTION, docId, { v: copy }).then(function (res) {
+        var payload = { v: copy };
+        if (writeDel) payload.del = delMap || {};
+        return FB.saveDoc(KV_COLLECTION, docId, payload).then(function (res) {
           if (res === null) {
             try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': not signed in' }); } catch (e2) {}
             return done(false);
           }
           km.sh = recordIdList(key, arr);
+          if (acceptedAfter) {
+            var mm = getMeta();
+            if (Object.keys(acceptedAfter).length) { if (!mm.dels) mm.dels = {}; mm.dels[key] = acceptedAfter; }
+            else if (mm.dels) delete mm.dels[key];
+            saveMeta();
+          }
           return done(true);
         }).catch(rlPushFail);
       };
       try {
-        return loadCloudDoc(key, docId).then(function (cloudArr) {
-          if (!cloudArr) return rlSave(val);
-          var mg = mergeRecordLists3(key, val, cloudArr, km.sh);
-          if (JSON.stringify(mg) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mg));
-          return rlSave(mg);
+        return loadCloudListDoc(key, docId).then(function (cd) {
+          var cloudArr = cd.arr || [];
+          var pFlags = {};
+          var mgAll = mergeRecordLists3(key, val, cloudArr, km.sh, pFlags);
+          /* web403: tombstone the deletes this merge applied,
+             filter the write by every tombstone in force plus
+             the undecided records (held back until the user
+             decides), and learn the local store the filtered
+             union WITH the undecided records still in it. */
+          var pAuth = authoredTombs(key, pFlags, cloudArr);
+          if (pAuth) acceptDels(key, pAuth);
+          processCloudDels(key, cd.del || {}, val, cloudArr, mgAll);
+          var uni = computeDelUnion(key, cd.del || {}, pAuth);
+          var writeIds = {};
+          Object.keys(uni.write).forEach(function (id) { writeIds[id] = 1; });
+          var confP = conflictIdSet(key);
+          Object.keys(confP).forEach(function (id) { writeIds[id] = 1; });
+          var mgWrite = mgAll.filter(function (r) {
+            var id = recordIdentity(key, r);
+            return !(id && writeIds[id]);
+          });
+          var heldBack = mgAll.filter(function (r) {
+            var id = recordIdentity(key, r);
+            return !!(id && confP[id]);
+          });
+          var mgLocal = applyDelFilter(key, mgWrite.concat(heldBack), val);
+          if (JSON.stringify(mgLocal) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mgLocal));
+          var present = recordIdList(key, mgWrite).concat(recordIdList(key, cloudArr));
+          uni.write = gcDelMap(uni.write, present);
+          var accOut = {};
+          Object.keys(uni.accepted).forEach(function (id) { if (uni.write[id]) accOut[id] = uni.accepted[id]; });
+          var hadDel = !!(cd.del && Object.keys(cd.del).length);
+          return rlSave(mgWrite, uni.write,
+            hadDel || !!Object.keys(uni.write).length, accOut);
         }).catch(rlPushFail);
       } catch (e) { return Promise.resolve(rlPushFail(e)); }
     }
@@ -2399,7 +2497,7 @@
     shadowIds.forEach(function (id) { if (!localIds[id] && cloudIds[id]) del[id] = 1; });
     return del;
   }
-  function mergeRecordLists3(key, localArr, cloudArr, shadowIds) {
+  function mergeRecordLists3(key, localArr, cloudArr, shadowIds, flags) {
     /* v293: the pending-delete set is computed FIRST and handed
        to the merge: a shadow-deleted identity that still has a
        same-fill sibling in the union (the edit that replaced
@@ -2443,8 +2541,229 @@
     if (!any) return merged;
     return merged.filter(function (r) {
       var id = recordIdentity(key, r);
-      return id === null || !del[id];
+      var drop = !(id === null || !del[id]);
+      /* web403: name the deletions this merge actually applied
+         (post fuel-rescue) on the caller's flags — the authoring
+         signal for the DELETE-STICKINESS tombstones. Callers
+         that pass no flags see no change. */
+      if (drop && flags) { (flags.deleted = flags.deleted || {})[id] = r; }
+      return !drop;
     });
+  }
+
+  /* ---------------- web403: DELETE-STICKINESS tombstones -------
+     The machinery behind the law stated at DEL_GC_MS above.
+     State (all TOP level of the meta, per the v276 rule):
+       m.dels   { key: { id: {t, fp} } }  tombstones this device
+                  has authored or accepted — applied to every
+                  merge result for that key, on every cycle.
+       m.delConf [ {key, id, t, fp, label} ]  disagreements
+                  awaiting the user's choice (status() surfaces
+                  them; the Preferences sync card renders them).
+       m.delRev { key: { id: ms } }  keep-revocations not yet
+                  confirmed landed in the cloud doc.            */
+  function recordContentFp(key, rec) {
+    var id = recordIdentity(key, rec);
+    if (!id) return null;
+    /* a fingerprint identity already IS the content */
+    if (id.indexOf('fp:') === 0) return id;
+    var shed = { photo: 1 };
+    (RECORD_PHOTO_FIELDS[key] || []).forEach(function (f) { shed[f] = 1; });
+    var parts = [];
+    Object.keys(rec || {}).sort().forEach(function (k) {
+      if (shed[k]) return;
+      parts.push(k + '=' + JSON.stringify(rec[k]));
+    });
+    return 'cfp:' + parts.join('|');
+  }
+  function findRecordById(key, arr, id) {
+    var out = null;
+    (arr || []).forEach(function (r) { if (!out && recordIdentity(key, r) === id) out = r; });
+    return out;
+  }
+  function recordLabel(key, rec) {
+    var names = { rev_entries: 'Revenue entry', fuel_fills: 'Fuel fill',
+      docs_items: 'Document', pti_reports: 'PTI report',
+      dmg_reports: 'Damage report', sessions: 'Shift record',
+      rev_extras: 'Revenue extra' };
+    var base = names[key] || 'Record', bits = [];
+    if (rec) {
+      if (rec.date) bits.push(String(rec.date));
+      if (key === 'rev_entries' && rec.amount !== null && rec.amount !== undefined) bits.push('$' + rec.amount);
+      if (key === 'fuel_fills' && rec.litres !== null && rec.litres !== undefined) bits.push(rec.litres + ' L');
+      if (rec.station) bits.push(String(rec.station));
+      if (rec.title) bits.push(String(rec.title).slice(0, 40));
+      if (rec.note) bits.push(String(rec.note).slice(0, 40));
+      if (rec.desc) bits.push(String(rec.desc).slice(0, 40));
+    }
+    return bits.length ? base + ' — ' + bits.join(' · ') : base;
+  }
+  function authoredTombs(key, flags, cloudArr) {
+    if (!flags || !flags.deleted) return null;
+    var out = null;
+    Object.keys(flags.deleted).forEach(function (id) {
+      /* the fingerprint basis is the AGREED record — the cloud's
+         own copy; the merged record is only a fallback */
+      var rec = findRecordById(key, cloudArr, id) || flags.deleted[id];
+      (out = out || {})[id] = { t: Date.now(), fp: recordContentFp(key, rec) };
+    });
+    return out;
+  }
+  function cloneDelMap(map) {
+    var out = {};
+    if (map && typeof map === 'object') {
+      Object.keys(map).forEach(function (id) {
+        var tb = map[id] || {};
+        out[id] = { t: Number(tb.t) || 0, fp: tb.fp || null };
+      });
+    }
+    return out;
+  }
+  function acceptDels(key, map) {
+    if (!map) return;
+    var m = getMeta();
+    if (!m.dels) m.dels = {};
+    if (!m.dels[key]) m.dels[key] = {};
+    Object.keys(map).forEach(function (id) { m.dels[key][id] = map[id]; });
+    saveMeta();
+  }
+  function conflictIdSet(key) {
+    var m = getMeta(), out = {};
+    (m.delConf || []).forEach(function (c) { if (c && c.key === key) out[c.id] = 1; });
+    return out;
+  }
+  /* GC RULE (named at DEL_GC_MS): drop a tombstone only when it
+     is older than DEL_GC_MS AND its id is absent from both lists
+     in play — a record still present anywhere keeps its guard. */
+  function gcDelMap(map, presentIds) {
+    var now = Date.now(), present = {}, out = {};
+    (presentIds || []).forEach(function (id) { present[id] = 1; });
+    Object.keys(map || {}).forEach(function (id) {
+      var tb = map[id];
+      if (tb && (now - (Number(tb.t) || 0)) > DEL_GC_MS && !present[id]) return;
+      out[id] = tb;
+    });
+    return out;
+  }
+  /* Process one cloud doc's `del` field against this device:
+     accept what settles, surface what doesn't, forget what a
+     keeper revoked. rlLocal is the pre-merge local list (the
+     edit test reads OUR copy, never the union winner). */
+  function processCloudDels(key, cloudDel, rlLocal, cloudArr, mergedArr) {
+    var m = getMeta(), changed = false;
+    if (!m.dels) m.dels = {};
+    var dels = cloneDelMap(m.dels[key]);
+    var rev = (m.delRev && m.delRev[key]) ? cloneDelMap(m.delRev[key]) : {};
+    var conf = (m.delConf || []).slice();
+    function confIdx(id) {
+      for (var i = 0; i < conf.length; i++) if (conf[i].key === key && conf[i].id === id) return i;
+      return -1;
+    }
+    Object.keys(cloudDel || {}).forEach(function (id) {
+      if (rev[id]) return;              /* our keep is in flight — our push clears it */
+      if (confIdx(id) >= 0) return;     /* already the user's to decide */
+      var tomb = cloudDel[id] || {};
+      var localRec = findRecordById(key, rlLocal, id);
+      if (localRec) {
+        var fp = recordContentFp(key, localRec);
+        if (fp && tomb.fp && fp !== tomb.fp) {
+          /* deleted there, EDITED here after the delete — the
+             tombstone cannot settle this; the user decides */
+          conf.push({ key: key, id: id, t: Number(tomb.t) || Date.now(),
+                      fp: tomb.fp, label: recordLabel(key, localRec) });
+          changed = true;
+          return;
+        }
+      }
+      if (!dels[id] || dels[id].t !== (Number(tomb.t) || 0)) {
+        dels[id] = { t: Number(tomb.t) || 0, fp: tomb.fp || null };
+        changed = true;
+      }
+    });
+    /* a choice whose record the user already removed by hand in
+       the module is moot — accept the tombstone and clear it */
+    for (var ci = conf.length - 1; ci >= 0; ci--) {
+      if (conf[ci].key !== key) continue;
+      if (!findRecordById(key, rlLocal, conf[ci].id)) {
+        if (cloudDel && cloudDel[conf[ci].id] && !dels[conf[ci].id]) {
+          var tb2 = cloudDel[conf[ci].id] || {};
+          dels[conf[ci].id] = { t: Number(tb2.t) || 0, fp: tb2.fp || null };
+        }
+        conf.splice(ci, 1);
+        changed = true;
+      }
+    }
+    /* revoke-forget: the record is back in the cloud list and
+       its tombstone is gone — a keeper restored it; forget ours */
+    var cloudIds = {};
+    (cloudArr || []).forEach(function (r) { var id2 = recordIdentity(key, r); if (id2) cloudIds[id2] = 1; });
+    Object.keys(dels).forEach(function (id) {
+      if (!(cloudDel && cloudDel[id]) && cloudIds[id] && confIdx(id) < 0) {
+        delete dels[id]; changed = true;
+      }
+    });
+    /* a revocation the cloud doc no longer names has landed */
+    Object.keys(rev).forEach(function (id) {
+      if (!(cloudDel && cloudDel[id])) { delete rev[id]; changed = true; }
+    });
+    var present = recordIdList(key, mergedArr).concat(recordIdList(key, cloudArr));
+    var gc = gcDelMap(dels, present);
+    if (Object.keys(gc).length !== Object.keys(dels).length) changed = true;
+    dels = gc;
+    if (changed) {
+      if (Object.keys(dels).length) m.dels[key] = dels; else delete m.dels[key];
+      if (Object.keys(rev).length) { if (!m.delRev) m.delRev = {}; m.delRev[key] = rev; }
+      else if (m.delRev) delete m.delRev[key];
+      m.delConf = conf;
+      saveMeta();
+    }
+  }
+  /* The union with accepted tombstones applied. Undecided
+     (conflict-held) records are exempt — and keep the LOCAL
+     version, the very copy the user is deciding about. */
+  function applyDelFilter(key, merged, rlLocal) {
+    var m = getMeta();
+    var dels = (m.dels && m.dels[key]) || {};
+    var conf = conflictIdSet(key);
+    if (!Object.keys(dels).length && !Object.keys(conf).length) return merged;
+    return (merged || []).filter(function (r) {
+      var id = recordIdentity(key, r);
+      return !(id && dels[id] && !conf[id]);
+    }).map(function (r) {
+      var id = recordIdentity(key, r);
+      if (id && conf[id]) return findRecordById(key, rlLocal, id) || r;
+      return r;
+    });
+  }
+  /* What the cloud should see of a list: undecided records are
+     stripped — they are held back until the user decides. */
+  function stripConflictHeld(key, arr) {
+    var conf = conflictIdSet(key);
+    if (!Object.keys(conf).length) return arr;
+    return (arr || []).filter(function (r) {
+      var id = recordIdentity(key, r);
+      return !(id && conf[id]);
+    });
+  }
+  /* The tombstone map a push writes: the cloud's current entries
+     (minus our in-flight keep-revocations), unioned with our
+     accepted set and any deletes this very push authored — a
+     rolled-back doc can never undelete, because every holder
+     re-asserts the tombstones it accepted. */
+  function computeDelUnion(key, cloudDel, authored) {
+    var m = getMeta();
+    var acc = cloneDelMap(m.dels && m.dels[key]);
+    var rev = (m.delRev && m.delRev[key]) || {};
+    var write = {};
+    Object.keys(cloudDel || {}).forEach(function (id) {
+      if (!rev[id]) write[id] = (cloudDel[id] && typeof cloudDel[id] === 'object')
+        ? { t: Number(cloudDel[id].t) || 0, fp: cloudDel[id].fp || null } : { t: 0, fp: null };
+    });
+    Object.keys(acc).forEach(function (id) { write[id] = acc[id]; });
+    if (authored) Object.keys(authored).forEach(function (id) {
+      write[id] = authored[id]; acc[id] = authored[id];
+    });
+    return { write: write, accepted: acc };
   }
 
   function syncNow() {
@@ -2460,6 +2779,48 @@
   }
   S.syncNow = syncNow;
   S.flush = flush;
+
+  /* web403: the user's ruling on one surfaced disagreement.
+     keep=true: the record stays; the tombstone is revoked
+     (m.delRev) and this device's next push restores the record
+     to the cloud list and clears the doc's entry — the keeper's
+     choice propagates like the delete did. keep=false: the
+     tombstone is accepted and the local copy dropped here too.
+     Either way the choice is cleared and a sync runs. */
+  S.resolveDelConflict = function (key, id, keep) {
+    try {
+      if (!RECORD_LIST_KEYS[key]) return false;
+      var m = getMeta();
+      var conf = (m.delConf || []).slice(), idx = -1;
+      for (var i = 0; i < conf.length; i++) {
+        if (conf[i].key === key && conf[i].id === id) { idx = i; break; }
+      }
+      if (idx < 0) return false;
+      var c = conf[idx];
+      conf.splice(idx, 1);
+      m.delConf = conf;
+      var km = keyMeta(key);
+      if (keep) {
+        if (!m.delRev) m.delRev = {};
+        if (!m.delRev[key]) m.delRev[key] = {};
+        m.delRev[key][id] = Date.now();
+      } else {
+        if (!m.dels) m.dels = {};
+        if (!m.dels[key]) m.dels[key] = {};
+        m.dels[key][id] = { t: c.t || Date.now(), fp: c.fp || null };
+        var arr = parseJson(lsGetRaw(key), null);
+        if (Array.isArray(arr)) {
+          var kept = arr.filter(function (r) { return recordIdentity(key, r) !== id; });
+          if (kept.length !== arr.length) lsSetRaw(key, JSON.stringify(kept));
+        }
+      }
+      /* stamp the key so the ruling itself ships on this flush */
+      km.t = Date.now(); km.u = S.uid;
+      saveMeta();
+      try { S.syncNow(); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  };
 
   /* ---------------- first-pull waiter (v28) ----------------
    * Lets routing code (afterAuth) wait for the first cloud pull to settle
@@ -2649,9 +3010,29 @@
             !(km.u && S.uid && km.u !== S.uid)) {
           var rlLocal = parseJson(raw, undefined);
           if (Array.isArray(rlLocal)) {
-            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, km.sh);
-            if (JSON.stringify(rlMerged) !== JSON.stringify(rlLocal)) {
-              lsSetRaw(key, JSON.stringify(rlMerged));
+            /* web403 (DELETE-STICKINESS-NOV10): the tombstone
+               layer rides the same union. The merge runs with
+               its flags out — deletions this merge applies for
+               THIS device are tombstoned into the accepted set
+               at once. The doc's own `del` field is then
+               processed (accept / conflict / revoke-forget),
+               and the final local list is the union with
+               accepted tombstones applied and undecided records
+               exempt. The dirty compare below runs on the CLOUD
+               VIEW of that list — undecided records stripped:
+               held back from the cloud until the user decides,
+               so an undecided cycle stays dirty and the flush's
+               own hold-back keeps them out of the write. */
+            var delFlags = {};
+            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, km.sh, delFlags);
+            var authP = authoredTombs(key, delFlags, d.v);
+            if (authP) acceptDels(key, authP);
+            processCloudDels(key, (d.del && typeof d.del === 'object') ? d.del : {},
+              rlLocal, d.v, rlMerged);
+            var rlFinal = applyDelFilter(key, rlMerged, rlLocal);
+            var rlView = stripConflictHeld(key, rlFinal);
+            if (JSON.stringify(rlFinal) !== JSON.stringify(rlLocal)) {
+              lsSetRaw(key, JSON.stringify(rlFinal));
               applied++;
             }
             /* v289: compare the SYNC COPY against the cloud doc —
@@ -2659,7 +3040,7 @@
                cloud state once the push has landed; comparing the
                full array would keep the key dirty forever and
                re-push the whole book every cycle. */
-            if (syncCopyJson(key, rlMerged) !== JSON.stringify(d.v)) {
+            if (syncCopyJson(key, rlView) !== JSON.stringify(d.v)) {
               /* the union holds records the cloud lacks — keep
                  the key dirty so the flush pushes the union UP.
                  The shadow names the cloud state just verified,
@@ -2672,7 +3053,11 @@
               km.sh = recordIdList(key, d.v);
             } else {
               km.t = cloudTs; km.s = cloudTs;
-              km.sh = recordIdList(key, rlMerged);
+              /* web403: the clean shadow names what this device
+                 now holds — the tombstone-filtered list — so a
+                 settled tombstone can never re-fire as a fresh
+                 pending delete on a later cycle. */
+              km.sh = recordIdList(key, rlFinal);
             }
             return;
           }
@@ -3075,6 +3460,11 @@
          telemetry key + the cloud docs' real field inventory) —
          the Advanced troubleshooting readout paints from this. */
       teleDiag: diagSnapshot(),
+      /* web403: delete disagreements awaiting the user's choice
+         (Preferences → Advanced renders them with both buttons).
+         Information only — never a dot input: an undecided
+         record must not paint the sync dot red. */
+      delConflicts: (m.delConf || []).slice(),
       lastError: S.lastError, stats: S.stats
     };
   };

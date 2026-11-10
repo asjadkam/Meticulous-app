@@ -637,7 +637,13 @@
         '<div style="border-top:1px solid #e3e3e3;margin-top:18px;padding-top:14px;">' +
         '<p class="note" style="margin-top:0">☁️ Cloud sync — troubleshooting</p>' +
         '<p class="note" id="pf_syncnote"></p>' +
-        '<button class="btn ghost" id="pf_syncnow">Retry sync now</button></div>' +
+        '<button class="btn ghost" id="pf_syncnow">Retry sync now</button>' +
+        /* web403 (DELETE-STICKINESS-NOV10): delete disagreements
+           land here, on the sync card — sync state already lives
+           on this card and this is the screen the owner opens
+           when records disagree. Painted by the sync wiring
+           below from CloudSync.status().delConflicts. */
+        '<div id="pf_delconf"></div></div>' +
         /* v296 (SYNC-STILL-FAILING — the v295 verdict failed too):
            the live-miles backup's DETAIL readout. Three builds
            shipped against a failure whose real error the app had
@@ -1379,6 +1385,7 @@
       (function () {
         var note = body.querySelector('#pf_syncnote');
         var diag = body.querySelector('#pf_syncdiag');
+        var dconf = body.querySelector('#pf_delconf');
         var btn = body.querySelector('#pf_syncnow');
         if (!btn) return;
         /* v296: plain sizes + clock for the detail readout. */
@@ -1430,6 +1437,40 @@
               : 'No backup attempt recorded yet — tap “Retry sync now”.';
           } catch (e) { diag.textContent = 'Could not read the backup detail.'; }
         }
+        /* web403 (DELETE-STICKINESS-NOV10): one block per delete
+           disagreement — the record was deleted on another
+           device but changed on this one after the delete, so
+           the driver rules on it here. Both choices call
+           CloudSync.resolveDelConflict and repaint. */
+        function escHtml(s) {
+          return String(s === null || s === undefined ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        }
+        function paintDelConf(st) {
+          if (!dconf) return;
+          try {
+            var confs = (st && st.delConflicts) || [];
+            if (!confs.length) { dconf.innerHTML = ''; return; }
+            dconf.innerHTML = confs.map(function (c, i) {
+              return '<div style="border-top:1px solid #e3e3e3;margin-top:12px;padding-top:10px;">' +
+                '<p class="note" style="margin-top:0">⚠️ Deleted on another device, but changed on this phone: ' +
+                escHtml(c.label || 'Record') + '. Keep your copy, or delete it here too?</p>' +
+                '<button class="btn ghost" data-delconf="' + i + '" data-keep="0">Delete it</button> ' +
+                '<button class="btn ghost" data-delconf="' + i + '" data-keep="1">Keep my copy</button></div>';
+            }).join('');
+            var bs = dconf.querySelectorAll('button[data-delconf]');
+            for (var bi = 0; bi < bs.length; bi++) {
+              bs[bi].onclick = function () {
+                var c = confs[Number(this.getAttribute('data-delconf'))];
+                if (!c) return;
+                try { if (window.CloudSync && CloudSync.resolveDelConflict) CloudSync.resolveDelConflict(c.key, c.id, this.getAttribute('data-keep') === '1'); } catch (e) {}
+                setTimeout(paint, 400);
+                setTimeout(paint, 2000);
+              };
+            }
+          } catch (e) { dconf.innerHTML = ''; }
+        }
         function paint() {
           if (!note) return;
           try { if (document && document.contains && !document.contains(note)) return; } catch (e) {}
@@ -1444,6 +1485,7 @@
               : st.state === 'syncing' ? 'Syncing…'
               : 'Sync is off (not signed in).';
             paintDiag(st);
+            paintDelConf(st);
           } catch (e) { if (note) note.textContent = 'Could not read the sync result.'; }
         }
         paint();
