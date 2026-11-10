@@ -677,6 +677,28 @@
                 document.documentElement.style.setProperty('--updBannerH', updH + 'px');
                 document.body.classList.add('updBannerOn');
               } catch (e) {}
+              /* v402 (BANNER-OVERLAP-TOP-NOV10): the landing
+                 measurement is one frame of the bar's life — a
+                 fold/unfold or rotation re-wraps it taller, a late
+                 font swap can grow it, and the one-shot reservation
+                 then under-reserves by the growth and the header
+                 slides back under the bar. Re-measure on every
+                 signal that can change the bar's height and hand
+                 the layout the new number; a same-height read is a
+                 no-op, and the bar never feeds back into its own
+                 size (the var lands on <html>, the padding on
+                 body), so the watchers cannot loop. */
+              var updRemeasure = function () {
+                var h = 0;
+                try { h = bar.offsetHeight || 0; } catch (e) {}
+                if (!(h > 0) || h === updH) return;
+                updH = h;
+                try { document.documentElement.style.setProperty('--updBannerH', updH + 'px'); } catch (e) {}
+              };
+              try { window.addEventListener('resize', updRemeasure); } catch (e) {}
+              try { window.addEventListener('orientationchange', updRemeasure); } catch (e) {}
+              try { if (document.fonts && document.fonts.ready && document.fonts.ready.then) document.fonts.ready.then(updRemeasure); } catch (e) {}
+              try { if (typeof ResizeObserver === 'function') new ResizeObserver(updRemeasure).observe(bar); } catch (e) {}
             }
           })
           .catch(function () {});
