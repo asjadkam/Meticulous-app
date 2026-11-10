@@ -1348,6 +1348,79 @@
     try { paintPtiFlag(); } catch (e) {}
   }
 
+  /* ================= TILE-HEAL-BEGIN =================
+     v397 (DASHBOARD-TILE-STALE-NOV10, owner Nov 10, 2026
+     09:10 MDT): the module cards' subtexts LIED. His
+     dashboard read Revenue "Last entry: $695.98 · yesterday"
+     hours after that entry was deleted (the Revenue list
+     itself topped at $362.50) and Documents "No documents
+     yet" while the vault held the 2 CVSA pages filed
+     Nov 9. The book was CORRECT everywhere — verified in
+     the cloud book too.
+     THE MECHANISM (convicted in this file + js/cloudsync.js):
+     a subtext is computed live exactly ONCE, inside
+     buildDashboard (modStatus -> module.status() ->
+     App._store, a fresh localStorage read — no cache
+     anywhere in the read path), and buildDashboard runs
+     only on auth, on showDashboard (navigating home) and
+     on pull-to-refresh. Nothing in the standing paint
+     cadence ever touches #modGrid again: trackerTick (the
+     1 s interval + the heroPaint visibility kick) paints
+     the hero, the bubble and the live-miles line only,
+     and CloudSync's after-pull signal (S.onAfterPull)
+     diffs only the telemetry keys (livemiles / geoloads /
+     tracker) for engine adoption. A change that lands
+     WITHOUT a navigation — a cloud pull carrying another
+     session's edit, a write from a second page lifetime
+     sharing the store — therefore leaves the grid showing
+     the subtexts of its last paint, while every module,
+     rendering fresh when opened, reads the current book.
+     In-session edits were masked by the navigation
+     repaint; the two proven tiles are precisely the two
+     whose latest changes arrived remotely.
+     THE FIX rides the codebase's own pattern — the
+     change-gated repaint the hero uses (_heroSig /
+     _extraSig), driven from the same tick: tileHeal
+     re-reads each painted card's live subtext through the
+     SAME modStatus door buildDashboard uses and rewrites
+     only the .s nodes whose text actually changed. The
+     card set, order, tier gates and click handlers are
+     untouched (they still belong to buildDashboard); the
+     heal owns ONLY the subtext surface, for EVERY card on
+     the grid — Revenue, Dispatch, Fuel & Expense, PTI,
+     Manifest, Navigator, Damage & Incident, Documents,
+     Invoice, Connect, P&L and Maintenance alike.
+     Throttled to a 15 s cadence inside the tick (a
+     subtext is a summary, not a clock; statuses re-parse
+     their store keys, documents largest of all), gated
+     to the visible dashboard, inert while auth-locked.
+     Harness-extractable: uses only el + modStatus + App. */
+  var _tileHealAt = 0;
+  function tileHeal(force) {
+    if (App._authLocked ? App._authLocked() : false) return false;
+    var dv = el('dashView');
+    if (!dv || dv.classList.contains('hidden')) return false;
+    var now = Date.now();
+    if (!force && _tileHealAt && now - _tileHealAt < 15000) return false;
+    _tileHealAt = now;
+    var g = el('modGrid');
+    if (!g || !g.querySelectorAll) return false;
+    var cards = g.querySelectorAll('.modcard');
+    if (!cards || !cards.length) return false;
+    var changed = false;
+    for (var i = 0; i < cards.length; i++) {
+      var key = cards[i].getAttribute('data-mod');
+      if (!key) continue;
+      var sEl = cards[i].querySelector ? cards[i].querySelector('.s') : null;
+      if (!sEl) continue;
+      var s = modStatus(key);
+      if (sEl.textContent !== s) { sEl.textContent = s; changed = true; }
+    }
+    return changed;
+  }
+  App._tileHeal = tileHeal; // v397: harness door (trackerTick below is the live driver)
+  /* ================= TILE-HEAL-END ================= */
+
   /* NAME-CARD-BEGIN — v147 (owner, Oct 17, 2026 21:31 MDT): the
      ONE-TIME name ask for accounts created before setup asked.
      Their Connect identity has always been a business or an
@@ -2985,6 +3058,11 @@
     try { paintBubble(sec); } catch (e) {}
     // v40: keep the "Miles (live)" dashboard line current
     try { if (window.LiveMiles) LiveMiles.paint(); } catch (e) {}
+    /* v397 (DASHBOARD-TILE-STALE-NOV10): keep the module
+       cards' subtexts current on the same cadence — tileHeal
+       is throttled + change-gated inside (see TILE-HEAL at
+       buildDashboard). */
+    try { tileHeal(); } catch (e) {}
     // v41: in Miles mode the dial IS the miles display — the small
     // live-miles line would only repeat it.
     if (payMode() === 'Miles') { var mm = el('trkMiles'); if (mm) mm.classList.add('hidden'); }
