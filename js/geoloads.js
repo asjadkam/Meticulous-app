@@ -1165,7 +1165,7 @@
           points: [{ lat: SEED.lat, lng: SEED.lng }],
           auxPoints: [], othersLearned: CFG_LEARNED.slice(), pending: null,
           present: false, visitCounted: false, closes: 0, everPresent: false,
-          cand: null, shCand: null, otherSeen: false, depSince: null, otherCand: null,
+          cand: null, shCand: null, otherShCand: null, otherSeen: false, depSince: null, otherCand: null,
           cluster: null, clusterStage: 0, excMaxKmh: 0,
           lastT: 0, lastLat: null, lastLng: null,
           lastNearM: Infinity, counted: false
@@ -1286,17 +1286,22 @@
               S.visitCounted = false; S.closes++;
               S.othersLearned.push({ lat: cl.lat, lng: cl.lng });
               clFired = true;
-            } else if (S.visitCounted && clNearM <= VISIT_SPAN_M && slowPath) {
+            } else if (S.visitCounted && clNearM <= VISIT_SPAN_M && slowPath && clOtherM > VISIT_SHADOW_M) {
               /* a new face of the SAME site, reached without
                  leaving the ground: the site grows; the visit
-                 does NOT count again (one visit tips once). */
+                 does NOT count again (one visit tips once).
+                 v407: a stop within the other end's own shadow
+                 reach is the other end, never this site's face —
+                 adopting it would zero the departure geometry
+                 (see the pending branch's note). */
               S.points.push({ lat: cl.lat, lng: cl.lng });
               S.present = true; S.depSince = null; S.cand = null;
               nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
               inSite = nearM <= VISIT_PRESENCE_M;
               clFired = true;
             } else if (S.visitCounted && !slowPath && tipGrade &&
-                       clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M) {
+                       clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M &&
+                       clOtherM > VISIT_SHADOW_M) {
               {
                 /* a tip-length road stop mid-visit (a fuel
                    stop fits this shape as well as a face can):
@@ -1343,6 +1348,7 @@
             } else if (!S.visitCounted && !S.present && OTHERS.length &&
                        (S.closes > 0 || S.everPresent) &&
                        clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M &&
+                       clOtherM > VISIT_SHADOW_M &&
                        (slowPath || tipGrade)) {
               /* a virgin face of a DECLARED site on a fresh
                  visit: the pit is excluded by the others, so a
@@ -1361,7 +1367,16 @@
                  stop already in progress when the counter armed
                  — he was parked somewhere arbitrary when a
                  dispatch re-pinned mid-day (Nov 5's swap) — must
-                 never read as an arrival. */
+                 never read as an arrival. v408 (LOADS-CLOSE-
+                 STARVED-NOV10): the stop must also sit beyond
+                 the OTHER end's shadow reach (clOtherM) — a
+                 loading dwell at the load face itself is ~2 km
+                 from the dump and otherwise qualified here,
+                 planting a probationary dump point ON the load
+                 end; presence then read ~0 m at the load end
+                 and the next leg's above-halo span fell under
+                 the 60 s departure bar, strangling that
+                 departure and every arrival after it. */
               if (!S.pending) {
                 S.points.push({ lat: cl.lat, lng: cl.lng, pend: true });
                 S.pending = { lat: cl.lat, lng: cl.lng, t: t };
@@ -1474,8 +1489,35 @@
         /* the other end of the loop: a dwell at a known other
            site closes the visit (he loaded; the next dump
            arrival is a new load). */
+        /* v408 (LOADS-CLOSE-STARVED-NOV10): the close gains the
+           arrival shadow's recovery reach. The plain close below
+           judges only presence within 250 m of the other end;
+           when the loading face sits a few hundred metres off
+           the peg (the excavator moved along the cut), the close
+           never built, visitCounted never cleared, and every
+           later dump arrival read as the same visit — Nov 10's
+           GPS counting stopped dead after load #2 and never
+           resumed. A still dwell within VISIT_SHADOW_M of a
+           known other end, beyond that reach of every site
+           point, now accumulates toward the same close under
+           the shadow's own discipline (fixes holding one stop
+           cluster, absence chunks forgiven to the grace). The
+           far exit cannot substitute: VISIT_SPAN_M (3500 m)
+           exceeds a whole loop. An early close can only re-arm
+           — under the visit law the next genuine arrival IS a
+           new load — so the wide reach is safe here exactly as
+           it was for arrivals in v405. */
+        var oshConfirm = false;
+        if (!S.present) {
+          var oshStep = shadowStep(S.otherShCand,
+            otherM <= VISIT_SHADOW_M && nearM > VISIT_SHADOW_M, lat, lng, t, dwellMs);
+          if (oshStep === 'confirm') { oshConfirm = true; S.otherShCand = null; }
+          else S.otherShCand = oshStep;
+        } else if (S.otherShCand) {
+          S.otherShCand = null;
+        }
         var oStep = candStep(S.otherCand, atOther && !inSite, t, dwellMs);
-        if (oStep === 'confirm') {
+        if (oStep === 'confirm' || oshConfirm) {
           S.otherCand = null;
           S.otherSeen = true; /* v405: a witnessed load-end dwell
              is the loop moving — the wide-reach judgments (the
@@ -2958,7 +3000,10 @@
       learner.begin(sameLP ? prevLP.learn : null);
       shadowLearner = ENGINE.createPatternLearner({ home: homePlace(), anchor: { lat: curLoad.lat, lng: curLoad.lng } });
       shadowLearner.begin(sameLP ? prevLP.patternShadow : null);
-      baseCount = (!sameLP && prevLP) ? (prevLP.count || 0) : 0;
+      /* v408 (LOADS-REPEG-RESET-NOV10): bank the day's whole
+         count — a same-session fall into lone-pickup teaching
+         must not zero a counted day. */
+      baseCount = prevLP ? (prevLP.count || 0) : 0;
       baseEvents = (!sameLP && prevLP && prevLP.events) ? prevLP.events.slice() : [];
       corrNow = prevLP ? (prevLP.corr || 0) : 0;
       var recLP = prevLP || blankDay(curDate);
@@ -3112,7 +3157,20 @@
         });
         var prevN = recordFor(curDate);
         var sameN = !!(prevN && prevN.sessionKey === sessionKey);
-        baseCount = (!sameN && prevN) ? (prevN.count || 0) : 0;
+        /* v408 (LOADS-REPEG-RESET-NOV10): the day's count banks
+           WHOLE here too — the armed branch's own discipline. The
+           old same-session zero assumed the learner's state always
+           carries the day, but when a counted day falls INTO
+           pattern mode mid-session (Nov 10: a pickup re-peg 126 m
+           from the dump pin made the resolved pair read too-close
+           and the armed visit counter was discarded), the record
+           is the only place the count lives: base 0 left status()
+           reading 0 for a day holding 5, and a pair proving before
+           the next re-peg would have persisted 0 + credits OVER
+           the banked count. A key-matching snapshot restore (the
+           restoredPair path below) still overrides with
+           record − snapshot, exactly as before. */
+        baseCount = prevN ? (prevN.count || 0) : 0;
         baseEvents = (!sameN && prevN && prevN.events) ? prevN.events.slice() : [];
         corrNow = prevN ? (prevN.corr || 0) : 0; // v220
         /* a pair taught earlier today arms the counter again at
@@ -3165,7 +3223,12 @@
            the dump learner does. */
         shadowLearner = ENGINE.createPatternLearner({ home: homePlace(), anchor: { lat: sites.load.lat, lng: sites.load.lng } });
         shadowLearner.begin(sameT ? prevT.patternShadow : null);
-        baseCount = (!sameT && prevT) ? (prevT.count || 0) : 0;
+        /* v408 (LOADS-REPEG-RESET-NOV10): bank the day's whole
+           count, as the pattern branch now does — a same-session
+           fall into teach mode must not zero a counted day; the
+           savedT restore below still overrides when a snapshot
+           resumes the counter. */
+        baseCount = prevT ? (prevT.count || 0) : 0;
         baseEvents = (!sameT && prevT && prevT.events) ? prevT.events.slice() : [];
         corrNow = prevT ? (prevT.corr || 0) : 0; // v220
         /* v267: a shadow-proven intra pair from earlier TODAY

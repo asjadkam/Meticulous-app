@@ -3043,15 +3043,22 @@
      extra row reads (the armed GPS counter, else the day's taps),
      shared by the widget line and the PiP bubble face. */
   function loadsGlance() {
+    var taps = 0;
+    try { taps = trkAccum().manualLoads || 0; } catch (e) {}
     try {
       if (window.GeoLoads && GeoLoads.today) {
         var gt = GeoLoads.today();
-        if (gt && gt.armed) return '🚛 ' + gt.count + (gt.count === 1 ? ' load' : ' loads');
+        /* v408 (LOADS-REPEG-RESET-NOV10): the glance reads the
+           same number the card does — the armed count or the day
+           record's banked count — with the driver's own taps as
+           the floor, so the faces can never disagree. */
+        if (gt && typeof gt.count === 'number') {
+          var n = Math.max(gt.count, taps);
+          return '🚛 ' + n + (n === 1 ? ' load' : ' loads');
+        }
       }
     } catch (e) {}
-    var n = 0;
-    try { n = trkAccum().manualLoads || 0; } catch (e) {}
-    return '🚛 ' + n + (n === 1 ? ' load' : ' loads');
+    return '🚛 ' + taps + (taps === 1 ? ' load' : ' loads');
   }
   function pushWidgetState(m) {
     try {
@@ -3116,7 +3123,7 @@
       try { if (window.GeoLoads && GeoLoads.pegs) pegState = GeoLoads.pegs(); } catch (e) { pegState = null; }
     }
     var sig = mode + '|' + App.tracker.status + '|' + taps + '|' +
-      (geoToday ? (geoToday.armed ? 'g' + geoToday.count : 'off') : 'na') +
+      (geoToday ? ('g' + geoToday.count + 'c' + (geoToday.corr || 0) + (geoToday.armed ? 'a' : 'b')) : 'na') +
       '|' + (pegState ? ((pegState.load ? pegState.load.t : 0) + ',' + (pegState.dump ? pegState.dump.t : 0)) : 'np');
     if (sig === _extraSig) return;
     _extraSig = sig;
@@ -3133,7 +3140,34 @@
        honestly, until the machine takes over. */
     else if (sessionActive()) {
       var machineLoads = (geoToday && geoToday.armed) ? geoToday.count : null;
-      var shownLoads = (machineLoads !== null) ? machineLoads : taps;
+      /* v408 (LOADS-REPEG-RESET-NOV10): when no counter is armed
+         (a re-peg dropped the day into learning), the day record's
+         own banked count still stands — the card reads the better
+         of the driver's session taps and the banked count, never
+         less than what the day already holds. Nov 10: the card
+         showed 0 over a record holding 5. */
+      var bankedLoads = (machineLoads === null && geoToday && typeof geoToday.count === 'number') ? geoToday.count : null;
+      var shownLoads = (machineLoads !== null) ? machineLoads
+        : Math.max(taps, bankedLoads || 0);
+      /* v408: the suffix never claims GPS for the driver's own
+         taps — today().count folds corr into the total, so when
+         corr != 0 the split is named; corr == 0 keeps the exact
+         legacy wording. A banked total on an unarmed day names
+         the split the same way. */
+      var loadSuffix = '';
+      if (shownLoads > 0 && (machineLoads !== null || (bankedLoads || 0) > taps)) {
+        var corrPart = (geoToday && geoToday.corr) || 0;
+        var machPart = shownLoads - corrPart;
+        if (corrPart !== 0 && machPart > 0) {
+          loadSuffix = machPart + ' counted ' +
+            ((geoToday.countSource === 'pegs') ? 'from your pegs' : 'by GPS') +
+            ' · ' + (corrPart > 0 ? '+' : '') + corrPart + ' your tap' + (Math.abs(corrPart) === 1 ? '' : 's');
+        } else if (corrPart !== 0) {
+          loadSuffix = 'your taps';
+        } else {
+          loadSuffix = (geoToday.countSource === 'pegs') ? 'counted from your pegs' : 'counted by GPS';
+        }
+      }
       /* v220 (owner, Oct 22, 2026 — LOADS-CORRECTION-BUTTONS): the
          correction is a PAIR of big, distinct buttons — +1 GREEN,
          −1 RED — never tiny: a wrong tap is the failure he named.
@@ -3155,9 +3189,7 @@
           ' · ' + (pegState.dump ? 'Dump pegged ' + fmtTimeAMPM(pegState.dump.t) : 'Dump not pegged');
       }
       h = '<div class="trkLoadCount">🚛 Loads today: <b>' + shownLoads + '</b>' +
-          (machineLoads !== null ? ' <span class="trkLoadSrc">' +
-            ((geoToday && geoToday.countSource === 'pegs') ? 'counted from your pegs' : 'counted by GPS') +
-            '</span>' : '') + '</div>' +
+          (loadSuffix ? ' <span class="trkLoadSrc">' + loadSuffix + '</span>' : '') + '</div>' +
           '<div class="trkLoadBtns">' +
           '<button type="button" class="trkAddBtn trkPlusBtn" id="trkLoadTapBtn">+1 load</button>' +
           '<button type="button" class="trkAddBtn trkMinusBtn" id="trkLoadCutBtn">−1 load</button>' +
