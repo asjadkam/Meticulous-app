@@ -37,7 +37,7 @@ const idxSrc = read('index.html');
 const ver = JSON.parse(read('version.json'));
 
 /* The web version this fix ships as — set at ship time. */
-const SHIP_WEB = 399;
+const SHIP_WEB = 400; /* renumbered by the web-400 pointer repair: two ships took 399 in parallel */
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
