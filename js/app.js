@@ -2178,8 +2178,37 @@
        it with this layer's idle truth instead of adopting a
        ghost session. */
     if (rec.status !== 'idle' && (!t.status || t.status === 'idle') && stateNewer) {
-      try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
-      return;
+      /* v93 (GEN74-RELAUNCH-NOV10, Nov 10, 2026): the ghost
+         test above cannot tell a stale shell from TODAY'S
+         OWN session — and on a crash/relaunch morning the
+         record this layer meets is usually today's: the
+         DayScheduler arm seeded it at the fire moment
+         (RUNNING from the dispatch pin) while this layer,
+         booting before the planned start, still sits idle.
+         Wiping it killed the day's timer at the relaunch
+         (his Nov 10 crash, 07:20 Edmonton: the relaunched
+         dashboard and the widget both read 00:00:00 over a
+         dispatch still "In progress"). A record whose
+         session pin is TODAY is never a ghost: if its
+         session has begun (the pin reached, or it stands
+         paused) fall through and ADOPT it — the restore the
+         timer law wants; if it is the arm's seed (the pin
+         still ahead), leave it standing untouched — this
+         layer's own auto-start begins that very session at
+         the pin and its syncs converge on the seed. Only a
+         record naming another day's session (or none) is
+         overwritten with this layer's idle truth, exactly
+         as before. Proven in tools/session-relaunch-v93
+         -test.js (B1/B2/B3 fail on the shipped branch; B4
+         keeps yesterday's ghost wipe). */
+      var recPin93 = 0;
+      try { var pm93 = /^s(\d+)$/.exec(rec.sessionKey || ''); if (pm93) recPin93 = Number(pm93[1]) || 0; } catch (e) {}
+      var recToday93 = recPin93 > 0 && todayStr(new Date(recPin93)) === todayStr(new Date());
+      if (!recToday93) {
+        try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
+        return;
+      }
+      if (!(rec.status === 'paused' || recPin93 <= Date.now())) return;
     }
     /* v271 (PHANTOM-RESURRECTION): session-identity arbitration
        for the record — the half of v265 that never reached this

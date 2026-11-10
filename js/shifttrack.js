@@ -65,6 +65,16 @@
       return !!(t && (t.status === 'running' || t.status === 'paused'));
     } catch (e) { return false; }
   }
+  /* v93 (GEN74-RELAUNCH-NOV10): is this epoch ms on TODAY's
+     local calendar day? The boot guard's sameness test for
+     a session pin (see syncOnBoot). */
+  function pinIsToday93(ms) {
+    if (!ms) return false;
+    var d = new Date(ms), n = new Date();
+    return d.getFullYear() === n.getFullYear()
+        && d.getMonth() === n.getMonth()
+        && d.getDate() === n.getDate();
+  }
 
   var currentKey = null;      // 's<sessionStartMs>' being recorded
   var lastStatus = null;      // last status() snapshot from the plugin
@@ -532,9 +542,42 @@
             drain(key);
           }).catch(function () {});
         } else {
-          drain(key).then(function () {
-            try { p.stop(); } catch (e) {}
-          });
+          /* v93 (GEN74-RELAUNCH-NOV10, Nov 10, 2026): the
+             drain-and-stop below assumed any native session
+             outliving its page tracker is a FINISHED shift.
+             On a crash/relaunch morning that is wrong in the
+             one case that matters: the DayScheduler arm
+             fired before the planned start and began
+             recording natively (the record seeded RUNNING
+             from the dispatch pin), while this page — booted
+             before the start, its tracker not yet begun —
+             reads idle. Stopping here cleared the session
+             record at the relaunch and the timer came back
+             dead (00:00:00 on every face) over a dispatch
+             still "In progress". Before the stop, read the
+             record: a LIVE session whose pin is TODAY is
+             not finished — it is today's day, begun or
+             armed — so leave it standing; this layer's own
+             start (or its collect's adoption) converges on
+             it. Anything else keeps the shipped behaviour
+             byte for byte. Proven in
+             tools/session-relaunch-v93-test.js (B1/B3). */
+          var stopIfStale93 = function () {
+            drain(key).then(function () {
+              try { p.stop(); } catch (e) {}
+            });
+          };
+          if (typeof p.sessionRecord === 'function') {
+            p.sessionRecord().then(function (rec) {
+              var pin93 = 0;
+              try { var m93 = /^s(\d+)$/.exec((rec && rec.sessionKey) || ''); if (m93) pin93 = Number(m93[1]) || 0; } catch (e) {}
+              var live93 = !!rec && (rec.status === 'running' || rec.status === 'paused');
+              if (live93 && pinIsToday93(pin93)) return;
+              stopIfStale93();
+            }).catch(function () { stopIfStale93(); });
+          } else {
+            stopIfStale93();
+          }
         }
       }).catch(function () {});
     },
