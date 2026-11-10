@@ -1157,6 +1157,13 @@
         snap = existingRec;
       }
     }
+    /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10): the cloud-floor
+       label rides the record (see applyCloudFloor below) — a
+       snapshot rebuilt by the fold above must not shed it. */
+    if (existingRec && typeof existingRec.cloudFloorM === 'number' && existingRec.cloudFloorM > 0 &&
+        typeof snap.cloudFloorM !== 'number') {
+      snap.cloudFloorM = existingRec.cloudFloorM;
+    }
     d.days[dayKey] = snap;
     // prune old session records
     Object.keys(d.days).forEach(function (k) {
@@ -1164,6 +1171,88 @@
       if (!rec || !rec.updatedAt || now - rec.updatedAt > PRUNE_MS) delete d.days[k];
     });
     try { s.set(STORE_KEY, d); } catch (e) {}
+  }
+
+  /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10, owner Nov 10, 2026
+     09:22 CST — "live miles should be stored in the cloud and
+     should not empty every single time"): THE CLOUD SESSION
+     FLOOR. The running total used to live only in this store
+     (localStorage) plus cloudsync's telemetry side-document —
+     and on Nov 10 a cache clear + force stop brought the
+     session and the loads back from the cloud while the miles
+     returned 0.2 km. Since v399 the tracker record — the
+     session's own cloud face, stamp-arbitrated in the pull and
+     re-saved every minute a session runs — carries the miles
+     with it (js/app.js stampLiveMilesOnTracker: liveMilesM /
+     liveMilesAt / liveMilesSid). This is the restoring half:
+     when the tracker in the store names a LIVE session (running
+     or paused — a closed day's tracker is idle and presents no
+     floor) whose pinned sessionId matches this session key
+     (the v361 ±5 s pin family) and whose stamp belongs to that
+     session's own day, the stamped metres are a FLOOR for the
+     day record: the record is raised to at least the floor, or
+     created from it when none survives, labelled cloudFloorM
+     like bridgedM labels the bridge estimates. The floor only
+     ever RAISES — a local record already ahead stands — and
+     the created/raised record seeds its counted-coverage span
+     [session start − the v174 fragment-adoption slack, stamp]
+     so the original breadcrumb trail, folded later through
+     mergeCrumbs' coverage dedupe, can never count the floored
+     ground a second time. Returns the floor applied, in metres
+     (0 = no floor / nothing to raise). */
+  var FLOOR_PIN_SLACK_MS = 5000; // the v361 session-pin jitter family
+  function cloudFloorFor(key) {
+    if (!key || String(key).charAt(0) !== 's') return null; // session records only — the date-keyed day watch takes no floor
+    var s = store();
+    if (!s) return null;
+    var t = null;
+    try { t = s.get('tracker', null); } catch (e) {}
+    if (!t || typeof t !== 'object') return null;
+    if (t.status !== 'running' && t.status !== 'paused') return null; // a live session only
+    var m = (typeof t.liveMilesM === 'number' && isFinite(t.liveMilesM)) ? t.liveMilesM : 0;
+    if (!(m > 0)) return null;
+    var sid = Number(t.sessionId) || 0;
+    var keyMs = parseInt(String(key).slice(1), 10) || 0;
+    if (!sid || !keyMs || Math.abs(sid - keyMs) > FLOOR_PIN_SLACK_MS) return null; // this session only
+    var at = (typeof t.liveMilesAt === 'number' && isFinite(t.liveMilesAt)) ? t.liveMilesAt : 0;
+    if (!at || at < sid) return null;
+    // the stamp must belong to the session's own day — never
+    // another day's miles, never a closed day's echo.
+    var dSess = new Date(sid), dAt = new Date(at);
+    if (dSess.getFullYear() !== dAt.getFullYear() || dSess.getMonth() !== dAt.getMonth() ||
+        dSess.getDate() !== dAt.getDate()) return null;
+    return { m: Math.round(m), at: at, keyMs: keyMs };
+  }
+  function applyCloudFloor(key) {
+    var fl = cloudFloorFor(key);
+    if (!fl) return 0;
+    var s = store();
+    if (!s) return 0;
+    var d = loadAll();
+    var rec = d.days[key] || null;
+    var cur = (rec && typeof rec.totalM === 'number' && isFinite(rec.totalM)) ? rec.totalM : 0;
+    if (fl.m <= cur) return 0; // the local record already holds more — the floor never reduces
+    var dd = new Date(fl.keyMs);
+    var dateStr = dd.getFullYear() + '-' + ('0' + (dd.getMonth() + 1)).slice(-2) + '-' + ('0' + dd.getDate()).slice(-2);
+    var span = { f: fl.keyMs - ADOPT_FIRST_SLACK_MS, t: fl.at };
+    if (!rec) {
+      rec = {
+        key: key, date: dateStr, totalM: fl.m,
+        anchor: null, still: null, crumbs: [], hasFix: true,
+        segs: [span], joinFrom: null,
+        bridgedM: 0, bridges: [],
+        cloudFloorM: fl.m, updatedAt: Date.now()
+      };
+    } else {
+      rec.totalM = fl.m;
+      rec.hasFix = true;
+      rec.cloudFloorM = fl.m;
+      rec.segs = (rec.segs || []).concat([span]);
+      rec.updatedAt = Date.now();
+    }
+    d.days[key] = rec;
+    try { s.set(STORE_KEY, d); } catch (e) { return 0; }
+    return fl.m;
   }
 
   /* v50: raw-fix subscribers (geofence load counting, js/geoloads.js).
@@ -1320,6 +1409,12 @@
       dayKey = key;
       broken = false;
       var keyMs = parseInt(String(key).slice(1), 10) || Date.now();
+      /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10): before the record
+         lookup, let the cloud session floor (the tracker record's
+         stamped miles, restored with the session itself) raise
+         or recreate this session's day record — the cache-wipe
+         road home. Only ever raises; see applyCloudFloor. */
+      try { applyCloudFloor(key); } catch (e) {}
       var saved = recordFor(key);
       dayDate = (function () { var d = new Date(keyMs); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); })();
       /* v174: a DATE-keyed record (the pre-session day watch,
@@ -1547,6 +1642,10 @@
        When the engine is already ahead, this is a no-op. */
     reseedFromStore: function () {
       if (!dayKey) return false;
+      /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10): the cloud session
+         floor first — a tracker that landed with this pull may
+         hold miles the day record lacks (see applyCloudFloor). */
+      try { applyCloudFloor(dayKey); } catch (e) {}
       var saved = recordFor(dayKey);
       if (!saved || typeof saved.totalM !== 'number') return false;
       var live = engine.snapshot();

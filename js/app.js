@@ -822,7 +822,14 @@
         App._afterPullWired = true;
         CloudSync.onAfterPull(function (keys) {
           try {
-            if (keys.indexOf('livemiles') >= 0 && window.LiveMiles && LiveMiles.adoptFromStore) {
+            /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10): the miles
+               adoption also fires on a TRACKER change — since
+               v399 the tracker carries the session's miles floor
+               (stampLiveMilesOnTracker), so a pull that lands
+               the session record after the engines began must
+               still reseed them (reseedFromStore applies the
+               floor before it reads the day record). */
+            if ((keys.indexOf('livemiles') >= 0 || keys.indexOf('tracker') >= 0) && window.LiveMiles && LiveMiles.adoptFromStore) {
               try { LiveMiles.adoptFromStore(); } catch (e) {}
             }
             if (keys.indexOf('geoloads') >= 0 && window.GeoLoads && GeoLoads.reseedFromStore) {
@@ -2027,7 +2034,54 @@
   }
 
   /* ---------------- tracker ---------------- */
-  function trackerSave() { store.set('tracker', App.tracker); try { syncSessionRecord(); } catch (e) {} }
+  /* v399 (LIVE-MILES-CLOUD-PERSIST-NOV10, owner Nov 10, 2026
+     09:22 CST): the running miles ride the tracker record — the
+     session's cloud face. The miles themselves accrued only in
+     the local livemiles record (localStorage), so a cache clear
+     wiped the morning's miles to 0.2 km while this very record
+     restored the session and the loads restored beside it: the
+     one record guaranteed to be in the cloud and guaranteed to
+     restore carried no miles at all. The stamp below closes
+     that: on every tracker save, a live session's fix-backed
+     total (the same sources sessionFacts reads — the persisted
+     record first, the live engine as the v389 fallback) is
+     written onto the tracker as liveMilesM / liveMilesAt /
+     liveMilesSid, so the debounced push carries it up on the
+     session's own cadence (transitions + the v220 minute
+     re-save) and the pull brings it home with the session.
+     Monotonic within the session (a young engine never stamps
+     backwards), replaced when the session changes, and REMOVED
+     when the tracker is idle — a closed day presents no floor.
+     js/miles.js applyCloudFloor is the restoring half. */
+  function stampLiveMilesOnTracker() {
+    var t = App.tracker;
+    if (!t) return;
+    if (t.status !== 'running' && t.status !== 'paused') {
+      if (t.liveMilesM !== undefined || t.liveMilesAt !== undefined || t.liveMilesSid !== undefined) {
+        delete t.liveMilesM; delete t.liveMilesAt; delete t.liveMilesSid;
+      }
+      return;
+    }
+    var km = null;
+    try {
+      if (window.LiveMiles && LiveMiles.recordKmFor) {
+        var rkm = LiveMiles.recordKmFor('s' + trackerSessionKeyMs());
+        if (typeof rkm === 'number' && isFinite(rkm) && rkm >= 0) km = rkm;
+      }
+      if (km === null && window.LiveMiles && LiveMiles.currentKm) {
+        var ckm = LiveMiles.currentKm();
+        if (typeof ckm === 'number' && isFinite(ckm) && ckm >= 0) km = ckm;
+      }
+    } catch (e) {}
+    if (km === null) return; // no fix-backed total yet — no number is invented, any standing stamp stays
+    var m = Math.round(km * 1000);
+    var sid = Number(t.sessionId) || 0;
+    if (t.liveMilesSid === sid && typeof t.liveMilesM === 'number' && t.liveMilesM > m) m = t.liveMilesM;
+    t.liveMilesM = m;
+    t.liveMilesAt = Date.now();
+    t.liveMilesSid = sid;
+  }
+  function trackerSave() { try { stampLiveMilesOnTracker(); } catch (e) {} store.set('tracker', App.tracker); try { syncSessionRecord(); } catch (e) {} }
 
   /* v52 (PIP-FACE-THIRD-STRIKE): the native session record is
      the PiP face's source of truth — status, elapsed, loads and
