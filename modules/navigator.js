@@ -3590,6 +3590,61 @@
         var box = body.querySelector('#nv_results');
         if (!q) { note('Type an address or place name first.'); return; }
         if (S.searching) return;
+        /* v395 (NAV-LINK-NO-ROUTE-NOV10, owner Nov 10, 2026
+           ~08:47, screen clip + his "Yes" to the read-back): a
+           pasted Maps link — or bare coordinates — in the search
+           box IS a pin, not a place name. This search never read
+           one: the words rode the geocoder, which returns
+           nothing for a link, and the "No places found" note
+           landed in this folded sheet where the driver never
+           sees it — the map just stood on "You are here", no
+           pin, no route. The paste bar (openSentPin) read the
+           same link fine; the doors disagreed about what a link
+           is. The pin step now stands at the head of the search,
+           before saved places and before the geocoder, on the
+           paste bar's own roads: (1) a pin INSIDE the text —
+           an api=1/@/dir pair, a %2C pair, a !3d/!4d segment,
+           bare "lat, lng", a whole message carrying a full
+           link — lands at once through landSentPin, the same
+           setDest + recordVisit landing a manual pin drop
+           gets (the route auto-fires from setDest); (2) a link
+           that HIDES its pin (a short link, or a bare Maps URL
+           the local read cannot open) is followed through the
+           ONE link brain (PinLinks.resolveUrl — the direct
+           follow, then the server door) and lands the same
+           way; (3) a link that yields nothing gets the paste
+           bar's plain words in the results box — never a
+           silent geocoder trip, and the geocoder is never fed
+           a link again. Typed words are untouched: a query
+           with no pin and no link falls through to the saved
+           places and the geocoder exactly as before. */
+        var pinC = sentPinCoords(q);
+        if (pinC) {
+          box.innerHTML = '';
+          landSentPin(pinC);
+          note('Found the pin in that — routing to it.');
+          return;
+        }
+        var linkHit = (window.PinLinks && PinLinks.findLinks) ? PinLinks.findLinks(q) : [];
+        var linkUrl = linkHit.length ? linkHit[0].url :
+          (/^https?:\/\/\S+$/i.test(q) ? q : null);
+        if (linkUrl) {
+          box.innerHTML = '<p class="note">Opening the link…</p>';
+          if (window.PinLinks && PinLinks.resolveUrl) {
+            PinLinks.resolveUrl(linkUrl).then(function (c) {
+              if (c) {
+                box.innerHTML = '';
+                landSentPin([c.lat, c.lng]);
+                note('Found the pin in that link — routing to it.');
+              } else {
+                box.innerHTML = '<p class="note">That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.</p>';
+              }
+            });
+          } else {
+            box.innerHTML = '<p class="note">That link could not be opened from inside the app. Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.</p>';
+          }
+          return;
+        }
         /* v183: SAVED PLACES WIN THE SEARCH. A match with a pin
            IS the destination (no geocoder involved); a match
            with only an address re-searches by the ADDRESS ALONE
