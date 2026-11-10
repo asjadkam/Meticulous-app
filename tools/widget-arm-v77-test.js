@@ -468,10 +468,18 @@ const SEC5 = "🚛 5 loads";
 ok(tw.includes('return "runsec0|" + (now / 1000L) + "|" + s.elapsedSec(now) + "|"\n                        + chronoFormat(s.elapsedSec(now)) + "|" + status + "|" + secondary;')
    || tw.includes('return "runsec0|" + (now / 1000L) + "|" + s.elapsedSec(now) + "|"'),
    'E10 TrackerWidget.faceSignature carries the v78 runsec0 form (wall second for the seg0 shape)');
+/* v95 SUPERSESSION (GEN76, Nov 10, 2026): the seg0 anchor key
+   is sessionKey + elapsedBase under versioned prefs names —
+   the v78 rev|updatedAt keying was convicted by the owner's
+   TIMER GAP WIDENING evidence (see session-glance-v95-test).
+   This pin follows the law; the historical assertion is kept
+   in the gen-75 regression base. */
 ok(tw.includes('private static long seg0AnchorBase(SharedPreferences sp,')
    && tw.includes('base = seg0AnchorBase(sp, cs, base);')
-   && tw.includes('putString("seg0_anchor_key", key)'),
-   'E10 buildViews anchors the seg0 Chronometer base per record state');
+   && tw.includes('cs.sessionKey + "|" + cs.elapsedBase')
+   && tw.includes('putString("seg0_anchor_key95", key)')
+   && tw.includes('seg0Key95'),
+   'E10 buildViews anchors the seg0 Chronometer base per session+bank (v95 keying)');
 ok(tw.includes('if (s.segStartMs == 0) {') && tw.includes('WIDGET-ZERO-SESSION-NOT-CLIMBING-NOV7'),
    'E10 the v78 repair is present and named in TrackerWidget');
 

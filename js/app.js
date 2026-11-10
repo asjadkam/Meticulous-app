@@ -528,11 +528,39 @@
     return { act: 'exit' };
   };
   App.wireSystemBack = function (Cap, fx) {
+    /* v95 (backRoute95 — GEN76, BACK-BUTTON-NO-DASHBOARD-NOV10,
+       Nov 10, 2026): the fx is also stored for the shell's own
+       route. The v60 design note above assumed the plugin's
+       backButton events ARE delivered to OTA pages; in the
+       owner's hands Nov 10 the system Back in Preferences did
+       nothing useful — the plugin's Android callback delivers
+       only when its listener registry is non-empty at press
+       time and otherwise walks WebView history or swallows
+       the press. The shell no longer depends on that registry:
+       MainActivity's own OnBackPressedCallback (registered
+       after plugin load, so it wins the dispatcher) calls
+       App.systemBack() below, which runs THIS SAME decision
+       through THIS SAME fx. The plugin listener stays wired
+       as a second door where it works; the shell's callback
+       is picked first by the dispatcher, so the two never
+       double-fire. */
+    App._sysBackFx = fx;
     if (!Cap || !Cap.Plugins || !Cap.Plugins.App ||
         typeof Cap.Plugins.App.addListener !== 'function') return false;
     Cap.Plugins.App.addListener('backButton', function () {
       try { fx.perform(App.navBackStep(fx.snapshot())); } catch (e) {}
     });
+    return true;
+  };
+  /* v95 (backRoute95): the shell's direct entry — the same
+     decision, the same perform, no plugin registry between
+     the press and the app's own back law. Returns false when
+     the app has not wired its fx yet (the boot window); the
+     shell consumes the press either way. */
+  App.systemBack = function () {
+    var fx = App._sysBackFx;
+    if (!fx) return false;
+    try { fx.perform(App.navBackStep(fx.snapshot())); } catch (e) {}
     return true;
   };
   /* SYS-BACK-END */

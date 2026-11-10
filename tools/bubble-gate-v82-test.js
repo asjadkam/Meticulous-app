@@ -387,11 +387,22 @@ ok(bo.includes('if (chronoBase != chronoBaseApplied)')
    'P3 the base is applied only when it changes (invariant per record state) and the Chronometer is started once — refresh() re-affirming never disturbs the ticking face');
 {
   const i = bo.indexOf('private long seg0AnchorBase');
-  const seg = i >= 0 ? bo.slice(i, i + 900) : '';
-  ok(i >= 0 && seg.includes('s.rev + "|" + s.updatedAt + "|" + s.elapsedBase')
-     && seg.includes('"seg0_anchor_key"') && seg.includes('"seg0_anchor_base"')
+  const seg = i >= 0 ? bo.slice(i, i + 2400) : '';
+  /* v95 SUPERSESSION (GEN76, Nov 10, 2026): the v78 key
+     (rev|updatedAt|elapsedBase) was convicted by the owner's
+     TIMER GAP WIDENING evidence — every record write, frozen
+     fact writes included, re-armed the anchor at the static
+     bank and discarded the face's accumulated count, so the
+     lag grew all through an awake stretch (v95 bench: 600 s
+     after 10 min of fact writes). The law is now
+     sessionKey + elapsedBase under versioned prefs names;
+     this pin follows the law. The historical assertion is
+     kept in the gen-75 regression base. */
+  ok(i >= 0 && seg.includes('s.sessionKey + "|" + s.elapsedBase')
+     && seg.includes('"seg0_anchor_key95"') && seg.includes('"seg0_anchor_base95"')
+     && bo.includes('seg0Key95')
      && bo.includes('chronoBase = seg0AnchorBase(s, chronoBase);'),
-     'P4 the seg0 anchor is stamped per record state (rev|updatedAt|elapsedBase — the widget\'s v78 key) in the bubble\'s own prefs and reused across rebuilds');
+     'P4 the seg0 anchor is stamped per session+bank (v95 key: sessionKey|elapsedBase) in the bubble\'s own prefs and reused across rebuilds');
 }
 ok(bo.includes('stopChrono();\n            clockTv.setText(clock);')
    && bo.includes('private void stopChrono()')
