@@ -921,6 +921,26 @@
       '<div class="a">' + esc(x.what) + ' — $' + esc(x.cost) + '</div>' +
       '<div class="b">' + esc(x.date) + ' · 📷 Receipt photo — tap to view ›</div></div>';
   }
+  /* v399 (FUEL-LIST-PHOTOS-NOV10, owner Nov 10, 2026 09:33:
+     "I want the pictures on the fuel records itself"): a
+     fill-up row whose record carries a receipt photo shows the
+     photo ON THE ROW — the same 46px thumbnail dress the
+     expense rows have worn since v346 (fxRowHTML above) — so
+     the picture is visible in the Fill-ups list itself, not
+     only inside the record's detail view. fillPhotos is the
+     one reader (v332): the row binds the record's OWN stored
+     first receipt, whichever shape it carries (photo / photos
+     stack / stray photo2). No new image payload is made or
+     stored. A photo-less fill returns '' and its row stays
+     byte-for-byte the row it has always been — chevron and
+     all; a thumbnailed row drops the floating chevron instead
+     (the floated thumb owns the row's right edge, and the row
+     still taps through to the same detail view). */
+  function fillThumbHTML(f) {
+    var photos = fillPhotos(f);
+    if (!photos.length) return '';
+    return '<img src="' + photos[0] + '" style="width:46px;height:46px;object-fit:cover;border-radius:8px;float:right;margin-left:10px" alt="">';
+  }
   function wireFxPhotoRows(body) {
     body.querySelectorAll('[data-fxphoto]').forEach(function (el) {
       el.onclick = function () {
@@ -988,9 +1008,9 @@
     h += '<div class="card"><h3 style="margin-top:0">🔎 Audit — Fill-ups</h3>' +
       '<p class="note" style="margin-top:0">Every fill-up on file, newest first — ' + flAll.length + ' record' + (flAll.length === 1 ? '' : 's') + '. Tap one to open it — its receipt photos are on the entry.</p>' +
       (flAll.length ? flSorted.map(function (p) {
-        var f = p.f, i = p.i;
-        return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
-          '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+        var f = p.f, i = p.i, fThumb = fillThumbHTML(f);
+        return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer">' + fThumb + '<div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
+          (fThumb ? '' : '<span style="float:right;color:var(--muted);font-weight:400">›</span>') + '</div>' +
           '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + '</div></div>';
       }).join('') : '<div class="empty">No fill-ups on file.</div>') + '</div>';
     var exps = S('expenses', []);
@@ -1299,9 +1319,9 @@
       var flShown = fuShowAll ? flSorted : flSorted.slice(0, 3);
       h += '<div class="card"><h3>📒 Fill-ups</h3>' +
         (flAll.length ? flShown.map(function (p) {
-          var f = p.f, i = p.i;
-          return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer"><div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
-            '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
+          var f = p.f, i = p.i, fThumb = fillThumbHTML(f);
+          return '<div class="listitem" data-fuedit="' + i + '" style="cursor:pointer">' + fThumb + '<div class="a">' + esc(f.litres) + ' L — $' + esc(f.cost) +
+            (fThumb ? '' : '<span style="float:right;color:var(--muted);font-weight:400">›</span>') + '</div>' +
             '<div class="b">' + esc(f.date) + (f.odo ? ' · odo ' + esc(f.odo) : '') + (f.station ? ' · ' + esc(f.station) : '') + ' · tap to view or edit</div></div>';
         }).join('') : '<div class="empty">No fill-ups yet.</div>') +
         (flAll.length > 3
