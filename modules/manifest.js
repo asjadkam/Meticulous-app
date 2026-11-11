@@ -1415,7 +1415,15 @@
     return pt.label || placeNameFor(pt.lat, pt.lng) || '';
   }
 
-  function docLines(d, c, t) {
+  function docLines(d, c, t, opts) {
+    /* web412 (LIMITED-NO-FINANCIALS): opts.noMoney is the LIMITED
+       rendering — a Limited Connect viewer's manifest carries NO
+       money figures at all: the Fuel & expenses section (every line
+       is a $ figure) is omitted whole, and the Day summary's earned
+       line never prints. Hours, loads, places, times and the
+       odometer still print — facts, not figures. The owner's own
+       calls pass no opts and are byte-identical to before. */
+    var noMoney = !!(opts && opts.noMoney);
     var L = [{ k: 'title', a: 'MANIFEST — ' + d }];
     if (c.live) L.push({ k: 'note', a: 'Shift still in progress — the end time and final numbers land when the shift is stopped.' });
     if (t.dispatch && c.dispatches.length) {
@@ -1510,7 +1518,7 @@
         L.push({ k: 'kv', a: 'Skipped', b: skipped355.map(function (s) { return s.name; }).join(' · ') });
       }
     }
-    if (t.expense && (c.fills.length || c.expenses.length)) {
+    if (!noMoney && t.expense && (c.fills.length || c.expenses.length)) {
       L.push({ k: 'h', a: 'Fuel & expenses' });
       c.fills.forEach(function (x) { L.push({ k: 'kv', a: 'Fuel — ' + (x.station || ''), b: '$' + x.cost }); });
       c.expenses.forEach(function (x) { L.push({ k: 'kv', a: x.what, b: '$' + x.cost }); });
@@ -1535,7 +1543,7 @@
        closes the section behind a rule (its totals row). The lines
        themselves — words, order, toggles, the v127 live/closed
        label — are unchanged. */
-    var anyFig = t.start || t.end || t.odo || t.earned ||
+    var anyFig = t.start || t.end || t.odo || (t.earned && !noMoney) ||
       (t.loads && c.loads > 0) ||
       !!c.pegPlaces; /* v283: a peg day's places open the section on their own */
     if (anyFig) L.push({ k: 'h', a: 'Day summary' });
@@ -1600,7 +1608,7 @@
        knows the live session (c.live). v134: the figure is the
        Day summary's totals row — a rule sets it apart, the line
        itself (kind, label, value) is unchanged. */
-    if (t.earned) {
+    if (t.earned && !noMoney) {
       L.push({ k: 'rule' });
       L.push({ k: 'kv', a: c.live ? 'Income earned today so far' : 'Total Earned Income', b: '$' + c.earned.toFixed(2) });
     }

@@ -17,7 +17,29 @@
   };
   var esc = function (s) { return App._esc(s); };
 
-  function list() { return S('list', []); }       // saved / history
+  function list() {
+    var l = S('list', []);
+    /* web412 (TICKET-DELETE-INERT): a record's ticketDel tombstones
+       bind at this read door too — a stale copy of the list that
+       still carries a tombstoned ticket (written back by an older
+       build or a pre-delete sync) reads WITHOUT it here, and the
+       next write through this module stores it without it.
+       Records carrying no tombstone pass through untouched
+       (same objects, same order). */
+    if (!Array.isArray(l)) return l;
+    var healed = null;
+    for (var i = 0; i < l.length; i++) {
+      var r = l[i];
+      if (r && r.ticketDel && r.tickets && r.tickets.some(function (t) { return t && r.ticketDel[t.id]; })) {
+        if (!healed) healed = l.slice();
+        var c = {};
+        for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) c[k] = r[k]; }
+        c.tickets = r.tickets.filter(function (t) { return !t || !r.ticketDel[t.id]; });
+        healed[i] = c;
+      }
+    }
+    return healed || l;
+  }       // saved / history
 
   /* v242 (WORK-PROFILES): the seam's local doors — a dispatch is
      stamped with the profile active at its creation, and its
@@ -465,13 +487,26 @@
     var a = dspGet('active', null);
     return (a && a.id === id) ? a : null;
   }
-  function dspApplyEdit(orig, f, tickets, legacyPhoto) {
+  function dspApplyEdit(orig, f, tickets, legacyPhoto, ticketDel) {
     var d = {};
     var k;
     for (k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) d[k] = orig[k]; }
     for (k in f) { if (Object.prototype.hasOwnProperty.call(f, k)) d[k] = f[k]; }
     d.id = orig.id;           // an edit never mints a new id
     d.status = orig.status;   // lifecycle is not a form field
+    /* web412 (TICKET-DELETE-INERT): the record's ticket tombstones
+       survive every edit (the copy above carried orig.ticketDel)
+       and this save's own deletions join them (ticketDel — the
+       form's pending set); the saved tickets are filtered by the
+       union, so a ticket deleted in this edit can never ride the
+       save back in, and an older tombstone keeps binding. */
+    if (ticketDel && Object.keys(ticketDel).length) {
+      var md = {};
+      var mk2;
+      if (d.ticketDel) for (mk2 in d.ticketDel) { if (Object.prototype.hasOwnProperty.call(d.ticketDel, mk2)) md[mk2] = d.ticketDel[mk2]; }
+      for (mk2 in ticketDel) { if (Object.prototype.hasOwnProperty.call(ticketDel, mk2)) md[mk2] = ticketDel[mk2]; }
+      d.ticketDel = md;
+    }
     /* v153: the stored day follows the SCHEDULED date — an edit
        that leaves the schedule alone keeps the same derived day
        (readForm's today-stamp can never move a day by itself),
@@ -482,6 +517,8 @@
     if (orig.startedAt !== undefined) d.startedAt = orig.startedAt;
     if (orig.endedAt !== undefined) d.endedAt = orig.endedAt;
     d.tickets = tickets ? tickets.slice() : [];
+    /* web412: tombstoned tickets stay out of an edit save too */
+    if (d.ticketDel) d.tickets = dspLiveTickets(d);
     /* photo stored once — same rule as dspBuildRecord */
     d.photo = d.tickets.length ? null : (legacyPhoto || null);
     /* v129: EDIT SAFETY on a completed dispatch — its ticket #,
@@ -1175,11 +1212,98 @@
      becomes the closing ticket through the same reader, so the
      two buttons differ only in where they START, never in how
      the close is confirmed or written. */
+  /* web412 (TICKET-PHOTO-SINGLE-CLOSE): the closing ticket and an
+     existing ticket are HALVES OF ONE HAUL CARD when either
+       - they carry the SAME photo (the card was attached in the
+         form, then closed on — the same picture read twice), or
+       - one half carries the photo and NO hours/weight yet while
+         the other carries the confirmed hours/weight (the form
+         attach stored the picture; the close confirm stored the
+         foreman's numbers — as a pair they showed as two tickets,
+         one with a photo and no hours, one with hours and no
+         photo).
+     A close must produce ONE ticket carrying BOTH. dspMergeCloseTicket
+     folds the closing ticket into that one existing half (the
+     closing ticket's confirmed fields win where it carries them;
+     the existing half's photo/number win where the closing ticket
+     lacks them) and returns the list with the pair unified; with
+     no such half it appends exactly as before. A ticket named in
+     the record's ticketDel tombstones NEVER re-enters through a
+     close (see dspDeleteTicket below). */
+  function dspTicketHasFacts(t) {
+    return !!(t && (parseFloat(t.foremanHours) > 0 || parseFloat(t.netWeight) > 0));
+  }
+  function dspMergeCloseTicket(tickets, ticket) {
+    var tk = (tickets || []).slice();
+    if (!ticket) return tk;
+    var idx = -1;
+    for (var i = 0; i < tk.length; i++) {
+      var t = tk[i];
+      if (!t) continue;
+      if (ticket.photo && t.photo && t.photo === ticket.photo) { idx = i; break; }
+      /* the complementary-halves merge fires only when the record
+         carries exactly ONE ticket — a multi-ticket day keeps its
+         distinct cards distinct, always */
+      if (tk.length === 1 && (!!t.photo !== !!ticket.photo) && dspTicketHasFacts(t) !== dspTicketHasFacts(ticket)) { idx = i; break; }
+    }
+    if (idx === -1) { tk.push(ticket); return tk; }
+    var half = tk[idx], merged = {};
+    var k;
+    for (k in half) { if (Object.prototype.hasOwnProperty.call(half, k)) merged[k] = half[k]; }
+    for (k in ticket) {
+      if (!Object.prototype.hasOwnProperty.call(ticket, k)) continue;
+      var v = ticket[k];
+      if (v === null || v === undefined || v === '') continue;   // a blank half never erases the other
+      merged[k] = v;
+    }
+    merged.id = half.id || ticket.id;
+    if (!merged.photo) merged.photo = half.photo || ticket.photo || null;
+    tk[idx] = merged;
+    return tk;
+  }
+  /* web412 (TICKET-DELETE-INERT): a ticket deleted from a SAVED
+     record tombstones on the record itself — ticketDel, the
+     record's own del field ({ticketId: deletedAtMs}), the same
+     shape the sync layer's record-list tombstones take (a del map
+     riding the record's own doc, never a silent vanish). The
+     ticket leaves the record's tickets[] at the same write, and
+     every dispatch door that rebuilds a record's tickets (an
+     edit save, a close) filters tombstoned ids out, so a stale
+     copy of the ticket — an old draft, a pre-delete close — can
+     never re-enter the record through those doors. A ticket that
+     only ever lived in an unsaved draft is never tombstoned (the
+     shadow rule: a local-only record is never tombstoned away);
+     the form's splice alone removes it, as before. */
+  function dspDeleteTicket(rec, ticketId, ts) {
+    if (!rec || !ticketId) return rec;
+    var out = {};
+    for (var k in rec) { if (Object.prototype.hasOwnProperty.call(rec, k)) out[k] = rec[k]; }
+    var del = {};
+    var dk;
+    if (rec.ticketDel) for (dk in rec.ticketDel) { if (Object.prototype.hasOwnProperty.call(rec.ticketDel, dk)) del[dk] = rec.ticketDel[dk]; }
+    del[ticketId] = ts || Date.now();
+    out.ticketDel = del;
+    out.tickets = (rec.tickets || []).filter(function (t) { return !t || t.id !== ticketId; });
+    /* photo stored once — same rule as dspBuildRecord: the
+       top-level photo stands only when no ticket carries one */
+    out.photo = out.tickets.length ? null : (rec.photo || null);
+    return out;
+  }
+  function dspLiveTickets(rec) {
+    var tk = (rec && rec.tickets) || [];
+    var del = (rec && rec.ticketDel) || null;
+    if (!del) return tk.slice();
+    return tk.filter(function (t) { return !t || !del[t.id]; });
+  }
   function dspBuildClosed(orig, ticket, endedAt) {
     var d = {};
     for (var k in orig) { if (Object.prototype.hasOwnProperty.call(orig, k)) d[k] = orig[k]; }
-    var tk = (orig.tickets || []).slice();
-    if (ticket) tk.push(ticket);
+    /* web412: tombstoned tickets never re-enter through a close,
+       and the closing ticket unifies with its other half (above)
+       instead of landing as a second ticket beside it. */
+    var base = dspLiveTickets(orig);
+    var liveTicket = (ticket && orig.ticketDel && orig.ticketDel[ticket.id]) ? null : ticket;
+    var tk = liveTicket ? dspMergeCloseTicket(base, liveTicket) : base;
     d.tickets = tk;
     /* photo stored once — inside tickets[] when tickets carry it;
        top-level only for the legacy no-ticket case. */
@@ -3566,6 +3690,12 @@
       /* draft0 was loaded at the top of render (v56 needs it before
          the HTML is built, to render the form in edit mode). */
       var pendingTickets = (draft0 && draft0.tickets) ? draft0.tickets.slice() : []; // [{id, photo, ocrType, ticketNo, cardNumber, foremanHours, paymentUnit, netWeight, grossWeight, tareWeight}]
+      /* web412 (TICKET-DELETE-INERT): ticket ids deleted from the
+         record being edited — they tombstone on that record at
+         Save (dspApplyEdit's ticketDel), and ride the draft so a
+         mid-edit reload cannot lose a deletion. Empty for a new
+         dispatch: a never-saved ticket is never tombstoned. */
+      var pendingTicketDel = (draft0 && draft0.ticketDel) ? draft0.ticketDel : {};
       var pendingPhoto = draft0 ? (draft0.photo || null) : null; // legacy single-photo (kept for backward compat)
       if (pendingPhoto === null) { var _dp0 = dspPhotoFor({ tickets: pendingTickets }); if (_dp0) pendingPhoto = _dp0; }
 
@@ -3584,6 +3714,7 @@
             driverId: q('#dp_driver')
           },
           tickets: pendingTickets.slice(),
+          ticketDel: pendingTicketDel,
           photo: pendingPhoto,
           editId: editingId || null, // v56: an in-progress edit stays an edit across reloads
           savedAt: Date.now()
@@ -3784,7 +3915,21 @@
         el.querySelectorAll('[data-tdel]').forEach(function (b) {
           b.onclick = function () {
             if (!confirm('Remove this ticket?')) return;
+            var gone = pendingTickets[+b.getAttribute('data-tdel')];
             pendingTickets.splice(+b.getAttribute('data-tdel'), 1);
+            /* web412 (TICKET-DELETE-INERT): deleting a ticket that
+               belongs to the SAVED record being edited tombstones
+               its id on that record at Save — the splice alone
+               silently vanished it from the form while a stale
+               copy (an old draft, a pre-delete close) could still
+               carry it back. A ticket added in this form session
+               and never saved is not on any record: no tombstone. */
+            if (editingId && gone && gone.id) {
+              var origRec = dspFindRecord(editingId);
+              if (origRec && (origRec.tickets || []).some(function (t) { return t && t.id === gone.id; })) {
+                pendingTicketDel[gone.id] = Date.now();
+              }
+            }
             if (!pendingTickets.length) pendingPhoto = null;
             else pendingPhoto = pendingTickets[pendingTickets.length - 1].photo || pendingPhoto;
             renderTicketList();
@@ -3797,11 +3942,22 @@
         });
       }
 
-      /* Edit a ticket's manually-confirmed fields (hours, payment unit) */
+      /* Edit a ticket's manually-confirmed fields (hours, payment unit).
+         web412 (TICKET-PHOTO-SINGLE-CLOSE): EVERY ticket type's editor
+         now also carries the ticket/card NUMBER field and the PHOTO
+         field — before, a ticket whose read missed its number had
+         nowhere to type it, and a ticket with no (or the wrong)
+         photo had no way to attach one without adding a second
+         ticket beside it (the pair this batch's close merge also
+         heals). The number writes the field the ticket's type
+         reads (cardNumber for a haul card, ticketNo otherwise);
+         the photo replaces this ticket's own photo in place. */
       function editTicket(i) {
         var t = pendingTickets[i]; if (!t) return;
         var promptEl = body.querySelector('#dp_ocr_prompt');
         var h = '<div class="card" style="border:2px solid var(--orange)"><h3>✏️ Ticket ' + (i + 1) + '</h3>';
+        h += '<label class="f">Ticket / card #</label>' +
+             '<input id="t_no" type="text" value="' + esc(t.cardNumber || t.ticketNo || '') + '" placeholder="e.g. 23177">';
         if (t.ocrType === 'haul_card') {
           h += '<label class="f">Foreman hours (from card)</label>' +
                '<input id="t_hours" type="number" inputmode="decimal" min="0" step="0.25" value="' + esc(t.foremanHours || '') + '" placeholder="e.g. 4">' +
@@ -3813,12 +3969,33 @@
           h += '<label class="f">Net weight (tonnes)</label>' +
                '<input id="t_net" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(t.netWeight || '') + '">';
         }
+        h += '<label class="f">Ticket photo</label>' +
+             (t.photo ? '<img src="' + t.photo + '" style="width:100%;border-radius:10px;margin:4px 0" alt="Ticket photo">' : '<div class="b" style="color:var(--orange)">No photo on this ticket yet.</div>') +
+             '<input id="t_photo" type="file" accept="image/*" style="margin:4px 0">';
         h += '<div class="row" style="margin-top:8px">' +
              '<button class="btn primary" id="t_save">Save ticket</button>' +
              '<button class="btn ghost" id="t_cancel">Cancel</button></div></div>';
         promptEl.innerHTML = h;
         promptEl.querySelector('#t_cancel').onclick = function () { promptEl.innerHTML = ''; };
+        var photoIn = promptEl.querySelector('#t_photo');
+        if (photoIn) photoIn.onchange = function () {
+          var f = photoIn.files && photoIn.files[0]; if (!f) return;
+          fileToThumb(f, function (url) {
+            if (!url) return;
+            t.photo = url;
+            if (!pendingTickets.length || pendingTickets.indexOf(t) === -1) return;
+            pendingPhoto = url;
+            promptEl.innerHTML = '';
+            renderTicketList();
+            updateNameEl();
+            persistDraft(); // v48
+            editTicket(pendingTickets.indexOf(t)); // reopen with the photo in place
+          });
+        };
         promptEl.querySelector('#t_save').onclick = function () {
+          var noEl = promptEl.querySelector('#t_no');
+          var nv = noEl ? noEl.value.trim() : '';
+          if (nv) { if (t.ocrType === 'haul_card') t.cardNumber = nv; else t.ticketNo = nv; }
           if (t.ocrType === 'haul_card') {
             t.foremanHours = promptEl.querySelector('#t_hours').value.trim();
             t.paymentUnit = promptEl.querySelector('#t_punit').value;
@@ -4281,7 +4458,7 @@
         /* v154: an edit saves with an empty job site too — see
            attemptSave. The verified write below is the only gate. */
         fields.date = orig.date; // readForm stamps today; dspApplyEdit derives the stored day from the scheduled date (v153)
-        var updated = dspApplyEdit(orig, fields, pendingTickets, pendingPhoto);
+        var updated = dspApplyEdit(orig, fields, pendingTickets, pendingPhoto, pendingTicketDel);
         var res = dspUpdateRecord(updated, orig);
         if (!res.ok) {
           persistDraft(); // best effort — the on-screen form is untouched either way

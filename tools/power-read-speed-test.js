@@ -15,10 +15,10 @@
  *      timers): beginEarly starts the fetch at capture; a second
  *      beginEarly / an escalate for the same photo ADOPTS it (one
  *      fetch, one read); settle callbacks fire before the adopting
- *      escalation's onResult; a hung fetch is aborted at the 20 s
- *      ceiling, retried ONCE at the 12 s ceiling, then lands as
- *      'waiting' with the photo queued (total: 2 fetches, never a
- *      third); offline beginEarly queues once; an implausible
+ *      escalation's onResult; a hung fetch is aborted at the
+ *      per-attempt ceiling, retried ONCE at the retry ceiling,
+ *      then lands as 'waiting' with the photo queued (total:
+ *      2 fetches, never a third); offline beginEarly queues once; an implausible
  *      cloud odometer value settles 'implausible', never 'done';
  *      disabled → beginEarly is null and nothing is sent.
  *   B. the renditions (real js/ticket-ocr.js): READ_MAX per reader;
@@ -118,8 +118,14 @@ async function engine() {
   const W = makeEngineWorld();
   const PR = W.PowerRead;
   ok('engine loaded with beginEarly', !!PR && typeof PR.beginEarly === 'function');
-  eq('per-attempt ceiling is 20 s', PR.FETCH_TIMEOUT_MS, 20000);
-  eq('retry ceiling is 12 s', PR.RETRY_TIMEOUT_MS, 12000);
+  /* web412 (ODOMETER-POWER-READ): the ceilings changed ON PURPOSE —
+     v142's 20 s / 12 s sat BELOW the proxy server's own 45 s
+     per-model timeout (deploy/ai/server.js GEMINI_TIMEOUT_MS), so a
+     slow-but-healthy read was aborted client-side and never landed
+     (owner's hands, Nov 8/9/10). The ceilings now sit ABOVE 45 s;
+     the bounded shape is unchanged (one retry, then queued). */
+  eq('per-attempt ceiling is 60 s (above the server 45 s per-model timeout)', PR.FETCH_TIMEOUT_MS, 60000);
+  eq('retry ceiling is 45 s (never shorter than the server per-model timeout)', PR.RETRY_TIMEOUT_MS, 45000);
   W.store.set('mt_odo', '168518'); // master: 169211 plausible, 45100 not
 
   /* --- adoption + ordering + dedupe --- */
@@ -162,13 +168,13 @@ async function engine() {
   let timeoutOutcome = null;
   PR2.beginEarly({ reader: 'odometer', image: IMG, onSettled: function (o) { timeoutOutcome = o; } });
   eq('hung read: fetch started', W2.calls().length, 1);
-  ok('a 20 s ceiling timer is armed', W2.fireTimer(20000));
+  ok('a 60 s ceiling timer is armed', W2.fireTimer(60000));
   await flush();
   eq('after the abort the retry waits, no fetch yet', W2.calls().length, 1);
   ok('the v118 retry delay is armed', W2.fireTimer(1200));
   await flush();
   eq('the retry sends exactly one more fetch', W2.calls().length, 2);
-  ok('the retry attempt carries the shorter 12 s ceiling', W2.fireTimer(12000));
+  ok('the retry attempt carries its 45 s ceiling', W2.fireTimer(45000));
   await flush();
   ok('the read settled after the bounded retry', !!timeoutOutcome);
   eq('a dead network lands as waiting (photo queued), not minutes of spinner', timeoutOutcome && timeoutOutcome.status, 'waiting');

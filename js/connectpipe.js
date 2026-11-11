@@ -2000,11 +2000,62 @@
       try { c = M._collectDay(d); } catch (e) { c = null; }
       if (c && (c.dispatches.length || c.sessions.length || c.fills.length ||
                 c.expenses.length || c.incidents.length)) {
-        try { lines = M._docLines(d, c, t); } catch (e) { lines = null; }
+        /* web412 (LIMITED-NO-FINANCIALS): _manifestDays serves ONLY
+           the Limited manifests doc (buildManifestsFor) — its lines
+           are rendered no-money at the source, so no pay / rate /
+           revenue / fuel-cost figure is ever written into a doc a
+           Limited viewer can read. The Full path (sharedManifest,
+           above) passes no such flag and is unchanged. */
+        try { lines = M._docLines(d, c, t, { noMoney: true }); } catch (e) { lines = null; }
         if (lines && lines.length) days.push({ date: d, lines: lines });
       }
     });
     return days;
+  };
+
+  /* web412 (LIMITED-NO-FINANCIALS): the reader-side twin of the
+     no-money rendering — a manifests doc published BEFORE the
+     source fix (or by any older build) can still carry $ lines;
+     a Limited viewer's client strips them here, at the one door
+     every Limited manifest read passes through (fetchRecords),
+     before any surface can paint them. A line is money-bearing
+     when either cell carries a $ figure; the rule line that only
+     ever set the earned figure apart goes with it when its
+     earned line is stripped. Facts (hours, loads, places, times)
+     carry no $ and pass untouched. */
+  CP._stripMoneyLines = function (lines) {
+    var src = Array.isArray(lines) ? lines : [];
+    function isMoney(l) {
+      if (!l) return true;
+      var a = String(l.a || ''), b = String(l.b || '');
+      return a.indexOf('$') !== -1 || b.indexOf('$') !== -1 || /earned income/i.test(a);
+    }
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+      var l = src[i];
+      if (!l) continue;
+      if (l.k === 'rule') {
+        /* the earned figure's rule must not outlive the figure:
+           a rule stands only when the line it sets apart is a
+           surviving non-money line */
+        var nx = src[i + 1];
+        if (!nx || isMoney(nx)) continue;
+        out.push(l);
+        continue;
+      }
+      if (isMoney(l)) continue;
+      out.push(l);
+    }
+    return out;
+  };
+  CP._stripMoneyManifests = function (doc) {
+    if (!doc || !Array.isArray(doc.manifests)) return doc;
+    doc.manifests.forEach(function (man) {
+      (man.days || []).forEach(function (day) {
+        if (day && Array.isArray(day.lines)) day.lines = CP._stripMoneyLines(day.lines);
+      });
+    });
+    return doc;
   };
 
   /* v148: MY manifests doc for ONE LIMITED viewer — the manifest
@@ -2662,7 +2713,9 @@
         if (CP.allowsModule(p.uid, 'manifest')) {
           jobs.push(f.db.collection('sharedmanifests').doc(p.uid + '_' + f.user.uid).get()
             .then(function (snap) {
-              if (snap && snap.exists) out.manifests[p.uid] = snap.data();
+              /* web412: strip any $ line a stale doc still carries
+                 (see _stripMoneyLines) — Limited never sees money */
+              if (snap && snap.exists) out.manifests[p.uid] = CP._stripMoneyManifests(snap.data());
             })
             .catch(function () {}));
         }

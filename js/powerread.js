@@ -524,9 +524,22 @@
   /* v142: per-attempt ceilings. A healthy read answered in 1.5–6 s in
      the Oct 17 endpoint probes; 20 s is generous headroom for a slow
      cell link, and the retry gets a shorter 12 s — the whole read is
-     wait-bounded at ~33 s worst case instead of unbounded. */
-  PowerRead.FETCH_TIMEOUT_MS = 20000;
-  PowerRead.RETRY_TIMEOUT_MS = 12000;
+     wait-bounded at ~33 s worst case instead of unbounded.
+     web412 (ODOMETER-POWER-READ, Nov 11, 2026): THOSE CEILINGS WERE
+     THE DEFECT. The proxy's own per-model timeout is 45 s
+     (deploy/ai/server.js GEMINI_TIMEOUT_MS) and its chain-walk can
+     legitimately spend longer than 20 s reaching an answer (a slow
+     cell link plus a cold first model). Every such read was aborted
+     CLIENT-side at 20 s (the retry at 12 s — even sooner), the abort
+     classified 'network', the photo queued, and every queue drain
+     repeated the same abort: a slow-but-healthy read could NEVER
+     land (the owner's dash reads, Nov 8–10). The ceilings now sit
+     ABOVE the server's per-model timeout: the first attempt gets
+     60 s, the retry 45 s. The wait stays bounded (~105 s worst case
+     plus the retry delay), and the offline queue remains the
+     backstop for a read that truly cannot complete. */
+  PowerRead.FETCH_TIMEOUT_MS = 60000;
+  PowerRead.RETRY_TIMEOUT_MS = 45000;
   function prTransient(res) {
     if (!res || res.ok) return false;
     if (res.kind === 'network') return true;
