@@ -273,6 +273,60 @@
  * is untouched. Bench: tools/loads-missed-dispatchpin-nov10-
  * test.js — live-404 bytes fail exactly the two convicted
  * shapes (20 passed / 6 failed); the fix passes all.
+ *
+ * v409 (Nov 10, 2026 — COUNTING-DYNAMIC-LEARNING-NOV10, the
+ * owner's design directive of 13:29 + the land-use addition of
+ * 13:30; design: hidden_files/counting-dynamic-design-nov10.md).
+ * The counter stops judging every site on earth by one set of
+ * constants. (1) A per-site PROFILE (seeded by the seed's land
+ * use, learned from proven faces + proven tips only) feeds the
+ * visit counter's wide judgements: a virgin face inside the
+ * learned chain reach counts on work ground (unknown ground
+ * keeps the full tip-grade bar), the arrival bar follows the
+ * site's proven rhythm inside [45 s, 120 s], and a foreign
+ * tip-shaped stop is judged by its ground — work closes the
+ * visit (the other end), residential is a SATELLITE (no close,
+ * no face, no teaching; the return is the same visit — the
+ * washroom break), unknown keeps v408 verbatim. (2) A resolved
+ * pair under the pair minimum routes to the MICRO-PAIR counter
+ * (identity + sequence) instead of standing down — the on-site
+ * job counts. (3) Land use resolves async off the counting path
+ * (Nominatim reverse, per-cell cache); profiles persist beside
+ * 'geoload_pairs'. A counter built without cfg.profile runs the
+ * v408 paths byte-for-byte. Bench: tools/counting-dynamic-
+ * learning-nov10-test.js (the design worlds on the real engine)
+ * + tools/counting-dynamic-routing-nov10-test.js (the glue).
+ *
+ * v416 (Nov 11, 2026 — COUNT-SEED-FROM-DISPATCH): the counter
+ * failed in the owner's hands on a dispatch saved BEFORE web
+ * 415 — its stored pin fields empty, its pins living only in
+ * its notes ("Go Empty To: (51.1225089, -114.0122197)" /
+ * "Hauling To: (51.3078889, -114.0369722)"). He started the
+ * shift from that dispatch, tipped at the Hauling To site at
+ * ~09:33, and the counter counted nothing: sitesFromDispatch
+ * read ONLY the stored fields, so the day resolved no sites
+ * at all and fell into pattern discovery, which cannot count
+ * a first tip. Web 414 taught the Navigator the notes pins
+ * and web 415 fills the fields at save/edit, but a record
+ * never re-saved since kept the counter blind. The fix is
+ * the seeding path only: sitesFromDispatch now fills each
+ * site the stored fields leave empty from the pins the
+ * dispatch's own notes label for it (the parser is a verbatim
+ * copy of dspNotesSitePins in modules/dispatch.js — the copy
+ * discipline dspNotesGoPin set at v414), and the world check
+ * (worldStale) also fires when the SAME dispatch's resolvable
+ * pins change under a running session — an edit saved, a
+ * Connect arrival replacing the record — via a pin signature
+ * captured at configure time. Seeding therefore happens at
+ * session start and whenever the active dispatch becomes
+ * known or changes mid-session, through configure()'s own
+ * banking discipline: the day's count is never reset or
+ * lowered by it. Manual pegs are untouched and keep
+ * precedence (every peg branch still runs before dispatch
+ * resolution). Bench: tools/count-seed-from-dispatch-v416-
+ * test.js — on web 415 bytes the Nov 11 morning replays to
+ * zero; on this build both sites seed from the notes, the
+ * first tip counts, and the peg/stored-pin laws hold.
  */
 (function () {
   'use strict';
@@ -737,6 +791,16 @@
       var only = seedLoad || seedDump;
       site = { lat: only.lat, lng: only.lng, radiusM: SITE_ONE_SEED_M };
     }
+    /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10): a LEARNED site scale
+       (the dump seed's persisted profile — proven faces from an
+       earlier day) widens the frame so it covers the faces the
+       site already proved. Only a learned scale is fed here,
+       never a bare prior: the frame is a centre-drift clamp with
+       bench-pinned behaviour, so a first day at a site runs
+       exactly as v408. */
+    if (site && typeof cfg.profileScaleM === 'number' && cfg.profileScaleM > site.radiusM) {
+      site.radiusM = Math.round(cfg.profileScaleM);
+    }
     var cen = {
       load: seedLoad ? { lat: seedLoad.lat, lng: seedLoad.lng } : null,
       dump: seedDump ? { lat: seedDump.lat, lng: seedDump.lng } : null
@@ -1012,6 +1076,62 @@
     };
   }
 
+  /* ---- the MICRO-PAIR counter (v409 — COUNTING-DYNAMIC-
+     LEARNING-NOV10, close-pair routing) ----
+     A resolved pair closer than MIN_SITE_SEP_M (the on-site job:
+     load and dump inside one ground) can be separated by neither
+     fence geometry (the fences would overlap) nor visit presence
+     (the other end sits inside the presence circle) — but it CAN
+     be separated by IDENTITY + SEQUENCE, the v282/v284 peg law:
+     the truck is at one end or the other, and the cycle alternates.
+     This machine is the house cycle counter fed at peg grade for
+     such a pair: micro fences (half the separation, less a margin,
+     clamped 30–60 m), a 30 s declared-place dwell, a 20 s depart,
+     and the fix stream rolling-centroid smoothed (a 4-fix window —
+     raw scatter at 150 m spans both ends; the smoothed stream is
+     what the peg counter's own discipline judges). API mirrors the
+     other counters so the glue treats it identically. */
+  function createMicroPairCounter(cfg) {
+    var load = { lat: +cfg.load.lat, lng: +cfg.load.lng };
+    var dump = { lat: +cfg.dump.lat, lng: +cfg.dump.lng };
+    var sepM = haversineM(load.lat, load.lng, dump.lat, dump.lng);
+    var radiusM = Math.round(sepM / 2 - 15);
+    radiusM = radiusM < 30 ? 30 : (radiusM > 60 ? 60 : radiusM);
+    var inner = createGeoLoadCounter({
+      load: load, dump: dump, radiusM: radiusM,
+      dwellMs: 30 * 1000, departMs: 20 * 1000, accMaxM: ACC_MAX_M
+    });
+    var win = [];
+    return {
+      /* marker the glue's readouts duck-type on */
+      microPair: true,
+      begin: function (key, saved) { win = []; return inner.begin(key, saved); },
+      ingest: function (fix) {
+        win.push({ lat: fix.latitude, lng: fix.longitude });
+        if (win.length > 4) win.shift();
+        var la = 0, ln = 0;
+        for (var i = 0; i < win.length; i++) { la += win[i].lat; ln += win[i].lng; }
+        return inner.ingest({
+          latitude: la / win.length, longitude: ln / win.length,
+          accuracy: fix.accuracy, time: fix.time
+        });
+      },
+      stop: function () { inner.stop(); },
+      snapshot: function () { return inner.snapshot(); },
+      count: function () { return inner.count(); },
+      events: function () { return inner.events(); },
+      phase: function () { return inner.phase(); },
+      zone: function () { return inner.zone(); },
+      isActive: function () { return inner.isActive(); },
+      centres: function () { return { load: { lat: load.lat, lng: load.lng }, dump: { lat: dump.lat, lng: dump.lng } }; },
+      debug: function () {
+        var d = (inner.debug ? inner.debug() : {}) || {};
+        d.mode = 'micro-pair'; d.sepM = Math.round(sepM); d.radiusM = radiusM;
+        return d;
+      }
+    };
+  }
+
   /* ---- dump-VISIT counting (v324 — COUNT-BY-DUMP-VISIT +
      SITE-EXTENT + REPEG, owner Nov 5, 2026) ----
      The owner's new counting law, stated plainly on his Nov 5
@@ -1077,6 +1197,43 @@
   var VISIT_FACE_MIN_M = 500;   // a foreign dwell must sit at least
                                 // this far from every site point to
                                 // close a visit (fringe is the site)
+  /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10 — the owner's design
+     directive, Nov 10, 13:29 + the 13:30 land-use addition; design
+     note: hidden_files/counting-dynamic-design-nov10.md). A per-site
+     PROFILE the visit counter reads its wide judgements from,
+     instead of one set of constants for every site on earth:
+       scaleM      — the chaining reach for a virgin face, learned
+                     from PROVEN faces only (1.25x the chain step,
+                     point to point, so a site can grow kilometres
+                     long one proven face at a time);
+       dwellNormMs — the site's proven tip rhythm (half-life of one
+                     proven tip), which sets the arrival bar once
+                     the site has proven a tip: clamp(0.6 x norm,
+                     45 s, 120 s). Until then the house 45 s bar
+                     holds — a prior is a placeholder, not evidence,
+                     and no unproven day may run worse than v408.
+     Priors come from the seed's LAND USE (a hint, never evidence:
+     it can never create a count — every count still needs presence
+     + dwell + an open visit): work ground expects a wide site,
+     residential ground expects a personal-scale stop, and unknown
+     (no map coverage, offline) seeds the scale at exactly the
+     v405 shadow reach, so a no-coverage day's wide judgements are
+     v408's own. A counter built WITHOUT cfg.profile (every bench
+     that constructs the raw engine) runs the v408 paths verbatim. */
+  var PROFILE_PRIORS = {
+    work: { scaleM: 1200, dwellNormMs: 120 * 1000 },
+    unknown: { scaleM: 450, dwellNormMs: 120 * 1000 }, // 450 = VISIT_SHADOW_M (declared just below)
+    residential: { scaleM: 300, dwellNormMs: 150 * 1000 }
+  };
+  var PROFILE_BAR_FLOOR_MS = 45 * 1000;  // the house arrival floor —
+                                         // learning never crosses it
+  var PROFILE_BAR_CEIL_MS = 120 * 1000;  // never pricier than the
+                                         // v140 tip-grade line
+  var PROFILE_DYN_MIN_MS = 90 * 1000;    // a stop-context verdict
+                                         // needs at least this much
+                                         // witnessed stop
+  var PROFILE_FACE_CAP = 12;             // proven faces per day —
+                                         // bounds scale pollution
   var VISIT_SHADOW_M = VISIT_PRESENCE_M + 200; // v405 (LOADS-
                                 // MISSED, round 3): the visit
                                 // counter's recovery reach — the
@@ -1095,6 +1252,63 @@
     });
     var accMaxM = cfg.accMaxM || ACC_MAX_M;
     var dwellMs = cfg.dwellMs || DWELL_MS;
+    /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10): the per-site profile.
+       Present only when the glue supplies cfg.profile; a counter
+       built without one runs the v408 paths verbatim (PROF null is
+       the guard on every dynamic branch below). cfg.profile:
+         landUseAt(lat,lng) — synchronous land-use cache read
+           ('work' | 'residential' | 'unknown'); the async lookup
+           lives in the glue and never blocks a decision;
+         scaleM / dwellNormMs — the persisted cross-day learning
+           for this seed's cell, when it exists (priors otherwise);
+         onProfile({scaleM, dwellNormMs}) — the glue's persistence
+           hook, fired the moment the profile learns. */
+    var PROF = (cfg && cfg.profile && typeof cfg.profile === 'object') ? cfg.profile : null;
+    var profUseAt = (PROF && typeof PROF.landUseAt === 'function')
+      ? PROF.landUseAt : function () { return 'unknown'; };
+    var SEED_USE = PROF ? profUseAt(SEED.lat, SEED.lng) : 'unknown';
+    var PRIOR = PROFILE_PRIORS[SEED_USE] || PROFILE_PRIORS.unknown;
+    var profScaleM = PRIOR.scaleM;
+    if (PROF && typeof PROF.scaleM === 'number' && PROF.scaleM > profScaleM) {
+      profScaleM = Math.round(PROF.scaleM);
+    }
+    var profNormMs = PRIOR.dwellNormMs;
+    if (PROF && typeof PROF.dwellNormMs === 'number' && PROF.dwellNormMs > 0) {
+      profNormMs = Math.min(240 * 1000, Math.max(60 * 1000, Math.round(PROF.dwellNormMs)));
+    }
+    /* the learned norm governs the bar only once a tip has PROVEN
+       at this site (profAdapted) — before that the house bar holds
+       (see the PROFILE_PRIORS note: a prior is not evidence). */
+    var profAdapted = false;
+    function profClampNorm(n) {
+      return n < 60 * 1000 ? 60 * 1000 : (n > 240 * 1000 ? 240 * 1000 : n);
+    }
+    function arriveBarMs() {
+      if (!PROF || !profAdapted) return dwellMs;
+      var b = Math.round(0.6 * profNormMs);
+      return b < PROFILE_BAR_FLOOR_MS ? PROFILE_BAR_FLOOR_MS
+        : (b > PROFILE_BAR_CEIL_MS ? PROFILE_BAR_CEIL_MS : b);
+    }
+    function profChanged() {
+      if (PROF && typeof PROF.onProfile === 'function') {
+        try { PROF.onProfile({ scaleM: profScaleM, dwellNormMs: profNormMs }); } catch (e) {}
+      }
+    }
+    /* a PROVEN tip teaches the site's rhythm: half-life of one
+       tip, clamped — two proven tips mostly converge (learn fast)
+       and the bar's own clamps fence the creep both ways. */
+    function learnTipMs(dwellObsMs) {
+      if (!PROF || !(dwellObsMs > 0)) return;
+      profAdapted = true;
+      var n = profClampNorm(Math.round(0.5 * profNormMs + 0.5 * dwellObsMs));
+      if (n !== profNormMs) { profNormMs = n; profChanged(); }
+    }
+    /* a PROVEN face extends the site's reach by chaining: 1.25x
+       its distance from the nearest point it chained from. */
+    function proveFaceM(dNearM) {
+      var grown = Math.round(1.25 * dNearM);
+      if (grown > profScaleM) { profScaleM = grown; profChanged(); }
+    }
     var S = null;
 
     function nearest(list, lat, lng) {
@@ -1167,6 +1381,13 @@
           present: false, visitCounted: false, closes: 0, everPresent: false,
           cand: null, shCand: null, otherShCand: null, otherSeen: false, depSince: null, otherCand: null,
           cluster: null, clusterStage: 0, excMaxKmh: 0,
+          /* v409 profile state (profile days only): the dynamic
+             verdict fires once per stop-cluster; satellites are
+             residential stops the visit held open through; faces
+             proven today (the 12/day pollution cap reads it);
+             presSince = the running presence span an arrival's
+             dwell observation is measured from. */
+          dynDecided: false, satellites: 0, facesProven: 0, presSince: null,
           lastT: 0, lastLat: null, lastLng: null,
           lastNearM: Infinity, counted: false
         };
@@ -1199,6 +1420,21 @@
           S.otherSeen = !!saved.otherSeen;
           if (typeof saved.closes === 'number') S.closes = saved.closes;
           if (typeof saved.lastT === 'number') S.lastT = saved.lastT;
+          /* v409: the day's own profile learning restores with the
+             snapshot (a relaunch mid-day keeps the scale the day
+             already proved); the glue's cross-day profile seeded
+             the priors before this, today's evidence outranks it. */
+          if (PROF && saved.profile && typeof saved.profile === 'object') {
+            if (typeof saved.profile.scaleM === 'number' && saved.profile.scaleM > profScaleM) {
+              profScaleM = Math.round(saved.profile.scaleM);
+            }
+            if (typeof saved.profile.dwellNormMs === 'number' && saved.profile.dwellNormMs > 0) {
+              profNormMs = profClampNorm(Math.round(saved.profile.dwellNormMs));
+              profAdapted = true;
+            }
+            if (typeof saved.profile.faces === 'number') S.facesProven = saved.profile.faces | 0;
+            if (typeof saved.profile.satellites === 'number') S.satellites = saved.profile.satellites | 0;
+          }
         }
         return S.key;
       },
@@ -1250,14 +1486,82 @@
         var cl = S.cluster;
         if (!cl) {
           cl = S.cluster = { lat: lat, lng: lng, n: 1, since: t };
-          S.clusterStage = 0;
+          S.clusterStage = 0; S.dynDecided = false;
         } else if (haversineM(lat, lng, cl.lat, cl.lng) <= VISIT_CLUSTER_M) {
           cl.n++; cl.lat += (lat - cl.lat) / cl.n; cl.lng += (lng - cl.lng) / cl.n;
         } else {
           cl = S.cluster = { lat: lat, lng: lng, n: 1, since: t };
-          S.clusterStage = 0;
+          S.clusterStage = 0; S.dynDecided = false;
         }
         var clAge = t - cl.since;
+        /* v409: the witnessed-presence span an arrival's dwell
+           observation is measured from (profile days only): it
+           starts at the first presence fix of this approach and
+           is consumed by the arrival landing below. */
+        if (PROF) {
+          if (S.present) S.presSince = null;
+          else if (inSite && !atOther && S.presSince === null) S.presSince = t;
+        }
+
+        /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10): the stop-context
+           verdicts — profile days only, once per stop-cluster,
+           when the stop has witnessed at least the context bar
+           (the learned arrival bar, floored at 90 s). Land use is
+           judged on the CLUSTER's ground. Two verdicts:
+           (1) VIRGIN FACE inside the learned chain reach: a
+           tip-shaped stop within profScaleM of the point set, not
+           at an other end, on work ground (or, on unknown ground,
+           at the full tip-grade dwell — v408's stricter bar),
+           with the loop demonstrably moving (v408's own evidence
+           gates), IS a face of this site: it is proven, the scale
+           chains from it, and the visit counts on it. This is the
+           door the km-wide site needed — v408's only far-face
+           door was the deferred pending rail, which a first tip
+           on a far face with nothing ever visited can never open.
+           (2) A FOREIGN tip-shaped stop while a visit stands
+           counted is judged by its ground: WORK — it was the
+           other end of the loop (closes, and is learned as one,
+           v408's foreign-dwell close kept); RESIDENTIAL — a
+           SATELLITE of the visit it follows: no close, no face,
+           no count, and the teaching branches below are silenced
+           for this cluster, so the return to the site stays the
+           SAME visit (the washroom break at any distance);
+           UNKNOWN — no verdict: v408's rules decide verbatim. */
+        if (PROF && !S.dynDecided && clAge >= Math.max(arriveBarMs(), PROFILE_DYN_MIN_MS)) {
+          var dynNearM = nearest(S.points, cl.lat, cl.lng);
+          var dynOtherM = Math.min(nearest(OTHERS, cl.lat, cl.lng), nearest(S.othersLearned, cl.lat, cl.lng));
+          var dynUse = profUseAt(cl.lat, cl.lng);
+          var dynFired = false;
+          if (!S.visitCounted && !S.present && OTHERS.length &&
+              (S.closes > 0 || S.everPresent || S.otherSeen) &&
+              dynNearM > VISIT_PRESENCE_M && dynNearM <= profScaleM &&
+              dynOtherM > VISIT_PRESENCE_M && dynUse !== 'residential' &&
+              (dynUse === 'work' || clAge >= LEARN_DWELL_MS) &&
+              S.facesProven < PROFILE_FACE_CAP) {
+            S.points.push({ lat: cl.lat, lng: cl.lng });
+            S.facesProven++;
+            proveFaceM(dynNearM);
+            S.count++; S.visitCounted = true; S.counted = true;
+            S.events.push({ t: t, site: 'dump', n: S.count });
+            S.present = true; S.depSince = null; S.cand = null; S.shCand = null;
+            S.excMaxKmh = 0; S.everPresent = true;
+            learnTipMs(clAge);
+            nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+            inSite = nearM <= VISIT_PRESENCE_M;
+            dynFired = true;
+          } else if (S.visitCounted && dynNearM > VISIT_PRESENCE_M + VISIT_HALO_M &&
+                     dynOtherM > VISIT_SHADOW_M && dynUse !== 'unknown') {
+            if (dynUse === 'work') {
+              S.visitCounted = false; S.closes++;
+              S.othersLearned.push({ lat: cl.lat, lng: cl.lng });
+              S.otherSeen = true;
+            } else { /* residential: the satellite verdict */
+              S.satellites++;
+            }
+            dynFired = true;
+          }
+          if (dynFired) { S.dynDecided = true; S.clusterStage = 2; }
+        }
         /* two-stage decision: at the cluster dwell (60 s) the
            site-internal (slow-path) cases resolve; at the LEARN
            dwell (120 s — a tip's length) the road-reached cases
@@ -1271,10 +1575,17 @@
           var clOtherM = Math.min(nearest(OTHERS, cl.lat, cl.lng), nearest(S.othersLearned, cl.lat, cl.lng));
           var slowPath = S.excMaxKmh <= VISIT_SITE_SPEED_KMH;
           var tipGrade = clAge >= LEARN_DWELL_MS;
+          /* v409: the cluster's land use — on residential ground
+             the teaching branches below (foreign close, site
+             extension, standby adoption) are silenced: a personal
+             stop teaches the site NOTHING (satellites never
+             teach). 'unknown' (and every no-profile day) leaves
+             each branch exactly as v408 wrote it. */
+          var clUse = PROF ? profUseAt(cl.lat, cl.lng) : 'unknown';
           var clFired = false;
           if (clNearM > VISIT_PRESENCE_M && clOtherM > VISIT_PRESENCE_M) {
             if (S.visitCounted && tipGrade && !OTHERS.length && !S.othersLearned.length &&
-                clNearM > VISIT_FACE_MIN_M) {
+                clNearM > VISIT_FACE_MIN_M && clUse !== 'residential') {
               /* no load end is known and he stopped at tip
                  length far off, by any road: that stop was the
                  other end of the loop — the visit closes, and
@@ -1286,7 +1597,7 @@
               S.visitCounted = false; S.closes++;
               S.othersLearned.push({ lat: cl.lat, lng: cl.lng });
               clFired = true;
-            } else if (S.visitCounted && clNearM <= VISIT_SPAN_M && slowPath && clOtherM > VISIT_SHADOW_M) {
+            } else if (S.visitCounted && clNearM <= VISIT_SPAN_M && slowPath && clOtherM > VISIT_SHADOW_M && clUse !== 'residential') {
               /* a new face of the SAME site, reached without
                  leaving the ground: the site grows; the visit
                  does NOT count again (one visit tips once).
@@ -1301,7 +1612,7 @@
               clFired = true;
             } else if (S.visitCounted && !slowPath && tipGrade &&
                        clNearM > VISIT_FACE_MIN_M && clNearM <= VISIT_SPAN_M &&
-                       clOtherM > VISIT_SHADOW_M) {
+                       clOtherM > VISIT_SHADOW_M && clUse !== 'residential') {
               {
                 /* a tip-length road stop mid-visit (a fuel
                    stop fits this shape as well as a face can):
@@ -1418,14 +1729,15 @@
         if (!S.present && !S.visitCounted &&
             (S.closes > 0 || S.everPresent || S.otherSeen)) {
           var shIn = nearM <= VISIT_SHADOW_M && otherM > VISIT_SHADOW_M;
-          var shStep = shadowStep(S.shCand, shIn, lat, lng, t, dwellMs);
+          if (PROF && shIn && S.presSince === null) S.presSince = t;
+          var shStep = shadowStep(S.shCand, shIn, lat, lng, t, arriveBarMs());
           if (shStep === 'confirm') { shConfirm = true; S.shCand = null; }
           else S.shCand = shStep;
         } else if (S.shCand) {
           S.shCand = null;
         }
         if (!S.present) {
-          var step = candStep(S.cand, (inSite || atAux) && !atOther, t, dwellMs);
+          var step = candStep(S.cand, (inSite || atAux) && !atOther, t, arriveBarMs());
           if (step === 'confirm' || shConfirm) {
             S.cand = null; S.shCand = null;
             if (!inSite && atAux) {
@@ -1459,6 +1771,10 @@
             if (!S.visitCounted) {
               S.count++; S.visitCounted = true; S.counted = true;
               S.events.push({ t: t, site: 'dump', n: S.count });
+              /* v409: a proven tip teaches the site's rhythm —
+                 the dwell it was witnessed over, presence start
+                 to landing. */
+              if (PROF) learnTipMs(S.presSince !== null ? (t - S.presSince) : 0);
             }
           } else {
             S.cand = step;
@@ -1466,6 +1782,9 @@
         } else if (inSite) {
           S.cand = null;
         }
+        /* v409: a presence span with no build alive is spent —
+           the next arrival measures its dwell from its own start. */
+        if (PROF && !S.present && !S.cand && !S.shCand && !inSite) S.presSince = null;
 
         /* departure: sustained absence beyond the halo. Fixes in
            the halo band hold the state (edge jitter at big
@@ -1550,7 +1869,7 @@
       stop: function () { if (S) S.active = false; },
       snapshot: function () {
         if (!S) return null;
-        return {
+        var snap = {
           sitesKey: S.key, count: S.count, events: S.events.slice(),
           points: S.points.filter(function (p) { return !p.pend; }).map(function (p) { return { lat: p.lat, lng: p.lng }; }),
           auxPoints: S.auxPoints.map(function (p) { return { lat: p.lat, lng: p.lng, aux: true }; }),
@@ -1560,6 +1879,16 @@
           closes: S.closes, everPresent: S.everPresent, otherSeen: S.otherSeen, lastT: S.lastT,
           zone: S.present ? 'dump' : 'out', phase: phaseOf()
         };
+        /* v409: the day's profile learning rides the snapshot
+           (profile days only — a no-profile snapshot is byte-
+           identical to v408's). */
+        if (PROF) {
+          snap.profile = {
+            scaleM: profScaleM, dwellNormMs: profNormMs,
+            faces: S.facesProven, satellites: S.satellites
+          };
+        }
+        return snap;
       },
       count: function () { return S ? S.count : 0; },
       events: function () { return S ? S.events.slice() : []; },
@@ -1575,9 +1904,20 @@
           dump: { lat: SEED.lat, lng: SEED.lng }
         };
       },
+      /* v409: the learned site profile, for the Advanced readout
+         and the benches — null on a no-profile counter (v408). */
+      profile: function () {
+        if (!PROF) return null;
+        return {
+          scaleM: profScaleM, dwellNormMs: profNormMs, arriveBarMs: arriveBarMs(),
+          landUse: SEED_USE, points: S ? S.points.length : 1,
+          facesProven: S ? S.facesProven : 0, satellites: S ? S.satellites : 0,
+          closes: S ? S.closes : 0, othersLearned: S ? S.othersLearned.length : CFG_LEARNED.length
+        };
+      },
       debug: function () {
         if (!S) return null;
-        return {
+        var dbg = {
           mode: 'dump-visit', zone: S.present ? 'dump' : 'out',
           phase: phaseOf(), count: S.count,
           points: S.points.length, present: S.present,
@@ -1585,6 +1925,13 @@
           nearestM: (S.lastNearM === Infinity) ? null : Math.round(S.lastNearM),
           candSince: S.cand ? S.cand.since : null, lastT: S.lastT
         };
+        if (PROF) {
+          dbg.profile = {
+            scaleM: profScaleM, dwellNormMs: profNormMs, arriveBarMs: arriveBarMs(),
+            landUse: SEED_USE, faces: S.facesProven, satellites: S.satellites
+          };
+        }
+        return dbg;
       }
     };
   }
@@ -2190,6 +2537,7 @@
     looksLikeAddress: looksLikeAddress,
     createGeoLoadCounter: createGeoLoadCounter,
     createPegCounter: createPegCounter,
+    createMicroPairCounter: createMicroPairCounter,
     createDumpVisitCounter: createDumpVisitCounter,
     createDumpLearner: createDumpLearner,
     createPatternLearner: createPatternLearner,
@@ -2285,6 +2633,12 @@
   var sessionKey = null;
   var curDate = null;
   var curDispatchId = null;
+  /* v416: the pin signature of the dispatch configure() last
+     resolved (see pinSigFor) — worldStale compares the live
+     record against it so a SAME-id dispatch whose pins change
+     mid-session (an edit saved, a Connect arrival) re-seeds
+     the counter instead of leaving it on yesterday's answer. */
+  var curPinSig = null;
   var curSites = null;       // { load: {...}, dump: {...} } once resolved
   var geocodeTried = {};     // dispatchId -> true (once per record per session)
   var lastPersist = 0;
@@ -2425,6 +2779,184 @@
     try { s.set(PAIRS_KEY, d); } catch (e) {}
   }
 
+  /* ----- v409 (COUNTING-DYNAMIC-LEARNING-NOV10): land use + the
+     per-site profile store -----
+     Land use is a HINT the counting layer reads as a prior: what
+     KIND of ground a place is — work (construction / industrial /
+     quarry / landfill / commercial yards), residential, or
+     unknown. It never creates a count and never overrides GPS +
+     dwell evidence; it picks which rule path a tip-shaped foreign
+     stop takes and seeds the site profile's scale/dwell priors.
+
+     Source: Nominatim REVERSE (the house geocoder — js/geo.js
+     already runs its forward search; same free service, no key).
+     The call shape is the one the design reserves for a future
+     nav-server door (GET /ai/landuse?lat&lng returning the same
+     class), so the server can replace the source without an app
+     change. Discipline: ONE lookup per NEW ~150 m cell, fired
+     asynchronously OFF the counting path, rate-spaced to the
+     service's fair use (1 req/s); the class is cached per cell in
+     the synced store 'landuse_cells' (90-day TTL — ground changes
+     slowly). A decision taken before its cell's answer lands uses
+     the cached value or 'unknown'; a fully offline day runs on
+     priors + whatever cells are already cached, and every gap
+     degrades to 'unknown' = the v408 behaviour exactly.
+
+     The PROFILE store ('geoload_site_profiles', beside
+     'geoload_pairs') persists what a site taught across days —
+     { scaleM, dwellNormMs, landUse, updatedAt } keyed by the
+     seed's cell — so a returning site starts from yesterday's
+     proof (learn fast); a profile older than 30 days decays back
+     to the priors. The day record's own counter snapshot carries
+     the same-day learning (see createDumpVisitCounter). */
+  var LANDUSE_KEY = 'landuse_cells';
+  var PROFILES_KEY = 'geoload_site_profiles';
+  var LANDUSE_TTL_MS = 90 * 86400000;
+  var PROFILE_TTL_MS = 30 * 86400000;
+  var landUseInFlight = {};
+  var landUseQueue = [];
+  var landUseBusy = false;
+  var landUseLastCall = 0;
+
+  /* a ~150 m cell: 0.0014 deg of latitude; longitude scaled for
+     the home latitude so cells stay roughly square. */
+  function cellKeyFor(lat, lng) {
+    return Math.round(lat / 0.0014) + ':' + Math.round(lng / 0.0022);
+  }
+  function loadLandUseCells() {
+    var s = store();
+    var d = s ? s.get(LANDUSE_KEY, null) : null;
+    if (!d || typeof d !== 'object' || !d.cells) d = { cells: {} };
+    return d;
+  }
+  /* Nominatim reverse answer -> the coarse class. Only classes
+     the map states plainly are trusted: an explicit work
+     land-use/feature type, or an explicitly residential one.
+     Everything else (place labels, roads, nature, no match) is
+     'unknown' — too coarse to weight a stop by. */
+  function classifyLandUse(j) {
+    if (!j || typeof j !== 'object') return 'unknown';
+    var cls = String(j.class || ''), typ = String(j.type || '');
+    var WORK = {
+      quarry: 1, industrial: 1, commercial: 1, landfill: 1,
+      construction: 1, retail: 1, brownfield: 1, depot: 1,
+      warehouse: 1, farmyard: 1, harbour: 1, port: 1
+    };
+    if (WORK[typ]) return 'work';
+    if (typ === 'residential') return 'residential';
+    if (cls === 'building' && (typ === 'house' || typ === 'apartments' ||
+        typ === 'detached' || typ === 'terrace' || typ === 'residential' ||
+        typ === 'dormitory' || typ === 'semidetached_house')) return 'residential';
+    return 'unknown';
+  }
+  function landUseEnsure(lat, lng) {
+    /* inert where the async machinery does not exist (benches):
+       the class simply stays 'unknown' there, as designed. */
+    if (typeof fetch !== 'function' || typeof setTimeout !== 'function') return;
+    var key = cellKeyFor(lat, lng);
+    if (landUseInFlight[key]) return;
+    var d = loadLandUseCells();
+    var c = d.cells[key];
+    if (c && (Date.now() - (c.t || 0)) < LANDUSE_TTL_MS) return;
+    landUseInFlight[key] = true;
+    landUseQueue.push({ lat: lat, lng: lng, key: key });
+    landUsePump();
+  }
+  function landUsePump() {
+    if (landUseBusy) return;
+    var job = landUseQueue.shift();
+    if (!job) return;
+    landUseBusy = true;
+    var wait = Math.max(0, 1100 - (Date.now() - landUseLastCall));
+    setTimeout(function () {
+      landUseLastCall = Date.now();
+      var done = function () {
+        landUseBusy = false;
+        delete landUseInFlight[job.key];
+        landUsePump();
+      };
+      var url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+        encodeURIComponent(job.lat.toFixed(6)) + '&lon=' + encodeURIComponent(job.lng.toFixed(6)) + '&zoom=16';
+      fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r && r.ok ? r.json() : null; })
+        .then(function (j) {
+          /* an answered lookup is cached whatever class it read
+             (including 'unknown'); a FAILED one is not, so the
+             next arm retries it. */
+          if (j) {
+            var d = loadLandUseCells();
+            d.cells[job.key] = { use: classifyLandUse(j), t: Date.now() };
+            var s = store();
+            try { if (s) s.set(LANDUSE_KEY, d); } catch (e) {}
+          }
+          done();
+        })
+        .catch(function () { done(); });
+    }, wait);
+  }
+  /* the counter's synchronous read: the cached class, or
+     'unknown' (kicking the async lookup for next time). Never
+     blocks, never waits. */
+  function landUseClassAt(lat, lng) {
+    if (!isFinite(lat) || !isFinite(lng)) return 'unknown';
+    var d = loadLandUseCells();
+    var c = d.cells[cellKeyFor(lat, lng)];
+    if (c && (Date.now() - (c.t || 0)) < LANDUSE_TTL_MS) return c.use || 'unknown';
+    landUseEnsure(lat, lng);
+    return (c && c.use) || 'unknown';
+  }
+  function loadSiteProfiles() {
+    var s = store();
+    var d = s ? s.get(PROFILES_KEY, null) : null;
+    if (!d || typeof d !== 'object' || !d.sites) d = { sites: {} };
+    return d;
+  }
+  /* The cfg.profile the visit counter reads for this seed: the
+     persisted learning for the seed's cell (or nulls = priors),
+     the land-use resolver, and the persistence hook the counter
+     fires when the profile learns (throttled per arm: the first
+     learning of an arm always saves; later ones at most every
+     30 s — the day snapshot carries the rest). */
+  function profileFor(seed) {
+    if (!seed || !ENGINE.isCoord(seed)) return null;
+    var key = cellKeyFor(seed.lat, seed.lng);
+    var d = loadSiteProfiles();
+    var st = d.sites[key];
+    if (st && (Date.now() - (st.updatedAt || 0)) > PROFILE_TTL_MS) st = null;
+    var lastSave = 0;
+    return {
+      scaleM: st && typeof st.scaleM === 'number' ? st.scaleM : null,
+      dwellNormMs: st && typeof st.dwellNormMs === 'number' ? st.dwellNormMs : null,
+      learnedScaleM: st && typeof st.scaleM === 'number' ? st.scaleM : null,
+      landUse: landUseClassAt(seed.lat, seed.lng),
+      landUseAt: landUseClassAt,
+      onProfile: function (snap) {
+        var now = Date.now();
+        if (lastSave && now - lastSave < 30000) return;
+        lastSave = now;
+        var dd = loadSiteProfiles();
+        dd.sites[key] = {
+          scaleM: snap.scaleM, dwellNormMs: snap.dwellNormMs,
+          landUse: landUseClassAt(seed.lat, seed.lng), updatedAt: now
+        };
+        Object.keys(dd.sites).forEach(function (k) {
+          if (now - (dd.sites[k].updatedAt || 0) > PROFILE_TTL_MS) delete dd.sites[k];
+        });
+        var s = store();
+        try { if (s) s.set(PROFILES_KEY, dd); } catch (e) {}
+      }
+    };
+  }
+  /* every visit-counter arm goes through here so the profile is
+     attached uniformly (the counter's other cfg is unchanged). */
+  function visitCfg(dump, others) {
+    return {
+      dump: dump, others: others,
+      learnedOthers: savedLearnedOthers(),
+      profile: profileFor(dump)
+    };
+  }
+
   /* ----- v140: the places the app already knows -----
      Work favorites live in the store key 'nav_data' (the same
      substrate js/yardstart.js reads); the built-in pits come from
@@ -2550,7 +3082,7 @@
        simply begins open — his arrival at the place he himself
        navigated to is the count. */
     var prevLearnSnap = learner ? learner.snapshot() : null;
-    counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [curLoad], learnedOthers: savedLearnedOthers() });
+    counter = ENGINE.createDumpVisitCounter(visitCfg(dump, [curLoad]));
     counter.begin(key, {
       sitesKey: key, count: 0, events: [],
       points: [{ lat: dump.lat, lng: dump.lng }],
@@ -2606,13 +3138,74 @@
     var a = s.get('dsp_active', null);
     return (a && a.id) ? a : null;
   }
+  /* v416 (COUNT-SEED-FROM-DISPATCH): the pins a dispatch's own
+     notes label for its two ends — "Go Empty To" -> the pickup
+     pin, "Hauling To" -> the dump pin (the pair itself, or the
+     Maps ?q= link after the label; never a pair from past the
+     OTHER label; an unlabelled pair is not a pin). This parser
+     is a verbatim copy of dspNotesSitePins in
+     modules/dispatch.js (web 415), by the same copy discipline
+     dspNotesGoPin set at v414: each side keeps its own copy so
+     neither depends on the other's resolver. */
+  function notesSitePins(notes) {
+    var out = { go: null, dump: null };
+    var t = String(notes || '');
+    if (!t) return out;
+    function pinAfter(labelRe, stopRe) {
+      var m = labelRe.exec(t);
+      if (!m) return null;
+      var seg = t.slice(m.index + m[0].length);
+      var cut = seg.search(stopRe);
+      if (cut !== -1) seg = seg.slice(0, cut);
+      seg = seg.slice(0, 240);
+      var dm = seg.match(/(-?\d{1,3}\.\d{4,})[\s,]+(-?\d{2,3}\.\d{4,})/);
+      if (!dm) return null;
+      var la = parseFloat(dm[1]), ln = parseFloat(dm[2]);
+      if (!isFinite(la) || !isFinite(ln)) return null;
+      if (Math.abs(la) > 90 || Math.abs(ln) > 180) return null;
+      if (la === 0 && ln === 0) return null;
+      return { lat: la, lng: ln };
+    }
+    out.go = pinAfter(/go\s*empty\s*to/i, /hauling\s*to/i);
+    out.dump = pinAfter(/hauling\s*to/i, /go\s*empty\s*to/i);
+    return out;
+  }
   /* Load site: the dispatch pin. Dump site: stored dump pin, else the
-     drop-off address (geocoded once, async — see maybeGeocode). */
+     drop-off address (geocoded once, async — see maybeGeocode).
+     v416: a site the stored fields leave empty is seeded from
+     the pin the dispatch's own notes label for it — a dispatch
+     saved before web 415 (which fills the fields at save/edit)
+     carries its pins only as notes text, and the counter must
+     seed from the dispatch it was given, not from a re-save
+     that may never happen. A stored pin always wins: the notes
+     fill only a site the fields leave empty, exactly the rule
+     web 415 writes by. The seeded sites are the dispatch's own
+     pins (src 'pin'), and every downstream consumer — the visit
+     counter, the v409 site profile (seeded from the dump pin's
+     cell by visitCfg/profileFor), the pair checks — reads them
+     exactly as it reads stored pins. */
   function sitesFromDispatch(d) {
     if (!d) return { load: null, dump: null };
     var load = siteFromPin(d.lat, d.lng, d.jobSite || d.pickup || 'Load site', 'pin');
     var dump = siteFromPin(d.dumpLat, d.dumpLng, d.dropoff || 'Dump site', 'pin');
+    if (!load || !dump) {
+      var pins = notesSitePins(d.notes);
+      if (!load && pins.go) load = siteFromPin(pins.go.lat, pins.go.lng, d.jobSite || d.pickup || 'Load site', 'pin');
+      if (!dump && pins.dump) dump = siteFromPin(pins.dump.lat, pins.dump.lng, d.dropoff || 'Dump site', 'pin');
+    }
     return { load: load, dump: dump };
+  }
+  /* v416: the signature worldStale watches — the active
+     dispatch's id plus the pins it resolves to (stored fields
+     first, notes after, exactly as sitesFromDispatch reads
+     them). Captured at every configure(); a live record whose
+     signature differs has become a different counting world
+     under the same session and must be re-resolved. */
+  function pinSigFor(d) {
+    if (!d) return 'none';
+    var s = sitesFromDispatch(d);
+    function c(x) { return x ? x.lat.toFixed(5) + ',' + x.lng.toFixed(5) : '-'; }
+    return (d.id || '') + '|' + c(s.load) + '>' + c(s.dump);
   }
   function blockedWhy(d, sites) {
     if (!d) return 'no-dispatch';
@@ -2736,6 +3329,8 @@
      the teaching locks when a close lands after it (the truck
      completed the loop back at the load end). */
   var visitSource = false; // v324: the day counts under the visit law (count-source label)
+  var microPair = false; /* v409: the day counts on the micro-pair
+     counter (close-pair routing) — its count-source label. */
   var taughtCloseBase = 0;
 
   /* v324: places the visit counter LEARNED as the loop's other
@@ -2768,6 +3363,7 @@
        marking (the peg is still the authority for the site). */
     if (visitSource) rec.countSource = 'dump-visit';
     else if (pegArmed) rec.countSource = 'pegs';
+    else if (microPair) rec.countSource = 'micro-pair'; /* v409 */
     rec.updatedAt = now;
     if (counter) {
       rec.count = baseCount + counter.count();
@@ -2812,10 +3408,12 @@
   function configure() {
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
+    curPinSig = pinSigFor(d); /* v416: the world this configure resolved */
     learner = null; learnMode = null; curLoad = null;
     handCarry = false; /* v323: branches that restore corr re-read it */
     basePegEvents = [];
     visitSource = false; /* v324 */
+    microPair = false; /* v409 */
     taughtCloseBase = 0; /* v324 */
     patternSeedWasDump = false;
     shadowLearner = null;
@@ -2877,9 +3475,7 @@
       baseEvents = (prevPegDay && prevPegDay.events && (!sameSwap || !savedSwap)) ? prevPegDay.events.slice() : [];
       corrNow = prevPegDay ? (prevPegDay.corr || 0) : 0;
       handCarry = !!(prevPegDay && prevPegDay.handCarry);
-      counter = ENGINE.createDumpVisitCounter({
-        dump: curSites.dump, others: [], learnedOthers: savedLearnedOthers()
-      });
+      counter = ENGINE.createDumpVisitCounter(visitCfg(curSites.dump, []));
       var swapSaved = savedSwap;
       if (!swapSaved && lastFixSeen &&
           ENGINE.haversineM(lastFixSeen.lat, lastFixSeen.lng, curSites.dump.lat, curSites.dump.lng) <= VISIT_PRESENCE_M) {
@@ -2933,12 +3529,18 @@
          cycle machine was the wrong tool: dispatch pins, a lone
          peg of either kind, taught/learned dumps, proven pattern
          pairs and navigated dumps. */
+      /* v409: the dump peg's LEARNED site scale (cross-day,
+         proven faces only) widens the peg counter's site frame —
+         see createPegCounter. A first day at the site passes
+         null and runs exactly as v408. */
+      var pegProf = profileFor(curSites.dump);
       counter = ENGINE.createPegCounter({
         load: curSites.load, dump: curSites.dump,
         /* v392: the truck's position at this (re)build — a fresh
            counter seeds its posture from it (see createPegCounter) */
         presence: lastFixSeen ? { lat: lastFixSeen.lat, lng: lastFixSeen.lng } : null,
-        presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0
+        presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0,
+        profileScaleM: pegProf ? pegProf.learnedScaleM : null
       });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
@@ -2970,11 +3572,8 @@
       baseEvents = (prevLone && prevLone.events && (!sameLone || !savedLone)) ? prevLone.events.slice() : [];
       corrNow = prevLone ? (prevLone.corr || 0) : 0;
       handCarry = !!(prevLone && prevLone.handCarry); /* v323 */
-      counter = ENGINE.createDumpVisitCounter({
-        dump: curSites.dump,
-        others: curSites.load ? [curSites.load] : [],
-        learnedOthers: savedLearnedOthers()
-      });
+      counter = ENGINE.createDumpVisitCounter(visitCfg(
+        curSites.dump, curSites.load ? [curSites.load] : []));
       counter.begin(loneKey, savedLone);
       visitSource = true;
       pegArmed = true;
@@ -3093,7 +3692,7 @@
       baseEvents = (prevV && prevV.events && (!sameV || !savedV)) ? prevV.events.slice() : [];
       corrNow = prevV ? (prevV.corr || 0) : 0;
       handCarry = !!(prevV && prevV.handCarry); /* v323 */
-      counter = ENGINE.createDumpVisitCounter({ dump: sites.dump, others: [], learnedOthers: savedLearnedOthers() });
+      counter = ENGINE.createDumpVisitCounter(visitCfg(sites.dump, []));
       counter.begin(vKey, savedV);
       visitSource = true;
       /* v324: the pattern learner still watches, seeded on the
@@ -3117,6 +3716,55 @@
     }
 
     if (why) {
+      /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10 — close-pair
+         routing): a pair the DISPATCH ITSELF declares closer than
+         the pair minimum is the on-site job — the day no longer
+         stands down to pattern discovery for it; it routes to the
+         MICRO-PAIR counter (identity + sequence: micro fences on
+         the pair's own separation, peg-grade dwell, smoothed
+         stream — see createMicroPairCounter), which counts the
+         alternation the presence machines cannot separate.
+         Guards, all deliberate:
+           - BOTH ends must be the dispatch's own pins (src
+             'pin'). A pair that only BECAME too-close mid-day —
+             his Nov 10 re-peg of the pickup 126 m from the dump
+             pin (the peg outranks the pin in resolution) — keeps
+             the v408 law exactly: bank the day whole and stand
+             down (loads-repeg-reset-nov10 W1 pins that shape).
+           - A day that already PROVED a pattern pair keeps it —
+             the restore inside the pattern path below owns it.
+           - The pair must carry a separation the micro fences
+             can stand on (>= 90 m, where the fence formula
+             leaves its 30 m floor and the two fences stop
+             overlapping). A SAME-PLACE pair (both pins on one
+             spot) has no declared separation at all — its real
+             sub-spots are discovered by the pattern learner,
+             as v408 ran those days (load-count-dead-v267 S6,
+             load-count-onepin-audit-v268 A7 pin that shape). */
+      if (why === 'sites-too-close' && sites.load && sites.dump &&
+          sites.load.src === 'pin' && sites.dump.src === 'pin' &&
+          ENGINE.haversineM(sites.load.lat, sites.load.lng, sites.dump.lat, sites.dump.lng) >= 90) {
+        var recTC = recordFor(curDate);
+        if (!(recTC && recTC.blocked === 'ambiguous-dump') &&
+            !(recTC && recTC.patternPair)) {
+          curSites = sites;
+          curLoad = sites.load;
+          var tcKey = sitesKeyFor(d.id, sites.load, sites.dump);
+          var sameTC = !!(recTC && recTC.sessionKey === sessionKey);
+          var savedTC = (sameTC && recTC.state && recTC.state.sitesKey === tcKey) ? recTC.state : null;
+          var savedTCCount = (savedTC && typeof savedTC.count === 'number') ? savedTC.count : 0;
+          baseCount = recTC ? Math.max(0, (recTC.count || 0) - savedTCCount) : 0;
+          baseEvents = (!sameTC && recTC && recTC.events) ? recTC.events.slice() : [];
+          if (sameTC && !savedTC && recTC && recTC.events) baseEvents = recTC.events.slice();
+          corrNow = recTC ? (recTC.corr || 0) : 0;
+          handCarry = !!(recTC && recTC.handCarry); /* v323 */
+          counter = ENGINE.createMicroPairCounter({ load: sites.load, dump: sites.dump });
+          counter.begin(tcKey, savedTC);
+          microPair = true;
+          persist(true);
+          return true;
+        }
+      }
       counter = null;
       /* v203 (LOADS-GPS-FIX): the dispatch is REAL but carries no
          anchor at all — no pin, and its text names no place the
@@ -3314,7 +3962,7 @@
        day counts DUMP VISITS — the load site rides as the known
        other end (a dwell there closes the visit), never as a
        required half of a cycle. */
-    counter = ENGINE.createDumpVisitCounter({ dump: sites.dump, others: [sites.load], learnedOthers: savedLearnedOthers() });
+    counter = ENGINE.createDumpVisitCounter(visitCfg(sites.dump, [sites.load]));
     counter.begin(key, saved);
     visitSource = true;
     if (learnMode === 'observe') {
@@ -3354,7 +4002,7 @@
        which is also the v220 lock that earns the pair memory).
        taughtCloseBase pins the closes count at this moment so
        feedFix can tell the FIRST close after teaching. */
-    counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [curLoad], learnedOthers: savedLearnedOthers() });
+    counter = ENGINE.createDumpVisitCounter(visitCfg(dump, [curLoad]));
     counter.begin(key, {
       sitesKey: key, count: 1,
       events: [{ t: cand.t, site: 'dump', n: 1 }],
@@ -3415,7 +4063,7 @@
        place's arrivals). */
     var visitShape = !pair.intra && !patternSeedWasDump;
     if (visitShape) {
-      counter = ENGINE.createDumpVisitCounter({ dump: dump, others: [load], learnedOthers: savedLearnedOthers() });
+      counter = ENGINE.createDumpVisitCounter(visitCfg(dump, [load]));
       visitSource = true;
     } else {
       counter = ENGINE.createGeoLoadCounter({
@@ -3674,7 +4322,17 @@
   function worldStale() {
     if (!counter && !learner) return true;
     var d = activeDispatch();
-    return (d ? d.id : null) !== curDispatchId;
+    if ((d ? d.id : null) !== curDispatchId) return true;
+    /* v416 (COUNT-SEED-FROM-DISPATCH): the same dispatch can
+       become a different counting world mid-session — an edit
+       saved (web 415 fills the record's fields, or the notes
+       themselves gain the pins), a Connect arrival replacing
+       the record, a re-pin like Nov 5's swap. The id check
+       alone left every one of those on the configuration the
+       session started with. The pin signature is the dispatch's
+       resolvable sites; when they move, re-resolve — through
+       configure()'s banking, which never lowers the day. */
+    return pinSigFor(d) !== curPinSig;
   }
 
   function onFix(fix) {
@@ -3792,6 +4450,7 @@
       if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} }
       watching = false;
       sessionKey = null;
+      curPinSig = null; /* v416 */
       counter = null;
       learner = null;
       shadowLearner = null;
@@ -3802,6 +4461,7 @@
       pegsNow = { load: null, dump: null };
       pegArmed = false;
       visitSource = false; /* v324 */
+      microPair = false; /* v409 */
       taughtCloseBase = 0; /* v324 */
       taughtOutstanding = false;
       wasDumpSinceTeach = false;
@@ -3912,6 +4572,7 @@
           out.blocked = null;
           if (visitSource) out.countSource = 'dump-visit'; // v324
           else if (pegArmed) out.countSource = 'pegs'; // v282
+          else if (microPair) out.countSource = 'micro-pair'; // v409
         }
       }
       return out;
@@ -3934,6 +4595,7 @@
         date: curDate,
         dispatchId: curDispatchId,
         mode: learnMode || (counter ? 'armed' : null),
+        microPair: microPair, /* v409 */
         armed: !!counter,
         blocked: rec ? (rec.blocked || null) : null,
         seedWasDump: patternSeedWasDump,
