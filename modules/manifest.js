@@ -866,7 +866,7 @@
       var built = null;
       try {
         if (window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-          built = Meticulous.shared.buildRevenueLines(revEntries, extras, rate, String(o.payStandard || '').toLowerCase(), G('pnl_card_wages', []) || []);
+          built = Meticulous.shared.buildRevenueLines(revEntries, extras, rate, String(o.payStandard || '').toLowerCase(), G('pnl_card_wages', []) || [], G('sessions', []) || []);
         }
       } catch (e) { built = null; }
       if (built) {

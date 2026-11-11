@@ -408,6 +408,14 @@
   function invCycCardWages() {
     try { return App._store.get('pnl_card_wages', []) || []; } catch (e) { return []; }
   }
+  /* v418: the device-local calendar date ('YYYY-MM-DD') of an
+     epoch-ms instant — the same local-day convention app.js uses
+     when it dates a session by its end day (todayStr). */
+  function invCycLocalDateOfMs(ms) {
+    var d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    return invCycFmt(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
   /* Build the invoice's revenue lines from period entries + extras.
      Returns {lines, duplicateDates, unconfirmedDates}: ONE line per
      day (see the region header for the source rules); extras are
@@ -416,8 +424,10 @@
      v179 (D1) heal above is applied per day INSIDE the builder, so
      Revenue's chart/preview, the invoice, the manifest and P&L —
      every consumer of this one builder — read the same paid total
-     for the day and can never disagree. */
-  function invCycBuildRevenueLines(entries, extras, rate, std, postings) {
+     for the day and can never disagree. The optional 6th argument
+     (v418) is the sessions store: when it holds records, it is the
+     evidence for the phantom-day rule inside the loop below. */
+  function invCycBuildRevenueLines(entries, extras, rate, std, postings, sessions) {
     rate = parseFloat(rate) || 0;
     std = String(std || '').toLowerCase();
     var raw = [];
@@ -433,6 +443,25 @@
     /* v179 (D1): per-day heal amounts, computed once up front from
        the day's own records (see invCycDaySelfWageUplift). */
     var upliftByDate = {}, heldTravelByDate = {}, upliftApplied = {};
+    /* v418 (PHANTOM-DAY): the dates that hold a session which
+       GENUINELY STARTED that day. A session record is dated by
+       its END day (app.js stopSessionAt), and its own start is
+       endedAt − seconds (the derivation Revenue's day detail
+       itself uses). A record whose start falls on an earlier
+       date is a cross-midnight shell, not this day's work — the
+       v303/v314 doctrine: days close the day they start, and no
+       flow books a session across midnight on purpose. */
+    var sessEvidence418 = (Array.isArray(sessions) && sessions.length > 0);
+    var genuineDay418 = {};
+    if (sessEvidence418) {
+      sessions.forEach(function (s) {
+        if (!s || !s.date) return;
+        var endMs = s.endedAt ? Date.parse(s.endedAt) : NaN;
+        var sec = parseFloat(s.seconds) || 0;
+        if (!(endMs > 0) || !(sec > 0)) return;
+        if (invCycLocalDateOfMs(endMs - sec * 1000) === s.date) genuineDay418[s.date] = true;
+      });
+    }
     if (Array.isArray(postings) && postings.length) {
       var healDates = {};
       (entries || []).forEach(function (e) { if (e && e.date) healDates[e.date] = true; });
@@ -473,9 +502,30 @@
         eHours = invCycRound2((parseFloat(e.foremanHours) || eHours) + (heldTravelByDate[e.date] || 0));
         if (std === 'hourly') { qty = eHours; desc = eHours + ' hrs @ $' + rate; }
       }
+      var src = invCycEntrySrc(e);
+      /* v418 (PHANTOM-DAY-NOV1 / GHOST-AUTO-NOV8, owner screenshot
+         Nov 11, 2026): two tracker shapes are never a day's line,
+         however they were priced. (1) The DRIP — a tracker entry
+         under 0.1 of the pay standard's unit (Nov 8: an ~1-second
+         session booked hours "0.00" and, from the unrounded hours,
+         $0.01). Revenue's entryMoneyFlags has called exactly this
+         never-money since v116; the builder now speaks the same
+         truth, so Revenue and the invoice cannot disagree on it.
+         (2) The PHANTOM — with the sessions store as evidence, a
+         tracker entry whose day holds no genuinely-started
+         session (Nov 1: 14.78h, $428.71, booked onto a Sunday he
+         never worked by a session that started the day before and
+         was only stopped on Nov 1; the record is dated by its end
+         day, so its whole span lands here). With no sessions
+         evidence the builder keeps its old behaviour exactly —
+         the fallback every consumer already assumes. Dispatch and
+         manual entries are never touched: paperwork is paperwork. */
+      if (src === 'tracker' && amt > 0) {
+        if (qty < 0.1) amt = 0;
+        else if (sessEvidence418 && !genuineDay418[e.date]) amt = 0;
+      }
       if (amt > 0 && qty <= 0 && std && e.note) desc = e.note;
       if (amt > 0) {
-        var src = invCycEntrySrc(e);
         raw.push({ desc: desc + ' — ' + e.date, amt: invCycRound2(amt), date: e.date, src: src });
         var hd = hoursByDateSrc[e.date] || (hoursByDateSrc[e.date] = {});
         hd[src] = (hd[src] || 0) + eHours;
@@ -639,16 +689,18 @@
      replaced by a verified write, and the draft is left untouched. */
   function invIssue(x) {
     var draft = x.draft || {};
+    /* v418 (NOV2-SAVE-BLOCK, owner screenshot Nov 11, 2026):
+       duplicateDates still arrives here, but it no longer refuses
+       the save. The v79 hard block sent him out of the invoice to
+       fix the day in Revenue before ANY invoice could be issued —
+       one unresolved day froze the whole period's billing. The
+       builder already leaves a duplicate day OFF the invoice's
+       lines, which is exactly the rule Revenue has always applied
+       to its own totals ("not counted in your totals" until the
+       day is fixed); the invoice now follows the same rule: the
+       day is excluded, the save proceeds, and the editor names the
+       excluded day in a plain note instead of a block. */
     var dupDates = x.duplicateDates || [];
-    if (dupDates.length) {
-      return {
-        ok: false, stage: 'duplicate',
-        message: 'Saving is blocked: ' + dupDates.map(invCycDateShort).join(', ') +
-          (dupDates.length === 1 ? ' still has' : ' still have') +
-          ' more than one tracker entry and no dispatch completion to confirm the day. ' +
-          'Fix that day in Revenue, then try again — nothing was saved and your draft is unchanged.'
-      };
-    }
     var listAll = invS('list', []);
     /* v242 (WORK-PROFILES): when the caller names a profile
        (x.profileId), the numbering sequence and the collision
@@ -1115,7 +1167,7 @@
        driver's rates live in their own books / P&L entry. For a
        setup that never split the rates this is the same number
        as before, byte for byte. */
-    return invCycBuildRevenueLines(entries, extras, planRate !== null ? planRate : psWageRate(o), o.payStandard, invCycCardWages());
+    return invCycBuildRevenueLines(entries, extras, planRate !== null ? planRate : psWageRate(o), o.payStandard, invCycCardWages(), App._store.get('sessions', []) || []);
   }
 
   /* lines from revenue entries + extras inside a period, using pay standard */
@@ -1318,10 +1370,13 @@
         h += '<p class="note">No revenue entries in this period. Add items manually:</p>';
       }
       if (revPlan.duplicateDates.length) {
-        h += '<p class="note" style="color:#c0392b">⛔ Saving is blocked: ' +
+        /* v418 (NOV2-SAVE-BLOCK): a plain note, not a block — the
+           day is left off this invoice (the builder's rule, and
+           Revenue's own totals rule); saving proceeds. */
+        h += '<p class="note" style="color:#b97a0f">⚠️ ' +
           revPlan.duplicateDates.map(function (d) { return esc(invCycDateShort(d)); }).join(', ') +
-          (revPlan.duplicateDates.length === 1 ? ' still has' : ' still have') +
-          ' more than one tracker entry and no dispatch completion to confirm the day. Fix that day in Revenue first.</p>';
+          (revPlan.duplicateDates.length === 1 ? ' has' : ' have') +
+          ' more than one tracker entry and no dispatch completion to confirm the day, so that day is left off this invoice. You can still save — fix the day in Revenue whenever you are ready and it will count on the next invoice.</p>';
       }
       draft.items.forEach(function (it, i) {
         h += '<div class="kv"><span>' + esc(it.desc) + ' × ' + esc(it.qty) + ' @ $' + Number(it.rate).toFixed(2) + '</span>' +
@@ -1661,7 +1716,7 @@
   function psPeriodGross(o, a, b) {
     var entries = App._store.get('rev_entries', []).filter(function (e) { return e && e.date >= a && e.date <= b; });
     var rate = psWageRate(o);
-    var built = invCycBuildRevenueLines(entries, [], rate, o.payStandard, invCycCardWages());
+    var built = invCycBuildRevenueLines(entries, [], rate, o.payStandard, invCycCardWages(), App._store.get('sessions', []) || []);
     var hours = 0;
     Object.keys(built.dayHours || {}).forEach(function (d) { hours += parseFloat(built.dayHours[d]) || 0; });
     hours = invCycRound2(hours);

@@ -1605,7 +1605,7 @@
     var built = null;
     try {
       if (typeof window !== 'undefined' && window.Meticulous && Meticulous.shared && Meticulous.shared.buildRevenueLines) {
-        built = Meticulous.shared.buildRevenueLines(entries, extras, rate, std, App._store.get('pnl_card_wages', []) || []);
+        built = Meticulous.shared.buildRevenueLines(entries, extras, rate, std, App._store.get('pnl_card_wages', []) || [], App._store.get('sessions', []) || []);
       }
     } catch (e) { built = null; }
     var earned = 0;

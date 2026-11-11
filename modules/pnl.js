@@ -797,7 +797,10 @@
         grouped = Meticulous.shared.buildRevenueLines(
           entAll.filter(function (e) { return inMonth(e.date, m); }),
           extAll.filter(function (x) { return inMonth(x.date, m); }),
-          parseFloat(rate) || 0, std, App._store.get('pnl_card_wages', []) || []);
+          parseFloat(rate) || 0, std, App._store.get('pnl_card_wages', []) || [],
+          /* v418: sessions evidence rides along (month-filtered with
+             the entries) so P&L reads the same phantom-free days. */
+          (App._store.get('sessions', []) || []).filter(function (s) { return s && inMonth(s.date, m); }));
       }
     } catch (e) { grouped = null; }
     if (grouped) {

@@ -313,7 +313,7 @@ function emptyDraft(no) {
   eq('v79 company: no company at all is missing', w.invCycCompanyMissing(null), true);
 })();
 
-/* ---------------- v79: issue — pref number, issue date, duplicate block ---------------- */
+/* ---------------- v79: issue — pref number, issue date (duplicate block superseded by v418) ---------------- */
 (function () {
   const b = freshBacking();
   const w = makeWorld(b, '2026-10-15');
@@ -345,14 +345,17 @@ function emptyDraft(no) {
   eq('v79 pref collision: stage', rc.stage, 'collision');
   eq('v79 pref collision: sequence not advanced again', advancedTo, '1152');
 
-  /* A duplicate day blocks the save outright — nothing is written. */
+  /* v418 (NOV2-SAVE-BLOCK) supersedes the v79 assertions that
+     stood here: a duplicate day NO LONGER blocks the save. The
+     builder leaves the day off the invoice's lines (Revenue's own
+     totals rule), and issuing proceeds — the record is archived
+     and the draft is consumed exactly as a clean issue. */
   w.App._store.set('inv_draft', draft);
   const rd = w.invIssue(Object.assign({}, args, { prefNo: '1152', duplicateDates: ['2026-10-15'], now: 1001 }));
-  eq('v79 duplicate: refused', rd.ok, false);
-  eq('v79 duplicate: stage', rd.stage, 'duplicate');
-  ok('v79 duplicate: message names the day', rd.message.indexOf('Oct 15') !== -1, rd.message);
-  eq('v79 duplicate: nothing archived', S('list', []).length, 1);
-  deepEq('v79 duplicate: draft intact', S('draft', null), draft);
+  eq('v418 duplicate: issue succeeds', rd.ok, true);
+  eq('v418 duplicate: record archived', S('list', []).length, 2);
+  eq('v418 duplicate: issued number', rd.rec.no, '1152');
+  eq('v418 duplicate: draft consumed', S('draft', null), null);
 })();
 
 /* ---------------- static layout assertions on the shipped file ---------------- */
@@ -366,7 +369,7 @@ function emptyDraft(no) {
   /* v79 statics */
   ok('v79 static: draft # fills from Preferences next number', invSrc.indexOf('if (!draft.no && o.nextInvoiceNo)') !== -1);
   ok('v79 static: issue passes the Preferences number', invSrc.indexOf("prefNo: o.nextInvoiceNo || ''") !== -1);
-  ok('v79 static: issue passes duplicate days to the blocker', invSrc.indexOf('duplicateDates: (revPlan && revPlan.duplicateDates) || []') !== -1);
+  ok('v418 static: issue still receives the duplicate days (exclusion note, no block)', invSrc.indexOf('duplicateDates: (revPlan && revPlan.duplicateDates) || []') !== -1);
   ok('v79 static: issue passes the tax-inclusive mode', invSrc.indexOf('taxIncluded: taxIncluded') !== -1);
   ok('v79 static: totals label the included tax', invSrc.indexOf('% GST, included in the rate') !== -1);
   ok('v79 static: tracker-only line flagged in the UI', invSrc.indexOf('from tracker — unconfirmed') !== -1);
