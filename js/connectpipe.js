@@ -971,6 +971,40 @@
     });
   };
 
+  /* v417 (UMAR-MIRROR-NO-DISPATCHES, Nov 11, 2026): publishRecent
+     carries today + yesterday only, and the complete-history
+     sweep (publishHistoryIfNewPeers) runs once per NEW peer — so
+     in a pair's steady state an UPCOMING dispatch's day was never
+     published at all until its own day arrived, and a connected
+     seat could never see the job the driver is booked on next
+     (the field report: the seat answered "No nothing" to "You
+     still don't see my dispatches?"). Every publishAll now also
+     publishes each FUTURE date that holds a dispatch record
+     (list or active). publishDay's own gates still rule — the
+     work-profile fence, buildDay's nothing-to-share null — and
+     its content guard keeps repeat cycles silent; a future date
+     with no dispatch never writes. */
+  CP.publishUpcoming = function () {
+    var st = store();
+    if (!st) return Promise.resolve(false);
+    var today = '';
+    try { today = App._today(); } catch (e) {}
+    if (!today) return Promise.resolve(false);
+    var set = {};
+    function add(d) {
+      var ds = CP.recordDate(d);
+      if (ds && ds > today) set[ds] = true;
+    }
+    (st.get('dsp_list', []) || []).forEach(function (d) { if (d) add(d); });
+    var act = st.get('dsp_active', null);
+    if (act) add(act);
+    var chain = Promise.resolve(true);
+    Object.keys(set).sort().forEach(function (ds) {
+      chain = chain.then(function () { return CP.publishDay(ds); });
+    });
+    return chain;
+  };
+
   /* ---------------- down: boss-sent dispatches ---------------- */
 
   /* v233 (DSP-REVOCATION-GATE, owner Oct 23, 2026 — the physical
@@ -2880,6 +2914,8 @@
      lifecycle and the Connect screen make on entry. */
   CP.publishAll = function () {
     return CP.publishRecent()
+      /* v417: upcoming dispatch days ride the same cycle */
+      .then(function () { return CP.publishUpcoming(); })
       .then(function () { return CP.publishRecords(); })
       /* v390: the ticket pass also rides the full cycle itself,
          so a peer whose ONLY grant is dispatch still lands her

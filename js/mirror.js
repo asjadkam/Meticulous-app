@@ -486,16 +486,46 @@
     var door = false;
     try { door = !!(cp && cp.kindFor && cp.kindFor(uid) === 'limited' && cp.allowsModule(uid, 'dispatch')); } catch (e) {}
     var from = cp && cp.dateShift ? cp.dateShift(t, -13) : t;
-    return cp.fetchCrewRange(from, t).then(function (days) {
+    /* v417 (UMAR-MIRROR-NO-DISPATCHES): the window now reaches a
+       week AHEAD as well — a dispatcher's seat must show the job
+       the driver is booked on next, not only the days behind him
+       (the pipe publishes upcoming dispatch days on the same
+       cycle, CP.publishUpcoming). Upcoming days render as their
+       own card of plain read-only rows above the last-14-days
+       card, which is unchanged byte for byte; the v390 tap-door
+       stays exactly where it was, on the past card only. */
+    var to = cp && cp.dateShift ? cp.dateShift(t, 7) : t;
+    return cp.fetchCrewRange(from, to).then(function (days) {
       if (!stillMine(uid)) return false;
       days = (days || []).filter(function (d) { return d && d.driver === uid; })
         .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+      var upcoming = days.filter(function (d) { return d.date > t && (d.dispatches || []).length; })
+        .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      days = days.filter(function (d) { return d.date <= t; });
       var h = headHtml(name);
-      if (!days.length) {
+      if (!days.length && !upcoming.length) {
         body.innerHTML = h + '<div class="card"><h3>📋 His dispatches</h3>' +
           '<div class="empty">No days shared yet. When he works, his days appear here on their own.</div></div>';
         return true;
       }
+      if (upcoming.length) {
+        h += '<div class="card"><h3>🔜 Upcoming dispatches</h3>';
+        upcoming.forEach(function (day) {
+          h += '<div style="margin:12px 0 2px;font-weight:700">' + esc(day.date) + '</div>';
+          (day.dispatches || []).forEach(function (sd) {
+            h += '<div class="kv"><span>' + esc(sd.jobSite || 'Dispatch') +
+              (sd.equipment ? ' · ' + esc(sd.equipment) : '') +
+              (timeText(sd.scheduledAt) ? ' · ' + esc(timeText(sd.scheduledAt)) : '') +
+              '</span><b>' + esc(statusText(sd)) + '</b></div>';
+            var ubits = [];
+            if (sd.material) ubits.push('Material: ' + esc(sd.material));
+            if (sd.notes) ubits.push(esc(sd.notes));
+            if (ubits.length) h += '<div style="padding-left:14px;color:#555;font-size:13px;margin:1px 0 4px">' + ubits.join(' · ') + '</div>';
+          });
+        });
+        h += '</div>';
+      }
+      if (days.length) {
       h += '<div class="card"><h3>📋 His dispatches — last 14 days</h3>';
       days.forEach(function (day, di) {
         var f = M.dayFacts(day);
@@ -541,7 +571,9 @@
         h += '<div class="kv"><span style="padding-left:14px"><b>Day total</b></span><b>' +
           num(f.loads, 0) + ' loads · ' + num(f.hours) + ' h</b></div>';
       });
-      body.innerHTML = h + '</div>';
+      h += '</div>';
+      }
+      body.innerHTML = h;
       if (door) {
         wirePhotos(body, uid);
         Array.prototype.forEach.call(body.querySelectorAll('.mrowbtn'), function (btn) {
