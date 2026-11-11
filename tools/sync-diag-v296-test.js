@@ -301,7 +301,14 @@ const PHONE_META = function () {
     const w = makeWorld(server, { local: [['livemiles', local]], meta: PHONE_META() });
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle(2500);
-    await w.sb.CloudSync.flush(); await settle(500);
+    /* v413 re-pin: the repeat attempt that names the failure
+       is driven through flushUrgent — since SYNC-FLAPPING-
+       NOV11 a failed telemetry attempt backs off for the
+       60 s coalesce window, so a plain flush inside the
+       window no longer retries at once (the storm this
+       suite's D2 repetition predates). The law under test
+       is unchanged: a REPEATED failure names itself. */
+    await w.sb.CloudSync.flushUrgent(); await settle(500);
     const att = w.diag().attempts.livemiles;
     ok('D2: the failed attempt is recorded, not ok', !!att && att.ok === false, att && JSON.stringify(att));
     ok('D2: the stage is WRITE', !!att && att.stage === 'write', att && att.stage);
@@ -360,13 +367,17 @@ const PHONE_META = function () {
     const w = makeWorld(server, { local: [['livemiles', local]], meta: PHONE_META() });
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle(2500);
-    await w.sb.CloudSync.flush(); await settle(500);
+    /* v413 re-pin: same backoff as D2 — the repeat attempt
+       and the post-heal retry are driven through the urgent
+       door; on the auto cadence they would wait out the
+       failed attempt's 60 s window and land inside it. */
+    await w.sb.CloudSync.flushUrgent(); await settle(500);
     ok('D6: while the failure stands, the dashboard strip is SHOWN',
       w.elements.syncWarn._hidden === false, 'hidden=' + w.elements.syncWarn._hidden);
     ok('D6: the strip carries the plain words',
       /Not backing up — your work is only on this phone/.test(w.elements.syncWarn.textContent), w.elements.syncWarn.textContent);
     server.failWrite = null; // the cloud heals
-    await w.sb.CloudSync.flush(); await settle(600);
+    await w.sb.CloudSync.flushUrgent(); await settle(600);
     await w.sb.CloudSync.syncNow(); await settle(1200);
     ok('D6: once the failing key lands, the strip hides BY ITSELF',
       w.elements.syncWarn._hidden === true, 'hidden=' + w.elements.syncWarn._hidden);

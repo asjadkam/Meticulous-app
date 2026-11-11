@@ -318,7 +318,11 @@
      pull replaces whole per-key records in several branches
      (the v224 telemetry merge among them), and a clock stored
      there would be wiped by the first pull of a shift — the
-     gate would spring open mid-shift and the cadence with it. */
+     gate would spring open mid-shift and the cadence with it.
+     v413: the clock stamps every telemetry ATTEMPT, landed or
+     failed (see pushOne's done) — it is the gate's "last
+     attempt" mark, so a failed backup backs off for the same
+     window a landed one coalesces for. */
   function teleLastPush(key) {
     var m = getMeta();
     return (m.teleTp && m.teleTp[key]) || 0;
@@ -354,8 +358,9 @@
    * beforeunload (the same moments js/app.js flushes the
    * engines). A telemetry TOMBSTONE is never gated: a
    * deliberate delete goes out on the normal debounce. The
-   * per-key clock (m.teleTp in the sync meta — the last landed
-   * telemetry write) survives restarts and pull merges. What this
+   * per-key clock (m.teleTp in the sync meta — the last
+   * telemetry attempt, landed or failed since v413) survives
+   * restarts and pull merges. What this
    * does NOT change: pull merging (the v224 day-total merge
    * restores a cold start from whatever the cloud holds — the
    * stop/hide flushes keep that copy final at every moment a
@@ -647,25 +652,32 @@
             (v.status === 'paused' || v.status === 'idle')) {
           S._teleUrgent = true;
         }
-        /* v301 (SYNC-PUSH-TRIGGERS): the close is not done at
-           the stop tap. The engines keep stamping telemetry
-           after the tracker has gone idle — the post-close
-           accrual (the drive home, v279) folds in for minutes
-           — and GeoLoads' final counts land the same way.
-           Those stamps are part of the close: a telemetry
-           stamp that lands while the tracker sits idle or
-           paused re-arms the urgent flag, so the final totals
-           ride the debounce out instead of sitting behind
-           the 60 s coalesce until the next boot (owner,
-           Oct 31, 2026 16:58 MDT: "it only pushes once when
-           I start the app... it needs to push when I am
-           closing it"). */
-        if (isTelemetryKey(pk)) {
-          try {
-            var trkNow = parseJson(lsGetRaw('tracker'), null);
-            if (trkNow && (trkNow.status === 'idle' || trkNow.status === 'paused')) S._teleUrgent = true;
-          } catch (e) {}
-        }
+        /* v301 (SYNC-PUSH-TRIGGERS) — NARROWED by v413
+           (SYNC-FLAPPING-NOV11): v301 re-armed the urgent flag
+           on EVERY telemetry stamp that landed while the
+           tracker sat idle or paused, so the final totals of a
+           close would ride the debounce out. In the owner's
+           hands (Nov 11, 2026, 00:56 CST) that rule fired all
+           night instead: the day-miles watch is armed before a
+           dispatch day while the tracker sits idle, and every
+           engine persist (each one re-stamps the day record)
+           became an urgent full read-merge-write of the
+           ~240 KB telemetry document on the 2.5 s debounce —
+           the 60 s coalesce never applied, attempts rolled
+           back to back inside a minute, slow ones were
+           abandoned by the 20 s push race and recorded FAILED
+           at the read/write step, and the status cycled
+           Syncing… → All synced → Syncing… until a manual
+           press ran a pull whose comparison sealed the key.
+           The urgent flag now comes only from the moments
+           that are actually urgent: the tracker TRANSITION
+           stamp above (the close's own stop/pause stamp —
+           the engines' final snapshots land in the same
+           breath, so the close still rides out at once) and
+           the hide / beforeunload / pagehide flushes. Every
+           other telemetry stamp — post-close accrual
+           included — rides the 60 s coalesce like the rest
+           of the day. */
         scheduleFlush();
       }
       refreshDot();
@@ -1660,6 +1672,20 @@
         if (isTelemetryKey(key) && raw !== null) stampTelePush(key);
         delete S._keyFails[key]; // v136: a successful push clears the key's failure record
         var _dm = getMeta(); _dm.uid = S.uid; _dm.globallySynced = true;
+      } else if (isTelemetryKey(key) && raw !== null) {
+        /* v413 (SYNC-FLAPPING-NOV11): a FAILED telemetry
+           attempt stamps the coalesce clock too — the clock
+           now reads "last attempt", landed or not. Before
+           this, a failure left the clock untouched, so the
+           key stayed eligible on the very next flush and a
+           sick link (or a doc that fails honestly) was
+           retried on every persist, watchdog tick and
+           debounce with no quiet between attempts — the
+           back-to-back FAILED rows in the owner's Nov 11
+           recording. A failed backup now waits out the same
+           60 s as a landed one; the key stays dirty and the
+           failure stays named exactly as before. */
+        stampTelePush(key);
       }
       saveMeta();
       return ok;

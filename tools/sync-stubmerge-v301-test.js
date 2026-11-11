@@ -648,17 +648,30 @@ const META_DIRTY = function (keys) {
       Array.isArray(ssDoc) && ssDoc.length === 1 && ssDoc[0].liveKm === 151.7);
     /* the post-close leg: the engine keeps accruing the drive
      * home after the close (v279) and stamps again while the
-     * tracker is already idle. That stamp is part of the
-     * close — it must ride out on the debounce too, not sit
-     * behind the 60 s coalesce until the next boot. */
+     * tracker is already idle. v301 let that stamp ride out
+     * on the debounce like the close itself; v413
+     * (SYNC-FLAPPING-NOV11) narrowed it: the same
+     * telemetry-stamp-while-idle urgency fired on EVERY
+     * day-watch persist all night and stormed the backup
+     * (see tools/sync-flap-v413-test.js). The close itself
+     * still rides the debounce (C2a — the tracker transition
+     * stamp carries it); a later accrual stamp rides the
+     * 60 s coalesce instead — out within the minute, and a
+     * page hide would flush it urgently — never the next
+     * boot. */
     const lmHome = JSON.parse(JSON.stringify(lmFinal));
     lmHome.days.sB.totalM = 175000;
     w.store.set('livemiles', lmHome);
     await tick(clock, 3100);
     const lmDoc2 = serverGet(server, 'livemiles');
-    ok('C2c: the post-close accrual pushes promptly too (the close is not done at the stop tap)',
-      !!lmDoc2 && lmDoc2.days && lmDoc2.days.sB && lmDoc2.days.sB.totalM === 175000,
+    ok('C2c: the post-close accrual no longer rides the debounce (v413 anti-storm law)',
+      !!lmDoc2 && lmDoc2.days && lmDoc2.days.sB && lmDoc2.days.sB.totalM === 151800,
       lmDoc2 && lmDoc2.days && lmDoc2.days.sB && lmDoc2.days.sB.totalM);
+    await tick(clock, 85000);                    // the coalesce window passes; the next watchdog carries it
+    const lmDoc3 = serverGet(server, 'livemiles');
+    ok('C2d: the post-close accrual lands by the coalesce — inside the minute, not the next boot',
+      !!lmDoc3 && lmDoc3.days && lmDoc3.days.sB && lmDoc3.days.sB.totalM === 175000,
+      lmDoc3 && lmDoc3.days && lmDoc3.days.sB && lmDoc3.days.sB.totalM);
   }
   {
     /* C3: the live cadence — while a shift runs, telemetry
