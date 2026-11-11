@@ -453,14 +453,40 @@
        flow books a session across midnight on purpose. */
     var sessEvidence418 = (Array.isArray(sessions) && sessions.length > 0);
     var genuineDay418 = {};
+    /* v419 (PHANTOM-ROOT-NOV11): the same pass also files each
+       record's HOURS under its date, split by the same own-start
+       test — genuine (started on its own date) vs shell (dated
+       here, started earlier). The v418 rule vouches a whole DAY:
+       one genuinely-started record on a date passes every tracker
+       entry for that date, and Revenue's onSession REPLACES the
+       day's tracker entry at each stop — so a shell that stopped
+       later in the day (Nov 1: the 14.78h span) became the day's
+       entry behind a small genuine record's vouch, and survived.
+       The entry-level test in the loop below closes that: an
+       entry whose own hours are a shell's hours, and no genuine
+       record's hours, is the shell's booking, whoever else
+       vouches for the day. */
+    var genuineHours419 = {}, shellHours419 = {};
     if (sessEvidence418) {
       sessions.forEach(function (s) {
         if (!s || !s.date) return;
         var endMs = s.endedAt ? Date.parse(s.endedAt) : NaN;
         var sec = parseFloat(s.seconds) || 0;
         if (!(endMs > 0) || !(sec > 0)) return;
-        if (invCycLocalDateOfMs(endMs - sec * 1000) === s.date) genuineDay418[s.date] = true;
+        if (invCycLocalDateOfMs(endMs - sec * 1000) === s.date) {
+          genuineDay418[s.date] = true;
+          (genuineHours419[s.date] || (genuineHours419[s.date] = [])).push(sec / 3600);
+        } else {
+          (shellHours419[s.date] || (shellHours419[s.date] = [])).push(sec / 3600);
+        }
       });
+    }
+    function hoursMatch419(list, hrs) {
+      if (!list) return false;
+      for (var hi = 0; hi < list.length; hi++) {
+        if (Math.abs(list[hi] - hrs) <= 0.011) return true;
+      }
+      return false;
     }
     if (Array.isArray(postings) && postings.length) {
       var healDates = {};
@@ -523,6 +549,20 @@
       if (src === 'tracker' && amt > 0) {
         if (qty < 0.1) amt = 0;
         else if (sessEvidence418 && !genuineDay418[e.date]) amt = 0;
+        /* v419: the day passed the v418 test on SOME record's
+           vouch — is THIS entry the day's genuine booking, or a
+           shell's? Its session hours are the foreman part when
+           travel was composed on top, else its hours (onSession
+           always stores the session's own hours there). Matching
+           a shell's hours and no genuine record's = the shell's
+           booking: never a line. Matching neither (an entry he
+           edited in Day Details, whose hours are his word) is
+           left exactly as v418 left it. */
+        else if (sessEvidence418 && shellHours419[e.date]) {
+          var eSessH419 = (parseFloat(e.foremanHours) > 0) ? parseFloat(e.foremanHours) : (parseFloat(e.hours) || 0);
+          if (eSessH419 > 0 && hoursMatch419(shellHours419[e.date], eSessH419) &&
+              !hoursMatch419(genuineHours419[e.date], eSessH419)) amt = 0;
+        }
       }
       if (amt > 0 && qty <= 0 && std && e.note) desc = e.note;
       if (amt > 0) {

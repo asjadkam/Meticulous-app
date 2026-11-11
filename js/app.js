@@ -3875,6 +3875,82 @@
   function stopSessionAt(endMs, endOdoVal) {
     var viaDispatch = _stopViaDispatch; _stopViaDispatch = false;
     var ticketPhoto = _endTicketPhoto; _endTicketPhoto = null;
+    /* v419 (PHANTOM-ROOT-NOV11): the booking gate. Until now this
+       funnel — the ONLY writer of session records — booked
+       whatever the tracker happened to claim at stop time: the
+       record's date from the STOP day, its seconds from the
+       tracker's current elapsed/startTs claim. Every guard
+       elsewhere (the stale heal, the closed-day proof, adoption)
+       judges a session by its PIN (sessionId), but nothing here
+       ever asked whether the claimed start and the pin agree, or
+       whether a start ever occurred on the day being booked —
+       and the heals reach a shell only on the dashboard tick /
+       visibility cadence, so a stop that landed first minted the
+       phantom (Oct 25's $136.21 shell booked exactly this way;
+       Nov 1's 14.78h Sunday record survived web 418's builder
+       because the minted record vouched for itself). The gate:
+       judged by the pin first (the heal's own startMs rule),
+       the derived start as fallback —
+         · start day == stop day: book exactly as before.
+         · start day before the stop day: a genuine overnight
+           carry ONLY when pin and derived start name the SAME
+           day (an edit or an adoption that moves the claimed
+           start off the pin's day is the phantom fingerprint,
+           never a carry), that day is the day right before the
+           stop day, the whole span is under 24 h, and the start
+           day does not already stand closed (closedDayProof411 —
+           a stop over a closed day is the resurrection shape,
+           and the closing booking already exists). A carry books
+           onto its ORIGINAL start day (bookDate419 below),
+           never re-dated to the stop day.
+         · anything else cross-day is a stale shell: it is
+           buried exactly as healStaleTracker buries it — engines
+           and the native service stood down, the tracker reset
+           to idle carrying the discard marker, and NO session
+           entry, NO cloud doc and NO Revenue line is written.
+       Any failure inside the gate falls through to the old
+       behaviour: a booking must never be lost to the gate's own
+       arithmetic. */
+    var bookDate419 = null;
+    try {
+      var t419 = App.tracker;
+      if (t419 && (t419.status === 'running' || t419.status === 'paused')) {
+        var pin419 = Number(t419.sessionId) || 0;
+        var der419 = 0;
+        try { der419 = Number(trackerSessionStartMs()) || 0; } catch (e419a) {}
+        var startMs419 = pin419 > 0 ? pin419 : der419;
+        if (startMs419 > 0) {
+          var startDay419 = todayStr(new Date(startMs419));
+          var stopDay419 = todayStr(new Date(endMs));
+          if (startDay419 < stopDay419) {
+            var carry419 = false;
+            var prevDay419 = new Date(endMs);
+            prevDay419.setDate(prevDay419.getDate() - 1);
+            if (pin419 > 0 && der419 > 0 &&
+                todayStr(new Date(der419)) === startDay419 &&
+                startDay419 === todayStr(prevDay419) &&
+                (endMs - der419) < 86400000) {
+              var closed419 = false;
+              try { closed419 = !!closedDayProof411(startMs419); } catch (e419b) {}
+              carry419 = !closed419;
+            }
+            if (carry419) {
+              bookDate419 = startDay419;
+            } else {
+              try { if (window.LiveMiles) LiveMiles.stopDay({ trailHome: true }); } catch (e419c) {}
+              try { dayEngineStop(); } catch (e419d) {}
+              try { if (window.ShiftTrack) ShiftTrack.sessionStopped('s' + startMs419); } catch (e419e) {}
+              try { App.armNativeDay(); } catch (e419f) {}
+              App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now(),
+                discardedSid: startMs419, discardedAt: Date.now() };
+              trackerSave();
+              try { trackerPaint(); } catch (e419g) {}
+              return;
+            }
+          }
+        }
+      }
+    } catch (e419) { bookDate419 = null; }
     var sec = trackedSecondsAt(endMs);
     // v40: close out live-miles tracking first (watcher off, final
     // crumb + total persisted) so the finished entry can carry the day.
@@ -3916,7 +3992,10 @@
           }
         }
       } catch (e) {}
-      var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
+      /* v419: a genuine overnight carry (see the gate at the top)
+         books onto its ORIGINAL start day; every other booking
+         keeps the end-day date it has always carried. */
+      var entry = { date: bookDate419 || todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
       /* v242 (WORK-PROFILES): the saved session carries the
          profile the tracker started under (a session restored
          from before profiles existed takes the active one). */
