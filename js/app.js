@@ -2444,10 +2444,47 @@
     }
     if (loadsNewer) {
       if (rec.loadsArmed) {
+        /* v421 (COUNTING-PHANTOM-TAPS-NOV11): the record's
+           loadsCorr is a STANDING TOTAL — the day's correction
+           as the record's keeper last wrote it — not a pending
+           delta. The shipped line fed it whole to GeoLoads.nudge
+           (a delta: corrNow += delta) on EVERY adoption whose
+           stamp won, and the stamp is weak: App._lastLoadsAt is
+           stamped only by this layer's own hero taps, never by
+           an adoption, and it resets to 0 on every relaunch,
+           while the record's updatedAt re-stamps on native
+           writes and collects keep arriving (foreground
+           collects, sessionRecord reads, applied === false
+           echoes). The keeper zeroes its copy only when a
+           consume-sync APPLIES — refused (the revision lost to
+           another client), hung (App._sessSyncing stuck, the
+           v94 shape), or never landed (the page died first) —
+           so the same record re-entered adoption and minted
+           the day's whole correction again each time. Nov 11:
+           13:27 corr +1, his tap made +2 (card: 4 loads), and
+           by 13:55 two re-collects had minted +2 twice more —
+           "Loads today: 8 · +6 your taps" with no further tap
+           (proven in tools/counting-phantom-taps-nov11-test.js:
+           corr 2 → 4 → 6 across three collects of one record).
+           The consumption is now the EXCESS only: nudge what
+           the record claims beyond the correction this layer
+           already holds, never less — a standing record can
+           neither re-mint nor un-mint a tap however often it
+           is collected — and the consumed stamp is banked into
+           App._lastLoadsAt so the same record cannot re-fire
+           inside the lifetime either. A record that genuinely
+           moves ahead (a correction made on another surface)
+           still crosses: exactly the excess, exactly once. */
         var corr = rec.loadsCorr || 0;
-        if (corr !== 0 && window.GeoLoads && GeoLoads.nudge) {
-          try { if (GeoLoads.nudge(corr) !== null) loadsChanged = true; } catch (e) {}
+        var heldCorr = null;
+        try {
+          var gtRec = (window.GeoLoads && GeoLoads.today) ? GeoLoads.today() : null;
+          if (gtRec && typeof gtRec.corr === 'number') heldCorr = gtRec.corr;
+        } catch (e) {}
+        if (heldCorr !== null && corr > heldCorr && window.GeoLoads && GeoLoads.nudge) {
+          try { if (GeoLoads.nudge(corr - heldCorr) !== null) loadsChanged = true; } catch (e) {}
         }
+        App._lastLoadsAt = Math.max(App._lastLoadsAt || 0, rec.updatedAt || 0);
       } else if ((rec.loadsManual || 0) !== ((t.accum && t.accum.manualLoads) || 0)) {
         trkAccum().manualLoads = Math.max(0, rec.loadsManual || 0);
         loadsChanged = true;
