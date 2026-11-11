@@ -400,6 +400,73 @@
     }
     return null;
   }
+  /* v415 (DISPATCH-LINKS-SET-SITES, owner Nov 11, 2026, over
+     the shipped web 414: "Like I had it before. I want the
+     dispatch links be set in a pickup and my dump sets"): a
+     dispatch entered with its pins typed into its NOTES — the
+     Nov 11 Aecon Trans shape, "Go Empty To: (51.1225089,
+     -114.0122197)" + its Maps link, "Hauling To: (51.3078889,
+     -114.0369722)" + its link — was BORN with its lat/lng and
+     dumpLat/dumpLng fields empty. Web 414 taught the Navigate
+     resolver to read the notes as a fallback, but the fields
+     are what the rest of the app reads: the Dump-only door
+     (stored dump fields only — a notes-only dispatch shows no
+     Dump-only button at all) and the load counter's site pegs.
+     The pins belong IN the record, set when the record is
+     assembled: each EMPTY site pair is filled from the pair
+     the record's own notes label for it — "Go Empty To" →
+     the pickup pair, "Hauling To" → the dump pair (the pair
+     itself, or the Maps ?q= link after the label; never a
+     pair from past the OTHER label; an unlabelled pair is
+     not a pin). A pair already stored always wins: only a
+     pair whose BOTH coordinates are blank is filled, so a
+     half-set pair is left exactly as it stands — a set field
+     is never overwritten from text. The parser lives whole
+     inside this region on purpose: the save/ingest benches
+     slice DSP-SAVE standalone, and the write side must never
+     depend on the read side's resolver (dspNotesGoPin, v414,
+     keeps its own copy by the same rule). */
+  function dspNotesSitePins(notes) {
+    var out = { go: null, dump: null };
+    var t = String(notes || '');
+    if (!t) return out;
+    function pinAfter(labelRe, stopRe) {
+      var m = labelRe.exec(t);
+      if (!m) return null;
+      var seg = t.slice(m.index + m[0].length);
+      var cut = seg.search(stopRe);
+      if (cut !== -1) seg = seg.slice(0, cut);
+      seg = seg.slice(0, 240);
+      var dm = seg.match(/(-?\d{1,3}\.\d{4,})[\s,]+(-?\d{2,3}\.\d{4,})/);
+      if (!dm) return null;
+      var la = parseFloat(dm[1]), ln = parseFloat(dm[2]);
+      if (!isFinite(la) || !isFinite(ln)) return null;
+      if (Math.abs(la) > 90 || Math.abs(ln) > 180) return null;
+      if (la === 0 && ln === 0) return null;
+      return { lat: la, lng: ln };
+    }
+    out.go = pinAfter(/go\s*empty\s*to/i, /hauling\s*to/i);
+    out.dump = pinAfter(/hauling\s*to/i, /go\s*empty\s*to/i);
+    return out;
+  }
+  function dspSitePairBlank(a, b) {
+    function blank(v) {
+      if (v === null || v === undefined || v === '') return true;
+      var n = parseFloat(v);
+      return !isFinite(n) || n === 0;
+    }
+    return blank(a) && blank(b);
+  }
+  function dspFillSitesFromNotes(d) {
+    if (!d || !d.notes) return d;
+    var needGo = dspSitePairBlank(d.lat, d.lng);
+    var needDump = dspSitePairBlank(d.dumpLat, d.dumpLng);
+    if (!needGo && !needDump) return d;
+    var pins = dspNotesSitePins(d.notes);
+    if (needGo && pins.go) { d.lat = pins.go.lat; d.lng = pins.go.lng; }
+    if (needDump && pins.dump) { d.dumpLat = pins.dump.lat; d.dumpLng = pins.dump.lng; }
+    return d;
+  }
   function dspBuildRecord(f, tickets, legacyPhoto, newId) {
     var d = {};
     for (var k in f) { if (Object.prototype.hasOwnProperty.call(f, k)) d[k] = f[k]; }
@@ -413,6 +480,9 @@
        SCHEDULED date whenever one was picked (a dispatch saved
        on the 16th FOR the 17th is the 17th's, from birth). */
     d.date = dspRecordDate(d) || d.date;
+    /* v415: born with its sites set too — the notes' labelled
+       pins land in the record's own fields (empty pairs only). */
+    dspFillSitesFromNotes(d);
     d.status = 'saved';
     return d;
   }
@@ -534,6 +604,11 @@
       if (!String(d.material || '').trim() && cf.material) d.material = cf.material;
       if (!(parseFloat(d.amount) > 0) && cf.amount) d.amount = cf.amount;
     }
+    /* v415 (DISPATCH-LINKS-SET-SITES): an edit save assembles
+       the record too — site pairs the record still leaves
+       empty are filled from its (possibly edited) notes, the
+       same rule as a create. Pairs the form carried stay. */
+    dspFillSitesFromNotes(d);
     return d;
   }
   /* v129: the ticket facts a read produced, mined from wherever
