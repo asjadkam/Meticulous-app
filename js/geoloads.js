@@ -745,6 +745,14 @@
                                 // this of the dump centre to nudge it
   var RECOVERY_CLUSTER_M = 35;  // v300: a "stopped here" cluster's
                                 // fixes hold within this of its centroid
+  var ADOPT_MARGIN_M = 100;     // v421: a face beyond the band is
+                                // adopted only when it belongs
+                                // DECISIVELY to the waiting end —
+                                // nearer that centre than the other
+                                // by at least this margin (a stop
+                                // equidistant from both ends, like
+                                // the v284 washroom 400 m off the
+                                // pair's axis, is neither end's face)
 
   function createPegCounter(cfg) {
     /* v369 (LOAD-NOT-COUNTED-AFTER-BOTH-PEGGED-NOV7): the accuracy
@@ -778,28 +786,38 @@
        engine suites) are unchanged. */
     var cfgPresence = isCoord(cfg.presence) ? { lat: +cfg.presence.lat, lng: +cfg.presence.lng } : null;
     var cfgPresenceT = (typeof cfg.presenceT === 'number') ? cfg.presenceT : 0;
-    /* the day's site frame, from the seeds alone */
+    /* v421 (COUNTING-REPEG-FAIL-NOV11): the site's own SCALE —
+       how far past a seed the site's ground may run. cfg.
+       profileScaleM carries the v409 profile's EFFECTIVE scale
+       for the dump seed (the land-use prior or the learned
+       scale, whichever runs further; the glue computes it). It
+       sizes the frame's reach PAST the seeds and the recovery
+       cluster's adoption reach in ingest. The v409 build fed
+       only a learned scale and measured it from the MIDPOINT,
+       so a first day at a site — and any face past the far
+       seed — still ran on the v284 frame: a circle ending
+       SITE_BUFFER_M past each seed, which judged every fix at
+       a face beyond the dump peg 'off-site' and discarded it
+       before the zone machine could see the visit at all
+       (Nov 11: the afternoon face past the morning's dump peg
+       never registered; proven in
+       tools/counting-repeg-fail-nov11-test.js). A counter built
+       with no profile scale keeps the v284 numbers exactly. */
+    var scaleM = (typeof cfg.profileScaleM === 'number' && cfg.profileScaleM > 0)
+      ? Math.round(cfg.profileScaleM) : 0;
+    var reachM = Math.max(SITE_BUFFER_M, scaleM);
+    /* the day's site frame, from the seeds + the site's scale */
     var site = null;
     if (seedLoad && seedDump) {
       var sepM = haversineM(seedLoad.lat, seedLoad.lng, seedDump.lat, seedDump.lng);
       site = {
         lat: (seedLoad.lat + seedDump.lat) / 2,
         lng: (seedLoad.lng + seedDump.lng) / 2,
-        radiusM: Math.max(SITE_MIN_M, sepM / 2 + SITE_BUFFER_M)
+        radiusM: Math.max(SITE_MIN_M, sepM / 2 + reachM)
       };
     } else if (seedLoad || seedDump) {
       var only = seedLoad || seedDump;
-      site = { lat: only.lat, lng: only.lng, radiusM: SITE_ONE_SEED_M };
-    }
-    /* v409 (COUNTING-DYNAMIC-LEARNING-NOV10): a LEARNED site scale
-       (the dump seed's persisted profile — proven faces from an
-       earlier day) widens the frame so it covers the faces the
-       site already proved. Only a learned scale is fed here,
-       never a bare prior: the frame is a centre-drift clamp with
-       bench-pinned behaviour, so a first day at a site runs
-       exactly as v408. */
-    if (site && typeof cfg.profileScaleM === 'number' && cfg.profileScaleM > site.radiusM) {
-      site.radiusM = Math.round(cfg.profileScaleM);
+      site = { lat: only.lat, lng: only.lng, radiusM: Math.max(SITE_ONE_SEED_M, reachM) };
     }
     var cen = {
       load: seedLoad ? { lat: seedLoad.lat, lng: seedLoad.lng } : null,
@@ -891,7 +909,29 @@
           if (pdL <= pFence && pdD <= pFence) pz = (pdL <= pdD) ? 'load' : 'dump';
           else if (pdL <= pFence) pz = 'load';
           else if (pdD <= pFence) pz = 'dump';
-          if (pz) {
+          if (pz === 'dump' && cfg.carryToDump) {
+            /* v421 (COUNTING-REPEG-FAIL-NOV11): the outgoing
+               machine was ARMED — a pickup already proven — when
+               this rebuild landed (the dump re-pegged mid-visit,
+               Nov 11 12:49). The v392 seed below would be born
+               "at-dump, unarmed" and bury that carry as the
+               visit's baseline; a re-peg must never eat a proven
+               carry any more than it may reset the count. Born
+               instead still owing the arrival: zone 'out', phase
+               'to-dump', armed — the presence at the face must
+               still prove itself by the ordinary dwell before
+               anything counts, exactly as if no rebuild had
+               happened. cfg.carryToDump is set by the glue from
+               the outgoing counter's own books, so a declaration
+               with no proven carry behind it (a first peg of the
+               day, a visit begun empty) keeps the baseline seed
+               below, untouched. */
+            effSaved = {
+              sitesKey: key, count: 0, events: [],
+              zone: 'out', phase: 'to-dump',
+              armed: true, lastT: cfgPresenceT
+            };
+          } else if (pz) {
             effSaved = {
               sitesKey: key, count: 0, events: [],
               zone: pz, phase: (pz === 'load') ? 'at-load' : 'at-dump',
@@ -982,7 +1022,13 @@
         if (before && recCen) {
           var dTgtC = haversineM(sm.lat, sm.lng, recCen.lat, recCen.lng);
           var dOthC = recOther ? haversineM(sm.lat, sm.lng, recOther.lat, recOther.lng) : Infinity;
-          var recCandidate = dTgtC > PEG_FENCE_M && dTgtC <= RECOVERY_BAND_M &&
+          /* v421: the cluster may build anywhere within the
+             site's scale of the waiting centre (the adoption
+             reach — see the maturity branch below). With no
+             profile scale the reach IS the v300 band and every
+             path below runs exactly as before. */
+          var recReachM = Math.max(RECOVERY_BAND_M, scaleM);
+          var recCandidate = dTgtC > PEG_FENCE_M && dTgtC <= recReachM &&
             dTgtC <= dOthC + TIE_BAND_M;
           if (recCandidate) {
             if (!rec) {
@@ -998,7 +1044,65 @@
                 haversineM(rec.lat, rec.lng, recCen.lat, recCen.lng) <=
                   (recOther ? haversineM(rec.lat, rec.lng, recOther.lat, recOther.lng) : Infinity) + TIE_BAND_M) {
               var rd = haversineM(recCen.lat, recCen.lng, rec.lat, rec.lng);
-              if (rd > 0) {
+              /* v421 adoption gates, on top of the maturity
+                 gates above: (1) DECISIVE OWNERSHIP — the face
+                 must be nearer the waiting centre than the other
+                 centre by ADOPT_MARGIN_M, not the tie band: a
+                 stop equidistant from both ends adopts nothing
+                 and (being beyond the band) does not nudge
+                 either, so it can never drag a centre (the v284
+                 off-axis washroom law); (2) RAW PRESENCE — the
+                 truck must be at the cluster on its latest RAW
+                 fix, within the cluster's own stillness radius:
+                 the cluster is built from smoothed fixes, and
+                 after a long drive the smoothed position trails
+                 the truck by hundreds of metres for minutes —
+                 a cluster can mature on that ghost while the
+                 truck sits parked on the true peg (the v416
+                 S6 park), and adopting onto the ghost would
+                 move the centre AWAY from the truck. A real
+                 face passes both: the truck is there, raw, and
+                 the ground is unmistakably that end's. */
+              var adoptOK = rd > RECOVERY_BAND_M &&
+                rd + ADOPT_MARGIN_M <=
+                  (recOther ? haversineM(rec.lat, rec.lng, recOther.lat, recOther.lng) : Infinity) &&
+                haversineM(fix.latitude, fix.longitude, rec.lat, rec.lng) <= RECOVERY_CLUSTER_M;
+              if (adoptOK) {
+                /* v421 (COUNTING-REPEG-FAIL-NOV11): FACE
+                   ADOPTION. The cluster has held a full
+                   declared-place dwell OUTSIDE the recovery
+                   band but within the site's scale: this is not
+                   a creeping face the 25 m walk can chase, it
+                   is the face itself, proven by the same
+                   stillness + dwell evidence the nudge trusts.
+                   The centre moves onto it in ONE step — the
+                   owner's learn-fast law (a proven face teaches
+                   the site's reach immediately, the v409
+                   proveFace chain). The adoption counts
+                   NOTHING: the arrival still confirms through
+                   the ordinary fence/shadow discipline from the
+                   adopted centre, which the continuing presence
+                   at the face now reaches. Rate-limited like a
+                   nudge (one step per dwell of continued
+                   presence) and clamped to the frame like every
+                   centre move. */
+                recCen.lat = rec.lat;
+                recCen.lng = rec.lng;
+                if (site) {
+                  var ads = haversineM(site.lat, site.lng, recCen.lat, recCen.lng);
+                  if (ads > site.radiusM) {
+                    var ag = site.radiusM / ads;
+                    recCen.lat = site.lat + (recCen.lat - site.lat) * ag;
+                    recCen.lng = site.lng + (recCen.lng - site.lng) * ag;
+                  }
+                }
+                if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
+                recCount++;
+                rec.lastNudge = fixT;
+              } else if (rd > 0 && rd <= RECOVERY_BAND_M) {
+                /* the v300 nudge walk — in-band faces only,
+                   exactly as shipped; a beyond-band cluster that
+                   failed the adoption gates moves nothing */
                 var rf = Math.min(DRIFT_STEP_M, rd) / rd;
                 recCen.lat += (rec.lat - recCen.lat) * rf;
                 recCen.lng += (rec.lng - recCen.lng) * rf;
@@ -3534,13 +3638,36 @@
          see createPegCounter. A first day at the site passes
          null and runs exactly as v408. */
       var pegProf = profileFor(curSites.dump);
+      /* v421 (COUNTING-REPEG-FAIL-NOV11): the profile's
+         EFFECTIVE scale for the dump site — the land-use prior
+         or the learned scale, whichever runs further (the same
+         effective scale the visit counter judges by) — is what
+         sizes the peg counter's frame reach and face-adoption
+         reach. v409 passed the learned scale alone, so a first
+         day at a site (nothing learned yet) widened nothing and
+         the frame still ended 100 m past the far seed. */
+      var pegScaleM = null;
+      if (pegProf) {
+        var pegPrior = PROFILE_PRIORS[pegProf.landUse] || PROFILE_PRIORS.unknown;
+        pegScaleM = Math.max(pegPrior.scaleM, pegProf.learnedScaleM || 0);
+      }
+      /* v421: a proven carry must survive this rebuild (the
+         dump re-pegged mid-visit) — read the OUTGOING counter's
+         arm before it is replaced; createPegCounter's seeding
+         honours it when the truck stands at the dump seed. */
+      var outArmed = false;
+      try {
+        var outDbg = (counter && counter.debug) ? counter.debug() : null;
+        outArmed = !!(outDbg && outDbg.armed);
+      } catch (e) { outArmed = false; }
       counter = ENGINE.createPegCounter({
         load: curSites.load, dump: curSites.dump,
         /* v392: the truck's position at this (re)build — a fresh
            counter seeds its posture from it (see createPegCounter) */
         presence: lastFixSeen ? { lat: lastFixSeen.lat, lng: lastFixSeen.lng } : null,
         presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0,
-        profileScaleM: pegProf ? pegProf.learnedScaleM : null
+        profileScaleM: pegScaleM,
+        carryToDump: outArmed
       });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
