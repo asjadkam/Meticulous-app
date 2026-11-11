@@ -50,6 +50,20 @@
    Persists via App._store (localStorage, mt_ prefix), key 'navigator':
    { profile: {height,width,length,weight,axleLoad,axles,hazmat},
      muted: false, mode: 'truck', avatar: 'dump' }.
+
+   v419 (NAV-ML-LEARNING, stage 1 — owner, Nov 10, 2026: the
+   Navigator must be dynamic, learning each trucker's own route
+   choices instead of always spitting out the same routes): the
+   learning itself lives in js/navlearn.js (window.NavLearn);
+   this module only carries the hooks — doRoute consults it
+   BEFORE the server for a learned route on the pair, startDrive
+   opens a capture trip, onPos feeds it fixes, exitDrive closes
+   the trip, and leaving a learned route suppresses it for that
+   destination for the rest of the drive (the re-route is the
+   standard router's). No new cards, no new settings, no taps:
+   the one visible trace is a quiet line in the route summary
+   when a learned route is in use. Later stages (traffic-aware
+   learning, road-size learning) build on the same store.
 */
 (function () {
   'use strict';
@@ -3130,6 +3144,10 @@
       function setDest(latlng, label, goNow) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
+        /* v419: a new destination ends any learned-route
+           suppression — suppression is per-destination, spent
+           with the destination it was earned against. */
+        S.learnSuppressDest = '';
         /* NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8 (owner, Nov 8,
            2026: "Once I drop a pin... The menu from under covers
            up the entire screen. I should see the direction...
@@ -4174,6 +4192,11 @@
         var first = !S.pos;
         var prevPos = S.pos;
         S.pos = [lat, lon];
+        /* v419 (NAV-ML-LEARNING stage 1): route capture — while
+           a drive runs, the path actually driven feeds the
+           learning trip (thinned inside NavLearn). No taps, no
+           UI: capture rides the fix stream as a passenger. */
+        if (S.drive && S.learnTrip) { try { NavLearn.pushFix(S.learnTrip, S.pos); } catch (e) {} }
         paceSample(prevPos, S.pos); /* v280: live pace window */
         /* v336 (NAV-TRUCK-POINTING-WRONG-WAY): the heading is
            picked by pickHeading (NAVPURE) — the GPS course is
@@ -4324,6 +4347,12 @@
            the destination stays set, but it never re-routes on
            its own; Route is the driver's deliberate tap now. */
         S.autoWanted = false;
+        /* v419: ending the route ends the learned-route state
+           with it — provenance cleared, and any suppression
+           spent, so the next navigation of the pair offers the
+           learned route fresh. */
+        S.onLearnedRoute = false;
+        S.learnSuppressDest = '';
         S.plan = null; S.line = null; S.manIdx = -1; S.offSince = 0; S.arrived = false;
         /* v356: the clearance warning belongs to the route —
            ending the route ends the warning with it. */
@@ -4381,6 +4410,27 @@
         }
         if (!S.dest) { note('Pick a destination first — search above or tap the map.'); return; }
         if (!S.pos) { note('Waiting for your location… allow location for Meticulous, then tap Route again.'); return; }
+        /* v419 (NAV-ML-LEARNING stage 1): a LEARNED route for
+           this origin→destination pair is offered FIRST — before
+           the server is asked anything. The gates keep it
+           honest: never mid-drive (a drive's re-routes belong to
+           the standard router — above all the re-route that
+           fires when he LEAVES a learned route, which must not
+           hand the same line back), never over a split-shift
+           plan (it walks its own stops), and never for a
+           destination whose learned route was left earlier this
+           drive (S.learnSuppressDest, spent by setDest /
+           clearRoute). A fresh account has no learned routes,
+           so lookup returns null and this branch is invisible. */
+        if (!S.rerouting && !S.drive && !S.planOwns && typeof window !== 'undefined' && window.NavLearn) {
+          var lrec = null;
+          try { lrec = NavLearn.lookup(S.pos, S.dest); } catch (e) { lrec = null; }
+          if (lrec && (!S.learnSuppressDest || S.learnSuppressDest !== NavLearn.destCellOf(S.dest))) {
+            var lbuilt = null;
+            try { lbuilt = NavLearn.planFor(lrec, S.destLabel); } catch (e) { lbuilt = null; }
+            if (lbuilt) { finalizeRoute(lbuilt.line, lbuilt.plan, null, lbuilt); return; }
+          }
+        }
         if (S.rerouting) return;
         S.rerouting = true;
         banner('Routing…', '');
@@ -4509,10 +4559,17 @@
           } catch (e) {}
         }
 
-        function finalizeRoute(line, plan, reqBody) {
+        function finalizeRoute(line, plan, reqBody, learned) {
           S.rerouting = false;
           S.line = line;
           S.plan = plan;
+          /* v419 (NAV-ML-LEARNING stage 1): the 4th argument is
+             present only for doRoute's learned adoption — every
+             server adoption (including the lastGood fallback)
+             clears the flag, so S.onLearnedRoute always names
+             the provenance of the line in force. */
+          S.onLearnedRoute = !!learned;
+          S.learnedCount = learned ? (learned.count || 1) : 0;
           fetchGradeEvents(line);
           /* v356: the clearance second look rides every adopted
              route (see fetchClearanceWarnings above). */
@@ -4565,7 +4622,9 @@
           var st = body.querySelector('#nv_steps');
           if (st) {
             st.innerHTML = '<p class="note" style="margin-top:0">' + fmtDist(S.plan.totalKm * 1000) + ' · ' + fmtMin(S.plan.totalMin) +
-              ' · ' + (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network') + '</p>' +
+              /* v419: the one quiet line where a learned route
+                 names itself — the summary's tail, nowhere else. */
+              ' · ' + (learned ? ('Your usual route — learned from your driving · driven ' + (learned.count || 1) + ((learned.count || 1) === 1 ? ' time' : ' times')) : (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network')) + '</p>' +
               S.plan.maneuvers.map(function (m, i) {
                 return '<div class="listitem" data-nvstep="' + i + '"><div class="a">' + esc(m.instruction) + '</div>' +
                   '<div class="b">' + fmtDist(m.lengthKm * 1000) + '</div></div>';
@@ -4800,6 +4859,21 @@
           if (!S.offSince) S.offSince = Date.now();
           else if (Date.now() - S.offSince > 2500 && !S.rerouting) {
             S.offSince = 0;
+            /* v419 (NAV-ML-LEARNING stage 1): leaving a LEARNED
+               route spends it for this destination — the
+               re-route below is an ordinary mid-drive one (the
+               server's; doRoute's learned branch never fires
+               mid-drive), and the suppression keeps any later
+               fresh route this drive on the standard router too.
+               The running trip also stops calling itself a
+               learned-route drive: its tail is the router's
+               re-route, so it can neither strengthen the learned
+               route it left nor teach a new one. */
+            if (S.onLearnedRoute) {
+              try { S.learnSuppressDest = NavLearn.destCellOf(S.dest); } catch (e) {}
+              S.onLearnedRoute = false;
+              if (S.learnTrip) { S.learnTrip.onLearned = false; S.learnTrip.suggested = null; }
+            }
             banner('Off route — re-routing…', '');
             speak('Off route. Re-routing.');
             doRoute();
@@ -5331,6 +5405,14 @@
            speaks for this road. */
         S.limitKmh = null; S.limitPos = null; S.limitFetchedAt = 0;
         S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null, trayKey: '' };
+        /* v419 (NAV-ML-LEARNING stage 1): capture opens with
+           the drive. The trip's reference suggestion is the line
+           in force NOW — a learned line when this drive rides
+           one, the server's otherwise; mid-drive re-routes never
+           rewrite it, so a deviation is judged against what the
+           Navigator first suggested for this pair. */
+        S.learnTrip = null;
+        try { if (typeof window !== 'undefined' && window.NavLearn && S.dest && S.pos) S.learnTrip = NavLearn.beginTrip(S.pos, S.dest, S.destLabel, S.line, !!S.onLearnedRoute); } catch (e) { S.learnTrip = null; }
         /* v212: arm the shell's drive bridges — PiP on leave,
            tray readout updates from the tick. Inert off-shell. */
         try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(true); } catch (e) {}
@@ -5539,6 +5621,13 @@
 
       function exitDrive() {
         if (!S || !S.drive) return;
+        /* v419 (NAV-ML-LEARNING stage 1): the drive's capture
+           closes here — arrival (via driveArrived's timer), the
+           End tap and clearRoute all funnel through exitDrive,
+           and NavLearn.finishTrip itself refuses any drive that
+           did not end at its destination, so an abandoned drive
+           teaches nothing. */
+        if (S.learnTrip) { try { NavLearn.finishTrip(S.learnTrip, S.pos); } catch (e) {} S.learnTrip = null; }
         /* v212: the shell's drive bridges stand down with the
            drive — PiP disarmed, tray readout cleared, any native
            line in flight stopped. Inert off-shell. */
