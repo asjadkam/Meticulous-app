@@ -215,6 +215,57 @@
     if (!(startMs > 0) || !(nowMs > 0)) return false;
     return dayKey303(startMs) < dayKey303(nowMs);
   }
+  /* v411 (CLOSE-SHUTS-TIMER, owner law restated Nov 10, broken
+     in his hands Nov 9 AND Nov 10): the closed-day proof — the
+     booked evidence that the day a session belongs to is
+     CLOSED. Two proofs, the two shapes a close writes:
+       (1) a FINISHED sessions entry whose own start (endedAt −
+           seconds) names the session's pin within the v69
+           jitter family (±5000 ms) — the v271/v352 test; OR
+       (2) a dispatch record for the session's day standing
+           COMPLETED — a dispatch completion IS a shift close
+           (js/app.js v82: applyCompletion stops the session),
+           and a close run on a surface whose own tracker was
+           idle (the Nov 9/10 web close-out) books the day this
+           way and writes NO sessions entry at all, leaving
+           proof (1) nothing to match.
+     The caller passes the UNION of this device's local lists
+     and the pull's own incoming docs, so the verdict never
+     depends on which doc the forEach reaches first. Mirrored
+     in js/app.js (closedDayProof411) and js/shifttrack.js
+     (dayClosed411). */
+  function closedProof411(sessionsArr, dspList, dspActive, startMs) {
+    if (!(startMs > 0)) return false;
+    var day = dayKey303(startMs);
+    if (Array.isArray(sessionsArr)) {
+      for (var i = 0; i < sessionsArr.length; i++) {
+        var e = sessionsArr[i];
+        if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
+        var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
+        if (isFinite(st) && Math.abs(st - startMs) <= 5000) return true;
+      }
+    }
+    var lists411 = [dspList, dspActive ? [dspActive] : null];
+    for (var li = 0; li < lists411.length; li++) {
+      var arr = lists411[li];
+      if (!Array.isArray(arr)) continue;
+      for (var j = 0; j < arr.length; j++) {
+        var d = arr[j];
+        if (!d || d.status !== 'completed') continue;
+        var rd = '';
+        if (typeof d.scheduledAt === 'string') {
+          var m411 = /^(\d{4})-(\d{2})-(\d{2})/.exec(d.scheduledAt);
+          if (m411) rd = m411[1] + m411[2] + m411[3];
+        }
+        if (!rd && typeof d.date === 'string') {
+          var m411b = /^(\d{4})-(\d{2})-(\d{2})/.exec(d.date);
+          if (m411b) rd = m411b[1] + m411b[2] + m411b[3];
+        }
+        if (rd && Number(rd) === day) return true;
+      }
+    }
+    return false;
+  }
   function isSyncable(key) {
     return typeof key === 'string' && key.length > 0 && key.indexOf('__') !== 0;
   }
@@ -3557,6 +3608,80 @@
                   }
                 }
               }
+            }
+          }
+        }
+
+        /* v411 (CLOSE-SHUTS-TIMER, owner Nov 9 + Nov 10, in his
+           hands twice after v352 shipped): the closed state wins
+           over ANY local running state at sync — the general law
+           the v271/v303/v352 rules each cover one shape of. All
+           three older rules read the LOCAL sessions list only,
+           so each missed the Nov 9/10 shape end to end: the
+           close-out landed on a surface whose tracker was idle,
+           booking the day as a COMPLETED DISPATCH (no sessions
+           entry at all — proof (2) in closedProof411), or the
+           finished entry existed only in the pull's OWN incoming
+           sessions doc, which the per-key forEach had not
+           applied yet when the tracker doc was judged (the
+           tracker is judged against a local list that does not
+           hold the close, falls to the stamp game, and its own
+           ticking re-stamps win — the running copy then pushes
+           UP over the account's closed day). This rule therefore
+           judges the tracker against the UNION of the local
+           lists and this pull's incoming docs for sessions /
+           dsp_list / dsp_active, and settles every posture:
+             - local LIVE + cloud idle: install the idle (the
+               v352 outcome, on the widened evidence);
+             - local LIVE + cloud live (the same session's echo,
+               pins within the jitter family, or a pin-less
+               copy): the local tracker goes IDLE in the
+               stopSessionAt reset shape and the key stays dirty
+               — tombstone idiom — so the flush pushes the close
+               UP and the account converges on closed;
+             - local IDLE + cloud live: the running copy is
+               refused (the v271 outcome, on the widened
+               evidence) and the key stays dirty the same way.
+           A cloud live copy naming a DIFFERENT session (pins
+           beyond the jitter family) is untouched here — v265's
+           later-session rule and the generic game arbitrate it
+           exactly as before. */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v)) {
+          var cd411Local = parseJson(raw, null);
+          var cd411CloudLive = d.v.status === 'running' || d.v.status === 'paused';
+          var cd411CloudSid = Number(d.v.sessionId) || 0;
+          var cd411LocalLive = !!(cd411Local && typeof cd411Local === 'object' &&
+            !Array.isArray(cd411Local) &&
+            (cd411Local.status === 'running' || cd411Local.status === 'paused'));
+          var cd411LocalSid = cd411LocalLive ? (Number(cd411Local.sessionId) || 0) : 0;
+          var cd411JudgeSid = cd411LocalLive ? cd411LocalSid : cd411CloudSid;
+          var cd411SameEcho = !cd411CloudLive || cd411CloudSid === 0 ||
+            !cd411LocalLive || Math.abs(cd411CloudSid - cd411LocalSid) <= 5000;
+          if (cd411JudgeSid > 0 && cd411SameEcho &&
+              (cd411LocalLive || cd411CloudLive)) {
+            var cd411Sessions = parseJson(lsGetRaw('sessions'), null) || [];
+            var cd411DspL = parseJson(lsGetRaw('dsp_list'), null) || [];
+            var cd411DspA = parseJson(lsGetRaw('dsp_active'), null);
+            docs.forEach(function (dd) {
+              var kk411 = dd.mt || dd.id;
+              if (kk411 === 'sessions' && Array.isArray(dd.v)) cd411Sessions = cd411Sessions.concat(dd.v);
+              else if (kk411 === 'dsp_list' && Array.isArray(dd.v)) cd411DspL = cd411DspL.concat(dd.v);
+              else if (kk411 === 'dsp_active' && dd.v && typeof dd.v === 'object' && !Array.isArray(dd.v)) cd411DspA = dd.v;
+            });
+            if (closedProof411(cd411Sessions, cd411DspL, cd411DspA, cd411JudgeSid)) {
+              if (cd411LocalLive && !cd411CloudLive) {
+                lsSetRaw(key, JSON.stringify(d.v));
+                meta.keys[key] = { t: cloudTs, s: cloudTs };
+                applied++;
+              } else if (cd411LocalLive) {
+                lsSetRaw(key, JSON.stringify({ status: 'idle', startTs: 0, elapsed: 0, stateAt: now }));
+                meta.keys[key] = { t: now, s: cloudTs };
+                applied++;
+              } else {
+                meta.keys[key] = { t: now, s: cloudTs };
+              }
+              return;
             }
           }
         }

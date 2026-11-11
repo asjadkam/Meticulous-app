@@ -2316,6 +2316,20 @@
       var recPin93 = 0;
       try { var pm93 = /^s(\d+)$/.exec(rec.sessionKey || ''); if (pm93) recPin93 = Number(pm93[1]) || 0; } catch (e) {}
       var recToday93 = recPin93 > 0 && todayStr(new Date(recPin93)) === todayStr(new Date());
+      /* v411 (CLOSE-SHUTS-TIMER): a record naming TODAY's session
+         is adoptable (the v93 arm seed) only while today is still
+         open. When the day stands CLOSED (closedDayProof411: a
+         finished twin booked, or the day's dispatch completed —
+         the Nov 9/10 close-out that landed on another surface),
+         the record is the closed day's stale echo: it is ENDED
+         with this layer's idle facts — the ghost-branch idiom —
+         and never adopted, so a full close/reopen can no longer
+         resurrect the timer from the native record the close
+         never reached. */
+      if (recToday93 && closedDayProof411(recPin93)) {
+        try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
+        return;
+      }
       if (!recToday93) {
         try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
         return;
@@ -3544,48 +3558,111 @@
     try { if (window.ShiftTrack && ShiftTrack.sessionStopped) ShiftTrack.sessionStopped('s' + ghostSid); } catch (e) {}
     return true;
   }
+  /* v411 (CLOSE-SHUTS-TIMER, owner law restated Nov 10, broken
+     in his hands Nov 9 AND Nov 10): closing the shift shuts the
+     timer down — no separate Stop, ever — and a closed day can
+     never resurrect a running timer on any surface. The proof
+     that a session's day is closed, in the order the app itself
+     writes a close:
+       (1) the sessions list holds a FINISHED entry whose own
+           start names this session (the v271/v69 identity test,
+           ±5000 ms) — the v352 proof, kept; OR
+       (2) a dispatch for the session's day stands COMPLETED —
+           the v82 law makes a dispatch completion a shift close
+           (applyCompletion stops the session on the closing
+           surface), so the completed record IS the close, on
+           whatever surface it landed. This is the Nov 9/10
+           shape the v352 test could not see: the close-out ran
+           on a surface whose own tracker was idle, so it booked
+           the day (dispatch + Revenue) and wrote NO sessions
+           entry at all — the phone's session had no finished
+           twin to match, and every v352/v271/v303 rule stood
+           down while the phone's timer ran on and, after a full
+           close/reopen, came back running.
+     The record-date read is the dispatch module's own rule
+     (scheduledAt's date prefix, else the record's date field),
+     inlined so this helper needs nothing outside the tracker
+     regions the harnesses slice. Mirrored in js/cloudsync.js
+     (closedProof411) and js/shifttrack.js (dayClosed411). */
+  function closedDayProof411(startMs) {
+    if (!(startMs > 0)) return false;
+    var day = todayStr(new Date(startMs));
+    var sessions = store.get('sessions', []);
+    if (Array.isArray(sessions)) {
+      for (var i = 0; i < sessions.length; i++) {
+        var e = sessions[i];
+        if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
+        var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
+        if (isFinite(st) && Math.abs(st - startMs) <= 5000) return true;
+      }
+    }
+    var lists411 = [store.get('dsp_list', [])];
+    var act411 = store.get('dsp_active', null);
+    if (act411) lists411.push([act411]);
+    for (var li = 0; li < lists411.length; li++) {
+      var arr = lists411[li];
+      if (!Array.isArray(arr)) continue;
+      for (var j = 0; j < arr.length; j++) {
+        var d = arr[j];
+        if (!d || d.status !== 'completed') continue;
+        var rd = '';
+        if (typeof d.scheduledAt === 'string') {
+          var m411 = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
+          if (m411) rd = m411[1];
+        }
+        if (!rd && typeof d.date === 'string') rd = d.date;
+        if (rd === day) return true;
+      }
+    }
+    return false;
+  }
   /* v352 (PHONE-TIMER-RUNS-AFTER-WEB-CLOSE, owner Nov 5, 20:02):
      the day was closed from the WEB session (End-shift at 18:00,
      the books correct), but the phone's live tracker never got
      the word — at 20:02 it painted Working… 11:02:52 and its
      miles engine was still accruing (259.3 live km against a
-     236 km odometer span). The sessions list is the booked
-     truth: when it holds a FINISHED entry whose own start names
-     this tracker's session (the v271/v69 identity test), the
+     236 km odometer span). The booked truth is the closed-day
+     proof above: when it holds for this tracker's session, the
      day is closed — on whatever session closed it — and this
      device stands everything down WITHOUT booking anything (the
-     closing session already wrote the entry; a stopSessionAt
-     here would double-book it). The engine posture mirrors a
-     local close exactly (LiveMiles.stopDay with trailHome, so
-     the drive home still accrues into the closed day's trail —
-     the standing close law; GeoLoads stop; the native session
+     closing session already wrote the entry; a stop here would
+     double-book it). The engine posture mirrors a local close
+     exactly (LiveMiles.stopDay with trailHome, so the drive
+     home still accrues into the closed day's trail — the
+     standing close law; GeoLoads stop; the native session
      stop), then the tracker resets to idle and trackerSave
      carries the idle facts to the widget and the native record.
-     Wired on the same cadence as healStaleTrackerPeriodic. */
+     Wired on the same cadence as healStaleTrackerPeriodic, and
+     (v411) at boot in init, before the relaunch fold. */
   function healClosedTracker() {
     var t = App.tracker;
     if (!t || (t.status !== 'running' && t.status !== 'paused')) return false;
     var sid = Number(t.sessionId) || 0;
     var startMs = sid > 0 ? sid : trackerSessionStartMs();
     if (!(startMs > 0)) return false;
+    /* The finished-twin test (v352), inline as it shipped —
+       then the v411 widening: the closed-day proof's second
+       prong (a completed dispatch for the session's day). */
+    var closed411 = false;
     var sessions = store.get('sessions', []);
-    if (!Array.isArray(sessions)) return false;
-    for (var i = 0; i < sessions.length; i++) {
-      var e = sessions[i];
-      if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
-      var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
-      if (isFinite(st) && Math.abs(st - startMs) <= 5000) {
-        var milesFin = null;
-        try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (err) {}
-        try { dayEngineStop(); } catch (err) {}
-        try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (err) {}
-        App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
-        trackerSave();
-        try { trackerPaint(); } catch (err) {}
-        return true;
+    if (Array.isArray(sessions)) {
+      for (var i = 0; i < sessions.length; i++) {
+        var e = sessions[i];
+        if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
+        var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
+        if (isFinite(st) && Math.abs(st - startMs) <= 5000) { closed411 = true; break; }
       }
     }
-    return false;
+    if (!closed411) closed411 = closedDayProof411(startMs);
+    if (!closed411) return false;
+    var milesFin = null;
+    try { if (window.LiveMiles) milesFin = LiveMiles.stopDay({ trailHome: true }); } catch (err) {}
+    try { dayEngineStop(); } catch (err) {}
+    try { if (window.ShiftTrack) ShiftTrack.sessionStopped(milesFin && milesFin.key); } catch (err) {}
+    App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
+    trackerSave();
+    try { trackerPaint(); } catch (err) {}
+    return true;
   }
   /* v314 (PHANTOM-SESSION-31H): the periodic re-test. Until now
      healStaleTracker was wired ONLY at cold open (init), on the
@@ -3816,6 +3893,29 @@
     try { App.armNativeDay(); } catch (e) {}
     if (sec > 0) {
       var sessions = store.get('sessions', []);
+      /* v411 (EXTRA-AUTO-SESSIONS): one shift, ONE booked session.
+         When the sessions list already holds this very session's
+         finished entry (the v69 identity test — its own start,
+         endedAt − seconds, names this session's pin within the
+         ±5000 ms jitter family), the day was already booked —
+         by the close on another surface whose heal had not yet
+         reached this tracker, the exact overlap that used to
+         file the same shift twice. The stop below still stands
+         everything down (engines, native service, tracker idle —
+         the close law), but it writes no second entry, saves no
+         second doc and posts no second Revenue line. */
+      var twin411 = false;
+      try {
+        var pin411 = Number(trackerSessionKeyMs()) || 0;
+        if (pin411 > 0 && Array.isArray(sessions)) {
+          for (var tw411 = 0; tw411 < sessions.length; tw411++) {
+            var te411 = sessions[tw411];
+            if (!te411 || !te411.endedAt || !(Number(te411.seconds) > 0)) continue;
+            var tst411 = Date.parse(te411.endedAt) - Number(te411.seconds) * 1000;
+            if (isFinite(tst411) && Math.abs(tst411 - pin411) <= 5000) { twin411 = true; break; }
+          }
+        }
+      } catch (e) {}
       var entry = { date: todayStr(new Date(endMs)), seconds: sec, endedAt: new Date(endMs).toISOString() };
       /* v242 (WORK-PROFILES): the saved session carries the
          profile the tracker started under (a session restored
@@ -3929,14 +4029,16 @@
          from the same helper the close review prices with. */
       var closeTravel = closeTravelFor(todayStr(new Date(trackerSessionStartMs())));
       if (closeTravel > 0) entry.travelHours = closeTravel;
-      sessions.push(entry); store.set('sessions', sessions);
-      // v40: both odometer readings already on the entry -> reconcile
-      // now (the usual path reconciles when the end reading lands via
-      // applyOdoReading, since the end prompt follows the stop).
-      try { if (window.LiveMiles && LiveMiles.reconcileSession(entry)) store.set('sessions', sessions); } catch (e) {}
-      if (window.FB && FB.saveDoc) FB.saveDoc('sessions', 's' + Date.now(), entry);
-      if (Meticulous.modules.revenue && Meticulous.modules.revenue.onSession) {
-        try { Meticulous.modules.revenue.onSession(entry); } catch (e) {}
+      if (!twin411) {
+        sessions.push(entry); store.set('sessions', sessions);
+        // v40: both odometer readings already on the entry -> reconcile
+        // now (the usual path reconciles when the end reading lands via
+        // applyOdoReading, since the end prompt follows the stop).
+        try { if (window.LiveMiles && LiveMiles.reconcileSession(entry)) store.set('sessions', sessions); } catch (e) {}
+        if (window.FB && FB.saveDoc) FB.saveDoc('sessions', 's' + Date.now(), entry);
+        if (Meticulous.modules.revenue && Meticulous.modules.revenue.onSession) {
+          try { Meticulous.modules.revenue.onSession(entry); } catch (e) {}
+        }
       }
     }
     App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
@@ -5241,7 +5343,17 @@
       trackerSave(); trackerPaint();
       // v69: pin the session's stable record identity before the
       // tracking hooks key anything by it (see trackerSessionKeyMs).
-      App.tracker.sessionId = trackerSessionStartMs();
+      /* v411 (EXTRA-AUTO-SESSIONS): the pin is the plan ANCHOR
+         itself, not the whole-second derivation off it. The
+         native day-arm was armed under 's' + anchorMs
+         (App.armNativeDay) and seeds the native record under
+         that exact key; the old derivation pinned the web
+         session up to a second LATER than the arm's key, so one
+         dispatch carried two session identities (the arm's and
+         the web's) that every reconcile then had to forgive as
+         "jitter twins". One dispatch, one session, one key:
+         the auto-started session IS the armed session. */
+      App.tracker.sessionId = anchorMs;
       App.tracker.startLabelMs = App.tracker.sessionId; // v361: pinned face start (the dispatch anchor)
       App.tracker.stateAt = Date.now(); // v361: a start is a deliberate transition (cloudsync v361)
       /* v242 (WORK-PROFILES): an auto-started session belongs to
@@ -7355,6 +7467,16 @@
        that is merely young or same-day is untouched and resumes
        exactly as before. */
     try { healStaleTracker(); } catch (e) {}
+    /* v411 (CLOSE-SHUTS-TIMER): the boot reconcile — a session
+       restored from the store whose day already stands CLOSED
+       (closedDayProof411) is stood down HERE, before the relaunch
+       fold below folds its closed time into the clock and
+       re-arms the engines and the native service for it. The
+       closed state wins over any local running state at boot,
+       on every device — the Nov 9/10 resurrection (web close-out
+       in the book, phone timer back running after a full
+       close/reopen) dies at this line. */
+    try { healClosedTracker(); } catch (e) {}
     if (App.tracker.status === 'running') { // v26: app was closed mid-shift — keep RUNNING, account for closed time
       App.tracker.elapsed += Math.floor((Date.now() - App.tracker.startTs) / 1000);
       App.tracker.startTs = Date.now();

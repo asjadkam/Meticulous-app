@@ -75,6 +75,53 @@
         && d.getMonth() === n.getMonth()
         && d.getDate() === n.getDate();
   }
+  /* v411 (CLOSE-SHUTS-TIMER): the closed-day proof for a session
+     pin, read off the web store this layer already shares: a
+     FINISHED sessions entry naming the pin (endedAt − seconds
+     within the v69 ±5000 ms jitter family), or a dispatch for
+     the pin's day standing COMPLETED (a dispatch completion is
+     a shift close — js/app.js v82 — and the Nov 9/10 close-out
+     booked the day that way on a surface whose tracker was
+     idle, writing no sessions entry at all). Mirrored in
+     js/app.js (closedDayProof411) and js/cloudsync.js
+     (closedProof411). */
+  function dayClosed411(pinMs) {
+    try {
+      if (!(pinMs > 0)) return false;
+      var s = store();
+      if (!s) return false;
+      var d0 = new Date(pinMs);
+      var day = d0.getFullYear() + '-' + ('0' + (d0.getMonth() + 1)).slice(-2) + '-' + ('0' + d0.getDate()).slice(-2);
+      var sessions = s.get('sessions', []);
+      if (Array.isArray(sessions)) {
+        for (var i = 0; i < sessions.length; i++) {
+          var e = sessions[i];
+          if (!e || !e.endedAt || !(Number(e.seconds) > 0)) continue;
+          var st = Date.parse(e.endedAt) - Number(e.seconds) * 1000;
+          if (isFinite(st) && Math.abs(st - pinMs) <= 5000) return true;
+        }
+      }
+      var lists = [s.get('dsp_list', [])];
+      var act = s.get('dsp_active', null);
+      if (act) lists.push([act]);
+      for (var li = 0; li < lists.length; li++) {
+        var arr = lists[li];
+        if (!Array.isArray(arr)) continue;
+        for (var j = 0; j < arr.length; j++) {
+          var d = arr[j];
+          if (!d || d.status !== 'completed') continue;
+          var rd = '';
+          if (typeof d.scheduledAt === 'string') {
+            var m = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
+            if (m) rd = m[1];
+          }
+          if (!rd && typeof d.date === 'string') rd = d.date;
+          if (rd === day) return true;
+        }
+      }
+      return false;
+    } catch (e) { return false; }
+  }
 
   var currentKey = null;      // 's<sessionStartMs>' being recorded
   var lastStatus = null;      // last status() snapshot from the plugin
@@ -485,14 +532,34 @@
       if (!p || typeof p.armDay !== 'function' || !arm || !arm.key) {
         return Promise.resolve(null);
       }
+      /* v411 (EXTRA-AUTO-SESSIONS): one dispatch, one arm. The
+         plan follows the dispatch AS EDITED (js/app.js v342), so
+         an edit re-arms under a NEW session key — and the old
+         arm must not survive beside it: a stale arm left standing
+         fires at the OLD time and seeds a session the owner
+         never started, alongside the day's real one. When the
+         stored arm names a different key, the native arm is
+         disarmed FIRST and the new arm placed after; a repeat of
+         the same arm stays the no-op it always was. */
+      var prev411 = null;
+      try { var s411 = store(); prev411 = s411 ? s411.get('dayarm', null) : null; } catch (e) {}
       storeDayArm({ key: arm.key, fireMs: arm.fireMs, startMs: arm.startMs, date: arm.date });
-      return p.armDay({
-        sessionKey: arm.key, fireMs: arm.fireMs,
-        startMs: arm.startMs, date: arm.date
-      }).then(function (r) {
-        refreshStatus();
-        return r;
-      }).catch(function () { return null; });
+      var place411 = function () {
+        return p.armDay({
+          sessionKey: arm.key, fireMs: arm.fireMs,
+          startMs: arm.startMs, date: arm.date
+        }).then(function (r) {
+          refreshStatus();
+          return r;
+        }).catch(function () { return null; });
+      };
+      if (prev411 && prev411.key && prev411.key !== arm.key &&
+          typeof p.disarmDay === 'function') {
+        return Promise.resolve()
+          .then(function () { try { return p.disarmDay(); } catch (e) { return null; } })
+          .then(place411, place411);
+      }
+      return place411();
     },
 
     /* v92: cancel the arm AND forget the stored window (the plan
@@ -572,7 +639,13 @@
               var pin93 = 0;
               try { var m93 = /^s(\d+)$/.exec((rec && rec.sessionKey) || ''); if (m93) pin93 = Number(m93[1]) || 0; } catch (e) {}
               var live93 = !!rec && (rec.status === 'running' || rec.status === 'paused');
-              if (live93 && pinIsToday93(pin93)) return;
+              /* v411 (CLOSE-SHUTS-TIMER): a live record whose day
+                 stands CLOSED (dayClosed411) is not the v93
+                 armed morning — it is the closed day's echo, and
+                 it takes the drain-and-stop below like any other
+                 finished shift, so the native service cannot
+                 keep recording a day the book has closed. */
+              if (live93 && pinIsToday93(pin93) && !dayClosed411(pin93)) return;
               stopIfStale93();
             }).catch(function () { stopIfStale93(); });
           } else {
