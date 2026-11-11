@@ -206,8 +206,16 @@ const CLEANMETA = { uid: 'u1', globallySynced: true, keys: { tracker: { t: 4000,
     await settle(900);
     eq('S4 the later session still wins by pin order', (P.get('tracker') || {}).sessionId, SID + 86400000);
   }
-  /* S5: a legacy copy without stateAt arbitrates exactly as
-     before (the rule needs both stamps). */
+  /* S5: SUPERSEDED BY v423 (TIMER-PAUSED-ITSELF-NOV11, Nov 11,
+     2026). The v361-era expectation — a legacy copy without
+     stateAt falls through to the old stamp game and the cloud
+     pause installs — was the acknowledged hole Nov 11's
+     incident walked through: a running session paused by a
+     same-session cloud copy with no tap anywhere. The v423
+     guard in js/cloudsync.js now refuses ANY same-session
+     cloud pause over a locally running session, stamps or no
+     stamps, so this scenario's law is: the running session
+     stands. (The scenario itself is unchanged.) */
   {
     const server = makeServer();
     serverSet(server, 'tracker', PHONE_PAUSED, 5000);
@@ -215,7 +223,7 @@ const CLEANMETA = { uid: 'u1', globallySynced: true, keys: { tracker: { t: 4000,
     const L = makeWorld(server, { local: [['tracker', legacy]], meta: JSON.parse(JSON.stringify(CLEANMETA)) });
     L.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle(900);
-    eq('S5 a stateAt-less local falls through to the old game (clean meta -> cloud installs)', (L.get('tracker') || {}).status, 'paused');
+    eq('S5 (v423) a stateAt-less local RUNNING session is never paused by a same-session cloud copy', (L.get('tracker') || {}).status, 'running');
   }
 
   console.log('— F: the face names the pinned start —');

@@ -3712,6 +3712,58 @@
           }
         }
 
+        /* v423 (TIMER-PAUSED-ITSELF-NOV11, owner Nov 11, 2026
+           16:33 CST: "I just opened the app to see the count.
+           And found it paused.. Without any action from me!
+           Now it's off by 1.5 hours!"): the v365 rule above
+           guards the stamp arbitration only when the two
+           copies carry DIFFERENT stateAts. Copies of the SAME
+           session restored on another surface carry the
+           session's stateAt VERBATIM — restores and ordinary
+           saves never re-stamp it, only transitions do — so a
+           paused copy of this session (folded on another
+           surface, or left by an echo) reaches this pull with
+           an EQUAL stamp, the v361 rule never engages, and the
+           generic game below decides: a settled local key takes
+           the cloud copy wholesale, a both-changed key takes it
+           on the doc stamp alone. A stateAt-less paused copy
+           (a legacy shell) is blind to the rule the same way —
+           it needs BOTH stamps > 0. js/app.js onAuth then
+           re-reads the store copy into the live page, and a
+           RUNNING session stands paused mid-flight by a flag
+           that never came from a tap on this device. His law
+           (Nov 7, restated Nov 11): a running timer pauses
+           only on his tap or a day close. A cloud copy may
+           therefore NEVER install a PAUSED state over a
+           locally RUNNING copy of the same session (pins
+           within the v361 jitter family, or a pin-less copy),
+           whatever stamps it carries — the local stands and
+           the key stays dirty (the tombstone idiom) so the
+           flush pushes the running truth UP and the account
+           converges on it. Postures untouched: a local PAUSE
+           (v361 above still installs a later deliberate
+           resume over it), the v411 close (above — a close
+           installs IDLE, never a pause), and different-session
+           copies (v265/v303 and the generic game arbitrate
+           them exactly as before). Proven in
+           tools/timer-autopause-v423-test.js (A1/A2/A2b fail
+           on web 422 bytes; A3/A4/A5 keep-green). */
+        if (key === 'tracker' && raw !== null && d.v &&
+            typeof d.v === 'object' && !Array.isArray(d.v) &&
+            d.v.status === 'paused') {
+          var lp423Local = parseJson(raw, null);
+          if (lp423Local && typeof lp423Local === 'object' && !Array.isArray(lp423Local) &&
+              lp423Local.status === 'running') {
+            var lp423LocalSid = Number(lp423Local.sessionId) || 0;
+            var lp423CloudSid = Number(d.v.sessionId) || 0;
+            if (lp423CloudSid === 0 || lp423LocalSid === 0 ||
+                Math.abs(lp423CloudSid - lp423LocalSid) <= 5000) {
+              meta.keys[key] = { t: now, s: cloudTs };
+              return;
+            }
+          }
+        }
+
         if (raw === null) {
           // Not on this device.
           if (km.d && km.d > cloudTs) {

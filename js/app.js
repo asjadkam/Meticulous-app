@@ -2429,7 +2429,34 @@
       } else if (rec.status === 'running' && (!t.status || t.status === 'idle')) {
         t.status = 'running'; t.elapsed = rec.elapsedBase || 0; t.startTs = rec.segStartMs || now; changed = true;
       } else if (rec.status === 'paused' && (!t.status || t.status === 'idle')) {
-        t.status = 'paused'; t.elapsed = rec.elapsedBase || 0; t.startTs = 0; changed = true;
+        /* v423 (TIMER-PAUSED-ITSELF-NOV11, owner Nov 11, 2026
+           16:33 CST — he reopened the app and found the day
+           PAUSED at 07:59:57 with no tap from him): this
+           restore used to adopt the record's pause on its SAVE
+           stamp alone (stateNewer — and a relaunched page's
+           _lastStateAt resets to 0, so the stamp contest is
+           no contest at all). Any paused record a reopen met —
+           an echo's young clock, a stale shell — became the
+           page's truth wholesale. A pause is a DELIBERATE
+           transition, and every real pause writer stamps one
+           (stateAt: his page tap, his face tap, a web-surface
+           tap, the split engine — js/app.js trackerToggle /
+           splitAutoPause, SessionRecord.nativeToggle). So the
+           restore now adopts the PAUSED state only from a
+           record carrying that stamp (stateAt > 0 — his own
+           face-tap pause before a close still restores exactly
+           as paused). An UNSTAMPED paused record is no one's
+           tap: the session restores RUNNING with its banked
+           time preserved whole and its segment re-anchored at
+           the restore moment — no counted time is lost, and
+           no phantom pause lands. Proven in
+           tools/timer-autopause-v423-test.js (B1 fails on web
+           422 bytes with his exact bank; B2/B4 keep-green). */
+        if ((rec.stateAt || 0) > 0) {
+          t.status = 'paused'; t.elapsed = rec.elapsedBase || 0; t.startTs = 0; changed = true;
+        } else {
+          t.status = 'running'; t.elapsed = rec.elapsedBase || 0; t.startTs = now; changed = true;
+        }
       }
       if (changed && rec.sessionKey) {
         var m = /^s(\d+)$/.exec(rec.sessionKey);
