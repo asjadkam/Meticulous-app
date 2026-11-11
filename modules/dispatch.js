@@ -909,7 +909,42 @@
      no copy carries a pin does the caller fall on to the
      place-name and text fallbacks. A pin present on the tapped
      copy always wins over the other copy's — the resolver fills
-     a MISSING pin, it never second-guesses a present one. */
+     a MISSING pin, it never second-guesses a present one.
+     v414 (DISPATCH-NAVIGATE-NO-DESTINATION, owner Nov 11, 2026,
+     screen recording of his morning): the ACTIVE Aecon Trans
+     dispatch carried its pins ONLY in its notes — "Go Empty To:
+     (51.1225089, -114.0122197)" + its Maps link, "Hauling To:
+     (51.3078889, -114.0369722)" + its link — typed in when the
+     dispatch was entered, so the lat/lng fields were never set
+     on either copy. His Navigate tap fell through the pin and
+     the place name to the text search and the Navigator opened
+     at his position with no destination and no route. The
+     notes ARE the record's own stored data, so the resolver
+     now reads them as its LAST resort: the pin the notes label
+     "Go Empty To" (the coordinate pair that follows the label,
+     in the pair or in the Maps link after it, never past the
+     "Hauling To" label — that pin is the Dump-only target, by
+     its own door). A stored pin on either copy still outranks
+     the notes, the tapped copy's notes outrank the other
+     copy's, and an UNLABELLED pair in the notes is not a pin —
+     nothing is pretended into existence. */
+  function dspNotesGoPin(notes) {
+    var t = String(notes || '');
+    if (!t) return null;
+    var m = /go\s*empty\s*to/i.exec(t);
+    if (!m) return null;
+    var seg = t.slice(m.index + m[0].length);
+    var cut = seg.search(/hauling\s*to/i);
+    if (cut !== -1) seg = seg.slice(0, cut);
+    seg = seg.slice(0, 240);
+    var dm = seg.match(/(-?\d{1,3}\.\d{4,})[\s,]+(-?\d{2,3}\.\d{4,})/);
+    if (!dm) return null;
+    var la = parseFloat(dm[1]), ln = parseFloat(dm[2]);
+    if (!isFinite(la) || !isFinite(ln)) return null;
+    if (Math.abs(la) > 90 || Math.abs(ln) > 180) return null;
+    if (la === 0 && ln === 0) return null;
+    return { lat: la, lng: ln };
+  }
   function dspRecordPin(d) {
     function pinOf(r) {
       if (!r || r.lat === null || r.lat === undefined || r.lng === null || r.lng === undefined) return null;
@@ -928,6 +963,21 @@
         }
         var a = active();
         if (a && a.id === d.id && a !== d) { var p2 = pinOf(a); if (p2) return p2; }
+      } catch (e) {}
+    }
+    /* v414: no stored pin on either copy — the record's own
+       notes are the last resort (dspNotesGoPin above): the
+       tapped copy's notes first, then the other copy's. */
+    var np = dspNotesGoPin(d && d.notes);
+    if (np) return np;
+    if (d && d.id) {
+      try {
+        var l2 = list();
+        for (var j = 0; j < l2.length; j++) {
+          if (l2[j] && l2[j].id === d.id && l2[j] !== d) { var np1 = dspNotesGoPin(l2[j].notes); if (np1) return np1; }
+        }
+        var a2 = active();
+        if (a2 && a2.id === d.id && a2 !== d) { var np2 = dspNotesGoPin(a2.notes); if (np2) return np2; }
       } catch (e) {}
     }
     return null;
