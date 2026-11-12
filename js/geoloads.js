@@ -806,6 +806,16 @@
     var scaleM = (typeof cfg.profileScaleM === 'number' && cfg.profileScaleM > 0)
       ? Math.round(cfg.profileScaleM) : 0;
     var reachM = Math.max(SITE_BUFFER_M, scaleM);
+    /* v437 (COUNT-SITE-CONFIRM-WIDEZONE-NOV12): the confirmed
+       site, judged by the glue on the pegs themselves (see
+       siteConfirmFor in the facade): the two pegs close by =
+       the one working site. On a peg day it widens exactly one
+       judgement — the recovery cluster's adoption in ingest
+       (a face decisively the waiting end's, inside the one
+       site, is adopted in one step instead of walked to).
+       A counter built without it runs the v436 paths. */
+    var confSite = (cfg && cfg.siteConfirmed && typeof cfg.siteConfirmed === 'object')
+      ? cfg.siteConfirmed : null;
     /* the day's site frame, from the seeds + the site's scale */
     var site = null;
     if (seedLoad && seedDump) {
@@ -1067,7 +1077,32 @@
                 rd + ADOPT_MARGIN_M <=
                   (recOther ? haversineM(rec.lat, rec.lng, recOther.lat, recOther.lng) : Infinity) &&
                 haversineM(fix.latitude, fix.longitude, rec.lat, rec.lng) <= RECOVERY_CLUSTER_M;
-              if (adoptOK) {
+              /* v437 (COUNT-SITE-CONFIRM-WIDEZONE-NOV12): on a
+                 CONFIRMED site the same adoption reaches INSIDE
+                 the band. The v300 walk (25 m per dwell) spends
+                 a whole short tip catching up to a face 100-200 m
+                 off the peg, and the inner shadow's load-reach
+                 exclusion refuses the overlap ground outright —
+                 so a first tip at a moved face on the one site
+                 could still die of the walk. The cluster
+                 evidence is unchanged (a full declared-place
+                 dwell, fixes holding one still cluster, the
+                 truck raw-present at it); what changes is the
+                 ownership bar: inside one confirmed site,
+                 decisively nearer the WAITING centre than the
+                 other (past the tie band) IS decisive — the
+                 cycle's sequence has already proven which end
+                 he is working, and an equidistant stop is
+                 neither end's face and adopts nothing, exactly
+                 as the off-axis washroom law demands. The count
+                 still lands through the ordinary fence dwell
+                 from the adopted centre; off a confirmed site
+                 nothing here changes. */
+              var confAdopt = !!confSite && rd > PEG_FENCE_M &&
+                rd + TIE_BAND_M <=
+                  (recOther ? haversineM(rec.lat, rec.lng, recOther.lat, recOther.lng) : Infinity) &&
+                haversineM(fix.latitude, fix.longitude, rec.lat, rec.lng) <= RECOVERY_CLUSTER_M;
+              if (adoptOK || confAdopt) {
                 /* v421 (COUNTING-REPEG-FAIL-NOV11): FACE
                    ADOPTION. The cluster has held a full
                    declared-place dwell OUTSIDE the recovery
@@ -1165,7 +1200,13 @@
       phase: function () { return inner ? inner.phase() : 'away'; },
       zone: function () { return inner ? inner.zone() : 'out'; },
       isActive: function () { return !!(inner && inner.isActive()); },
-      debug: function () { return inner && inner.debug ? inner.debug() : null; },
+      debug: function () {
+        var d = inner && inner.debug ? inner.debug() : null;
+        /* v437: the confirmed-site readout, as on the visit
+           counter — present only on a confirmed day. */
+        if (d && confSite) { d.siteConfirmed = true; d.pairSepM = confSite.sepM; }
+        return d;
+      },
       /* v284: the drift, read by the glue's persist + the suite */
       centres: function () {
         return {
@@ -1463,6 +1504,45 @@
       var grown = Math.round(1.25 * dNearM);
       if (grown > profScaleM) { profScaleM = grown; profChanged(); }
     }
+    /* v437 (COUNT-SITE-CONFIRM-WIDEZONE-NOV12): the CONFIRMED
+       site — cfg.sitePair is set by the glue only when the
+       day's pair fits inside the site's own believed scale
+       (the owner's rule: the pegs being close by confirms he
+       is working on the one site). On a confirmed day the zone
+       candidates in ingest run alongside the house machinery:
+       the arrival reach starts at the scale the profile
+       already believes (the day's first tip at a moved face
+       counts — it does not wait for proven faces to grow the
+       reach), and which END a stop belongs to is decided by
+       decisive proximity, the sequence inside the one site.
+       A counter built without cfg.sitePair (every raw-engine
+       bench, every unconfirmed day) runs the v436 paths
+       verbatim — CONF null is the guard on every branch. */
+    var CONF = (cfg && cfg.sitePair && isCoord(cfg.sitePair.load))
+      ? { load: { lat: +cfg.sitePair.load.lat, lng: +cfg.sitePair.load.lng },
+          sepM: +cfg.sitePair.sepM || 0, reachM: +cfg.sitePair.reachM || 0 }
+      : null;
+    /* the zone's reach: the scale the profile believes for
+       this ground (its prior or its learned scale, whichever
+       runs further — profScaleM only ever grows from there),
+       never under the house recovery reach the v405 shadow
+       already trusts. */
+    function confReachM() {
+      if (!CONF) return 0;
+      var r = Math.max(CONF.reachM, VISIT_SHADOW_M);
+      if (PROF && profScaleM > r) r = profScaleM;
+      return r;
+    }
+    /* which end's ground a fix stands on, inside one site:
+       decisively nearer one end (past the peg law's tie
+       band) is that end; the lens between them is a tie and
+       belongs to NEITHER end — a mid-site washroom stop can
+       neither count a tip nor close a visit. */
+    function confSide(dDump, dOther) {
+      if (dDump + TIE_BAND_M < dOther) return 'dump';
+      if (dOther + TIE_BAND_M < dDump) return 'load';
+      return 'tie';
+    }
     var S = null;
 
     function nearest(list, lat, lng) {
@@ -1534,6 +1614,7 @@
           auxPoints: [], othersLearned: CFG_LEARNED.slice(), pending: null,
           present: false, visitCounted: false, closes: 0, everPresent: false,
           cand: null, shCand: null, otherShCand: null, otherSeen: false, depSince: null, otherCand: null,
+          zoneCand: null, zoneCloseCand: null, /* v437: runtime-only, like cand — never persisted */
           cluster: null, clusterStage: 0, excMaxKmh: 0,
           /* v409 profile state (profile days only): the dynamic
              verdict fires once per stop-cluster; satellites are
@@ -1890,9 +1971,34 @@
         } else if (S.shCand) {
           S.shCand = null;
         }
+        /* v437: the CONFIRMED-SITE zone arrival — a parallel
+           candidate in the shadow's own cluster discipline
+           (fixes holding one stop cluster; a drive-through's
+           marching fixes can never build it), judged over the
+           zone the profile already believes from the day's
+           start. It demands a decisively dump-side stop (the
+           load end's ground can never build it, and neither
+           can the tie lens between the ends), the house
+           arrival bar, and a visit standing open — with NO
+           loop-moved evidence gate: on the one confirmed site
+           the first tip of the day counts where he tips. The
+           landing itself is the shared one below, so a visit
+           can never count twice, whichever door confirms. */
+        var zoneConfirm = false, zoneFace = null;
+        if (CONF && !S.present && !S.visitCounted) {
+          var zIn = nearM <= confReachM() && confSide(nearM, otherM) === 'dump';
+          var zStep = shadowStep(S.zoneCand, zIn, lat, lng, t, arriveBarMs());
+          if (zStep === 'confirm') {
+            zoneConfirm = true;
+            if (S.zoneCand) zoneFace = { lat: S.zoneCand.lat, lng: S.zoneCand.lng };
+            S.zoneCand = null;
+          } else S.zoneCand = zStep;
+        } else if (S.zoneCand) {
+          S.zoneCand = null;
+        }
         if (!S.present) {
           var step = candStep(S.cand, (inSite || atAux) && !atOther, t, arriveBarMs());
-          if (step === 'confirm' || shConfirm) {
+          if (step === 'confirm' || shConfirm || zoneConfirm) {
             S.cand = null; S.shCand = null;
             if (!inSite && atAux) {
               var bi = -1, bd = Infinity;
@@ -1903,6 +2009,23 @@
               if (bi >= 0) {
                 var promoted = S.auxPoints.splice(bi, 1)[0];
                 S.points.push({ lat: promoted.lat, lng: promoted.lng });
+                nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
+                inSite = nearM <= VISIT_PRESENCE_M;
+              }
+            }
+            if (zoneConfirm && zoneFace &&
+                nearest(S.points, zoneFace.lat, zoneFace.lng) > VISIT_PRESENCE_M) {
+              /* v437: the face the zone arrival just proved
+                 joins the site — the virgin-face adoption's own
+                 move — so departure and later presence judge
+                 from where he actually tips, and the same face
+                 needs no second proof. The profile day's face
+                 cap is the pollution bound, as everywhere; a
+                 capped face still counts its load, it simply
+                 is not adopted. */
+              if (!PROF || S.facesProven < PROFILE_FACE_CAP) {
+                S.points.push({ lat: zoneFace.lat, lng: zoneFace.lng });
+                if (PROF) { S.facesProven++; proveFaceM(nearM); }
                 nearM = nearest(S.points, lat, lng); S.lastNearM = nearM;
                 inSite = nearM <= VISIT_PRESENCE_M;
               }
@@ -2018,6 +2141,59 @@
           S.otherCand = oStep;
         }
 
+        /* v437: on a confirmed site the load end sits INSIDE
+           the dump's presence web — the two ends are a few
+           hundred metres apart on one ground, so a departure
+           judged from the dump points alone can never fire
+           while he loads (the nearest point stays inside the
+           halo), and the visit would stand "present" at the
+           dump forever, swallowing the next arrival whole
+           (the arrival doors all stand behind !present). The
+           sequence is the separation: a confirmed close at the
+           load end means he HAS left the dump face, whatever
+           the presence geometry still says — presence clears
+           with the close. */
+        if (CONF && loopClosed) {
+          S.present = false; S.depSince = null;
+          if (S.zoneCand) S.zoneCand = null;
+        }
+        /* v437: the zone close — a decisively load-side dwell
+           anywhere in the zone closes the counted visit: the
+           loading face moves around the one site exactly as
+           the tip face does, and the pin's own circles (the
+           standard close above, which a moved load face can
+           sit inside the dump's presence of) cannot see it.
+           Judged in the shadow's cluster discipline, at the
+           house close bar. Whichever close confirms first
+           closes the visit once — this one stands down on a
+           visit the standard close already closed. */
+        if (CONF && S.visitCounted) {
+          var cIn = otherM <= confReachM() && confSide(nearM, otherM) === 'load';
+          var cStep = shadowStep(S.zoneCloseCand, cIn, lat, lng, t, dwellMs);
+          if (cStep === 'confirm') {
+            S.zoneCloseCand = null;
+            if (S.pending) {
+              /* the standard close's own settlement, mirrored:
+                 the pending stop was a tip at the site's new
+                 face — it counts now, at its own time. */
+              S.count++;
+              S.events.push({ t: S.pending.t, site: 'dump', n: S.count });
+              S.counted = true;
+              for (var zpi = 0; zpi < S.points.length; zpi++) {
+                if (S.points[zpi].pend) delete S.points[zpi].pend;
+              }
+              S.pending = null;
+              S.closes++;
+            }
+            S.visitCounted = false; S.closes++;
+            S.otherSeen = true;
+            S.present = false; S.depSince = null;
+            loopClosed = true;
+          } else S.zoneCloseCand = cStep;
+        } else if (S.zoneCloseCand) {
+          S.zoneCloseCand = null;
+        }
+
         return {
           accepted: true, zone: inSite ? 'dump' : 'out',
           confirmed: S.present ? 'dump' : 'out', phase: phaseOf(),
@@ -2089,6 +2265,14 @@
             scaleM: profScaleM, dwellNormMs: profNormMs, arriveBarMs: arriveBarMs(),
             landUse: SEED_USE, faces: S.facesProven, satellites: S.satellites
           };
+        }
+        /* v437: the confirmed-site readout (Advanced + the
+           benches) — present only on a confirmed day, so an
+           unconfirmed day's readout is byte-identical to 436. */
+        if (CONF) {
+          dbg.siteConfirmed = true;
+          dbg.pairSepM = CONF.sepM;
+          dbg.zoneReachM = Math.round(confReachM());
         }
         return dbg;
       },
@@ -3175,14 +3359,51 @@
       }
     };
   }
+  /* v437 (COUNT-SITE-CONFIRM-WIDEZONE-NOV12): the owner's site-
+     confirmation rule, in his words on the Nov 12 drive: "The
+     tricky part is for the app to know if the user is working
+     on site... But I think that can be confirmed if the pegs
+     are both close by." A day's pickup point and dump point
+     that fit inside the site's own believed scale — the dump
+     seed's profile scale: the land-use prior or the learned
+     scale, whichever runs further (work 1200 m / unknown
+     450 m / residential 300 m before any learning) — are ONE
+     working site, and the counters are told so at arm time.
+     Judged fresh on every arm, so a re-peg or a dispatch
+     change re-decides it (the count is banked across re-arms
+     as always). A pair beyond the scale gets null and runs
+     exactly as web 436 ran it. */
+  function siteConfirmFor(dump, load, prof) {
+    if (!dump || !load || !ENGINE.isCoord(dump) || !ENGINE.isCoord(load)) return null;
+    var p = prof || profileFor(dump);
+    var prior = PROFILE_PRIORS[p && p.landUse] || PROFILE_PRIORS.unknown;
+    var scaleM = Math.max(prior.scaleM, (p && p.learnedScaleM) || 0);
+    var sep = ENGINE.haversineM(dump.lat, dump.lng, load.lat, load.lng);
+    if (!(sep <= scaleM)) return null;
+    return {
+      load: { lat: +load.lat, lng: +load.lng },
+      sepM: Math.round(sep), reachM: scaleM,
+      landUse: p ? p.landUse : 'unknown'
+    };
+  }
   /* every visit-counter arm goes through here so the profile is
      attached uniformly (the counter's other cfg is unchanged). */
   function visitCfg(dump, others) {
-    return {
+    var prof = profileFor(dump);
+    var cfg = {
       dump: dump, others: others,
       learnedOthers: savedLearnedOthers(),
-      profile: profileFor(dump)
+      profile: prof
     };
+    /* v437: the pair the arm already knows (a dispatch's pair,
+       a peg + a pin, a learned pair) is judged for site
+       confirmation once, here, so every visit-counter arm
+       carries the same verdict. */
+    if (others && others.length && ENGINE.isCoord(others[0])) {
+      var conf = siteConfirmFor(dump, others[0], prof);
+      if (conf) cfg.sitePair = conf;
+    }
+    return cfg;
   }
 
   /* ----- v140: the places the app already knows -----
@@ -3827,6 +4048,11 @@
         var outDbg = (counter && counter.debug) ? counter.debug() : null;
         outArmed = !!(outDbg && outDbg.armed);
       } catch (e) { outArmed = false; }
+      /* v437 (COUNT-SITE-CONFIRM-WIDEZONE-NOV12): the same
+         confirmation, judged on the pegs themselves — a close
+         pair of pegs is the confirmed site, and the peg counter
+         is told so (it widens its recovery adoption only). */
+      var pegConf = siteConfirmFor(curSites.dump, curSites.load, pegProf);
       counter = ENGINE.createPegCounter({
         load: curSites.load, dump: curSites.dump,
         /* v392: the truck's position at this (re)build — a fresh
@@ -3834,7 +4060,8 @@
         presence: lastFixSeen ? { lat: lastFixSeen.lat, lng: lastFixSeen.lng } : null,
         presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0,
         profileScaleM: pegScaleM,
-        carryToDump: outArmed
+        carryToDump: outArmed,
+        siteConfirmed: pegConf ? { sepM: pegConf.sepM, reachM: pegConf.reachM } : null
       });
       counter.begin(pegKey, savedPeg);
       pegArmed = true;
