@@ -1096,6 +1096,86 @@
     return '<button class="btn ghost small" id="dp_nav_active">🧭 Navigate</button>' +
       (hasDump ? ' <button class="btn ghost small" id="dp_nav_dump">🧭 Dump only</button>' : '');
   }
+  /* v429 (NAV-LINK-NAVIGATION — the SECONDARY door): the notes'
+     Maps links as TAPPABLE pins. esc() alone left them inert
+     text (owner, Nov 12, 2026, screen recording: "Tapping the
+     link does not navigate to anywhere"). The notes text is
+     escaped exactly as before; each Maps link (PinLinks.
+     findLinks — the one link brain) is replaced in place by a
+     small Maps-pin button carrying the link, wired at render
+     end to dspNavigateNoteLink. Non-Maps text and non-Maps
+     URLs stay plain; without PinLinks the notes render exactly
+     as they always did. */
+  function dspNotesHtml(notes) {
+    var t = String(notes || '');
+    if (!t) return '';
+    var links = [];
+    try { if (typeof window !== 'undefined' && window.PinLinks && PinLinks.findLinks) links = PinLinks.findLinks(t); } catch (e) { links = []; }
+    if (!links.length) return esc(t);
+    var out = '', cursor = 0;
+    links.forEach(function (L) {
+      out += esc(t.slice(cursor, L.index));
+      out += '<button type="button" class="btn small navy" data-dspnote-link="' + esc(L.url) + '" style="padding:2px 8px">🧭 Maps pin</button>';
+      cursor = L.end;
+    });
+    out += esc(t.slice(cursor));
+    return out;
+  }
+  /* v429: a tapped notes link OFFERS navigation to its pin.
+     The pin is read, in order: (1) the labelled pair the owning
+     record's own notes set beside that link's label — read by
+     the record's own parser (dspNotesSitePins), so the Nov 12
+     shape ("Go Empty To: (51.125222, -113.9828056) <link>")
+     answers on the device with no network at all; (2) a pin
+     inside the link itself (PinLinks.coordsFromUrl — a full
+     link); (3) the link followed through the one link brain
+     (PinLinks.resolveUrl — direct follow, then the server
+     door). The offer is a confirm; the landing is the card's
+     own hand-off (dspNavigatePin). Nothing readable → plain
+     words, never an invented pin. */
+  function dspNavigateNoteLink(url) {
+    if (!url) return;
+    var notes = '';
+    try {
+      var cands = [];
+      var act = dspGet('active', null);
+      if (act) cands.push(act);
+      (dspGet('list', []) || []).forEach(function (r) { if (r && r !== act) cands.push(r); });
+      for (var i = 0; i < cands.length; i++) {
+        if (cands[i].notes && String(cands[i].notes).indexOf(url) !== -1) { notes = String(cands[i].notes); break; }
+      }
+    } catch (e) { notes = ''; }
+    var label = '', pin = null;
+    if (notes) {
+      var idx = notes.indexOf(url);
+      var goIdx = -1, haulIdx = -1, m;
+      m = /go\s*empty\s*to/i.exec(notes); if (m) goIdx = m.index;
+      m = /hauling\s*to/i.exec(notes); if (m) haulIdx = m.index;
+      if (goIdx !== -1 && haulIdx !== -1) label = idx >= Math.max(goIdx, haulIdx) ? (haulIdx > goIdx ? 'Hauling To' : 'Go Empty') : (goIdx < haulIdx ? 'Go Empty' : 'Hauling To');
+      else if (goIdx !== -1 && idx >= goIdx) label = 'Go Empty';
+      else if (haulIdx !== -1 && idx >= haulIdx) label = 'Hauling To';
+      var pins = dspNotesSitePins(notes);
+      if (label === 'Go Empty') pin = pins.go;
+      if (label === 'Hauling To') pin = pins.dump;
+    }
+    function offer(p) {
+      if (!p) {
+        alert('That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste it in the Navigator instead — the full link carries the pin.');
+        return;
+      }
+      if (!confirm('Navigate to ' + (label || 'this pin') + '?')) return;
+      dspNavigatePin(p.lat, p.lng, label || 'Sent pin');
+    }
+    if (pin) { offer(pin); return; }
+    var direct = null;
+    try { if (typeof window !== 'undefined' && window.PinLinks && PinLinks.coordsFromUrl) direct = PinLinks.coordsFromUrl(url); } catch (e) { direct = null; }
+    if (direct) { offer(direct); return; }
+    if (typeof window !== 'undefined' && window.PinLinks && PinLinks.resolveUrl) {
+      PinLinks.resolveUrl(url).then(function (c) { offer(c); });
+      return;
+    }
+    offer(null);
+  }
   function dspNavigatePin(lat, lng, name) {
     var la = parseFloat(lat), ln = parseFloat(lng);
     if (!isFinite(la) || !isFinite(ln)) return false;
@@ -2493,7 +2573,7 @@
           (a.material ? '<div class="kv"><span>Material</span><b>' + esc(a.material) + '</b></div>' : '') +
           (a.ticketNo ? '<div class="kv"><span>Ticket #</span><b>' + esc(a.ticketNo) + '</b></div>' : '') +
           (a.amount ? '<div class="kv"><span>Amount</span><b>$' + esc(a.amount) + '</b></div>' : '') +
-          (a.notes ? '<div class="kv stack"><span>Notes</span><b>' + esc(a.notes) + '</b></div>' : '') +
+          (a.notes ? '<div class="kv stack"><span>Notes</span><b>' + dspNotesHtml(a.notes) + '</b></div>' : '') +
           (isOffice ? '' : '<div class="kv"><span>Started</span><b>' + esc(fmtTime(a.startedAt)) + '</b></div>') +
           (dspPhotoFor(a) ? '<img src="' + dspPhotoFor(a) + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
             (App._photoDl ? App._photoDl(dspPhotoFor(a), 'ticket-' + (a.date || '')) : '') : '') +
@@ -2551,7 +2631,7 @@
           (face.ticketName ? '<div class="kv"><span>Name on ticket</span><b>' + esc(face.ticketName) + '</b></div>' : '') +
           (face.rateSource ? '<div class="kv"><span>Rate set by</span><b>' + esc(face.rateSource) + '</b></div>' : '') +
           (face.payer ? '<div class="kv"><span>Paid by</span><b>' + esc(face.payer) + '</b></div>' : '') +
-          (face.notes ? '<div class="kv stack"><span>Notes</span><b>' + esc(face.notes) + '</b></div>' : '') +
+          (face.notes ? '<div class="kv stack"><span>Notes</span><b>' + dspNotesHtml(face.notes) + '</b></div>' : '') +
           face.photos.map(function (p) { return '<img src="' + p + '" style="width:100%;border-radius:10px;margin-top:8px" alt="Ticket photo">' +
             (App._photoDl ? App._photoDl(p, 'ticket-' + (face.date || '')) : ''); }).join('') +
           '<div class="row" style="margin-top:10px">' +
@@ -2607,7 +2687,7 @@
           (d.material ? ' · ' + esc(d.material) : '') +
           (d.ticketNo ? ' · #' + esc(d.ticketNo) : '') +
           (d.amount ? ' · $' + esc(d.amount) : '') +
-          (d.notes ? ' · 📝 ' + esc(d.notes) : '') + '</div>' +
+          (d.notes ? ' · 📝 ' + dspNotesHtml(d.notes) : '') + '</div>' +
           (dspPhotoFor(d) ? '<img src="' + dspPhotoFor(d) + '" style="width:100%;border-radius:8px;margin-top:6px" alt="Ticket">' +
           (App._photoDl ? App._photoDl(dspPhotoFor(d), 'ticket-' + (d.date || '')) : '') : '') +
           /* v103: Delete is a two-step IN-APP confirm — the
@@ -5400,6 +5480,12 @@
           /* v300: no known place — the text itself navigates. */
           dspNavigateQuery(d.jobSite || d.pickup || d.dropoff || d.address || '');
         };
+      });
+      /* v429: a Maps link inside any rendered notes (active card,
+         completed face, list rows — dspNotesHtml) offers
+         navigation to its pin (see dspNavigateNoteLink). */
+      body.querySelectorAll('[data-dspnote-link]').forEach(function (b) {
+        b.onclick = function () { dspNavigateNoteLink(b.getAttribute('data-dspnote-link')); };
       });
       /* v220: the active card's Navigate.
          v300: pin -> known place -> the record's own text as the
