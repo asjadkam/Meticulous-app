@@ -1173,6 +1173,56 @@
           dump: cen.dump ? { lat: cen.dump.lat, lng: cen.dump.lng } : null
         };
       },
+      /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): the driver's +1
+         at the tip teaches the dump centre the same bounded
+         lesson a counted event teaches (onEvent's drift) —
+         without logging an event and without moving any count:
+         the tap's count is the glue's correction, as always.
+         The gates are the machine's own: the tap must sit
+         nearer the dump centre than the load centre (onEvent's
+         honesty gate — a stop at the pickup can never drag the
+         dump peg), and within the recovery reach the counter
+         itself trusts (RECOVERY_BAND_M, or the site's learned
+         scale when one runs further — the ingest's own
+         recReachM). Beyond that reach the peg stays put: on a
+         peg day a face that far out is what a re-peg declares.
+         The drifted centre rides the snapshot (pegCentres), so
+         the lesson survives a relaunch — and it never touches
+         the day's count or the pegs themselves, so a re-peg
+         behaves exactly as it did (banked count, fresh key). */
+      teachTip: function (lat, lng, t) {
+        if (!cen.dump || !inner || !isCoord({ lat: lat, lng: lng })) return null;
+        var dD = haversineM(lat, lng, cen.dump.lat, cen.dump.lng);
+        var dL = cen.load ? haversineM(lat, lng, cen.load.lat, cen.load.lng) : Infinity;
+        if (dD > dL + TIE_BAND_M) {
+          return { taught: false, why: 'at-other', nearestM: Math.round(dD), atSite: false, openVisit: false };
+        }
+        var reachM = Math.max(RECOVERY_BAND_M, scaleM);
+        if (dD > reachM) {
+          return { taught: false, why: 'far', nearestM: Math.round(dD), atSite: false, openVisit: false };
+        }
+        var atSite = dD <= PEG_FENCE_M + RECOVERY_BAND_M;
+        var openVisit = false;
+        try { openVisit = inner.phase() === 'to-dump'; } catch (e) { openVisit = false; }
+        if (dD > 0) {
+          var f = Math.min(DRIFT_STEP_M, dD) / dD;
+          cen.dump.lat += (lat - cen.dump.lat) * f;
+          cen.dump.lng += (lng - cen.dump.lng) * f;
+          if (site) {
+            var ds = haversineM(site.lat, site.lng, cen.dump.lat, cen.dump.lng);
+            if (ds > site.radiusM) {
+              var g = site.radiusM / ds;
+              cen.dump.lat = site.lat + (cen.dump.lat - site.lat) * g;
+              cen.dump.lng = site.lng + (cen.dump.lng - site.lng) * g;
+            }
+          }
+          if (inner.moveSites) inner.moveSites(cen.load, cen.dump);
+        }
+        return {
+          taught: dD > PEG_FENCE_M, how: 'drift', nearestM: Math.round(dD),
+          atSite: atSite, openVisit: openVisit
+        };
+      },
       pegEvents: function () { return evLog.slice(); },
       site: function () {
         return site ? { lat: site.lat, lng: site.lng, radiusM: site.radiusM } : null;
@@ -1940,7 +1990,11 @@
           S.otherShCand = null;
         }
         var oStep = candStep(S.otherCand, atOther && !inSite, t, dwellMs);
+        var loopClosed = false; /* v436: this fix proved the loop
+           completed at the other end — read by the glue's
+           handCarry discipline (feedFix) */
         if (oStep === 'confirm' || oshConfirm) {
+          loopClosed = true;
           S.otherCand = null;
           S.otherSeen = true; /* v405: a witnessed load-end dwell
              is the loop moving — the wide-reach judgments (the
@@ -1967,7 +2021,8 @@
         return {
           accepted: true, zone: inSite ? 'dump' : 'out',
           confirmed: S.present ? 'dump' : 'out', phase: phaseOf(),
-          counted: S.counted, count: S.count
+          counted: S.counted, count: S.count,
+          closedVisit: loopClosed /* v436 */
         };
       },
       stop: function () { if (S) S.active = false; },
@@ -2036,6 +2091,75 @@
           };
         }
         return dbg;
+      },
+      /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): a +1 the driver
+         taps AT the tip is ground truth for that tip. His words,
+         Nov 12: the site moved his dump spot a few metres, the
+         machine missed the count, he +1'd by hand — and the tap
+         should change the peg slightly. Until now a tap moved
+         only the day's correction: counted events taught the
+         site (faces, drift), hand taps taught it nothing, so
+         the next tip at the moved face missed the same way. The
+         tap now teaches the point set under the machine's own
+         disciplines:
+           - never within VISIT_SHADOW_M of a known other end:
+             load-end ground is never taught as dump ground;
+           - within VISIT_CLUSTER_M of a point, the tap NUDGES
+             that point toward where he actually tipped, by at
+             most DRIFT_STEP_M — the peg law's bounded step, his
+             "change it slightly" in the machine's own terms;
+           - further out, on this site's own ground, the tap
+             spot becomes a point of the site — a driver-proven
+             face — out to the site's chain reach (the profile
+             scale); the band beyond the shadow reach asks for
+             the same loop-moved evidence the machine's own face
+             adoption asks for, so a stray tap cannot plant a
+             face on an unproven day;
+           - across town it teaches nothing — the count still
+             stands on the glue's correction, as always.
+         No count moves here: the tap's count IS the correction.
+         The returned atSite/openVisit lets the glue mark the
+         pending visit hand-counted (the v323/v324 discipline,
+         now measured against the taught ground), so the
+         machine's late arrival for THIS tip retires the
+         correction instead of stacking a second count on the
+         same load — and the taught point rides the snapshot,
+         so the lesson survives a relaunch and the next tip at
+         the moved spot counts by GPS on its own. */
+      teachTip: function (lat, lng, t) {
+        if (!S || !S.active || !isCoord({ lat: lat, lng: lng })) return null;
+        var dNear = nearest(S.points, lat, lng);
+        var dOther = Math.min(nearest(OTHERS, lat, lng), nearest(S.othersLearned, lat, lng));
+        if (dOther <= VISIT_SHADOW_M) {
+          return { taught: false, why: 'at-other', nearestM: Math.round(dNear), atSite: false, openVisit: false };
+        }
+        var reachM = PROF ? Math.max(profScaleM, VISIT_SHADOW_M) : VISIT_SHADOW_M;
+        if (dNear > reachM) {
+          return { taught: false, why: 'far', nearestM: Math.round(dNear), atSite: false, openVisit: false };
+        }
+        if (dNear > VISIT_SHADOW_M && !(S.closes > 0 || S.everPresent || S.otherSeen)) {
+          return { taught: false, why: 'unproven', nearestM: Math.round(dNear), atSite: false, openVisit: false };
+        }
+        var openVisit = !S.visitCounted;
+        if (dNear <= VISIT_CLUSTER_M) {
+          var bi = -1, bd = Infinity;
+          for (var i = 0; i < S.points.length; i++) {
+            var dd = haversineM(lat, lng, S.points[i].lat, S.points[i].lng);
+            if (dd < bd) { bd = dd; bi = i; }
+          }
+          if (bi >= 0 && bd > 0) {
+            var f = Math.min(DRIFT_STEP_M, bd) / bd;
+            S.points[bi].lat += (lat - S.points[bi].lat) * f;
+            S.points[bi].lng += (lng - S.points[bi].lng) * f;
+          }
+          return { taught: true, how: 'nudge', nearestM: Math.round(dNear), atSite: true, openVisit: openVisit };
+        }
+        if (PROF && S.facesProven >= PROFILE_FACE_CAP) {
+          return { taught: false, why: 'face-cap', nearestM: Math.round(dNear), atSite: false, openVisit: false };
+        }
+        S.points.push({ lat: +lat, lng: +lng });
+        if (PROF) { S.facesProven++; proveFaceM(dNear); }
+        return { taught: true, how: 'face', nearestM: Math.round(dNear), atSite: true, openVisit: openVisit };
       }
     };
   }
@@ -3214,6 +3338,49 @@
     persist(true);
     return true;
   }
+  /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): a +1 tapped while
+     the day is still in TEACH mode is the driver declaring the
+     dump with his own position — "I tipped HERE." It arms the
+     visit counter on the tap spot under the navigated
+     adoption's own discipline (the spot must pair with the
+     known load site; the caller holds the fix to the peg-
+     planting accuracy bar), with the tip in progress as the
+     baseline: the counter begins PRESENT at the spot with the
+     visit counted-in-state — the swap window's seed, for the
+     same reason — so the machine can never count this tip a
+     second time; the tap's own count rides the correction the
+     caller (teachTap) has already added. The observe learner
+     inherits the teach learner's leg state, exactly as the
+     navigated adoption hands it over. */
+  function adoptTapDump(pos, t) {
+    var dump = { lat: pos.lat, lng: pos.lng, label: 'Dump site', src: 'tap' };
+    curSites = { load: curLoad, dump: dump };
+    var key = sitesKeyFor(curDispatchId, curLoad, dump);
+    var prevLearnSnap = learner ? learner.snapshot() : null;
+    counter = ENGINE.createDumpVisitCounter(visitCfg(dump, [curLoad]));
+    counter.begin(key, {
+      sitesKey: key, count: 0, events: [],
+      points: [{ lat: dump.lat, lng: dump.lng }],
+      present: true, visitCounted: true, closes: 0,
+      lastT: (prevLearnSnap && prevLearnSnap.lastT) || t || 0
+    });
+    visitSource = true;
+    navArmDone = true;
+    learnMode = 'observe';
+    learner = ENGINE.createDumpLearner({ load: curLoad, dump: dump });
+    learner.begin(prevLearnSnap);
+    if (shadowLearner) { try { shadowLearner.stop(); } catch (e) {} shadowLearner = null; }
+    taughtOutstanding = false; wasDumpSinceTeach = false;
+    var rec = recordFor(curDate) || blankDay(curDate);
+    rec.dispatchId = curDispatchId; rec.sessionKey = sessionKey;
+    rec.sites = curSites; rec.blocked = null; rec.updatedAt = Date.now();
+    rec.tapDump = { lat: dump.lat, lng: dump.lng, t: t || Date.now() };
+    if (learner) rec.learn = learner.snapshot();
+    writeDay(rec);
+    persist(true);
+    return true;
+  }
+
   /* Adoption is only ever a TEACH-mode event: a dump already
      resolved (pin, remembered pair, taught) is never overridden
      by a navigation. */
@@ -4367,6 +4534,15 @@
       if (handCarry) {
         if (r.counted) { corrNow -= 1; handCarry = false; }
         else if (r.zone === 'load' && lastFeedZone !== 'load') handCarry = false;
+        /* v436: the visit counter has no 'load' zone to come
+           back to — its loop-completion signal is the
+           closedVisit flag on the ingest return (the other-end
+           dwell confirmed). The truck went back and loaded, so
+           the tapped tip was the machine's miss: the mark
+           clears and the tap stands — the v323 S6c discipline
+           on this machine, without which a lingering mark
+           would eat the NEXT visit's honest machine count. */
+        else if (r.closedVisit) handCarry = false;
       }
       if (r.zone) lastFeedZone = r.zone;
     }
@@ -4779,6 +4955,29 @@
       if (!curDate || !watching) return null;
       nudgedLive = true; // v222: a live correction outranks a pulled record's older corr on reseed
       corrNow += (parseInt(delta, 10) || 0);
+      /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): a +1 tapped at
+         the tip also TEACHES the site where the tip actually
+         happened (the counters' teachTip — bounded, gated, and
+         count-free; the correction above remains the tap's
+         count). The lesson is taken from the counter's own
+         last fix, held to the peg-planting standard (setPeg's
+         50 m accuracy bar — the same evidence a manual peg is
+         planted from): a rough or missing fix teaches nothing
+         and the tap still counts, untouched. When the lesson
+         lands on the site's ground with the visit still open,
+         the pending visit is marked hand-counted — the v324
+         mark, now measured against the TAUGHT ground, so a tip
+         at a face the machine had not yet learned is marked
+         too: its late arrival retires this correction instead
+         of stacking a second count on the same load. */
+      if ((parseInt(delta, 10) || 0) > 0 && counter && typeof counter.teachTip === 'function' &&
+          lastFixSeen && isFinite(lastFixSeen.lat) && isFinite(lastFixSeen.lng) &&
+          (lastFixSeen.accuracy === null || lastFixSeen.accuracy === undefined ||
+           lastFixSeen.accuracy <= ENGINE.ACC_MAX_M)) {
+        var ttRes = null;
+        try { ttRes = counter.teachTip(lastFixSeen.lat, lastFixSeen.lng, lastFixSeen.t || Date.now()); } catch (e) { ttRes = null; }
+        if (ttRes && ttRes.atSite && ttRes.openVisit) handCarry = true;
+      }
       /* v323: a +1 tapped while carrying, with the truck at the
          dump (within 120 m of the dump centre), marks the pending
          carry hand-counted — see the handCarry note above. */
@@ -4823,6 +5022,32 @@
       if (machine + corrNow < 0) corrNow = -machine;
       persist(true);
       return corrNow;
+    },
+
+    /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): the +1 door for a
+       day with NO counter yet — teach mode, where the dump was
+       given out loud on site and never pinned. app.js calls
+       this when the armed-day nudge path does not apply: the
+       tap seeds the day's dump at the truck's own position
+       (adoptTapDump) and counts on the day's correction, like
+       any armed-day tap. Every gate is the house standard: the
+       day is watched, no counter exists, teach mode holds a
+       known load site, the last fix meets the peg-planting
+       accuracy bar, and the spot pairs with the load site.
+       Anything less returns false and the caller falls back to
+       the session tap count exactly as before. */
+    teachTap: function () {
+      if (!curDate || !watching || counter) return false;
+      if (learnMode !== 'teach' || !curLoad) return false;
+      var f = lastFixSeen;
+      if (!f || !isFinite(f.lat) || !isFinite(f.lng)) return false;
+      if (f.accuracy !== null && f.accuracy !== undefined && f.accuracy > ENGINE.ACC_MAX_M) return false;
+      var pos = { lat: f.lat, lng: f.lng };
+      if (!ENGINE.sitesCheck(curLoad, pos).ok) return false;
+      corrNow += 1;
+      nudgedLive = true;
+      adoptTapDump(pos, (typeof f.t === 'number' && f.t > 0) ? f.t : Date.now());
+      return true;
     },
 
     /* v282 (LOADS-SITE-PEGS): plant (or move) a peg — 'load' for

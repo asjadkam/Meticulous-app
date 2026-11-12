@@ -2827,6 +2827,20 @@
         if (GeoLoads.nudge(1) !== null) { try { syncSessionRecord(); } catch (e) {} return trkAccum(); }
       }
     } catch (e) {}
+    /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): a +1 on a day the
+       machine has not armed yet (teach mode — the dump was
+       given out loud on site, never pinned) still teaches: the
+       tap declares the dump at the truck's own position and
+       counts on the day record's correction (GeoLoads.teachTap
+       gates it hard — known load site, a peg-grade fix, a spot
+       that pairs). Only a tap GeoLoads consumes skips the
+       session tap count; every other unarmed tap keeps the
+       v140 fallback below, untouched. */
+    try {
+      if (window.GeoLoads && GeoLoads.teachTap && GeoLoads.teachTap()) {
+        try { syncSessionRecord(); } catch (e) {} return trkAccum();
+      }
+    } catch (e) {}
     var a = trkAccum();
     a.manualLoads += 1;
     trackerSave();
