@@ -125,7 +125,11 @@
      record through the verified saves, so sync picks it up and
      the merge's completeness law (a photo scores +3) defends it
      from then on. Nothing is invented: a record whose photo
-     survives nowhere reachable stays photo-less, as it was. */
+     survives nowhere reachable stays photo-less, as it was.
+     (web 426: the heal's once-per-session blanket became a
+     per-record ledger — see healPhotoGrafts below: a record
+     arriving by sync pull after the session's first render is
+     looked up on the next render, not after a restart.) */
   function fillContentKey(rec) {
     if (!rec) return '';
     return 'fill_' + [rec.date || '', rec.odo || '', rec.litres || '', rec.cost || '']
@@ -561,15 +565,50 @@
   }
   try { (window.__mtRelief = window.__mtRelief || []).push({ keys: ['fuel_fills', 'fuel_expenses'], free: shedMarkedPhotos, arm: auditPhotoDocs }); } catch (e) {}
 
-  var photoGraftRan = false;
+  /* web 426 (FUEL-PHOTO-SYNC-NOV11): THE HEAL KEEPS A LEDGER,
+     NOT A BLANKET. The v350 heal ran ONCE per page session —
+     photoGraftRan was spent by the first Fuel render, whatever
+     that render found (including nothing at all) — and it
+     snapshotted the photo-less records at that moment. A fill
+     filed on ANOTHER surface later in the same session reached
+     this device by sync pull photo-less (the v289 shed, by
+     design) and was never looked up until the next full app
+     restart: Nov 11, the web session filed the Shell #110 fill
+     (110.292 L, $239.22, odo 172,726) with its receipt — the
+     photo document landed in the account under its stable key,
+     the entry itself synced to his phone within minutes — and
+     the phone's row painted no thumbnail, because the module
+     had already rendered that day and the heal was spent. The
+     ledger: every photo-less record is looked up when it is
+     first SEEN photo-less (a new arrival is a new key, so it is
+     looked up on the very next render), and a record that
+     stayed photo-less is looked up again only after a retry
+     window — so a document that lands late, or room that frees
+     up later, still heals inside the same session, while
+     repeated renders of an unchanged book spend no reads.
+     Matching, grafting, the fit ladder and the once-a-day
+     legacy scan keep their v350–v373 behaviour exactly. */
+  var PHOTO_GRAFT_RETRY_MS = 5 * 60 * 1000;
+  var photoGraftTried = {}; /* match key -> ms of its last lookup round this session */
   function healPhotoGrafts(body) {
-    if (photoGraftRan) return;
     if (!(window.FB && FB.loadDoc && FB.loadDocs && FB.user)) return;
-    photoGraftRan = true;
     function expensesList() { return S('expenses', []); }
     var missF = fills().filter(function (r) { return r && !fillPhotos(r).length; });
     var missX = expensesList().filter(function (r) { return r && !fillPhotos(r).length; });
     if (!missF.length && !missX.length) return;
+    var graftNow = Date.now();
+    function due(keys) {
+      for (var i = 0; i < keys.length; i++) {
+        var t = photoGraftTried[keys[i]];
+        if (!t || graftNow - t > PHOTO_GRAFT_RETRY_MS) return true;
+      }
+      return false;
+    }
+    var todoF = missF.filter(function (r) { return due(fillMatchKeys(r)); });
+    var todoX = missX.filter(function (r) { return due([expensePhotoDocKey(r)]); });
+    if (!todoF.length && !todoX.length) return;
+    todoF.forEach(function (r) { fillMatchKeys(r).forEach(function (k) { photoGraftTried[k] = graftNow; }); });
+    todoX.forEach(function (r) { photoGraftTried[expensePhotoDocKey(r)] = graftNow; });
     var changed = false;
     /* Apply against a FRESH read of the book — the driver may
        have saved while the reads were in flight; a record is
@@ -604,19 +643,19 @@
       });
     }
     var reads = [];
-    if (missF.length) reads.push(FB.loadDoc('kv', 'fuel_fills').then(function (d) {
+    if (todoF.length) reads.push(FB.loadDoc('kv', 'fuel_fills').then(function (d) {
       ((d && d.v) || []).forEach(function (r) { if (r && fillPhotos(r).length) graftInto(true, r); });
     }).catch(function () {}));
-    if (missX.length) reads.push(FB.loadDoc('kv', 'fuel_expenses').then(function (d) {
+    if (todoX.length) reads.push(FB.loadDoc('kv', 'fuel_expenses').then(function (d) {
       ((d && d.v) || []).forEach(function (r) { if (r && fillPhotos(r).length) graftInto(false, r); });
     }).catch(function () {}));
-    missF.forEach(function (r) {
+    todoF.forEach(function (r) {
       reads.push(FB.loadDoc('fuel', fillPhotoDocKey(r)).then(function (d) {
         var rec = srcFromFuelDoc(d);
         if (rec) graftInto(true, rec);
       }).catch(function () {}));
     });
-    missX.forEach(function (r) {
+    todoX.forEach(function (r) {
       reads.push(FB.loadDoc('fuel', expensePhotoDocKey(r)).then(function (d) {
         var rec = srcFromFuelDoc(d);
         if (rec) graftInto(false, rec);
@@ -1103,7 +1142,9 @@
       fuelBody = body;
       /* v350: heal any photo-less records from the copies of
          their photos that survive elsewhere (async; re-renders
-         itself if it grafted anything). Once per app session. */
+         itself if it grafted anything). web 426: per-record
+         ledger — records arriving later in the session are
+         looked up when they appear; repeats are windowed. */
       try { healPhotoGrafts(body); } catch (e) {}
       var trend = mpgTrend();
       /* v75: an edit target that vanished (deleted elsewhere) falls
