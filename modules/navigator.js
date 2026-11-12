@@ -47,6 +47,33 @@
    ignored — nothing a user can type, clear, or corrupt can steer
    or break routing anymore.
 
+   v419 (NAV-ML-LEARNING, stage 1 — owner, Nov 10, 2026: the
+   Navigator must be dynamic, learning each trucker's own route
+   choices instead of always spitting out the same routes): the
+   learning itself lives in js/navlearn.js (window.NavLearn);
+   this module only carries the hooks — doRoute consults it
+   BEFORE the server for a learned route on the pair, startDrive
+   opens a capture trip, onPos feeds it fixes, exitDrive closes
+   the trip, and leaving a learned route suppresses it for that
+   destination for the rest of the drive (the re-route is the
+   standard router's). No new cards, no new settings, no taps:
+   the one visible trace is a quiet line in the route summary
+   when a learned route is in use.
+   v433 (NAV-TRUCK-ROUTING, owner Nov 12, 2026): the v419 hooks
+   above were silently dropped by a post-419 ship and stayed
+   dropped through web 432 — js/navlearn.js still loaded, but
+   nothing called it: no capture, no learned offers in the live
+   app. Web 433 RESTORES every hook and adds the truck-legality
+   guard on both sides (see the NAVPURE v433 block): routing
+   assumes a LOADED truck (24.3 t tandem default), adopted
+   routes are screened against Calgary's truck network +
+   driver-reported weight-restricted streets with an exclusion
+   re-ask and a loud warning, a flagged drive never teaches
+   and taints the learned record it rode, and a clean learned
+   route is adopted FIRST — it wins over the engine's route,
+   per the owner's Nov 12 ruling after his driven Métis Trail
+   route lost to the 48 Avenue NE shortcut while he was loaded.
+
    Persists via App._store (localStorage, mt_ prefix), key 'navigator':
    { profile: {height,width,length,weight,axleLoad,axles,hazmat},
      muted: false, mode: 'truck', avatar: 'dump' }.
@@ -64,7 +91,7 @@
      against the real service fixtures. Coordinates are [lat, lon]
      everywhere except buildRouteRequest, which emits Valhalla's
      {lat, lon} location objects. */
-  var NAV_DEFAULT_PROFILE = { height: 3.9, width: 2.6, length: 9.0, weight: 24, axleLoad: 10, axles: 3, hazmat: false };
+  var NAV_DEFAULT_PROFILE = { height: 3.9, width: 2.6, length: 9.0, weight: 24.3, axleLoad: 10, axles: 3, hazmat: false }; /* v433: weight = the tandem dump's LOADED licensed mass, 24,300 kg (Alberta registration) — routing assumes loaded; a saved vehicle record still overrides per-field (v356) */
 
   function navProfile(p) {
     var d = NAV_DEFAULT_PROFILE, o = {}, k;
@@ -1806,6 +1833,287 @@
     return { maxheightM: worst.maxheightM, vehicleHeightM: vehicleHeightM, atKm: worst.atKm };
   }
 
+
+  /* v433 (NAV-TRUCK-ROUTING, owner Nov 12, 2026, filmed: the
+     Navigator routed him along 48 Avenue NE — in his words a
+     "50% weight legal" street — while he was running the pair
+     LOADED; he had also driven the same pair himself via Métis
+     Trail to teach the learner the legal way, and the learned
+     route did not win): THREE fixes ride this block.
+     (1) LOADED BY DEFAULT: the tandem-dump default profile
+     weight is the truck's licensed mass, 24.3 t (24,300 kg —
+     the Alberta registration figure), so every truck-costing
+     request assumes a LOADED truck unless the driver's own
+     saved vehicle record says otherwise (that record still
+     wins per-field in loadSettings, exactly as v356 built it).
+     (2) THE HONEST LIMIT + THE GUARD: Calgary's load bans
+     (50% / 75% / 90% seasonal weight limits) exist in NO
+     machine-readable feed — the City publishes a PDF map only,
+     and its open truck-route layer (Socrata yqm7-vj8i) carries
+     no load-ban field; 48 Avenue NE is even LISTED there as an
+     unrestricted truck route. So no engine can hard-avoid a
+     "50%" street from data. What the app honestly does
+     instead: every adopted truck route is SCREENED (runtime,
+     beside this block) against that live layer plus the
+     driver-reported table below; a route that runs a real
+     stretch on a restricted street, off the designated
+     network, or on a reported street is first re-asked ONCE
+     with the bad stretch excluded (Valhalla
+     exclude_polygons), and if it still comes back — or the
+     exclusion cannot be built — it is adopted WITH a loud
+     painted + spoken warning. Posted signs govern, always.
+     (3) LEARNING, BOTH SIDES (see js/navlearn.js v433): a
+     driven trace that screens flagged NEVER teaches, and a
+     learned record it rode is tainted so it is never offered
+     again; and a CLEAN learned route for the pair is adopted
+     BEFORE the server is asked (the v419 branch, restored —
+     it was silently dropped by a post-419 ship and stayed
+     dropped through web 432) — the learned legal route WINS
+     over the engine's shortcut, it is not an offer he has to
+     hunt for. The pure decision for that branch is
+     learnedRouteDecision below, so the bench can pin the
+     precedence without a DOM. */
+  var TRUCKNET_EXTENT = { n: 51.25, s: 50.80, w: -114.35, e: -113.80 };
+
+  /* Driver-reported restrictions: streets a driver has told
+     the app are weight-restricted, in the driver's own words.
+     This table exists precisely because the bans live in no
+     data feed (see above) — a report is the only honest
+     source, and a reported street is NEVER access-exempt in
+     the screen: even a route ENDING on it warns, because a
+     loaded truck may not use it at all. Geometry is the
+     engine's own driven shape of the street. 48 Avenue NE:
+     the middle-west bend (~-114.029..-114.000) could not be
+     verified on Nov 12 (the geometry source was down), so
+     that stretch is not in the table yet — the eastern and
+     western straights are. */
+  var REPORTED_RESTRICTIONS = [
+    { name: '48 Avenue NE', note: '50% weight limit', reportedAt: '2026-11-12',
+      lines: [
+        [[51.09598,-113.99853],[51.09599,-113.99676],[51.09599,-113.99561],[51.09599,-113.99498],[51.09605,-113.99405],[51.09604,-113.99327],[51.09602,-113.98995],[51.09603,-113.98969],[51.09605,-113.98952],[51.09608,-113.98931],[51.09613,-113.98903],[51.09619,-113.98882],[51.09633,-113.98847],[51.0965,-113.98816],[51.09665,-113.98798],[51.09683,-113.98781],[51.09718,-113.98758],[51.09759,-113.9874],[51.09804,-113.98718],[51.0984,-113.98704],[51.09886,-113.98684],[51.09947,-113.98656],[51.09966,-113.98646],[51.09985,-113.98631],[51.09999,-113.98619],[51.10019,-113.98596],[51.10044,-113.98552],[51.10064,-113.98503],[51.1008,-113.98456],[51.10101,-113.98399],[51.1012,-113.98356],[51.10139,-113.98326],[51.10161,-113.983],[51.10177,-113.98285],[51.10199,-113.98274],[51.10225,-113.98264],[51.10256,-113.98259],[51.10319,-113.98255],[51.10365,-113.98251],[51.10518,-113.98238],[51.10575,-113.98234]],
+        [[51.0962,-114.0368],[51.09617,-114.03333],[51.09617,-114.0319],[51.0961,-114.02941]]
+      ] }
+  ];
+
+  function truckNetCoverage(line) {
+    if (!line || !line.length) return 'out';
+    var mnLat = 90, mxLat = -90, mnLon = 180, mxLon = -180, i;
+    for (i = 0; i < line.length; i++) {
+      if (line[i][0] < mnLat) mnLat = line[i][0];
+      if (line[i][0] > mxLat) mxLat = line[i][0];
+      if (line[i][1] < mnLon) mnLon = line[i][1];
+      if (line[i][1] > mxLon) mxLon = line[i][1];
+    }
+    return (mxLat < TRUCKNET_EXTENT.s || mnLat > TRUCKNET_EXTENT.n ||
+            mxLon < TRUCKNET_EXTENT.w || mnLon > TRUCKNET_EXTENT.e) ? 'out' : 'in';
+  }
+
+  function truckNetDistToPtsM(p, pts) {
+    if (!pts || pts.length < 2) return Infinity;
+    var best = Infinity, i, d;
+    for (i = 0; i + 1 < pts.length; i++) {
+      d = pointSegM(p, pts[i], pts[i + 1]).dist;
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  /* Screen one line against the truck network.
+     segments — [{type, restricted, pts:[[lat,lon],...]}] from
+       the City layer (runtime fetch; benches pass fixtures).
+     reported — REPORTED_RESTRICTIONS-shaped entries.
+     line     — the route/driven line [[lat,lon],...].
+     plan     — optional maneuverPlan output, used only to
+       NAME a stretch from the maneuver that covers it.
+     The line is sampled every ~25 m. A sample inside the
+     Calgary extent is judged: within 30 m of a reported line
+     = 'reported'; else within 30 m of a layer segment =
+     on-network ('restricted' when that segment is a
+     Restricted truck route or carries restriction text);
+     else 'offnet'. The first/last 600 m are the bylaw
+     local-access zones: off-network/restricted samples there
+     do not count (a truck may always reach its own door) —
+     reported samples ALWAYS count. A stretch flags at
+     >= 250 m of off-network/restricted, or >= 150 m of
+     reported. Returns {flagged, offM, restrictedM, reportedM,
+     stretches:[{kind, fromKm, toKm, name}], worst}.
+     opts.reportedOnly judges ONLY the reported table (the
+     runtime's first pass: reported streets need no fetched
+     data, so they flag even when the layer cannot be had). */
+  function truckNetScreen(segments, reported, line, plan, opts) {
+    var out = { flagged: false, offM: 0, restrictedM: 0, reportedM: 0, stretches: [], worst: null };
+    if (!line || line.length < 2) return out;
+    var totalM = 0, i;
+    for (i = 0; i + 1 < line.length; i++) totalM += haversineM(line[i], line[i + 1]);
+    if (!(totalM > 0)) return out;
+    var STEP = 25, ACCESS = 600;
+    var kinds = [], names = [], alongs = [];
+    for (var m = 0; m <= totalM; m += STEP) {
+      var p = pointAlongLine(line, m);
+      if (!p) { kinds.push(null); names.push(null); alongs.push(m); continue; }
+      var judged = p[0] >= TRUCKNET_EXTENT.s && p[0] <= TRUCKNET_EXTENT.n &&
+                   p[1] >= TRUCKNET_EXTENT.w && p[1] <= TRUCKNET_EXTENT.e;
+      var kind = null, name = null;
+      if (judged) {
+        var dRep = Infinity, repName = null, ri, li2;
+        if (reported) for (ri = 0; ri < reported.length; ri++) {
+          var ent = reported[ri];
+          if (!ent || !ent.lines) continue;
+          for (li2 = 0; li2 < ent.lines.length; li2++) {
+            var dd = truckNetDistToPtsM(p, ent.lines[li2]);
+            if (dd < dRep) { dRep = dd; repName = ent.name; }
+          }
+        }
+        if (dRep <= 30) { kind = 'reported'; name = repName; }
+        else if (opts && opts.reportedOnly) { kind = null; }
+        else {
+          var bestD = Infinity, bestSeg = null, si;
+          if (segments) for (si = 0; si < segments.length; si++) {
+            var seg = segments[si];
+            if (!seg || !seg.pts || seg.pts.length < 2) continue;
+            /* cheap reject: segment bounds padded ~350 m */
+            var sMnLat = 90, sMxLat = -90, sMnLon = 180, sMxLon = -180, bi;
+            for (bi = 0; bi < seg.pts.length; bi++) {
+              if (seg.pts[bi][0] < sMnLat) sMnLat = seg.pts[bi][0];
+              if (seg.pts[bi][0] > sMxLat) sMxLat = seg.pts[bi][0];
+              if (seg.pts[bi][1] < sMnLon) sMnLon = seg.pts[bi][1];
+              if (seg.pts[bi][1] > sMxLon) sMxLon = seg.pts[bi][1];
+            }
+            if (p[0] < sMnLat - 0.0032 || p[0] > sMxLat + 0.0032 ||
+                p[1] < sMnLon - 0.0045 || p[1] > sMxLon + 0.0045) continue;
+            var sd = truckNetDistToPtsM(p, seg.pts);
+            if (sd < bestD) { bestD = sd; bestSeg = seg; }
+          }
+          if (bestSeg && bestD <= 30) {
+            if (bestSeg.type === 'Restricted truck route' ||
+                (bestSeg.restricted && String(bestSeg.restricted).trim())) kind = 'restricted';
+            else kind = 'onnet';
+          } else kind = 'offnet';
+        }
+      }
+      var access = (m < ACCESS || m > totalM - ACCESS);
+      if (kind === 'offnet') { out.offM += STEP; if (access) kind = null; }
+      else if (kind === 'restricted') { out.restrictedM += STEP; if (access) kind = null; }
+      else if (kind === 'reported') { out.reportedM += STEP; }
+      kinds.push(kind); names.push(name); alongs.push(m);
+    }
+    /* fold consecutive counted samples into stretches —
+       only the three flagging kinds count ('onnet' is the
+       network doing its job; it breaks a run like null). */
+    var runs = [], cur = null;
+    for (i = 0; i < kinds.length; i++) {
+      var countable = kinds[i] === 'reported' || kinds[i] === 'restricted' || kinds[i] === 'offnet';
+      if (countable && cur && cur.kind === kinds[i]) { cur.toM = alongs[i] + STEP; if (!cur.name && names[i]) cur.name = names[i]; }
+      else if (countable) { cur = { kind: kinds[i], fromM: alongs[i], toM: alongs[i] + STEP, name: names[i] }; runs.push(cur); }
+      else cur = null;
+    }
+    function streetFor(fromKm, toKm) {
+      if (!plan || !plan.maneuvers) return null;
+      for (var mi = 0; mi < plan.maneuvers.length; mi++) {
+        var mv = plan.maneuvers[mi];
+        if (mv.cumEndKm >= fromKm && mv.cumStartKm <= toKm && mv.streets && mv.streets.length) return mv.streets[0];
+      }
+      return null;
+    }
+    var prio = { reported: 3, restricted: 2, offnet: 1 };
+    for (i = 0; i < runs.length; i++) {
+      var r = runs[i], span = r.toM - r.fromM;
+      var need = (r.kind === 'reported') ? 150 : 250;
+      if (span < need) continue;
+      var st = { kind: r.kind, fromKm: Math.round(r.fromM / 10) / 100, toKm: Math.round(r.toM / 10) / 100,
+                 name: r.name || streetFor(r.fromM / 1000, r.toM / 1000) };
+      out.stretches.push(st);
+      if (!out.worst || prio[st.kind] > prio[out.worst.kind] ||
+          (prio[st.kind] === prio[out.worst.kind] && (st.toKm - st.fromKm) > (out.worst.toKm - out.worst.fromKm))) out.worst = st;
+    }
+    out.flagged = out.stretches.length > 0;
+    return out;
+  }
+
+  /* The exclusion ring for a re-ask: a closed [lon,lat]
+     polygon hugging the worst stretch (±40 m along the line,
+     ±24 m across). Valhalla caps exclude_polygons at a
+     10,000 m circumference (error 167, probed live Nov 12),
+     so an over-long stretch is cut to its central 3,000 m.
+     null when there is nothing honest to exclude. */
+  function truckNetExclusion(line, screen) {
+    if (!line || line.length < 2 || !screen || !screen.worst) return null;
+    var totalM = 0, i;
+    for (i = 0; i + 1 < line.length; i++) totalM += haversineM(line[i], line[i + 1]);
+    var fromM = Math.max(0, screen.worst.fromKm * 1000 - 40);
+    var toM = Math.min(totalM, screen.worst.toKm * 1000 + 40);
+    if (toM - fromM < 60) return null;
+    if (2 * ((toM - fromM) + 48) > 9000) {
+      var mid = (fromM + toM) / 2;
+      fromM = Math.max(0, mid - 1500); toM = Math.min(totalM, mid + 1500);
+    }
+    var pts = [], m;
+    for (m = fromM; m <= toM; m += 50) { var p = pointAlongLine(line, m); if (p) pts.push(p); }
+    var endP = pointAlongLine(line, toM); if (endP) pts.push(endP);
+    if (pts.length < 2) return null;
+    function offset(pt, prev, next, side) {
+      var rad = Math.PI / 180;
+      var kx = 111320 * Math.cos(pt[0] * rad), ky = 110540;
+      var dx = (next[1] - prev[1]) * kx, dy = (next[0] - prev[0]) * ky;
+      var L = Math.sqrt(dx * dx + dy * dy) || 1;
+      var px = (-dy / L) * side * 24, py = (dx / L) * side * 24;
+      return [pt[1] + px / kx, pt[0] + py / ky];
+    }
+    var left = [], right = [], j;
+    for (j = 0; j < pts.length; j++) {
+      var prev = pts[Math.max(0, j - 1)], next = pts[Math.min(pts.length - 1, j + 1)];
+      left.push(offset(pts[j], prev, next, 1));
+      right.push(offset(pts[j], prev, next, -1));
+    }
+    var ring = left.concat(right.reverse());
+    ring.push(ring[0].slice());
+    return ring;
+  }
+
+  /* ONE warning for a flagged screen — the worst stretch
+     speaks for the route. Reported streets are named with
+     their reported limit; layer findings name the street
+     from the plan when the screen found one. */
+  function truckNetWarning(screen) {
+    if (!screen || !screen.flagged || !screen.worst) return null;
+    var w = screen.worst;
+    var name = w.name || 'a side street';
+    if (w.kind === 'reported') {
+      var noteTxt = '';
+      for (var i = 0; i < REPORTED_RESTRICTIONS.length; i++) {
+        if (REPORTED_RESTRICTIONS[i].name === w.name) noteTxt = REPORTED_RESTRICTIONS[i].note || '';
+      }
+      return { kind: w.kind, name: w.name,
+        banner: 'Weight-restricted street on this route: ' + w.name + (noteTxt ? ' (' + noteTxt + ')' : '') + ' — a loaded truck must not use it. Posted signs govern.',
+        speak: 'Warning. This route uses a weight-restricted street, ' + w.name + '. A loaded truck must not use it.' };
+    }
+    if (w.kind === 'restricted') {
+      return { kind: w.kind, name: name,
+        banner: 'This route uses a restricted truck street: ' + name + ' — trucks are restricted there. Posted signs govern.',
+        speak: 'Warning. This route uses a restricted truck street, ' + name + '.' };
+    }
+    return { kind: w.kind, name: name,
+      banner: 'This route leaves Calgary’s designated truck network on ' + name + ' — local access only for trucks. Posted signs govern.',
+      speak: 'Warning. This route leaves the designated truck network on ' + name + '. Local access only.' };
+  }
+
+  /* v433: the learned-route branch's whole decision, pure so
+     the bench pins it: a learned record exists (the caller
+     has already applied suppression / skip-once / car-mode
+     gates) and its line has been screened. 'adopt' = the
+     learned route is PRESENTED — it wins, the server is never
+     asked. 'taint' = the learned line itself runs a flagged
+     stretch: taint the record and fall through to the server.
+     'skip-once' = the screen could not run (network unknown):
+     never adopt unverified, and do not ask again this
+     destination — fall through to the server once. */
+  function learnedRouteDecision(hasRec, verdict) {
+    if (!hasRec) return 'none';
+    if (verdict === 'flagged') return 'taint';
+    if (verdict === 'unknown') return 'skip-once';
+    return 'adopt';
+  }
+
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -2855,6 +3163,14 @@
         /* v356: the clearance second look's one warning for the
            active route (null = none / not checked yet). */
         clearanceWarn: null,
+        /* v433 (restored v419 + truck guard): learned-route
+           provenance + suppression for the active route, the
+           one-shot skip for an unscreenable learned route, the
+           running capture trip, and the truck-network warning
+           (pending = computed for a route not yet finalized). */
+        onLearnedRoute: false, learnedCount: 0, learnTrip: null,
+        learnSuppressDest: '', learnSkipOnce: '',
+        truckNetWarn: null, pendingNetWarn: null,
         /* v280 (NAV-TRAFFIC-LIVE-ETA): live-ETA state — the
            pace window (rolling GPS distance/time samples from
            onPos), the licensed-provider traffic probe/poll
@@ -3079,7 +3395,7 @@
         '<button class="btn ghost hidden" id="nv_end" style="margin-top:8px">End route</button>' +
         '<p class="note" id="nv_note"></p></div>';
 
-      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_clearance"></div><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div></div>';
+      h += '<div class="card"><h3>🪜 Directions</h3><div id="nv_clearance"></div><div id="nv_trucknet"></div><div id="nv_steps"><div class="empty">No route yet.</div></div></div></div></div>';
 
       /* v101 DRIVE SCREEN — a dedicated full-screen mode (fixed
          overlay; rendered hidden with the module so teardown is the
@@ -3278,6 +3594,13 @@
       function setDest(latlng, label, goNow) {
         S.dest = latlng; S.destLabel = label || '';
         S.arrived = false;
+        /* v433 (restored v419): a new destination ends any
+           learned-route suppression — suppression is
+           per-destination, spent with the destination it was
+           earned against. The unscreenable-learned skip-once
+           is per-destination the same way. */
+        S.learnSuppressDest = '';
+        S.learnSkipOnce = '';
         /* NAV-PIN-DROP-PANEL-COVERS-MAP-NOV8 (owner, Nov 8,
            2026: "Once I drop a pin... The menu from under covers
            up the entire screen. I should see the direction...
@@ -4331,6 +4654,12 @@
            chasing them is what rotated the parked drive view —
            plane, camera aim and all — on his Nov 12 tape. */
         S.stillState = standstillStep(S.stillState, lat, lon, Date.now());
+        /* v433 (restored v419, NAV-ML-LEARNING stage 1): route
+           capture — while a drive runs, the path actually
+           driven feeds the learning trip (thinned inside
+           NavLearn). No taps, no UI: capture rides the fix
+           stream as a passenger. */
+        if (S.drive && S.learnTrip) { try { NavLearn.pushFix(S.learnTrip, S.pos); } catch (e) {} }
         paceSample(prevPos, S.pos); /* v280: live pace window */
         /* v336 (NAV-TRUCK-POINTING-WRONG-WAY): the heading is
            picked by pickHeading (NAVPURE) — the GPS course is
@@ -4482,6 +4811,93 @@
           fmtHeightM(w.maxheightM) + ' m in ' + fmtDist(w.atKm * 1000) + ' — your vehicle is ' + fmtHeightM(w.vehicleHeightM) + ' m</p>';
       }
 
+      /* v433: the truck-network warning's one home on the
+         glass — a single bold line at the top of the Directions
+         card, beside the clearance warning's. paintTruckNetWarn
+         renders S.truckNetWarn and nothing else. */
+      function paintTruckNetWarn() {
+        var el = body.querySelector('#nv_trucknet');
+        if (!el) return;
+        var w = S && S.truckNetWarn;
+        if (!w) { el.innerHTML = ''; return; }
+        el.innerHTML = '<p style="margin:0 0 8px;color:#b91c1c;font-weight:700;font-size:1.05em">\u26a0\ufe0f ' + esc(w.banner) + '</p>';
+      }
+
+      /* v433: the truck-network screen's data fetch — the City
+         of Calgary's own truck-route layer (Socrata yqm7-vj8i,
+         CORS-open), fetched for the line's bounding box and
+         cached per render by rounded box. Fully guarded like
+         the clearance fetch: a 6 s timeout race answers null
+         (UNKNOWN — never blocks navigation, never invents a
+         verdict), and only the layer's geometry + type +
+         restriction text ride in. */
+      var truckNetCache = {};
+      function fetchTruckNet(line, cb) {
+        if (typeof fetch !== 'function' || !line || line.length < 2) { cb(null); return; }
+        var minLat = 90, maxLat = -90, minLon = 180, maxLon = -180, i;
+        for (i = 0; i < line.length; i++) {
+          if (line[i][0] < minLat) minLat = line[i][0];
+          if (line[i][0] > maxLat) maxLat = line[i][0];
+          if (line[i][1] < minLon) minLon = line[i][1];
+          if (line[i][1] > maxLon) maxLon = line[i][1];
+        }
+        var pad = 0.004;
+        minLat -= pad; maxLat += pad; minLon -= pad; maxLon += pad;
+        var key = minLat.toFixed(3) + ',' + minLon.toFixed(3) + ',' + maxLat.toFixed(3) + ',' + maxLon.toFixed(3);
+        if (truckNetCache[key]) { cb(truckNetCache[key]); return; }
+        var where = 'within_box(multilinestring,' + maxLat.toFixed(6) + ',' + minLon.toFixed(6) + ',' + minLat.toFixed(6) + ',' + maxLon.toFixed(6) + ')';
+        var url = 'https://data.calgary.ca/resource/yqm7-vj8i.json?$limit=20000&$select=segment_id,type,restricted,multilinestring&$where=' + encodeURIComponent(where);
+        var done = false;
+        var timer = setTimeout(function () { if (!done) { done = true; cb(null); } }, 6000);
+        try {
+          fetch(url)
+            .then(function (r) { if (!r.ok) throw new Error('socrata ' + r.status); return r.json(); })
+            .then(function (rows) {
+              if (done) return; done = true; try { clearTimeout(timer); } catch (e) {}
+              var segs = [];
+              (rows || []).forEach(function (row) {
+                var ml = row && row.multilinestring;
+                if (!ml || !ml.coordinates) return;
+                ml.coordinates.forEach(function (part) {
+                  var pts = [];
+                  (part || []).forEach(function (c) { if (c && isFinite(c[0]) && isFinite(c[1])) pts.push([c[1], c[0]]); });
+                  if (pts.length >= 2) segs.push({ type: row.type || '', restricted: row.restricted || '', pts: pts });
+                });
+              });
+              truckNetCache[key] = segs;
+              cb(segs);
+            })
+            .catch(function () { if (!done) { done = true; try { clearTimeout(timer); } catch (e) {} cb(null); } });
+        } catch (e) { if (!done) { done = true; try { clearTimeout(timer); } catch (e) {} cb(null); } }
+      }
+
+      /* v433: screen one line and answer with a verdict:
+         'outside' (beyond the Calgary layer's country — the
+         screen has nothing honest to say), 'unknown' (the
+         layer could not be fetched), 'clean', or 'flagged'
+         (with the pure screen attached). */
+      function screenLine(line, plan, cb) {
+        if (!line || line.length < 2 || truckNetCoverage(line) === 'out') { cb({ verdict: 'outside', screen: null }); return; }
+        /* v433: the reported table is LOCAL data — it is
+           screened first and flags even when the layer fetch
+           fails outright: a driver-reported weight-restricted
+           street never waits on a network answer. */
+        var rep = null;
+        try { rep = truckNetScreen(null, REPORTED_RESTRICTIONS, line, plan, { reportedOnly: true }); } catch (e) { rep = null; }
+        if (rep && rep.flagged) { cb({ verdict: 'flagged', screen: rep }); return; }
+        fetchTruckNet(line, function (segs) {
+          /* an EMPTY layer over a Calgary line is a data
+             failure, not evidence — with no segments the screen
+             knows nothing about the network here, so the honest
+             verdict is 'unknown', never 'flagged'. */
+          if (!segs || !segs.length) { cb({ verdict: 'unknown', screen: null }); return; }
+          var sc = null;
+          try { sc = truckNetScreen(segs, REPORTED_RESTRICTIONS, line, plan); } catch (e) { sc = null; }
+          if (!sc) { cb({ verdict: 'unknown', screen: null }); return; }
+          cb({ verdict: sc.flagged ? 'flagged' : 'clean', screen: sc });
+        });
+      }
+
       function clearRoute() {
         if (S.drive) exitDrive();
         /* v103: ending a route also spends the auto-route latch —
@@ -4492,6 +4908,14 @@
         /* v356: the clearance warning belongs to the route —
            ending the route ends the warning with it. */
         S.clearanceWarn = null; paintClearanceWarn();
+        /* v433 (restored v419): ending the route ends the
+           learned-route state with it — provenance cleared, and
+           any suppression spent, so the next navigation of the
+           pair offers the learned route fresh. The
+           truck-network warning belongs to the route too. */
+        S.onLearnedRoute = false; S.learnedCount = 0;
+        S.learnSuppressDest = ''; S.learnSkipOnce = '';
+        S.truckNetWarn = null; S.pendingNetWarn = null; paintTruckNetWarn();
         if (S.routeLine && S.map) { S.map.removeLayer(S.routeLine); S.routeLine = null; }
         var st = body.querySelector('#nv_steps'); if (st) st.innerHTML = '<div class="empty">No route yet.</div>';
         var end = body.querySelector('#nv_end'); if (end) end.classList.add('hidden');
@@ -4546,12 +4970,66 @@
         if (!S.dest) { note('Pick a destination first — search above or tap the map.'); return; }
         if (!S.pos) { note('Waiting for your location… allow location for Meticulous, then tap Route again.'); return; }
         if (S.rerouting) return;
+        /* v433 (NAV-TRUCK-ROUTING + restored v419, owner
+           Nov 12, 2026 11:27 CST: "I was just training it last
+           time that it's not supposed to take me from the
+           inside road, it's supposed to take me from Métis. It
+           did not though."): a LEARNED route for this
+           origin->destination pair is consulted FIRST — before
+           the server is asked anything — and a clean one is
+           ADOPTED: it is the presented route, not an offer
+           buried somewhere. The gates keep it honest: never
+           mid-drive (a drive's re-routes belong to the standard
+           router — above all the re-route that fires when he
+           LEAVES a learned route), never in car mode (the
+           guard is a truck guard), never over a split-shift
+           plan, never for a destination whose learned route was
+           left earlier this drive (suppression), and never
+           twice past an unscreenable line (skip-once). The
+           learned line is screened like any route before it is
+           adopted: flagged -> the record is TAINTED (never
+           offered again) and the server routes instead;
+           unknown -> the server routes this once. A fresh
+           account has no learned routes, so lookup returns null
+           and this branch is invisible. */
+        if (!S.drive && !S.planOwns && S.settings.mode !== 'car' && typeof window !== 'undefined' && window.NavLearn) {
+          var lrec0 = null;
+          try { lrec0 = NavLearn.lookup(S.pos, S.dest); } catch (e) { lrec0 = null; }
+          if (lrec0) {
+            var dCell0 = '';
+            try { dCell0 = NavLearn.destCellOf(S.dest); } catch (e) { dCell0 = ''; }
+            if ((!S.learnSuppressDest || S.learnSuppressDest !== NavLearn.destCellOf(S.dest)) &&
+                (!S.learnSkipOnce || S.learnSkipOnce !== NavLearn.destCellOf(S.dest))) {
+              var lbuilt0 = null;
+              try { lbuilt0 = NavLearn.planFor(lrec0, S.destLabel); } catch (e) { lbuilt0 = null; }
+              if (lbuilt0) {
+                S.rerouting = true;
+                banner('Routing…', '');
+                var destAtAsk = S.dest;
+                screenLine(lbuilt0.line, lbuilt0.plan, function (lres) {
+                  if (!S || S.dest !== destAtAsk) { if (S) S.rerouting = false; return; }
+                  var dec = learnedRouteDecision(true, lres.verdict);
+                  if (dec === 'taint') {
+                    try { NavLearn.markTainted(NavLearn.pairKeyFor(S.pos, S.dest), 'trucknet'); } catch (e) {}
+                    S.rerouting = false; doRoute(); return;
+                  }
+                  if (dec === 'skip-once') { S.learnSkipOnce = dCell0; S.rerouting = false; doRoute(); return; }
+                  finalizeRoute(lbuilt0.line, lbuilt0.plan, null, lbuilt0);
+                });
+                return;
+              }
+            }
+          }
+        }
         S.rerouting = true;
         banner('Routing…', '');
         var url = S.settings.serverUrl.replace(/\/+$/, '') + '/route';
         var truckMode = S.settings.mode !== 'car';
         var attempt = 0;
         var lastGood = null;
+        /* v433: the truck-network exclusion re-ask fires at
+           most once per doRoute (see screenThenFinalize). */
+        var netExcludedOnce = false;
 
         /* v179 (F5): fetch elevations for ~200 m samples along
            the new route from the free Open-Meteo elevation
@@ -4673,8 +5151,56 @@
           } catch (e) {}
         }
 
-        function finalizeRoute(line, plan, reqBody) {
+        /* v433 (NAV-TRUCK-ROUTING): every adopted SERVER
+           route in truck mode is screened against the truck
+           network before it is presented (screenLine, above).
+           Clean / outside-Calgary / unscreenable -> adopted
+           exactly as before (unknown never blocks a server
+           route). Flagged -> ONE re-ask with the worst stretch
+           excluded (Valhalla exclude_polygons, proven live
+           Nov 12 within its 10,000 m circumference cap); the
+           original rides lastGood with its warning pending, so
+           a failed re-ask still lands the driver on the
+           original route WITH the warning, and a re-ask that
+           comes back still flagged is adopted WITH the warning
+           too. Silence is the one outcome this function never
+           produces for a flagged route. */
+        function screenThenFinalize(line, plan, reqBody) {
+          S.pendingNetWarn = null;
+          if (!truckMode || truckNetCoverage(line) === 'out') { finalizeRoute(line, plan, reqBody); return; }
+          screenLine(line, plan, function (res) {
+            if (!S) return;
+            if (res.verdict === 'flagged' && res.screen) {
+              if (!netExcludedOnce) {
+                var poly = null;
+                try { poly = truckNetExclusion(line, res.screen); } catch (e) { poly = null; }
+                if (poly) {
+                  netExcludedOnce = true;
+                  lastGood = { line: line, plan: plan, netVerdict: res.screen };
+                  S.pendingNetWarn = truckNetWarning(res.screen);
+                  requestRoute(null, null, [poly]);
+                  return;
+                }
+              }
+              S.pendingNetWarn = truckNetWarning(res.screen);
+            }
+            finalizeRoute(line, plan, reqBody);
+          });
+        }
+
+        function finalizeRoute(line, plan, reqBody, learned) {
           S.rerouting = false;
+          /* v433 (restored v419): the 4th argument is present
+             only for doRoute's learned adoption — every server
+             adoption (including the lastGood fallback) clears
+             the flag, so S.onLearnedRoute always names the
+             provenance of the line in force. */
+          S.onLearnedRoute = !!learned;
+          S.learnedCount = learned ? (learned.count || 1) : 0;
+          /* v433: a pending truck-network warning becomes this
+             route's warning (painted here; spoken below, where
+             it outranks the first-line announcement). */
+          S.truckNetWarn = S.pendingNetWarn || null; S.pendingNetWarn = null; paintTruckNetWarn();
           S.line = line;
           S.plan = plan;
           fetchGradeEvents(line);
@@ -4729,7 +5255,7 @@
           var st = body.querySelector('#nv_steps');
           if (st) {
             st.innerHTML = '<p class="note" style="margin-top:0">' + fmtDist(S.plan.totalKm * 1000) + ' · ' + fmtMin(S.plan.totalMin) +
-              ' · ' + (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network') + '</p>' +
+              ' · ' + (learned ? ('Your usual route — learned from your driving · driven ' + (learned.count || 1) + ((learned.count || 1) === 1 ? ' time' : ' times')) : (S.settings.mode === 'car' ? 'Car route' : 'Truck route — Calgary truck network')) + '</p>' +
               S.plan.maneuvers.map(function (m, i) {
                 return '<div class="listitem" data-nvstep="' + i + '"><div class="a">' + esc(m.instruction) + '</div>' +
                   '<div class="b">' + fmtDist(m.lengthKm * 1000) + '</div></div>';
@@ -4753,7 +5279,13 @@
           /* mid-drive, the drive screen's own prompts own the
              speech; the planning screen keeps its first-line
              announcement exactly as before. */
-          if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
+          /* v433: a truck-network warning is spoken INSTEAD
+             of the first-line announcement (speak() cancels, so
+             the two can never both land; the warning is the one
+             he must hear). Mid-drive it is spoken too — the
+             drive prompts resume on the next fix. */
+          if (S.truckNetWarn) speak(S.truckNetWarn.speak);
+          else if (!S.drive) speak(S.plan.maneuvers[0].verbalPre || S.plan.maneuvers[0].instruction);
           /* v280 (NAV-TRAFFIC-LIVE-ETA): the offer's verdict —
              the re-plan this route came from was the driver's
              tap on the traffic offer; its remaining time
@@ -4781,7 +5313,7 @@
           return (h !== null && h !== undefined && isFinite(h)) ? h : null;
         }
         var fwdAttempt = 0, viaInFlight = false, plainRetried = false;
-        function requestRoute(excludePts, viaPt) {
+        function requestRoute(excludePts, viaPt, excludePolys) {
           viaInFlight = !!viaPt;
           var reqOpts = { routePref: S.settings.routePref };
           if (viaPt) {
@@ -4800,6 +5332,11 @@
           if (excludePts && excludePts.length) {
             reqBody.exclude_locations = excludePts.map(function (p) { return { lat: p[0], lon: p[1] }; });
           }
+          /* v433: the truck-network exclusion re-ask — whole
+             polygons the engine must not route through (see
+             screenThenFinalize). Absent on every other call,
+             so the proven request shape is otherwise untouched. */
+          if (excludePolys && excludePolys.length) reqBody.exclude_polygons = excludePolys;
           /* v104: the HTTP status rides along so the failure line
              below can name what ACTUALLY happened (see the catch). */
           var httpStatus = 0;
@@ -4881,7 +5418,10 @@
                 }
                 plan = sanitizeTruckPlan(plan);
               }
-              finalizeRoute(line, plan, reqBody);
+              /* v433: screened before it is presented (see
+                 screenThenFinalize) — flagged routes get their
+                 one exclusion re-ask / loud warning there. */
+              screenThenFinalize(line, plan, reqBody);
             })
             .catch(function (err) {
               /* v260 (NAV-NO-UTURN): a failed FORWARD (via)
@@ -4994,6 +5534,22 @@
           if (!S.offSince) S.offSince = Date.now();
           else if (Date.now() - S.offSince > 2500 && !S.rerouting) {
             S.offSince = 0;
+            /* v433 (restored v419, NAV-ML-LEARNING stage 1):
+               leaving a LEARNED route spends it for this
+               destination — the re-route below is an ordinary
+               mid-drive one (the server's; doRoute's learned
+               branch never fires mid-drive), and the
+               suppression keeps any later fresh route this
+               drive on the standard router too. The running
+               trip also stops calling itself a learned-route
+               drive: its tail is the router's re-route, so it
+               can neither strengthen the learned route it left
+               nor teach a new one. */
+            if (S.onLearnedRoute) {
+              try { S.learnSuppressDest = NavLearn.destCellOf(S.dest); } catch (e) {}
+              S.onLearnedRoute = false;
+              if (S.learnTrip) { S.learnTrip.onLearned = false; S.learnTrip.suggested = null; }
+            }
             banner('Off route — re-routing…', '');
             speak('Off route. Re-routing.');
             doRoute();
@@ -5529,6 +6085,15 @@
            speaks for this road. */
         S.limitKmh = null; S.limitPos = null; S.limitFetchedAt = 0;
         S.drive = { said: {}, headingApplied: null, remSeg: -1, remAlong: 0, rrShown: null, animId: null, insetKey: '', arrows: null, trayKey: '' };
+        /* v433 (restored v419, NAV-ML-LEARNING stage 1):
+           capture opens with the drive. The trip's reference
+           suggestion is the line in force NOW — a learned line
+           when this drive rides one, the server's otherwise;
+           mid-drive re-routes never rewrite it, so a deviation
+           is judged against what the Navigator first suggested
+           for this pair. */
+        S.learnTrip = null;
+        try { if (typeof window !== 'undefined' && window.NavLearn && S.dest && S.pos) S.learnTrip = NavLearn.beginTrip(S.pos, S.dest, S.destLabel, S.line, !!S.onLearnedRoute); } catch (e) { S.learnTrip = null; }
         /* v212: arm the shell's drive bridges — PiP on leave,
            tray readout updates from the tick. Inert off-shell. */
         try { if (window.ShiftTrack && ShiftTrack.setDriving) ShiftTrack.setDriving(true); } catch (e) {}
@@ -5764,6 +6329,30 @@
 
       function exitDrive() {
         if (!S || !S.drive) return;
+        /* v433 (restored v419 + the truck-legality guard): the
+           drive's capture closes here — arrival (via
+           driveArrived's timer), the End tap and clearRoute all
+           funnel through exitDrive, and NavLearn.finishTrip
+           itself refuses any drive that did not end at its
+           destination, so an abandoned drive teaches nothing.
+           The DRIVEN trace is screened first (the same screen
+           routes get): flagged -> the drive teaches nothing and
+           a learned record it rode is tainted; unknown -> the
+           drive teaches nothing either (unverified is not
+           clean); outside Calgary / car mode -> the stage-1
+           rules run exactly as v419 wrote them. */
+        if (S.learnTrip) {
+          var ltrip433 = S.learnTrip; S.learnTrip = null;
+          var endPos433 = S.pos;
+          var closeTrip433 = function (flag) {
+            try { NavLearn.finishTrip(ltrip433, endPos433, flag); } catch (e) {}
+          };
+          if (typeof window === 'undefined' || !window.NavLearn) { /* learning inert */ }
+          else if (!S.settings || S.settings.mode === 'car' || truckNetCoverage(ltrip433.trace) === 'out') closeTrip433(undefined);
+          else screenLine(ltrip433.trace, null, function (tres) {
+            closeTrip433(tres.verdict === 'flagged' ? 'flagged' : (tres.verdict === 'unknown' ? 'unknown' : 'clean'));
+          });
+        }
         /* v212: the shell's drive bridges stand down with the
            drive — PiP disarmed, tray readout cleared, any native
            line in flight stopped. Inert off-shell. */

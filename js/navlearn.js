@@ -25,6 +25,28 @@
         A fresh account simply has no learned routes and gets
         standard routing, exactly as before this file existed.
 
+   v433 (NAV-TRUCK-ROUTING, owner Nov 12, 2026 — the truck
+   GPS must assume the truck is LOADED, and must never learn
+   that a weight-restricted street is fine): the Navigator
+   screens every finished drive's trace against Calgary's
+   truck network + the driver-reported restricted streets and
+   hands finishTrip a screenFlag:
+     - 'flagged' — the trace ran a real stretch over a
+       restricted / off-network / reported street. Such a
+       drive NEVER plants or refreshes a learned route (a
+       driver may lawfully run such a street EMPTY; the
+       learner must not promote that path for a loaded truck),
+       and when the drive RODE a learned route, that record is
+       TAINTED: lookup returns null for it from then on, so it
+       can never be offered again.
+     - 'unknown' — the screen could not run. Unverified is
+       not clean: the drive teaches nothing.
+     - 'clean', or no flag at all (outside Calgary, car mode,
+       older callers) — the stage-1 rules below run exactly as
+       written; every stage-1 bench pin still holds.
+   The Navigator also calls markTainted directly when a
+   learned route it was about to adopt screens flagged.
+
    Pairs are keyed by ~150 m cells, the same keying the load
    counter's site profiles use (js/geoloads.js cellKeyFor):
    0.0014° of latitude, 0.0022° of longitude.
@@ -203,6 +225,21 @@
     var now = drive.now || Date.now();
     var rec = data.routes[drive.pairKey] || null;
     var dur = (typeof drive.durationSec === 'number' && drive.durationSec > 0) ? drive.durationSec : 0;
+    /* v433 (NAV-TRUCK-ROUTING): the truck-legality guard runs
+       BEFORE every stage-1 rule. A flagged drive teaches
+       nothing — never planted, never refreshed, never
+       strengthened — and a flagged drive ON a learned route
+       taints that record so it is never offered again. An
+       unscreened ('unknown') drive teaches nothing either.
+       Absent flag -> the stage-1 rules below, unchanged. */
+    if (drive.screenFlag === 'flagged') {
+      if (drive.onLearned && rec) {
+        rec.tainted = { why: 'trucknet', at: now };
+        return { data: data, changed: true, why: 'tainted' };
+      }
+      return { data: data, changed: false, why: 'restricted' };
+    }
+    if (drive.screenFlag === 'unknown') return { data: data, changed: false, why: 'unverified' };
     if (drive.onLearned) {
       if (!rec) return { data: data, changed: false, why: 'learned-gone' };
       rec.count = (rec.count || 0) + 1;
@@ -244,6 +281,10 @@
     if (!key) return null;
     var rec = data.routes[key];
     if (!rec || !rec.line || rec.line.length < 2) return null;
+    /* v433: a tainted record (its line runs a truck-illegal
+       stretch — see nlApplyDrive / markTainted) is never
+       offered, exactly as if it had never been learned. */
+    if (rec.tainted) return null;
     return rec;
   }
 
@@ -320,6 +361,20 @@
       return { line: rec.line.slice(), plan: plan, count: rec.count || 1 };
     },
 
+    /* v433: taint a learned record by pair key — its line
+       runs a truck-illegal stretch, so lookup never offers it
+       again. Called by the Navigator when a learned route it
+       was about to adopt screens flagged, before the driver
+       ever rides it. */
+    markTainted: function (pairKey, why) {
+      if (!pairKey) return;
+      var d = nlLoad();
+      var rec = d.routes[pairKey];
+      if (!rec || rec.tainted) return;
+      rec.tainted = { why: why || 'trucknet', at: Date.now() };
+      nlSave(d);
+    },
+
     /* Begin capturing a drive. suggested = the line in force at
        drive start (the pair's reference suggestion — a learned
        line when the drive rides one, the server's otherwise). */
@@ -348,7 +403,7 @@
        Navigator's exitDrive funnels all three here). Judged and
        folded into the store; anything short of a completed drive
        at the destination teaches nothing. */
-    finishTrip: function (trip, lastPos) {
+    finishTrip: function (trip, lastPos, screenFlag) {
       if (!trip) return null;
       if (lastPos) NavLearn.pushFix(trip, lastPos);
       /* the destination door is judged on the trace's true end:
@@ -361,7 +416,8 @@
         pairKey: trip.pairKey, origin: trip.origin, dest: trip.dest,
         destLabel: trip.destLabel, trace: trip.trace,
         durationSec: Math.max(0, (Date.now() - trip.startedAt) / 1000),
-        onLearned: trip.onLearned, now: Date.now(), assessment: assessment
+        onLearned: trip.onLearned, now: Date.now(), assessment: assessment,
+        screenFlag: screenFlag
       });
       if (res.changed) nlSave(res.data);
       return res;
