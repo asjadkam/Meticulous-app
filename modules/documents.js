@@ -16,14 +16,11 @@
  *    whole book outgrows one cloud doc, exactly the v289 fuel
  *    law). View any document full-size any time; delete sits
  *    behind a two-tap confirm, away from the primary action.
- *  - MY INSPECTIONS: every PTI report already filed in the app
- *    (pti_reports — the same records Inspection Mode and the
- *    PTI Past-inspections list read), the FULL history, newest
- *    first, one summary line each in Inspection Mode's own
- *    format (modules/pti.js _dotSummaryText). A tap opens the
- *    summary sheet — date, pre/post, time, odometer, one
- *    result line, signed — never the full checklist. Nothing
- *    is re-entered: inspections appear by themselves.
+ *  - MY INSPECTIONS (v339–v430, REMOVED in v431 — see the
+ *    v431 note at the foot of this header): every PTI report
+ *    already filed in the app, listed under My documents on
+ *    this page. Gone from the face on the owner's ruling;
+ *    inspections live in the PTI module.
  *  - SEND (owner / fleet-manager faces): pick a connected
  *    driver, a photo or PDF, a label — the document crosses
  *    through the existing Connect pipe as a 'vaultdoc'
@@ -34,6 +31,21 @@
  *
  * Store keys: docs_items (the vault). PTI data is only READ
  * here (pti_reports) — this module files no inspection.
+ *
+ * v431 (DOCUMENTS-PAGE-INSPECTIONS-REMOVAL, owner Nov 12,
+ * 2026): the "🔍 My inspections" list that stood under My
+ * documents on this page (the newest 3 + "Show more — N more
+ * inspections") is REMOVED, on the owner's ruling confirmed
+ * this day: the Documents page holds documents only —
+ * licence, registration, insurance. Inspections do NOT
+ * belong on this page; they live in their own place, the
+ * PTI module, whose own Past inspections list reads the
+ * same pti_reports — so the removal strands nothing and no
+ * inspection record is touched. The face is now: the Audit
+ * button, Add a document, My documents, and (owner faces)
+ * Send a document. The module's read of pti_reports stays
+ * for the Audit view, which is a separate door and was not
+ * named in the ruling.
  */
 (function () {
   'use strict';
@@ -216,7 +228,6 @@
   var viewFrom = 'main';   // where a detail view returns to ('main' | 'audit')
   var delArm = false;
   var docsShowAll = false;
-  var inspShowAll = false;
   var addPending = null;    // {kind, data, fileName} held by the Add form
   var addLabel = 'Other';
   var addErr = '';
@@ -298,7 +309,6 @@
   function renderMain(body) {
     var role = roleNow();
     var docs = items();
-    var insps = inspections();
     var peers = connectedPeers();
     var canSend = (role === 'office' || role === 'both') && peers.length > 0;
     var h = '<button class="btn small ghost" id="docs_audit_btn" style="margin-bottom:10px">🔎 Audit</button>';
@@ -328,22 +338,11 @@
           (docsShowAll ? 'Show less' : 'Show more — ' + (docs.length - 3) + ' more document' + (docs.length - 3 === 1 ? '' : 's')) + '</button>'
         : '') + '</div>';
 
-    /* ---- My inspections (drivers file them; office reads
-       its drivers' inspections in the PTI module instead) ---- */
-    if (role !== 'office') {
-      var shownInsp = inspShowAll ? insps : insps.slice(0, 3);
-      h += '<div class="card"><h3 style="margin-top:0">🔍 My inspections</h3>' +
-        (insps.length ? shownInsp.map(function (r) {
-          return '<div class="listitem" data-insp-open="' + esc(r.id) + '" style="cursor:pointer">' +
-            '<div class="a">' + esc(r.date || '') +
-            '<span style="float:right;color:var(--muted);font-weight:400">›</span></div>' +
-            '<div class="b">' + esc(summaryLine(r)) + '</div></div>';
-        }).join('') : '<div class="empty">No inspections filed yet — they appear here by themselves as you file them in PTI.</div>') +
-        (insps.length > 3
-          ? '<button class="btn ghost" id="docs_insp_more" style="width:100%;margin-top:8px">' +
-            (inspShowAll ? 'Show less' : 'Show more — ' + (insps.length - 3) + ' more inspection' + (insps.length - 3 === 1 ? '' : 's')) + '</button>'
-          : '') + '</div>';
-    }
+    /* ---- v431: NO inspections list on this page. The
+       "🔍 My inspections" card that stood here is removed on
+       the owner's ruling (Nov 12, 2026): documents only on
+       the Documents page; inspections live in the PTI
+       module. ---- */
 
     /* ---- Send a document to a driver (owner faces) ---- */
     if (canSend) {
@@ -436,8 +435,6 @@
     };
     var moreB = body.querySelector('#docs_more');
     if (moreB) moreB.onclick = function () { docsShowAll = !docsShowAll; Meticulous.modules.documents.render(body); };
-    var inspMoreB = body.querySelector('#docs_insp_more');
-    if (inspMoreB) inspMoreB.onclick = function () { inspShowAll = !inspShowAll; Meticulous.modules.documents.render(body); };
     body.querySelectorAll('[data-doc-open]').forEach(function (elx) {
       elx.onclick = function () {
         viewFrom = 'main';
@@ -446,13 +443,8 @@
         Meticulous.modules.documents.render(body);
       };
     });
-    body.querySelectorAll('[data-insp-open]').forEach(function (elx) {
-      elx.onclick = function () {
-        viewFrom = 'main';
-        view = { mode: 'insp', id: elx.getAttribute('data-insp-open') };
-        Meticulous.modules.documents.render(body);
-      };
-    });
+    /* v431: the face's [data-insp-open] wiring went with the
+       removed list — the Audit view wires its own rows. */
 
     if (!canSend) return;
     /* Send form */
@@ -622,7 +614,7 @@
     },
     resetView: function () {
       view = { mode: 'main', id: null }; delArm = false; viewFrom = 'main';
-      docsShowAll = false; inspShowAll = false;
+      docsShowAll = false;
     },
     render: function (body) {
       docsBody = body;
