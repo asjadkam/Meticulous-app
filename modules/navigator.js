@@ -1237,89 +1237,6 @@
     return parseLatLngText(s);
   }
 
-  /* v429 (NAV-LINK-NAVIGATION, owner Nov 12, 2026, screen
-     recording of the Dispatch card): "Tapping the link does not
-     navigate to anywhere. But that is supposed to be a secondary
-     option — that is not supposed to be the primary option. [I]
-     should be able to navigate in the navigation module with the
-     link somewhere." THE PRIMARY DOOR: the Navigator's own
-     Destination card offers the ACTIVE dispatch's destinations —
-     Go Empty and Hauling To, BY NAME — and one tap routes to the
-     pin. This function is the pure read behind that offer: given
-     a dispatch record it returns the destinations it can stand
-     behind, in run order:
-       [{ key:'go',   label:'Go Empty',  lat, lng, url },
-        { key:'dump', label:'Hauling To', lat, lng, url }]
-     A destination's pin comes first from the record's own site
-     fields (lat/lng = the pickup, dumpLat/dumpLng = the dump —
-     the v415 fields), then from the notes: the pair the notes
-     set beside the destination's own label (the Nov 12 shape:
-     "Go Empty To: (51.125222, -113.9828056) <link>"), read
-     through the ONE link brain (PinLinks.extractPins — bare
-     pairs, full-link pins, in text order). A destination whose
-     notes carry a Maps link but no readable pin keeps the link
-     as its url — the tap resolves it through PinLinks.resolveUrl
-     at tap time, never an invented pin. A destination with
-     neither a pin nor a link is not offered. Labels are the
-     run's own names — never coordinates. */
-  function navDispatchDestinations(d) {
-    var out = [];
-    if (!d || typeof d !== 'object') return out;
-    function pair(a, b) {
-      var la = parseFloat(a), ln = parseFloat(b);
-      if (!isFinite(la) || !isFinite(ln)) return null;
-      if (Math.abs(la) > 90 || Math.abs(ln) > 180) return null;
-      if (la === 0 && ln === 0) return null;
-      return { lat: la, lng: ln };
-    }
-    var notes = String(d.notes || '');
-    var goPin = pair(d.lat, d.lng), dumpPin = pair(d.dumpLat, d.dumpLng);
-    var goUrl = '', dumpUrl = '';
-    if (notes && typeof window !== 'undefined' && window.PinLinks && PinLinks.extractPins) {
-      try {
-        var ex = PinLinks.extractPins(notes);
-        var goIdx = -1, haulIdx = -1, m;
-        m = /go\s*empty\s*to/i.exec(notes); if (m) goIdx = m.index;
-        m = /hauling\s*to/i.exec(notes); if (m) haulIdx = m.index;
-        /* segment of a position: the label it follows (the later
-           of the two labels at or before it); a position before
-           both labels belongs to neither. */
-        function segOf(pos) {
-          if (goIdx !== -1 && haulIdx !== -1) return pos >= Math.max(goIdx, haulIdx) ? (haulIdx > goIdx ? 'dump' : 'go') : (goIdx < haulIdx ? 'go' : 'dump');
-          if (goIdx !== -1) return pos >= goIdx ? 'go' : '';
-          if (haulIdx !== -1) return pos >= haulIdx ? 'dump' : '';
-          return '';
-        }
-        (ex.pins || []).forEach(function (p) {
-          var seg = segOf(p.index);
-          if (seg === 'go' && !goPin) goPin = { lat: p.lat, lng: p.lng };
-          if (seg === 'dump' && !dumpPin) dumpPin = { lat: p.lat, lng: p.lng };
-        });
-        (ex.links || []).forEach(function (L) {
-          var seg = segOf(L.index);
-          if (seg === 'go' && !goUrl) goUrl = L.url;
-          if (seg === 'dump' && !dumpUrl) dumpUrl = L.url;
-        });
-        /* unlabelled notes: pins/links in order fill what is
-           still missing — first the Go Empty, then the dump. */
-        if (goIdx === -1 && haulIdx === -1) {
-          (ex.pins || []).forEach(function (p) {
-            if (!goPin) goPin = { lat: p.lat, lng: p.lng };
-            else if (!dumpPin) dumpPin = { lat: p.lat, lng: p.lng };
-          });
-          (ex.links || []).forEach(function (L) {
-            if (!goUrl) goUrl = L.url;
-            else if (!dumpUrl) dumpUrl = L.url;
-          });
-        }
-      } catch (e) { /* the fields alone still stand */ }
-    }
-    var site = String(d.jobSite || d.pickup || '').trim();
-    if (goPin || goUrl) out.push({ key: 'go', label: 'Go Empty', lat: goPin ? goPin.lat : null, lng: goPin ? goPin.lng : null, url: goUrl || '', site: site });
-    if (dumpPin || dumpUrl) out.push({ key: 'dump', label: 'Hauling To', lat: dumpPin ? dumpPin.lat : null, lng: dumpPin ? dumpPin.lng : null, url: dumpUrl || '', site: site });
-    return out;
-  }
-
   /* v103: the v93 turn-by-turn HANDOFF (its link builder + the
      timed cascade) is DELETED outright — owner ruling, Oct 16,
      2026: navigation never leaves the app. There is deliberately
@@ -2931,19 +2848,6 @@
          so every other account's face stays byte-identical. */
       var rp0 = null;
       try { rp0 = (window.SplitShift && SplitShift.routePlan) ? SplitShift.routePlan() : null; } catch (e) { rp0 = null; }
-      /* v429 (NAV-LINK-NAVIGATION): the active dispatch's own
-         destinations for the Destination card's primary door
-         (see navDispatchDestinations). Read at render from the
-         same dsp_active record the rest of the app reads; a
-         completed or cancelled record offers nothing. No active
-         dispatch → no block, the card is byte-identical. */
-      var dspDests = [];
-      try {
-        var dspAct429 = App._store.get('dsp_active', null);
-        if (dspAct429 && dspAct429.status !== 'completed' && dspAct429.status !== 'cancelled') {
-          dspDests = navDispatchDestinations(dspAct429);
-        }
-      } catch (e) { dspDests = []; }
       var h = '<div class="nv-shell">' +
         '<div class="nv-shell-head"><button class="btn ghost small" id="nv_back">← Back</button>' +
         '<span class="nv-shell-title">🧭 Navigator</span>' +
@@ -3075,26 +2979,28 @@
           '<span style="color:#555">Set the Navigator server URL in Preferences → Advanced. The map and your position still work below.</span></div>';
       }
       h += '<div class="card"><h3>📍 Destination</h3>' +
-        /* v429: the PRIMARY link door — the active dispatch's
-           destinations, by name, one tap routes (wired below,
-           beside the sent-pin door). Present only when an active
-           dispatch carries a destination. */
-        (dspDests.length ?
-          '<label class="f">🚛 Today\'s dispatch' + (dspDests[0].site ? ' — ' + esc(dspDests[0].site) : '') + '</label>' +
-          dspDests.map(function (dd, di) {
-            return '<div class="row" style="margin-bottom:6px"><button class="btn navy" data-nvdsp="' + di + '" style="flex:1">🧭 ' + esc(dd.label) + '</button></div>';
-          }).join('') +
-          '<div id="nv_dsp_note"></div>' : '') +
         '<label class="f">Address or place</label>' +
         '<div class="row"><input id="nv_q" placeholder="e.g. Foothills Industrial Park, Calgary" style="flex:1">' +
         '<button class="btn navy" id="nv_search">Search</button></div>' +
         '<div id="nv_results"></div>' +
         /* v330: the SENT-PIN door — foremen and other drivers text
            Google Maps links; paste one here and the Navigator
-           goes to its pin (see openSentPin). */
-        '<label class="f">Sent a pin in a text? Paste the Maps link</label>' +
+           goes to its pin (see openSentPin).
+           v430 (NAV-FROM-PIN, owner Nov 12, 2026, on seeing the
+           v429 build live): "That's not the reality for all the
+           truckers. Instead it should just say navigate from pin
+           and a text box where you can paste the link." The v429
+           dispatch block above this card's search (Today's
+           dispatch — Go Empty / Hauling To buttons) is REMOVED:
+           one fleet's run is not every trucker's flow. This door
+           is the universal one — any driver, any Maps link — and
+           it now carries his words as its label: "Navigate from
+           pin". Same box, same ids, same openSentPin plumbing
+           (the v358 PinLinks brain behind it); only the label
+           and the button's word changed. */
+        '<label class="f">Navigate from pin</label>' +
         '<div class="row"><input id="nv_link" placeholder="Paste the Maps link here" style="flex:1">' +
-        '<button class="btn navy" id="nv_link_open">Open pin</button></div>' +
+        '<button class="btn navy" id="nv_link_open">Navigate</button></div>' +
         '<div id="nv_link_note"></div>' +
         /* v103 door 1: the SAME search-first picker as Navigation
            (the Navigation module's shared component — recents-only
@@ -3754,41 +3660,6 @@
       if (linkOpenBtn) linkOpenBtn.onclick = openSentPin;
       var linkInp = body.querySelector('#nv_link');
       if (linkInp) linkInp.addEventListener('keydown', function (e) { if (e && e.key === 'Enter') openSentPin(); });
-      /* v429: the dispatch destinations' taps. A destination that
-         carries its pin lands exactly like a sent pin — setDest
-         (which auto-routes) + the visit recorded under the
-         destination's own name (the Manifest law). A destination
-         that carries only its link is resolved through the ONE
-         link brain (PinLinks.resolveUrl — the direct follow,
-         then the server door) and lands the same way; a link
-         that yields nothing gets the paste bar's plain words,
-         never a silent dead end. */
-      function landDispatchPin(coords, label) {
-        setDest(coords, label, true);
-        if (S.map) S.map.setView(S.dest, 14);
-        try {
-          var nvm429 = Meticulous.modules.navigation;
-          if (nvm429 && nvm429.recordVisit) nvm429.recordVisit(label, coords[0], coords[1]);
-        } catch (e) {}
-      }
-      body.querySelectorAll('[data-nvdsp]').forEach(function (b) {
-        b.onclick = function () {
-          var dd = dspDests[Number(b.getAttribute('data-nvdsp'))];
-          if (!dd) return;
-          var nt = body.querySelector('#nv_dsp_note');
-          var say = function (t) { if (nt) nt.innerHTML = t ? '<p class="note" style="margin-top:6px">' + esc(t) + '</p>' : ''; };
-          if (dd.lat !== null && dd.lng !== null) { say(''); landDispatchPin([dd.lat, dd.lng], dd.label); return; }
-          if (dd.url && window.PinLinks && PinLinks.resolveUrl) {
-            say('Opening the link…');
-            PinLinks.resolveUrl(dd.url).then(function (c) {
-              if (c) { say(''); landDispatchPin([c.lat, c.lng], dd.label); }
-              else say('That link did not lead to a pin I could read. Open it once in Maps, copy the full link from the top, and paste that below instead — the full link carries the pin.');
-            });
-            return;
-          }
-          say('No pin could be read for ' + dd.label + ' on this dispatch.');
-        };
-      });
       /* v183: ALL saved places (work + personal), read through
          the Navigation module's shared picker data — the search
          consults this list BEFORE any geocoder (see the handler
@@ -4301,8 +4172,8 @@
          whose pin the deep-link drain (js/deeplink.js) could not
          read or resolve arrives here preserved — never with an
          invented pin. The link waits in this door's own box under
-         a plain note, and Open pin runs the door's own tries on
-         it. Consumed once, then cleared. */
+         a plain note, and the Navigate from pin button runs the
+         door's own tries on it. Consumed once, then cleared. */
       try {
         var ml = (window.App && App._store) ? App._store.get('maplink_link', null) : null;
         if (ml && ml.url) {
@@ -4311,7 +4182,7 @@
           var mlNt = body.querySelector('#nv_link_note');
           if (mlInp) mlInp.value = String(ml.url);
           if (mlNt) mlNt.innerHTML = '<p class="note" style="margin-top:6px">' +
-            esc('This link was tapped outside the app and I could not read a pin from it. It is kept here — tap Open pin and I will try again, or open it once in Maps and paste the full link instead — the full link carries the pin.') + '</p>';
+            esc('This link was tapped outside the app and I could not read a pin from it. It is kept here — tap Navigate and I will try again, or open it once in Maps and paste the full link instead — the full link carries the pin.') + '</p>';
         }
       } catch (e) {}
 
