@@ -186,7 +186,9 @@ function ptiWorld(seed) {
   ok('source: no docs_insp_more anywhere', docSrc.indexOf('docs_insp_more') < 0);
   ok('source: no inspShowAll state anywhere', docSrc.indexOf('inspShowAll') < 0);
   const idxSrc = read('index.html');
-  ok('index loads modules/documents.js?v=431', idxSrc.indexOf('modules/documents.js?v=431') >= 0);
+  /* pin moved v431 -> v442 (DOC-OPEN-NOV12 shipped a new
+     documents.js; the removal this suite proves is untouched) */
+  ok('index loads modules/documents.js?v=442', idxSrc.indexOf('modules/documents.js?v=442') >= 0);
 
   /* ---------- the driver face: documents only ---------- */
   {

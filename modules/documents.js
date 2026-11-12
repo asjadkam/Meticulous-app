@@ -46,6 +46,20 @@
  * Send a document. The module's read of pti_reports stays
  * for the Audit view, which is a separate door and was not
  * named in the ruling.
+ *
+ * v442 (DOC-OPEN-NOV12, owner Nov 12, 2026, his screen
+ * recording): tapping the CVSA Inspection Report opened a
+ * detail whose document was a tiny broken-image icon — the
+ * detail printed the record's `data` field raw into an <img>,
+ * and for a document whose bytes the sync copy had shed (the
+ * v339 law) that field is absent: src="undefined". His order:
+ * "When clicked on a specific document it should open up that
+ * document." The detail now RESOLVES the bytes — record data
+ * URL as-is, vault reference through PhotoVault.get, anything
+ * else from the v394 account copy (which no code had ever
+ * read back), healing found bytes into the vault — and the
+ * photo opens full-screen on tap, tap again to zoom. The
+ * full reasoning stands at resolveDocBytes below.
  */
 (function () {
   'use strict';
@@ -236,6 +250,13 @@
   var sendNote = '';
   var docsBody = null;
   var pulling = false;
+  /* v442 (DOC-OPEN-NOV12): bytes the detail view resolved for
+     a document whose record does not carry them itself, keyed
+     by document id — the detail re-renders (the delete arm)
+     and the full-screen view read the picture from here, so a
+     fetched page is fetched once. */
+  var resolvedBytes = {};
+  var fullEl = null;        // the full-screen overlay, while open
 
   function roleNow() {
     try { return (App.userRole && App.userRole()) || ''; } catch (e) { return ''; }
@@ -490,18 +511,174 @@
     };
   }
 
+  /* ---------------- v442: opening a document ----------------
+     DOC-OPEN-NOV12 (owner, Nov 12, 2026, his screen recording):
+     Documents → the CVSA Inspection Report — Nov 5, 2026
+     (AB318427EI) → the detail showed Label and Added and a
+     tiny broken-image icon where the page itself should be.
+     His order: "When clicked on a specific document it should
+     open up that document."
+
+     ROOT: the detail view printed the record's `data` field
+     straight into an <img src>. Three shapes of that field are
+     in the wild and only one of them is a picture: an inline
+     data URL (legacy, fine), a vault reference (web 441 —
+     fine once the vault's painter swaps the bytes in), and NO
+     data at all — the sync copy sheds `data` whenever the
+     vault book outgrows one cloud doc (the v339 law above), so
+     a document filed on one surface arrives on another with
+     its facts and NO page, and the detail printed
+     src="undefined": the broken icon he recorded. The full
+     page does exist — the Add form's account copy (v394:
+     FB.saveDoc('documents', id, …)) — but no code anywhere
+     ever read that copy back.
+
+     THE FIX (this module only): the detail view RESOLVES the
+     document's bytes before it paints them — the record's own
+     data URL as-is; a vault reference through PhotoVault.get;
+     anything else (missing, shed, a reference the vault
+     cannot produce) falls back to the v394 account copy, and
+     bytes found there are healed into the vault so the record
+     carries a reference from then on. While bytes are on their
+     way the view says so in words; if no copy exists anywhere
+     it says that in words too — never a broken icon again.
+     The photo, once shown full-width, is tappable: it opens
+     the document full-screen, and a tap there toggles between
+     fit-to-screen and full size (scroll to pan) — a proper
+     document view. PDFs ride the same resolution before the
+     Open button delivers them. */
+  function isDataUrl(s) { return typeof s === 'string' && s.indexOf('data:') === 0; }
+  function isVaultRef(s) {
+    try { return !!(window.PhotoVault && PhotoVault.isRef && PhotoVault.isRef(s)); }
+    catch (e) { return typeof s === 'string' && s.indexOf('mtphoto://') === 0; }
+  }
+  /* Bytes found in the account copy are put in the vault and
+     the record is re-pointed at the reference — the same heal
+     the vault sweep performs, so the document opens from the
+     record itself on every device from then on. A failed heal
+     changes nothing: the view still shows the fetched page
+     from resolvedBytes. */
+  function healDocBytes(d, url) {
+    try {
+      if (!(window.PhotoVault && PhotoVault.put) || !d || !d.id || !isDataUrl(url)) return;
+      PhotoVault.put(url).then(function (ref) {
+        if (!ref) return;
+        var list = items();
+        var changed = false;
+        list.forEach(function (x) {
+          if (x && x.id === d.id && x.data !== ref) { x.data = ref; changed = true; }
+        });
+        if (changed) saveItemsVerified(list);
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function accountCopy(d) {
+    try {
+      if (!(window.FB && FB.loadDoc) || !d || !d.id) return Promise.resolve(null);
+      return FB.loadDoc('documents', d.id).then(function (rec) {
+        return (rec && isDataUrl(rec.data)) ? rec.data : null;
+      }).catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+  /* resolveDocBytes(d, cb) — cb(urlOrNull). The record's own
+     bytes win; the vault answers for a reference; the account
+     copy is the last door, for either shape. */
+  function resolveDocBytes(d, cb) {
+    if (!d) { cb(null); return; }
+    if (resolvedBytes[d.id]) { cb(resolvedBytes[d.id]); return; }
+    if (isDataUrl(d.data)) { cb(d.data); return; }
+    var fromAccount = function () {
+      accountCopy(d).then(function (url) {
+        if (url) { resolvedBytes[d.id] = url; healDocBytes(d, url); }
+        cb(url || null);
+      });
+    };
+    if (isVaultRef(d.data)) {
+      try {
+        PhotoVault.get(d.data).then(function (url) {
+          if (url) { resolvedBytes[d.id] = url; cb(url); }
+          else fromAccount();
+        }, fromAccount);
+        return;
+      } catch (e) {}
+    }
+    fromAccount();
+  }
+
+  /* The full-screen document view: the page itself, the whole
+     screen, nothing else. A tap on the page toggles fit /
+     full size (the full size scrolls, so a licence line or a
+     stamp can be read close); ✕ or a tap on the dark ground
+     closes it. Plain DOM, appended over everything. */
+  function closeDocFull() {
+    if (fullEl) {
+      try { fullEl.parentNode && fullEl.parentNode.removeChild(fullEl); } catch (e) {}
+      fullEl = null;
+    }
+  }
+  function openDocFull(url) {
+    closeDocFull();
+    try {
+      var host = document.createElement('div');
+      host.setAttribute('id', 'docs_full');
+      host.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,12,16,0.95);display:flex;flex-direction:column;';
+      var bar = document.createElement('div');
+      bar.style.cssText = 'display:flex;justify-content:flex-end;padding:10px;';
+      var x = document.createElement('button');
+      x.setAttribute('type', 'button');
+      x.className = 'btn small ghost';
+      x.style.cssText = 'color:#fff;border-color:#fff;min-width:48px;min-height:48px;font-size:20px;';
+      x.textContent = '✕';
+      x.onclick = function () { closeDocFull(); };
+      bar.appendChild(x);
+      var scroller = document.createElement('div');
+      scroller.style.cssText = 'flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;';
+      var img = document.createElement('img');
+      img.setAttribute('src', url);
+      img.setAttribute('alt', 'Document');
+      img.style.cssText = 'max-width:100%;height:auto;cursor:zoom-in;';
+      var zoomed = false;
+      img.onclick = function () {
+        zoomed = !zoomed;
+        img.style.cssText = zoomed
+          ? 'max-width:none;width:auto;height:auto;cursor:zoom-out;'
+          : 'max-width:100%;height:auto;cursor:zoom-in;';
+        if (!zoomed) { try { scroller.scrollLeft = 0; scroller.scrollTop = 0; } catch (e) {} }
+      };
+      scroller.appendChild(img);
+      scroller.onclick = function (ev) { if (ev && ev.target === scroller) closeDocFull(); };
+      host.appendChild(bar);
+      host.appendChild(scroller);
+      document.body.appendChild(host);
+      fullEl = host;
+    } catch (e) {}
+  }
+
   /* ---------------- detail views ---------------- */
   function renderDocDetail(body, d) {
+    closeDocFull();
+    var held = resolvedBytes[d.id] || (isDataUrl(d.data) ? d.data : null);
     var h = '<div class="card"><button class="btn small ghost" id="docs_back">‹ Back</button>' +
       '<h3 style="margin-top:10px">' + (d.kind === 'pdf' ? '📄 ' : '🖼 ') + esc(d.name || 'Document') + '</h3>' +
       '<div class="kv"><span>Label</span><b>' + esc(d.label || '') + '</b></div>' +
       '<div class="kv"><span>Added</span><b>' + esc(fmtWhen(d.addedAt)) + '</b></div>' +
-      (d.sentBy ? '<div class="kv"><span>Sent by</span><b>' + esc(d.sentBy) + (d.sentAt ? ' · ' + esc(fmtWhen(d.sentAt)) : '') + '</b></div>' : '') +
-      (d.kind === 'pdf'
-        ? '<button class="btn primary" id="docs_open_pdf" style="width:100%;margin-top:12px">📄 Open the PDF</button>'
-        : '<img src="' + d.data + '" style="width:100%;border-radius:10px;margin-top:10px">' +
-          (App._photoDl ? App._photoDl(d.data, 'document-' + (d.label || '')) : '')) +
-      '<div style="margin-top:16px;border-top:1px solid #eef1f6;padding-top:10px">' +
+      (d.sentBy ? '<div class="kv"><span>Sent by</span><b>' + esc(d.sentBy) + (d.sentAt ? ' · ' + esc(fmtWhen(d.sentAt)) : '') + '</b></div>' : '');
+    if (d.kind === 'pdf') {
+      h += '<button class="btn primary" id="docs_open_pdf" style="width:100%;margin-top:12px">📄 Open the PDF</button>' +
+        '<div class="note" id="docs_pdf_note" style="margin-top:6px"></div>';
+    } else if (held) {
+      h += '<img id="docs_photo_img" src="' + held + '" alt="Document" style="width:100%;border-radius:10px;margin-top:10px;cursor:zoom-in">' +
+        (App._photoDl ? App._photoDl(held, 'document-' + (d.label || '')) : '');
+    } else if (isVaultRef(d.data)) {
+      /* the record carries a vault reference: paint it — the
+         vault's own painter swaps the bytes in as they land —
+         and the resolution below stands behind it. */
+      h += '<img id="docs_photo_img" src="' + d.data + '" alt="Document" style="width:100%;border-radius:10px;margin-top:10px;cursor:zoom-in">' +
+        '<div class="note" id="docs_photo_note" style="margin-top:6px">Opening the document…</div>';
+    } else {
+      h += '<div class="note" id="docs_photo_note" style="margin-top:10px">Opening the document…</div>';
+    }
+    h += '<div style="margin-top:16px;border-top:1px solid #eef1f6;padding-top:10px">' +
       '<button class="btn ghost" id="docs_del" style="color:#c2410c">' + (delArm ? 'Tap again to delete this document' : '🗑 Delete document') + '</button></div></div>';
     body.innerHTML = h;
     body.querySelector('#docs_back').onclick = function () {
@@ -509,10 +686,47 @@
       Meticulous.modules.documents.render(body);
     };
     var openB = body.querySelector('#docs_open_pdf');
-    if (openB) openB.onclick = function () { openPdf(d.data); };
+    if (openB) openB.onclick = function () {
+      resolveDocBytes(d, function (url) {
+        if (url) { openPdf(url); return; }
+        var n = body.querySelector('#docs_pdf_note');
+        if (n) n.textContent = 'This PDF could not be loaded — no copy of it could be found.';
+      });
+    };
+    var imgEl = body.querySelector('#docs_photo_img');
+    if (imgEl) imgEl.onclick = function () {
+      var url = resolvedBytes[d.id] || (isDataUrl(imgEl.getAttribute('src')) ? imgEl.getAttribute('src') : null);
+      if (url) { openDocFull(url); return; }
+      resolveDocBytes(d, function (u) { if (u) openDocFull(u); });
+    };
+    if (d.kind !== 'pdf' && !held) {
+      /* the record does not carry the page itself (a vault
+         reference not yet painted, or bytes the sync copy
+         shed): fetch the document and put it on the face. */
+      resolveDocBytes(d, function (url) {
+        if (view.mode !== 'doc' || view.id !== d.id || docsBody !== body) return;
+        var note = body.querySelector('#docs_photo_note');
+        if (!url) {
+          if (note) note.textContent = 'This document could not be loaded — no copy of it could be found.';
+          var im0 = body.querySelector('#docs_photo_img');
+          if (im0 && !isDataUrl(im0.getAttribute('src'))) im0.style.display = 'none';
+          return;
+        }
+        var im = body.querySelector('#docs_photo_img');
+        if (im) {
+          if (im.getAttribute('src') !== url) im.setAttribute('src', url);
+          im.onclick = function () { openDocFull(url); };
+        } else {
+          Meticulous.modules.documents.render(body);
+          return;
+        }
+        if (note) note.textContent = '';
+      });
+    }
     body.querySelector('#docs_del').onclick = function () {
       if (!delArm) { delArm = true; Meticulous.modules.documents.render(body); return; }
       delArm = false;
+      delete resolvedBytes[d.id];
       if (deleteDoc(d.id)) view = { mode: viewFrom === 'audit' ? 'audit' : 'main', id: null };
       Meticulous.modules.documents.render(body);
     };
@@ -618,6 +832,7 @@
     },
     render: function (body) {
       docsBody = body;
+      closeDocFull();
       if (view.mode === 'audit') { renderAudit(body); return; }
       if (view.mode === 'doc' && view.id) {
         var d = null;
@@ -638,6 +853,9 @@
     _buildDoc: buildDoc,
     _addDoc: addDoc,
     _deleteDoc: deleteDoc,
+    _resolveDocBytes: resolveDocBytes,
+    _fullOpen: function () { return !!fullEl; },
+    _closeFull: closeDocFull,
     _inspections: inspections,
     _summaryParts: summaryParts,
     _summaryLine: summaryLine,
