@@ -747,6 +747,28 @@ label.chk input{width:18px;height:18px;}
   max-width:none;border-radius:0;font-size:11.5px;line-height:1.3;
   padding:5px 10px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;text-align:center;}
+/* v427 (NAV-PIP-COVER-NOV12; owner Nov 12, 2026, driving —
+   screenshot of the floating navigation window over his home
+   screen: the direction pill ("200 m · Turn left onto Country
+   Hills Boulevard NE.") wrapped ~4 deep and covered most of the
+   small map; his order: "this screen should not be covered with
+   instructions"): the v292 carve-out above is retired by his
+   newest word — the SYSTEM PiP posture (.nv-pip) was left
+   wearing the base wrapping pill, and in the small system
+   window that pill IS the covering card, the same defect v292
+   fixed for the mini. The .nv-pip posture now gets the same
+   slim single-line caption strip: pinned to the bottom edge,
+   one line, ellipsis — the map stays visible and the words
+   ride as a caption, never a card over the road. The v273
+   full-wording interest is served the v292 way: the full
+   instruction is one tap away (the tap reopens full
+   navigation, whose banner carries it whole) and the voice
+   speaks it. The base pill rule is unchanged; it is now
+   overridden in BOTH compact postures. Nothing else moves. */
+.nv-drive.nv-pip .nv-drive-pip-line{left:0;right:0;bottom:0;transform:none;
+  max-width:none;border-radius:0;font-size:11.5px;line-height:1.3;
+  padding:5px 10px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;text-align:center;}
 .nv-drive-map{width:100%;height:100%;background:#e9e2d0;} /* v260: warm sand under the vibrant palette while tiles load (was pale blue-grey #e8edf5) */
 /* v135: THE AVATAR IS A TRUCK (owner, Oct 17 12:05 MDT: the
    30px ▲ "arrow as you" was "something puny" — "the moving
