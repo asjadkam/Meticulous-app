@@ -125,9 +125,12 @@
            to the v148 cleared shape); the account's sharedphotos
            are deleted outright (the one share collection the rules
            let the owner delete);
-       (3) Firebase Storage — the app stores NO files there (photos
-           ride inside Firestore records, which step (1) deletes),
-           so there is nothing to do in this step.
+       (3) Firebase Storage — the app stores NO files there, so
+           there is nothing to do in this step. (Photos ride in
+           Firestore: inline in records, in the per-record photo
+           documents, and — since web 441 — in the vault's
+           'photos' collection, which step (1) deletes as part
+           of OWN_COLLECTIONS.)
      The rules forbid deleting requests / shareddays / sharedrecords
      / sharedbilling / sharedmanifests / pipedispatches docs outright
      (delete:false since v131–v148): those records are the other
@@ -144,7 +147,10 @@
      every step is a delete or an idempotent stamp on what remains. */
   FB.OWN_COLLECTIONS = ['kv', 'meta', 'sessions', 'dispatches', 'fuel', 'damage',
     'invoices', 'maintenance', 'pti', 'documents', 'feedback', 'revenue',
-    'pnl', 'pnl_drivers', 'pnl_wage_entries', 'pnl_card_wages', 'pnl_travel_claims'];
+    'pnl', 'pnl_drivers', 'pnl_wage_entries', 'pnl_card_wages', 'pnl_travel_claims',
+    /* v441 (PHOTO-VAULT-NOV12): the photo vault's payload tree
+       (js/photovault.js) — a deleted account leaves no photos */
+    'photos'];
 
   function deleteEveryDoc(ref) {
     return ref.get().then(function (snap) {

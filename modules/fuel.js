@@ -516,7 +516,14 @@
         if (!ps.length) return;
         var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
         if (!safe[dk]) return;
-        cands.push({ rec: r, size: stackChars(ps) });
+        var sz = stackChars(ps);
+        /* v441 (PHOTO-VAULT-NOV12): a stack this small is a vault
+           reference (or a sliver of one) — it IS the shed state
+           already, it frees nothing worth having, and dropping
+           the reference would only hide a photo the vault holds.
+           The reclaim's own 20k floor, applied here too. */
+        if (sz < 20000) return;
+        cands.push({ rec: r, size: sz });
       });
       cands.sort(function (a, b) { return b.size - a.size; });
       var listFreed = 0, changed = false;
@@ -543,6 +550,12 @@
       if (!r) return;
       var ps = fillPhotos(r);
       if (!ps.length) return;
+      /* v441 (PHOTO-VAULT-NOV12): a reference-sized stack needs
+         no account document of its own — the vault owns those
+         bytes, and writing the reference INTO the photo
+         document would replace the full copy that may live
+         there with a pointer. */
+      if (stackChars(ps) < 20000) return;
       var dk = isFill ? fillPhotoDocKey(r) : expensePhotoDocKey(r);
       if (safe[dk]) return;
       var doc = photoDocPayload(r, ps);

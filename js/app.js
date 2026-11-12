@@ -99,7 +99,23 @@
       try {
         var key = store._conFamily[k] ? store._adoptLegacy(k) : k;
         var v = localStorage.getItem('mt_' + key);
-        return v === null || v === undefined ? d : JSON.parse(v);
+        if (v === null || v === undefined) return d;
+        var out = JSON.parse(v);
+        /* v441 (PHOTO-VAULT-NOV12): a stored photo reference
+           ("mtphoto://…", js/photovault.js) resolves to its
+           cached picture here, at the one door every reader
+           walks through — modules keep reading their records
+           exactly as they always have, and a reference whose
+           bytes have not landed yet rides through as-is for
+           the vault's painter to swap in. Guarded: worlds
+           without the vault (suite harnesses slice this store
+           out alone) read exactly as before. */
+        try {
+          if (v.indexOf('mtphoto://') !== -1 && typeof window !== 'undefined' && window.PhotoVault && PhotoVault.hydrateValue) {
+            out = PhotoVault.hydrateValue(out);
+          }
+        } catch (e) {}
+        return out;
       }
       catch (e) { return d; }
     },
@@ -8316,11 +8332,17 @@
     } catch (e) { say('Couldn’t download — try again'); }
   }
   App._photoDl = function (photo, label) {
-    if (!photo || typeof photo !== 'string' || photo.indexOf('data:') !== 0) return '';
+    if (!photo || typeof photo !== 'string') return '';
+    /* v441 (PHOTO-VAULT-NOV12): a vault reference earns the same
+       button — the click resolves its bytes first (below). */
+    var isRef = photo.indexOf('mtphoto://') === 0;
+    if (!isRef && photo.indexOf('data:') !== 0) return '';
     var isPng = photo.indexOf('data:image/png') === 0;
     var name = 'meticulous-' + String(label || 'photo').replace(/[^A-Za-z0-9._-]+/g, '-') + (isPng ? '.png' : '.jpg');
     var token = 'pd' + (++photoDlSeq);
-    photoDlReg[token] = { photo: photo, name: name, mime: isPng ? 'image/png' : 'image/jpeg' };
+    photoDlReg[token] = isRef
+      ? { ref: photo, name: name, mime: 'image/jpeg' }
+      : { photo: photo, name: name, mime: isPng ? 'image/png' : 'image/jpeg' };
     return '<button type="button" class="btn small ghost" data-photodl="' + token + '" style="margin-top:6px">\u2B07 Download this photo</button>';
   };
   try {
@@ -8338,6 +8360,23 @@
       var rec = photoDlReg[btn.getAttribute('data-photodl')];
       if (!rec) return;
       if (ev.preventDefault) ev.preventDefault();
+      if (rec.ref && !rec.photo) {
+        /* v441: a vault reference — fetch the picture, then
+           deliver it like any other photo. */
+        if (window.PhotoVault && PhotoVault.get) {
+          var oldTxt = btn.textContent;
+          btn.textContent = 'Loading photo…';
+          PhotoVault.get(rec.ref).then(function (url) {
+            try { btn.textContent = oldTxt; } catch (e) {}
+            if (url) {
+              rec.photo = url;
+              rec.mime = url.indexOf('data:image/png') === 0 ? 'image/png' : 'image/jpeg';
+              photoDlDeliver(rec, btn);
+            }
+          }, function () { try { btn.textContent = oldTxt; } catch (e) {} });
+        }
+        return;
+      }
       photoDlDeliver(rec, btn);
     });
   } catch (e) {}
