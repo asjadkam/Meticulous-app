@@ -233,8 +233,27 @@
      and the pull's own incoming docs, so the verdict never
      depends on which doc the forEach reaches first. Mirrored
      in js/app.js (closedDayProof411) and js/shifttrack.js
-     (dayClosed411). */
-  function closedProof411(sessionsArr, dspList, dspActive, startMs) {
+     (dayClosed411).
+     v440 (CLOSE-ECHO-NOV12): a THIRD proof joins the two —
+       (3) a rev_entries entry whose dspId names a dispatch
+           (in the same union of lists) whose record day is
+           the session's day. An entry carrying a dspId is
+           written ONLY by a completion (applyCompletion stamps
+           revEntry.dspId), and a completion IS a shift close.
+           It is the one close-evidence an echo push cannot
+           erase: rev_entries settles by union, never by the
+           whole-doc stamp game, so a phone that flushes its
+           stale OPEN dsp_list up over the close (Nov 12: the
+           pagehide flush at his full close, ~1 min after the
+           web close landed, before any pull had run) can roll
+           the completed record out of the cloud — but the
+           completion's Revenue line survives, lands at the
+           next pull, and now carries the verdict by itself.
+           On Nov 12 every shipped gate read only proofs
+           (1)/(2), judged the day open forever, and the timer
+           resurrected on the card, the widget and the bubble
+           for over an hour after the close. */
+  function closedProof411(sessionsArr, dspList, dspActive, startMs, revArr) {
     if (!(startMs > 0)) return false;
     var day = dayKey303(startMs);
     if (Array.isArray(sessionsArr)) {
@@ -246,12 +265,13 @@
       }
     }
     var lists411 = [dspList, dspActive ? [dspActive] : null];
+    var dayById440 = {};
     for (var li = 0; li < lists411.length; li++) {
       var arr = lists411[li];
       if (!Array.isArray(arr)) continue;
       for (var j = 0; j < arr.length; j++) {
         var d = arr[j];
-        if (!d || d.status !== 'completed') continue;
+        if (!d) continue;
         var rd = '';
         if (typeof d.scheduledAt === 'string') {
           var m411 = /^(\d{4})-(\d{2})-(\d{2})/.exec(d.scheduledAt);
@@ -261,7 +281,22 @@
           var m411b = /^(\d{4})-(\d{2})-(\d{2})/.exec(d.date);
           if (m411b) rd = m411b[1] + m411b[2] + m411b[3];
         }
+        if (rd && d.id !== null && d.id !== undefined) dayById440[String(d.id)] = rd;
+        if (d.status !== 'completed') continue;
         if (rd && Number(rd) === day) return true;
+      }
+    }
+    /* v440 (CLOSE-ECHO-NOV12) prong (3): the completion's
+       Revenue line — a rev entry whose dspId names a dispatch
+       in the lists above whose record day is the session's
+       day. Written only by a completion; settles by union, so
+       no echo push can erase it (see the header note). */
+    if (Array.isArray(revArr)) {
+      for (var ri = 0; ri < revArr.length; ri++) {
+        var re = revArr[ri];
+        if (!re || re.dspId === null || re.dspId === undefined) continue;
+        var rday = dayById440[String(re.dspId)];
+        if (rday && Number(rday) === day) return true;
       }
     }
     return false;
@@ -3746,13 +3781,15 @@
             var cd411Sessions = parseJson(lsGetRaw('sessions'), null) || [];
             var cd411DspL = parseJson(lsGetRaw('dsp_list'), null) || [];
             var cd411DspA = parseJson(lsGetRaw('dsp_active'), null);
+            var cd440Rev = parseJson(lsGetRaw('rev_entries'), null) || [];
             docs.forEach(function (dd) {
               var kk411 = dd.mt || dd.id;
               if (kk411 === 'sessions' && Array.isArray(dd.v)) cd411Sessions = cd411Sessions.concat(dd.v);
               else if (kk411 === 'dsp_list' && Array.isArray(dd.v)) cd411DspL = cd411DspL.concat(dd.v);
               else if (kk411 === 'dsp_active' && dd.v && typeof dd.v === 'object' && !Array.isArray(dd.v)) cd411DspA = dd.v;
+              else if (kk411 === 'rev_entries' && Array.isArray(dd.v)) cd440Rev = cd440Rev.concat(dd.v);
             });
-            if (closedProof411(cd411Sessions, cd411DspL, cd411DspA, cd411JudgeSid)) {
+            if (closedProof411(cd411Sessions, cd411DspL, cd411DspA, cd411JudgeSid, cd440Rev)) {
               if (cd411LocalLive && !cd411CloudLive) {
                 lsSetRaw(key, JSON.stringify(d.v));
                 meta.keys[key] = { t: cloudTs, s: cloudTs };

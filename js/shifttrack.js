@@ -104,19 +104,37 @@
       var lists = [s.get('dsp_list', [])];
       var act = s.get('dsp_active', null);
       if (act) lists.push([act]);
+      var dayById440 = {};
       for (var li = 0; li < lists.length; li++) {
         var arr = lists[li];
         if (!Array.isArray(arr)) continue;
         for (var j = 0; j < arr.length; j++) {
           var d = arr[j];
-          if (!d || d.status !== 'completed') continue;
+          if (!d) continue;
           var rd = '';
           if (typeof d.scheduledAt === 'string') {
             var m = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
             if (m) rd = m[1];
           }
           if (!rd && typeof d.date === 'string') rd = d.date;
+          if (rd && d.id !== null && d.id !== undefined) dayById440[String(d.id)] = rd;
+          if (d.status !== 'completed') continue;
           if (rd === day) return true;
+        }
+      }
+      /* v440 (CLOSE-ECHO-NOV12) prong (3): the completion's
+         Revenue line (a rev_entries entry whose dspId names
+         a dispatch above dated the pin's day) — written only
+         by a completion, union-settled, so it survives the
+         echo push that can erase the completed record
+         itself. Mirrored in js/app.js (closedDayProof411)
+         and js/cloudsync.js (closedProof411). */
+      var rev440 = s.get('rev_entries', []);
+      if (Array.isArray(rev440)) {
+        for (var ri = 0; ri < rev440.length; ri++) {
+          var re = rev440[ri];
+          if (!re || re.dspId === null || re.dspId === undefined) continue;
+          if (dayById440[String(re.dspId)] === day) return true;
         }
       }
       return false;

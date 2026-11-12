@@ -3707,19 +3707,44 @@
     var lists411 = [store.get('dsp_list', [])];
     var act411 = store.get('dsp_active', null);
     if (act411) lists411.push([act411]);
+    var dayById440 = {};
     for (var li = 0; li < lists411.length; li++) {
       var arr = lists411[li];
       if (!Array.isArray(arr)) continue;
       for (var j = 0; j < arr.length; j++) {
         var d = arr[j];
-        if (!d || d.status !== 'completed') continue;
+        if (!d) continue;
         var rd = '';
         if (typeof d.scheduledAt === 'string') {
           var m411 = /^(\d{4}-\d{2}-\d{2})/.exec(d.scheduledAt);
           if (m411) rd = m411[1];
         }
         if (!rd && typeof d.date === 'string') rd = d.date;
+        if (rd && d.id !== null && d.id !== undefined) dayById440[String(d.id)] = rd;
+        if (d.status !== 'completed') continue;
         if (rd === day) return true;
+      }
+    }
+    /* v440 (CLOSE-ECHO-NOV12) prong (3): the completion's
+       Revenue line — a rev_entries entry whose dspId names a
+       dispatch in the lists above whose record day is this
+       session's day. An entry carrying a dspId is written
+       ONLY by a completion (applyCompletion), a completion
+       IS a shift close (v82), and rev_entries settles by
+       union — so this evidence survives the echo push that
+       erased the completed record itself on Nov 12 (the
+       phone's pagehide flush rolled its stale OPEN list over
+       the web close before any pull ran; every gate read
+       only prongs (1)/(2), judged the day open forever, and
+       the timer resurrected on the card, the widget and the
+       bubble for over an hour). Mirrored in js/cloudsync.js
+       (closedProof411) and js/shifttrack.js (dayClosed411). */
+    var rev440 = store.get('rev_entries', []);
+    if (Array.isArray(rev440)) {
+      for (var ri = 0; ri < rev440.length; ri++) {
+        var re = rev440[ri];
+        if (!re || re.dspId === null || re.dspId === undefined) continue;
+        if (dayById440[String(re.dspId)] === day) return true;
       }
     }
     return false;
