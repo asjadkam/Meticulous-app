@@ -1554,6 +1554,57 @@
     if (!(distToPinM <= 150) || !(leftAlongM <= 300)) return false;
     return speedMps === null || speedMps === undefined || !isFinite(speedMps) || speedMps < 0.5;
   }
+  /* v432 (NAV-CAMERA-JITTER, owner Nov 12, 2026, filmed stopped
+     at the 80 Avenue NE site entrance, 0 km/h on his own speed
+     chip): THE STANDSTILL JUDGE. Parked, the truck's GPS fixes
+     wander — a slow random walk of tens of metres — and every
+     guidance consumer read that wander as travel: the next-turn
+     distance crept 30 -> 20 -> 10 m on a truck that never moved,
+     an "Off route" fired and re-routed him, and the follow
+     camera chased the wander until the truck left the frame.
+     The judge is POSITION-ONLY, the ground truth every other
+     gate here already trusts (off-route judges distance from
+     the line; load counting judges dwell inside a disc). A
+     SPELL opens on a fix (the candidate ANCHOR); the truck is
+     proven parked when a 2.5 s spell completes in which no fix
+     strayed more than 20 m from the anchor and the last fix
+     sits within 8 m of it — a spell a truck merely PASSING
+     THROUGH can never complete: at 5 m/s the window's travel
+     is 12.5 m and the end fix sits that far from the anchor,
+     at 10 m/s it is 25 m. (A disc-and-time test alone would
+     "prove" a standstill at highway speed — a 35 m disc takes
+     3.5 s to cross at 10 m/s — so the end-point tightness is
+     the actual discriminator.) A fix more than 20 m out
+     during an unproven spell re-seats the spell there (a
+     wander spike restarts the proof, it never poisons it);
+     once proven, the proof holds until a fix leaves the wider
+     35 m disc — hysteresis: proof is strict, holding is
+     tolerant — and that exit is real travel: the anchor
+     re-seats and the proof restarts. Reported speed never
+     enters the judgement — at a standstill it is the noisiest
+     number on the fix and can stand stale from the last
+     moving fix. The honest bounds: a crawl under ~3 m/s can
+     read as stopped (the same crawl band v336 already
+     distrusts for headings), and guidance can lag a
+     within-disc crawl by at most the disc's width before the
+     proof breaks. Pure: (state, fix, now) -> state, so the
+     bench can replay a whole stop. */
+  function standstillStep(st, lat, lon, nowMs) {
+    if (typeof lat !== 'number' || typeof lon !== 'number' || !isFinite(lat) || !isFinite(lon)) return st || null;
+    if (!st || !st.anchor) return { anchor: [lat, lon], since: nowMs, still: false };
+    var d = haversineM(st.anchor, [lat, lon]);
+    if (d > 35) return { anchor: [lat, lon], since: nowMs, still: false };
+    if (!st.still && d > 20) return { anchor: [lat, lon], since: nowMs, still: false };
+    /* The proof window EQUALS the off-route hold (2.5 s): the
+       judge steps before trackProgress on every fix, so a stop
+       whose spell opened before the off-route clock started is
+       always proven before that clock can mature — the gate
+       there never even opens. A stop still rolling into its
+       spell when the clock starts keeps the v300 exposure for
+       its first ~2.5 s only, and can never re-fire parked. */
+    if (!st.still && nowMs - st.since >= 2500 && d <= 8) return { anchor: st.anchor, since: st.since, still: true };
+    return st;
+  }
   /* v337 (NAV-ETA): the displayed ETA may not teleport. The
      tick's estimate switches wholesale between estimators
      (plan/pace blend, a live provider answer, back again), and
@@ -2768,6 +2819,9 @@
            the drive floated in the shell dock (PIP-LANDS-HOME). */
         lastFixAt: 0, lastFixT: 0, streamFixT: 0, navFixT: 0, watchdogId: null, parked: false,
         offSince: 0, rerouting: false, arrived: false, searching: false,
+        /* v432: the standstill judge's state (standstillStep) —
+           {anchor, since, still}; null until the first fix. */
+        stillState: null,
         /* v103: the auto-route latch — setDest arms it for the NEW
            destination only (autoKey), maybeAutoRoute consumes it
            once a position exists. Ending a route never re-arms
@@ -4268,6 +4322,15 @@
         var first = !S.pos;
         var prevPos = S.pos;
         S.pos = [lat, lon];
+        /* v432 (NAV-CAMERA-JITTER): the standstill judge steps on
+           EVERY fix (see standstillStep in NAVPURE). While its
+           proof stands, guidance reads the anchor (navPos), the
+           glide reads speed 0 (navSpeed), and the believed
+           heading FREEZES below: standstill wander throws off
+           >=10 m derived bearings in random directions, and
+           chasing them is what rotated the parked drive view —
+           plane, camera aim and all — on his Nov 12 tape. */
+        S.stillState = standstillStep(S.stillState, lat, lon, Date.now());
         paceSample(prevPos, S.pos); /* v280: live pace window */
         /* v336 (NAV-TRUCK-POINTING-WRONG-WAY): the heading is
            picked by pickHeading (NAVPURE) — the GPS course is
@@ -4278,7 +4341,14 @@
            the truck's pointing against travel. */
         var derivedH = (prevPos && haversineM(prevPos, S.pos) >= 10) ? bearingDeg(prevPos, S.pos) : null;
         var spdNow = (speed !== null && speed !== undefined && isFinite(speed)) ? speed : S.speed;
-        var pickedH = pickHeading(S.heading, (heading !== null && heading !== undefined && isFinite(heading)) ? heading : null, spdNow, derivedH);
+        /* v432: while the standstill proof stands the heading is
+           NOT re-picked — a parked truck does not change where it
+           points (the v336 rule, completed: wander at a crawl
+           could still mint a derived bearing; a proven stop now
+           mints nothing). Travel resumes the picking the moment
+           the proof breaks. */
+        var pickedH = navStill() ? null :
+          pickHeading(S.heading, (heading !== null && heading !== undefined && isFinite(heading)) ? heading : null, spdNow, derivedH);
         if (pickedH !== null && pickedH !== undefined) S.heading = pickedH;
         if (speed !== null && speed !== undefined && isFinite(speed)) S.speed = speed;
         /* v104: before the settle pass, the position is recorded
@@ -4858,12 +4928,30 @@
         requestRoute(null);
       }
 
+      /* v432 (NAV-CAMERA-JITTER): the position and speed
+         GUIDANCE believes. While the standstill proof stands
+         (standstillStep, fed by onPos), the truck IS its anchor
+         and its speed is 0 — raw fixes wander metres around a
+         parked truck, and every consumer downstream (projection,
+         countdown, off-route, arrival, the follow camera) used
+         to read that wander as travel. Moving, navPos IS S.pos
+         and navSpeed IS S.speed — the live path is untouched. */
+      function navStill() { return !!(S && S.stillState && S.stillState.still); }
+      function navPos() {
+        if (navStill() && S.stillState.anchor) return S.stillState.anchor;
+        return S ? S.pos : null;
+      }
+      function navSpeed() {
+        if (navStill()) return 0;
+        return S ? S.speed : null;
+      }
+
       function paintStep() {
         if (!S.plan || S.manIdx < 0) return;
         var m = S.plan.maneuvers[S.manIdx];
         var sub = '';
         if (S.line && S.pos) {
-          var pr = distToRouteM(S.pos, S.line);
+          var pr = distToRouteM(navPos(), S.line); /* v432: the believed position (anchor while parked) */
           var toTurnM = Math.max(0, m.cumEndKm * 1000 - pr.along);
           var leftM = Math.max(0, S.plan.totalKm * 1000 - pr.along);
           sub = 'In ' + fmtDist(toTurnM) + ' · ' + fmtDist(leftM) + ' to destination';
@@ -4878,7 +4966,11 @@
 
       function trackProgress() {
         if (!S.plan || !S.line || !S.pos) return;
-        var pr = distToRouteM(S.pos, S.line);
+        /* v432: progress is judged from the BELIEVED position —
+           the anchor while the standstill proof stands — so a
+           parked truck's countdown, maneuver index and arrival
+           all hold still with the truck. */
+        var pr = distToRouteM(navPos(), S.line);
         /* Off-route: >55 m off the line, held briefly so a
            parking-lot wiggle never triggers a re-route.
            v300 (NAV-OFFROUTE-DETECTION): the hold drops 4 s ->
@@ -4889,8 +4981,16 @@
            the only warning was a silent banner — on his Oct 31
            tape the Southland departure took ~15-20 s to surface
            and never said a word. The windowed projection makes
-           dist honest immediately; the voice makes it heard. */
-        if (pr.dist > 55) {
+           dist honest immediately; the voice makes it heard.
+           v432: a PROVEN standstill never enters this block at
+           all — the anchor's own distance is judged once, when
+           the truck actually stops off the line (a yard gate,
+           a site entrance), and GPS wander around that anchor
+           must not re-try the question every 2.5 s: on his
+           Nov 12 tape the parked truck was told "Off route"
+           and re-routed where it sat. Travel breaks the proof
+           and detection resumes untouched. */
+        if (pr.dist > 55 && !navStill()) {
           if (!S.offSince) S.offSince = Date.now();
           else if (Date.now() - S.offSince > 2500 && !S.rerouting) {
             S.offSince = 0;
@@ -4955,7 +5055,7 @@
            off the drawn line's end but the drive is genuinely
            done). Straight-line proximity by itself can no longer
            end a drive. */
-        var dDest = haversineM(S.pos, S.dest);
+        var dDest = haversineM(navPos(), S.dest); /* v432: believed position */
         var leftAlongM = S.plan.totalKm * 1000 - pr.along;
         var atDoor = pr.dist <= 60 && leftAlongM <= 30;
         var atPin = dDest < 40 && leftAlongM <= 250;
@@ -4963,7 +5063,7 @@
            dwell lives here (20 s of parkedArrivalOk on THIS
            plan); any break (rolling again, a new plan, leaving
            the radius) restarts the spell. */
-        var parkedOk = parkedArrivalOk(dDest, leftAlongM, S.speed);
+        var parkedOk = parkedArrivalOk(dDest, leftAlongM, navSpeed()); /* v432: believed speed — a stale moving-fix speed must not veto a proven park */
         if (parkedOk) {
           if (S.parkSpellPlan !== S.plan || !S.parkSpellAt) { S.parkSpellPlan = S.plan; S.parkSpellAt = Date.now(); }
         } else { S.parkSpellAt = 0; S.parkSpellPlan = null; }
@@ -5254,6 +5354,10 @@
           if (pivot && S.driveMap.setZoomAround) S.driveMap.setZoomAround(pivot, z, { animate: false });
         } catch (e) {}
         S._pinchZooming = false;
+        /* v432: the driver's own pinch is the one legal zoom
+           change while following — the zoom it lands on becomes
+           the follow zoom the lock holds from here. */
+        if (S.drive) { try { S.drive.followZoom = S.driveMap.getZoom(); } catch (e) {} }
       }
       function attachDriveGestures() {
         var mapEl = body.querySelector('#nv_drive_map');
@@ -5489,6 +5593,13 @@
                view: the coverage contract holds on all of
                them. */
             paintDriveLayers();
+            /* v432 (NAV-CAMERA-JITTER): the FOLLOW ZOOM is born
+               with the map — the one zoom the camera holds while
+               follow owns the view. Only the driver's own pinch
+               may move it afterwards (gesturePinchZoom re-records
+               it); the tick's zoom lock and the zoomend hook below
+               restore it against any other zoom the map reports. */
+            try { S.drive.followZoom = S.driveMap.getZoom(); } catch (e) { S.drive.followZoom = 18; }
             /* v260 (NAV-TOP-CUTOFF): open already compensated —
                size the lift from the viewport and centre the
                camera on the follow target, so the first frame
@@ -5515,9 +5626,29 @@
                any other zoom source. */
             try {
               S.driveMap.on('dragstart', function () { setDriveFree(true); });
-              S.driveMap.on('zoomstart', function () {
-                if (S._pinchZooming || S._gestLock === 'pinch') return;
-                setDriveFree(true);
+              /* v432 (NAV-CAMERA-JITTER): a zoom that is NOT the
+                 driver's own pinch no longer stands the follow
+                 down. The v215 hook read any other zoomstart as
+                 free-look: the follow camera surrendered, the
+                 🎯 pill appeared, and nothing brought the truck
+                 back — on his Nov 12 tape the view pulled away
+                 to the whole airport while he sat parked. Now a
+                 foreign zoom is CORRECTED back to the follow
+                 zoom the moment it lands (zoomend), the tick's
+                 zoom lock is the backstop, and only a real DRAG
+                 (above) enters free-look. The driver's pinch is
+                 excused before any of this — it re-records the
+                 follow zoom itself (gesturePinchZoom). */
+              S.driveMap.on('zoomend', function () {
+                try {
+                  if (S._pinchZooming || S._gestLock === 'pinch' || S._zoomFixing) return;
+                  if (!S.drive || S.driveFree || !S.drive.followZoom) return;
+                  if (S.driveMap.getZoom() !== S.drive.followZoom && S.driveMap.setZoomAround) {
+                    S._zoomFixing = true;
+                    S.driveMap.setZoomAround(followTarget() || navPos(), S.drive.followZoom, { animate: false });
+                    S._zoomFixing = false;
+                  }
+                } catch (e) { S._zoomFixing = false; }
               });
             } catch (e) {}
             /* v210: two-finger observers (passive). v215: they
@@ -6085,7 +6216,7 @@
       }
       function driveTickBody() {
         if (!S.drive || !S.plan || !S.line || !S.pos || S.arrived) return null;
-        var pr = distToRouteM(S.pos, S.line);
+        var pr = distToRouteM(navPos(), S.line); /* v432: believed position — the countdown holds still on a parked truck */
         var dp = driveProgress(S.plan, pr.along);
         var showNext = !!dp.next;
         /* v133: every write below goes through the cached writer
@@ -6244,7 +6375,7 @@
         } catch (e) {}
         var rrEl = body.querySelector('#nvd_reroute');
         if (rrEl) {
-          var showRr = S.rerouting || pr.dist > 55; /* v300: same line trackProgress judges */
+          var showRr = S.rerouting || (!navStill() && pr.dist > 55); /* v300: same line trackProgress judges; v432: a proven standstill never wears the pill */
           /* v128: the pill is STATE, not a per-tick write — its
              class and text are touched only when the shown state
              actually flips (hidden / off-route / rerouting). */
@@ -6512,7 +6643,7 @@
                against the raw truck point here would re-fire
                the pan on every tick and park the camera on the
                truck, undoing the compensation. */
-            var ft = followTarget() || S.pos;
+            var ft = followTarget() || navPos(); /* v432: believed position */
             /* v300 (NAV-GPS-FLICKER): while the animator is
                alive IT owns the camera — the tick's own instant
                panTo duelled the animator's per-frame ease (two
@@ -6528,6 +6659,25 @@
             if (!S.driveFree && !animAlive && (!ctr || haversineM(ft, [ctr.lat, ctr.lng]) > 3)) {
               S.driveMap.panTo(ft, { animate: false });
             }
+            /* v432 (NAV-CAMERA-JITTER): THE ZOOM LOCK. While
+               follow owns the view, the zoom is the FOLLOW zoom —
+               recorded when the drive opens and moved afterwards
+               ONLY by the driver's own pinch (gesturePinchZoom
+               re-records it). Any other zoom the map reports —
+               a platform quirk, a stray Leaflet animation — is
+               restored around the follow target on this tick, so
+               the driver never again watches the view zoom itself
+               out from under him mid-drive (his Nov 12 tape: the
+               satellite view pulled back to the whole airport and
+               crept back, untouched). The lock stands down in
+               free-look, where the view is the driver's. */
+            if (!S.driveFree && S.drive && S.drive.followZoom && !S._zoomFixing &&
+                S.driveMap.getZoom && S.driveMap.setZoomAround &&
+                S.driveMap.getZoom() !== S.drive.followZoom) {
+              S._zoomFixing = true;
+              try { S.driveMap.setZoomAround(ft, S.drive.followZoom, { animate: false }); } catch (e) {}
+              S._zoomFixing = false;
+            }
             if (S.driveMarker) S.driveMarker.setLatLng(S.pos);
           } catch (e) {}
         }
@@ -6538,7 +6688,7 @@
            change, not on every fix. */
         if (S.driveMap && S.driveLine && S.line) {
           try {
-            var rem = routeRemainder(S.line, S.pos);
+            var rem = routeRemainder(S.line, navPos()); /* v432: believed position — the drawn remainder stops creeping at a standstill */
             if (rem && (S.drive.remSeg !== rem.seg || Math.abs(rem.along - (S.drive.remAlong || 0)) >= 10)) {
               S.drive.remSeg = rem.seg; S.drive.remAlong = rem.along;
               var layers = S.driveLine.getLayers();
@@ -6582,8 +6732,13 @@
            at the last applied heading, or north-up — a nav view
            from the first frame, never a flat map. */
         var plane = body.querySelector('#nvd_plane') || docEl('nvd_plane');
+        /* v432: the first paint still lands (a drive can open on
+           a parked truck), but a PROVEN standstill never RE-paints
+           the plane from S.heading — the believed heading is
+           frozen in onPos, and this gate is the second lock, so
+           the parked view cannot slowly rotate under him. */
         if (plane && (S.drive.headingApplied === null || S.drive.headingApplied === undefined ||
-            (S.heading !== null && S.heading !== undefined &&
+            (!navStill() && S.heading !== null && S.heading !== undefined &&
              angDeltaDeg(S.heading, S.drive.headingApplied) >= 2))) {
           var hdg = (S.heading !== null && S.heading !== undefined)
             ? S.heading : (S.drive.headingApplied || 0);
@@ -6660,14 +6815,17 @@
          camera is steered to. */
       function followTarget() {
         if (!S || !S.pos) return null;
-        if (!S.driveMap || !S.driveLiftPx || getNavViewMode() === '2d') return S.pos;
+        /* v432: the camera follows the BELIEVED position — the
+           anchor while parked — so the follow point itself stops
+           wandering with the raw fixes. */
+        if (!S.driveMap || !S.driveLiftPx || getNavViewMode() === '2d') return navPos();
         var pitch = (S.viewPitch !== null && S.viewPitch !== undefined) ? S.viewPitch : 50;
         var s = S.driveLiftPx / Math.max(0.2, Math.cos(pitch * Math.PI / 180));
         var hdg = (S.drive && S.drive.headingApplied !== null && S.drive.headingApplied !== undefined)
           ? S.drive.headingApplied : (S.heading || 0);
         var rad = hdg * Math.PI / 180;
         var z = S.driveMap.getZoom ? S.driveMap.getZoom() : 18;
-        var p = S.driveMap.project(S.pos, z);
+        var p = S.driveMap.project(navPos(), z); /* v432: believed position */
         p.x += Math.sin(rad) * s; p.y -= Math.cos(rad) * s;
         var ll = S.driveMap.unproject(p, z);
         return [ll.lat, ll.lng];
@@ -6678,7 +6836,9 @@
         S.drive.animAt = Date.now(); /* v300: the tick's animator-liveness proof */
         var moving = false;
         try {
-          if (S.heading !== null && S.heading !== undefined &&
+          /* v432: a proven standstill eases NO heading — the
+             plane holds its last real bearing while parked. */
+          if (!navStill() && S.heading !== null && S.heading !== undefined &&
               S.drive.headingApplied !== null && S.drive.headingApplied !== undefined) {
             var dh = ((S.heading - S.drive.headingApplied + 540) % 360) - 180;
             if (Math.abs(dh) > 0.3) {
@@ -6695,7 +6855,7 @@
                with the cutoff compensation in the transform,
                centring on the truck itself would walk the
                marker up off its anchor between ticks. */
-            var tgt = followTarget() || S.pos;
+            var tgt = followTarget() || navPos();
             /* v335 (NAV-GPS-STEPPING-NOT-SMOOTH) supersedes the
                v300 fixed-lead extrapolation: the aim is the
                truck's position advanced by glideAim — the fix's
@@ -6708,9 +6868,17 @@
             if (tgt && S.pos) {
               var aimH = (S.drive.headingApplied !== null && S.drive.headingApplied !== undefined)
                 ? S.drive.headingApplied : S.heading;
-              var aimP = glideAim(S.pos, aimH, S.speed, Date.now() - (S.lastFixAt || Date.now()));
-              if (aimP && aimP !== S.pos) {
-                tgt = [tgt[0] + (aimP[0] - S.pos[0]), tgt[1] + (aimP[1] - S.pos[1])];
+              /* v432: the glide advances from the BELIEVED
+                 position at the BELIEVED speed — parked, that is
+                 the anchor at speed 0, the aim IS the anchor, and
+                 the camera has nowhere to wander to. (On the
+                 Nov 12 tape a stale speed standing over from the
+                 last moving fix kept advancing the aim — and with
+                 it the camera — off a stopped truck.) */
+              var aimBase = navPos();
+              var aimP = glideAim(aimBase, aimH, navSpeed(), Date.now() - (S.lastFixAt || Date.now()));
+              if (aimP && aimP !== aimBase) {
+                tgt = [tgt[0] + (aimP[0] - aimBase[0]), tgt[1] + (aimP[1] - aimBase[1])];
               }
             }
             if (ctr) {
@@ -6731,7 +6899,7 @@
            what made the steps. A parked truck, a free-look hold,
            or a stream gone quiet (>3 s — the watchdog's country)
            lets it die exactly as before. */
-        if (!moving && S.drive && !S.driveFree && (S.speed || 0) > 1 &&
+        if (!moving && S.drive && !S.driveFree && (navSpeed() || 0) > 1 && /* v432: believed speed — a parked truck's animator sleeps */
             S.lastFixAt && (Date.now() - S.lastFixAt < 3000)) moving = true;
         if (moving && typeof requestAnimationFrame === 'function') {
           S.drive.animId = requestAnimationFrame(driveAnim);
