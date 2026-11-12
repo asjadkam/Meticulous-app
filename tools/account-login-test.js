@@ -156,7 +156,7 @@ async function main() {
     ['pf_pw_cur', 'pf_pw_new', 'pf_pw_conf', 'pf_pw_btn', 'pf_pw_note'].forEach(function (id) {
       eq((acct.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'account: exactly one #' + id);
     });
-    eq((acct.match(/type="password"/g) || []).length, 3, 'account: exactly three password inputs live here now');
+    eq((acct.match(/type="password"/g) || []).length, 4, 'account: four password inputs live here now (v438: 3 change-password + 1 delete-account re-auth — still this screen only)');
     ok(/btn ghost" id="pf_pw_btn"/.test(acct), 'account: Change password keeps its quiet ghost styling');
     ok(acct.indexOf('FB.changePassword') >= 0 && acct.indexOf('FB.reauthenticate') >= 0, 'account: wired to FB.changePassword + FB.reauthenticate (the same handlers)');
 

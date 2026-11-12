@@ -102,6 +102,149 @@
     var cred = firebase.auth.EmailAuthProvider.credential(FB.auth.currentUser.email, normPw(password));
     return FB.auth.currentUser.reauthenticateWithCredential(cred);
   };
+  /* v438 (ACCOUNT-DELETE — owner order Nov 12, 2026: "Add the delete
+     account button"; also Google Play's in-app account-deletion
+     rule): the cloud engine behind the Delete account card on the
+     Account & login screen (modules/account.js drives the confirm,
+     the re-authentication, the device wipe and the auth delete
+     around it). FB.deleteOwnData() erases, IN ORDER:
+       (1) the account's own tree — every doc in every subcollection
+           under users/{uid} (OWN_COLLECTIONS is the union of every
+           collection name the app writes: kv is the cloudsync
+           store; the rest are the record collections named in
+           firestore.rules and the FB.saveDoc call sites), then the
+           users/{uid} document itself;
+       (2) the Connect presence — the directory/{uid} listing; every
+           requests pair: accepted pairs are ENDED with the app's
+           own stamp (endedAt — either party may stamp it; the same
+           write the one-time sweep uses), pending requests
+           addressed TO this account are declined; the account's own
+           published share docs lose their audience
+           (shareddays/sharedrecords viewers -> [] and the records
+           sections emptied; sharedbilling/sharedmanifests emptied
+           to the v148 cleared shape); the account's sharedphotos
+           are deleted outright (the one share collection the rules
+           let the owner delete);
+       (3) Firebase Storage — the app stores NO files there (photos
+           ride inside Firestore records, which step (1) deletes),
+           so there is nothing to do in this step.
+     The rules forbid deleting requests / shareddays / sharedrecords
+     / sharedbilling / sharedmanifests / pipedispatches docs outright
+     (delete:false since v131–v148): those records are the other
+     party's copies too, so the flow ends the pairs and strips the
+     audiences instead — after it runs no connection can read
+     anything of this account any more, and what a peer already
+     received stays in their hands, exactly as the privacy policy
+     states. (Pending requests SENT BY this account cannot be
+     withdrawn under the rules — the recipient declines them; the
+     account they point from no longer exists.)
+     Any failure rejects immediately: later steps never run, and the
+     auth account is untouched — the caller deletes it LAST, only on
+     this promise resolving. Safe to retry after a partial failure:
+     every step is a delete or an idempotent stamp on what remains. */
+  FB.OWN_COLLECTIONS = ['kv', 'meta', 'sessions', 'dispatches', 'fuel', 'damage',
+    'invoices', 'maintenance', 'pti', 'documents', 'feedback', 'revenue',
+    'pnl', 'pnl_drivers', 'pnl_wage_entries', 'pnl_card_wages', 'pnl_travel_claims'];
+
+  function deleteEveryDoc(ref) {
+    return ref.get().then(function (snap) {
+      var refs = [];
+      snap.forEach(function (d) { refs.push(d.ref); });
+      var i = 0;
+      function chunk() {
+        if (i >= refs.length) return Promise.resolve();
+        var batch = FB.db.batch();
+        var n = 0;
+        while (i < refs.length && n < 400) { batch.delete(refs[i]); i++; n++; }
+        return batch.commit().then(chunk);
+      }
+      return chunk();
+    });
+  }
+
+  function endAllPairs(db, uid) {
+    var now = Date.now();
+    function handle(snap) {
+      var jobs = [];
+      snap.forEach(function (d) {
+        var r = d.data() || {};
+        if (r.status === 'accepted' && !((r.endedAt || 0) > 0)) {
+          jobs.push(d.ref.update({ endedAt: now, updatedAt: now }));
+        } else if (r.status === 'pending' && r.to === uid) {
+          jobs.push(d.ref.update({ status: 'declined', updatedAt: now }));
+        }
+      });
+      return Promise.all(jobs);
+    }
+    return db.collection('requests').where('from', '==', uid).get().then(handle)
+      .then(function () { return db.collection('requests').where('to', '==', uid).get(); })
+      .then(handle);
+  }
+
+  function stripOwnShares(db, uid) {
+    var now = Date.now();
+    var jobs = [];
+    jobs.push(db.collection('shareddays').where('driver', '==', uid).get().then(function (snap) {
+      var js = [];
+      snap.forEach(function (d) { js.push(d.ref.update({ viewers: [] })); });
+      return Promise.all(js);
+    }));
+    jobs.push(db.collection('sharedrecords').doc(uid).get().then(function (snap) {
+      if (!snap.exists) return null;
+      return snap.ref.update({ viewers: [], fuel: [], expenses: [], pti: [], damage: [] });
+    }));
+    jobs.push(db.collection('sharedbilling').where('driver', '==', uid).get().then(function (snap) {
+      var js = [];
+      snap.forEach(function (d) {
+        var r = d.data() || {};
+        js.push(d.ref.set({
+          driver: uid, viewer: r.viewer,
+          driverName: r.driverName || '', driverBusiness: r.driverBusiness || '',
+          invoices: [], manifests: [], updatedAt: now
+        }));
+      });
+      return Promise.all(js);
+    }));
+    jobs.push(db.collection('sharedmanifests').where('driver', '==', uid).get().then(function (snap) {
+      var js = [];
+      snap.forEach(function (d) {
+        var r = d.data() || {};
+        js.push(d.ref.set({
+          driver: uid, viewer: r.viewer,
+          driverName: r.driverName || '', driverBusiness: r.driverBusiness || '',
+          manifests: [], updatedAt: now
+        }));
+      });
+      return Promise.all(js);
+    }));
+    jobs.push(deleteEveryDoc(db.collection('sharedphotos').where('driver', '==', uid)));
+    return Promise.all(jobs);
+  }
+
+  FB.deleteOwnData = function () {
+    if (!FB.ready || !FB.user || !FB.db) return Promise.reject(new Error('Not signed in.'));
+    var uid = FB.user.uid;
+    var db = FB.db;
+    var userRef = db.collection('users').doc(uid);
+    var chain = Promise.resolve();
+    FB.OWN_COLLECTIONS.forEach(function (name) {
+      chain = chain.then(function () { return deleteEveryDoc(userRef.collection(name)); });
+    });
+    chain = chain.then(function () { return userRef.delete(); });
+    chain = chain.then(function () { return db.collection('directory').doc(uid).delete(); });
+    chain = chain.then(function () { return endAllPairs(db, uid); });
+    chain = chain.then(function () { return stripOwnShares(db, uid); });
+    return chain;
+  };
+  /* v438: the LAST step of the delete flow — the caller runs it
+     only after FB.deleteOwnData() has resolved and the device store
+     has been wiped, and re-authenticates first (delete() demands a
+     recent login, same as updatePassword). */
+  FB.deleteAuthAccount = function () {
+    if (!FB.auth || !FB.auth.currentUser) return Promise.reject(new Error('Not signed in.'));
+    return FB.auth.currentUser.delete();
+  };
+
   FB.signOut = function () {
     return FB.auth.signOut();
   };
