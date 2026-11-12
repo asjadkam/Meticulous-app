@@ -3633,6 +3633,42 @@
            S.planDestKey already carrying this key. */
         if (S.planOwns && key !== S.planDestKey) { S.planOwns = false; S.planDestKey = ''; S.planStopKey = ''; }
         if (key !== S.autoKey) {
+          /* v434 (NAV-SEARCHBOX-LINK — the destination handover,
+             owner's film Nov 12, 2026 11:21 CST): a NEW
+             destination retires the OLD route on the spot. The
+             shipped code left the old plan standing until the
+             new route landed — and maybeAutoRoute will not fire
+             while ANY plan stands, so no route to the new pin
+             was ever requested; meanwhile every fix ran
+             trackProgress against the OLD line with the NEW pin
+             in S.dest: paintStep repainted the old plan's
+             instructions over this banner, and arrival could be
+             judged on the old route's tail against the new
+             pin's distance. On his film the banner flipped
+             "Drive north · 250 m to destination" against
+             "You have arrived" against "Destination set", the
+             remaining distance walked 250 → 220 → 180 m while
+             he stood still, and the pin on the map stayed the
+             OLD destination by the airport. Now the old plan,
+             its line, its steps and its arrival die with the old
+             destination, here, before the latch below arms: the
+             one honest state painted above ("Destination set —
+             Getting your route…") is the only state until the
+             new route lands, and the auto-route fires exactly
+             once, for the new pin. A same-destination re-set
+             (a rename, a re-tap of the same pin) takes the
+             else-branch and keeps its live route, exactly as
+             before. Mid-drive the same retirement is safe: the
+             drive tick is plan-guarded, and finalizeRoute
+             re-arms the drive screen on the new plan. */
+          S.plan = null; S.line = null; S.manIdx = -1; S.offSince = 0; S.arrived = false;
+          S.parkSpellAt = 0; S.parkSpellPlan = null;
+          if (S.routeLine && S.map) { S.map.removeLayer(S.routeLine); S.routeLine = null; }
+          var stOld = body.querySelector('#nv_steps');
+          if (stOld) stOld.innerHTML = '<div class="empty">No route yet.</div>';
+          var endOld = body.querySelector('#nv_end'); if (endOld) endOld.classList.add('hidden');
+          var drvOld = body.querySelector('#nv_drive'); if (drvOld && !S.drive) drvOld.classList.add('hidden');
+          var rtOld = body.querySelector('#nv_route'); if (rtOld) rtOld.className = 'btn primary big';
           S.autoKey = key; S.autoWanted = true;
           /* v104: a new destination is a new arm for auto-Drive
              too — entry gets its one shot again, and the arm is
@@ -4340,8 +4376,17 @@
         if (!navPicker) { box.innerHTML = '<div class="empty">Places are unavailable right now.</div>'; return; }
         var res = navPicker.pickerEntries(nvKind, nvMapQ);
         if (!res.rows.length) {
-          box.innerHTML = '<div class="empty">' +
-            (nvMapQ.trim() ? 'No place matches that — try Search as address below.' : 'Places you go to will show here — type to find any place.') + '</div>';
+          /* v434 (NAV-SEARCHBOX-LINK): a pasted Maps link is not
+             a place name — the panel must never dead-end it with
+             "No place matches that" (the owner's Nov 12 film:
+             he pasted the dispatch's Hauling To link into this
+             box and the panel was the whole answer). A link (or
+             a readable pin) gets the one honest line instead,
+             and Go takes him to its pin (see mapLinkGo). */
+          box.innerHTML = searchBoxPin(nvMapQ)
+            ? '<div class="empty">🔗 That is a Maps link — tap Go and I will take you to its pin.</div>'
+            : '<div class="empty">' +
+              (nvMapQ.trim() ? 'No place matches that — try Search as address below.' : 'Places you go to will show here — type to find any place.') + '</div>';
           return;
         }
         box.innerHTML = (res.recents ? '<p class="note" style="margin:2px 0 0">🕘 Recent places</p>' : '') +
@@ -4371,6 +4416,60 @@
             }
           };
         });
+      }
+      /* v434 (NAV-SEARCHBOX-LINK, owner's film Nov 12, 2026
+         11:21 CST — "It's not working now"): the MAIN search
+         box is the box in front of the driver, and a pasted Maps
+         link must work THERE. The v395 pin step stood only at
+         the head of the SHEET search — the map Go reached it by
+         delegation, but its words landed in the folded sheet
+         where he never sees them, and the map face itself
+         answered the paste with the Places panel's "No place
+         matches that". Now the map box reads a link the same
+         way the sheet does — the same sentPinCoords read, the
+         same ONE link brain (PinLinks) — and lands it through
+         the same landSentPin, but with its feedback on the MAP
+         face (the banner he drives by): a pin inside the text
+         lands at once; a short link shows "Opening the link…"
+         on the banner while PinLinks.resolveUrl follows it
+         (direct follow, then the server door); a link that
+         yields nothing gets the paste bar's plain words on the
+         banner, never a silent Places trip. Ordinary text is
+         NOT consumed here — it falls through to the existing
+         delegation and searches exactly as before. */
+      function searchBoxPin(text) {
+        var pinC = sentPinCoords(text);
+        if (pinC) return { pin: pinC };
+        var hits = (window.PinLinks && PinLinks.findLinks) ? PinLinks.findLinks(String(text == null ? '' : text)) : [];
+        var url = hits.length ? hits[0].url :
+          (/^https?:\/\/\S+$/i.test(String(text || '').trim()) ? String(text).trim() : null);
+        return url ? { url: url } : null;
+      }
+      function mapLinkGo(text) {
+        var hit = searchBoxPin(text);
+        if (!hit) return false;
+        placesPanelOpen = false;
+        paintPlacesPanel();
+        if (hit.pin) { landSentPin(hit.pin); return true; }
+        banner('Opening the link…', 'Getting the pin it points to.');
+        var deadLink = function (head) {
+          var words = 'Open it once in Maps, copy the full link from the top, and paste that instead — the full link carries the pin.';
+          banner(head, words);
+          /* the v395 law: the same words also stand in the sheet
+             results box (the door the sheet search itself writes),
+             so the two faces never contradict each other. */
+          var rbox = body.querySelector('#nv_results');
+          if (rbox) rbox.innerHTML = '<p class="note">' + esc(head) + ' ' + esc(words) + '</p>';
+        };
+        if (window.PinLinks && PinLinks.resolveUrl) {
+          PinLinks.resolveUrl(hit.url).then(function (c) {
+            if (c) landSentPin([c.lat, c.lng]);
+            else deadLink('That link did not lead to a pin I could read.');
+          });
+        } else {
+          deadLink('That link could not be opened from inside the app.');
+        }
+        return true;
       }
       function paintKindPills() {
         var w = body.querySelector('#nv_kind_work');
@@ -4437,6 +4536,10 @@
         var v = mapQEl ? String(mapQEl.value || '').trim() : '';
         nvMapQ = mapQEl ? String(mapQEl.value || '') : '';
         if (!v) return;
+        /* v434: a link (or a readable pin) in the box is
+           consumed HERE, on the map face — never delegated into
+           the folded sheet (see mapLinkGo). */
+        if (mapLinkGo(v)) return;
         var q2 = body.querySelector('#nv_q');
         if (q2 && searchBtn) {
           q2.value = v;
@@ -4448,6 +4551,9 @@
       var mapAddrBtn = body.querySelector('#nv_map_addr');
       if (mapAddrBtn) mapAddrBtn.onclick = function () {
         var v = nvMapQ.trim();
+        /* v434: the same link intake — a link is not an address,
+           and this door must not feed one to the geocoder. */
+        if (v && mapLinkGo(v)) return;
         var q3 = body.querySelector('#nv_q');
         if (v && q3 && searchBtn) {
           q3.value = v;
@@ -5023,6 +5129,24 @@
         }
         S.rerouting = true;
         banner('Routing…', '');
+        /* v434 (NAV-SEARCHBOX-LINK): the destination THIS
+           request answers, stamped once for the whole chain
+           (the exclusion / forward re-requests below are the
+           same logical request). If the driver sets another
+           destination while this one is in flight, its landing
+           is stale: finalizeRoute and the failure path drop it
+           instead of adopting it, so the old route can never
+           resurrect over the new pin — the second half of the
+           Nov 12 thrash (the first half is setDest retiring the
+           old plan the moment a new destination lands). A
+           re-route for the SAME destination (off-route, mode,
+           the Route tap) carries the same key and adopts
+           exactly as before. */
+        var routeKey = S.dest ? S.dest[0].toFixed(6) + ',' + S.dest[1].toFixed(6) : '';
+        var destMoved = function () {
+          return !!routeKey && !!S.dest &&
+            (S.dest[0].toFixed(6) + ',' + S.dest[1].toFixed(6)) !== routeKey;
+        };
         var url = S.settings.serverUrl.replace(/\/+$/, '') + '/route';
         var truckMode = S.settings.mode !== 'car';
         var attempt = 0;
@@ -5189,6 +5313,18 @@
         }
 
         function finalizeRoute(line, plan, reqBody, learned) {
+          /* v434: a landing for a destination the driver has
+             already replaced is dropped, never adopted — the
+             new destination's own armed auto-route (setDest
+             latched it; maybeAutoRoute held it while this
+             request was in flight) fires its request now. The
+             guard stands at the adoption door itself, so it
+             covers the truck screen's delayed landings too. */
+          if (destMoved()) {
+            S.rerouting = false;
+            maybeAutoRoute();
+            return;
+          }
           S.rerouting = false;
           /* v433 (restored v419): the 4th argument is present
              only for doRoute's learned adoption — every server
@@ -5343,6 +5479,11 @@
           fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody) })
             .then(function (r) { httpStatus = r.status || 0; if (!r.ok) throw new Error('http'); return r.json(); })
             .then(function (data) {
+              /* v434: the destination moved while this answer
+                 was in flight — do not spend the U-turn layers
+                 (which would re-request the OLD destination) on
+                 it; drop it like a stale landing. */
+              if (destMoved()) { S.rerouting = false; maybeAutoRoute(); return; }
               if (!data || !data.trip || !data.trip.legs || !data.trip.legs.length) throw new Error('empty');
               var line = [];
               data.trip.legs.forEach(function (leg) { line = line.concat(decodeShape(leg.shape)); });
@@ -5424,6 +5565,11 @@
               screenThenFinalize(line, plan, reqBody);
             })
             .catch(function (err) {
+              /* v434: a failure for a destination the driver has
+                 already replaced is not his error to read — the
+                 old request dies quietly and the new
+                 destination's armed auto-route fires instead. */
+              if (destMoved()) { S.rerouting = false; lastGood = null; maybeAutoRoute(); return; }
               /* v260 (NAV-NO-UTURN): a failed FORWARD (via)
                  request — the engine could not use the through
                  point — retries ONCE as a plain request before
