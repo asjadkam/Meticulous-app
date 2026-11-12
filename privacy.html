@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meticulous — Privacy Policy</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #ffffff; line-height: 1.6; margin: 0; padding: 0; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.9em; margin-bottom: 0.2em; }
+  h2 { font-size: 1.3em; margin-top: 1.8em; border-bottom: 1px solid #e2e2e2; padding-bottom: 0.25em; }
+  .effective { color: #555; font-style: italic; margin-top: 0; }
+  ul { padding-left: 1.4em; }
+  li { margin-bottom: 0.5em; }
+  strong { font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<h1>Meticulous — Privacy Policy</h1>
+<p class="effective">Effective date: November 12, 2026</p>
+<p>Meticulous Technologies ("Meticulous", "we", "us") operates the Meticulous app for dump-truck drivers, owner-operators, and fleet managers. This policy explains what information the app collects, why, who it is shared with, and the choices you have. We wrote it in plain language on purpose.</p>
+
+<h2>1. What we collect and why</h2>
+<p><strong>Account information.</strong> When you create an account we collect your email address and a password (stored securely by our sign-in provider, Google Firebase — we never see or store your actual password). You may also add your name, business name, phone number, and your role (driver, owner-operator, or fleet manager). This is used to run your account, sign you in, and sync your records across your devices.</p>
+<p>You can also use Meticulous without an account ("Local mode"). In Local mode your records stay only on your device and nothing in this section about cloud storage applies until you sign in.</p>
+<p><strong>Your work records.</strong> Meticulous is a work record book. The records you create in the app — dispatches, haul tickets, shift hours and timer records, load counts, odometer readings, fuel purchases and receipts, expenses, maintenance records, pre-trip inspection reports, invoices, manifests, and profit-and-loss figures — are stored so the app can do its job: show your day, calculate your pay, and keep your history. These records belong to you.</p>
+<p><strong>Directory listing (for Connect).</strong> So other Meticulous users can find and connect with you, every signed-in account publishes a small directory listing with identity only: your display name, business name, and role. No work records, location, or contact details are in the directory listing.</p>
+
+<h2>2. Location</h2>
+<p>Meticulous uses precise GPS location for its core features: tracking your shift and trip miles, counting loads at pickup and dump sites, learning the places you work, and turn-by-turn navigation.</p>
+<ul>
+<li>Location is collected while you use these features, including in the background <strong>while a work shift or trip is being recorded</strong>. On Android this runs as a visible recording service — your phone shows a notification ("Meticulous is recording your work trip location") the whole time. The app does not track your location around the clock or when no shift/trip is running.</li>
+<li>Your trip miles and the places the app learns (such as your pickup and dump sites) are saved with your records and, when you are signed in, synced to your account so they survive a lost or replaced phone.</li>
+<li>For navigation, your trip's start point and destination are sent to our routing server to calculate a truck route. Map and address services the app uses (OpenStreetMap map tiles and address search, City of Calgary traffic data, and Open-Meteo weather) receive the map area or place you are looking at, the way any map app works. If you use the VIN lookup, the vehicle identification number you enter is sent to the U.S. NHTSA database to decode it.</li>
+</ul>
+
+<h2>3. Photos and documents</h2>
+<p>You can add photos and files to your records — haul tickets, fuel receipts, documents such as your licence, registration, and insurance, inspection and damage photos, and odometer photos.</p>
+<ul>
+<li>Photos you add are stored with your records (on your device, and in your account when signed in), compressed to a working size.</li>
+<li><strong>Reading photos:</strong> the app first tries to read a photo (for example, an odometer or a ticket) on your device itself, using built-in text recognition. Nothing leaves your phone for that. If the on-device reader cannot read the photo, the app can send that one photo through our server to Google's Gemini AI vision service to try reading it. The result is only ever a suggestion — nothing is saved from a photo read until you confirm it.</li>
+<li><strong>In-app assistant:</strong> if you ask the app's built-in assistant a question, your question is sent through our server to an AI service that generates the answer.</li>
+</ul>
+
+<h2>4. Sharing through Connect</h2>
+<p>Connect is how drivers share with the people they work with — a boss, a fleet manager, a dispatcher, or a customer who pays them. <strong>Sharing only ever happens with people you choose to connect with, at the access level you grant:</strong></p>
+<ul>
+<li><strong>Connect (all):</strong> your connected person can see your work records, including history, as described in the app.</li>
+<li><strong>Connect (limited):</strong> only the parts you tick — for example dispatch and manifests only. Unticked parts (such as fuel, expenses, maintenance, inspections, invoices, and profit-and-loss) do not cross.</li>
+<li><strong>One-time connection:</strong> a single share that ends when it is done.</li>
+</ul>
+<p>Dispatches you send to a connected person land in their app as their job. Invoices and manifests you issue to a connected payer cross to them with the records attached to them, as the app shows you before anything is sent. You can change a connection's access level or end a connection at any time; ending it stops all future sharing. We never sell your personal information, and we never share your records with anyone except the connections you make and the service providers in section 6.</p>
+
+<h2>5. Payments</h2>
+<p>Meticulous offers a free trial and paid subscription tiers. When you subscribe, payment is processed by <strong>Stripe</strong>. Your card number goes directly to Stripe — it never touches or is stored on our systems. We keep only your subscription status, your tier, and the Stripe customer and subscription identifiers so the app knows your plan. Stripe's own privacy policy covers how Stripe handles your payment information.</p>
+
+<h2>6. Service providers</h2>
+<p>We use a small number of service providers to run the app:</p>
+<ul>
+<li><strong>Google Firebase</strong> (sign-in, database, sync, and app notifications) — stores and processes your account and records as described above.</li>
+<li><strong>Google Gemini</strong> — reads a photo only in the situation described in section 3, and helps power the in-app assistant.</li>
+<li><strong>Stripe</strong> — subscription payments (section 5).</li>
+<li><strong>OpenStreetMap and its public services, the City of Calgary open-data portal, Open-Meteo, and the U.S. NHTSA</strong> — map, address, traffic, weather, and VIN data for navigation features (section 2).</li>
+<li><strong>Our routing server</strong> — calculates truck routes and relays the photo-reading and assistant requests above.</li>
+</ul>
+<p>Notifications: the app can send you push notifications (for example, about dispatches and connection activity) through Firebase. You can turn notifications off in your phone's settings at any time.</p>
+<p><strong>No advertising.</strong> Meticulous has no ads and no advertising trackers, and we do not use third-party analytics services to profile you.</p>
+
+<h2>7. How your data is stored and protected</h2>
+<p>Your records are kept on your device and, when you are signed in, in Google Firebase (Google Cloud) so they sync and are backed up. Data is encrypted while it travels between your device and the cloud, and access to each account's cloud records is restricted by security rules so that only you — and the people you connect with, at the level you granted — can reach them. No system is perfectly secure, but we work to protect your information and limit what we collect to what the app needs to function.</p>
+
+<h2>8. Retention and deleting your data</h2>
+<ul>
+<li>Your records stay in your account until you delete them or close your account. You can edit or delete individual records in the app at any time, and deleting the app removes its local data from that device.</li>
+<li><strong>To close your account and erase your cloud data, use Delete Account in the app</strong> (Account &amp; login screen, below Change password). Deleting your account erases the records stored for it, except anything we must keep for legal or tax reasons. If you no longer have the app, email us at meticuloustech1@gmail.com and we will delete your account for you. People you connected with keep what you already shared with them in their own accounts, the same way a sent email stays with its recipient.</li>
+<li>If you use Local mode only, your data is only on your device and is removed when you delete it or uninstall the app.</li>
+</ul>
+
+<h2>9. Children</h2>
+<p>Meticulous is a work tool for commercial truck drivers and the businesses that work with them. It is not directed at children, and we do not knowingly collect information from children.</p>
+
+<h2>10. Changes to this policy</h2>
+<p>If we change this policy in a meaningful way, we will update the effective date above and note the change in the app or on this page. Continuing to use the app after a change means you accept the updated policy.</p>
+
+<h2>11. Contact</h2>
+<p>Questions about this policy or your data:</p>
+<p><strong>Meticulous Technologies</strong><br>
+Email: <strong>meticuloustech1@gmail.com</strong></p>
+</main>
+</body>
+</html>
