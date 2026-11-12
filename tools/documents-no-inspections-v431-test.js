@@ -187,8 +187,10 @@ function ptiWorld(seed) {
   ok('source: no inspShowAll state anywhere', docSrc.indexOf('inspShowAll') < 0);
   const idxSrc = read('index.html');
   /* pin moved v431 -> v442 (DOC-OPEN-NOV12 shipped a new
-     documents.js; the removal this suite proves is untouched) */
-  ok('index loads modules/documents.js?v=442', idxSrc.indexOf('modules/documents.js?v=442') >= 0);
+     documents.js; the removal this suite proves is untouched);
+     moved again v442 -> v443 (DOC-ADD-PICKER-NOV12, same
+     standing) */
+  ok('index loads modules/documents.js?v=443', idxSrc.indexOf('modules/documents.js?v=443') >= 0);
 
   /* ---------- the driver face: documents only ---------- */
   {

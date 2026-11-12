@@ -60,6 +60,17 @@
  * read back), healing found bytes into the vault — and the
  * photo opens full-screen on tap, tap again to zoom. The
  * full reasoning stands at resolveDocBytes below.
+ *
+ * v443 (DOC-ADD-PICKER-NOV12, owner Nov 12, 2026 17:49 CST,
+ * his screenshot of this form): "It's not opening up
+ * anything!" — Take photo / Photo or PDF opened no camera
+ * and no picker on his phone. The controls were buttons
+ * whose only link to their file inputs was a JS-forwarded
+ * .click() on a 1px, opacity:0, pointer-events:none input —
+ * a synthetic click the phone's WebView swallows. They are
+ * labels bound with `for` now: the browser activates the
+ * input from the user's own tap. The full reasoning stands
+ * at fileButtons below.
  */
 (function () {
   'use strict';
@@ -312,10 +323,26 @@
       return '<button type="button" class="btn small ' + (l === current ? 'primary' : 'ghost') + '" data-' + prefix + 'label="' + esc(l) + '">' + esc(l) + '</button>';
     }).join('') + '</div>';
   }
+  /* v443 (DOC-ADD-PICKER-NOV12): the two doors are LABELS
+     bound to their inputs with `for` — never buttons again.
+     Owner, Nov 12, 2026 17:49 CST, on this very form: "It's
+     not opening up anything!" The buttons' only connection
+     to their inputs was a JS onclick calling .click() on an
+     input styled 1px / opacity:0 / pointer-events:none, and
+     in the phone's WebView (the OTA _capacitor_file_ copy)
+     that synthetic click on a non-interactable input is
+     swallowed — no camera, no picker, nothing. A label's
+     activation is dispatched by the browser itself as part
+     of the user's real tap — the same trust a tap on the
+     input itself gets, which is why the app's direct-input
+     flows (dispatch's #t_photo, damage's #dg_img) have
+     always opened in his hands. No JS forwarder may ride
+     the label: in a healthy browser it would fire the input
+     a second time behind the label's own activation. */
   function fileButtons(prefix) {
     return '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
-      '<button type="button" class="btn secondary" id="' + prefix + '_cam" style="flex:1;">📷 Take photo</button>' +
-      '<button type="button" class="btn secondary" id="' + prefix + '_pick" style="flex:1;">📁 Photo or PDF</button>' +
+      '<label class="btn secondary" id="' + prefix + '_cam" for="' + prefix + '_cam_in" style="flex:1;text-align:center;cursor:pointer;">📷 Take photo</label>' +
+      '<label class="btn secondary" id="' + prefix + '_pick" for="' + prefix + '_in" style="flex:1;text-align:center;cursor:pointer;">📁 Photo or PDF</label>' +
       '</div>' +
       '<input type="file" id="' + prefix + '_cam_in" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
       '<input type="file" id="' + prefix + '_in" accept="image/*,.pdf,application/pdf" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">';
@@ -404,11 +431,12 @@
       view = { mode: 'audit', id: null };
       Meticulous.modules.documents.render(body);
     };
-    /* Add form */
+    /* Add form — v443: NO click-forwarding is wired here.
+       The Take photo / Photo or PDF controls are labels
+       (fileButtons above); the browser activates the bound
+       input from the user's tap itself. Only the change
+       side is wired. */
     var camIn = body.querySelector('#docs_cam_in'), pickIn = body.querySelector('#docs_in');
-    var camB = body.querySelector('#docs_cam'), pickB = body.querySelector('#docs_pick');
-    if (camB && camIn) camB.onclick = function () { camIn.click(); };
-    if (pickB && pickIn) pickB.onclick = function () { pickIn.click(); };
     function onAddFile(ev) {
       var file = ev.target.files && ev.target.files[0];
       if (!file) return;
@@ -468,11 +496,9 @@
        removed list — the Audit view wires its own rows. */
 
     if (!canSend) return;
-    /* Send form */
+    /* Send form — v443: labels again (see the Add form
+       note); only the change side is wired. */
     var sCamIn = body.querySelector('#docs_s_cam_in'), sPickIn = body.querySelector('#docs_s_in');
-    var sCamB = body.querySelector('#docs_s_cam'), sPickB = body.querySelector('#docs_s_pick');
-    if (sCamB && sCamIn) sCamB.onclick = function () { sCamIn.click(); };
-    if (sPickB && sPickIn) sPickB.onclick = function () { sPickIn.click(); };
     function onSendFile(ev) {
       var file = ev.target.files && ev.target.files[0];
       if (!file) return;

@@ -417,7 +417,10 @@ function openDoc(w, body, id) {
   /* ---------- PHASE 9: pins ---------- */
   console.log('PHASE 9 — pins');
   {
-    ok('pin: index loads modules/documents.js?v=442', read('index.html').indexOf('modules/documents.js?v=442') >= 0);
+    /* pin moved v442 -> v443 (DOC-ADD-PICKER-NOV12 shipped a
+       new documents.js; the open-a-document fix this suite
+       proves is untouched) */
+    ok('pin: index loads modules/documents.js?v=443', read('index.html').indexOf('modules/documents.js?v=443') >= 0);
     const src = read('modules/documents.js');
     ok('pin: the resolver is in the shipped module', src.indexOf('function resolveDocBytes') >= 0);
     ok('pin: the account copy is read back (loadDoc)', src.indexOf("FB.loadDoc('documents'") >= 0);
