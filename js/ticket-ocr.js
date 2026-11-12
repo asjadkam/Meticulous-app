@@ -1035,6 +1035,25 @@
       add(!!(parsed.qty || parsed.weight), (parsed.qty ? 'qty ' + parsed.qty : '') + (parsed.qty && parsed.weight ? ' · ' : '') + (parsed.weight ? 'weight ' + parsed.weight : ''), 'qty/weight');
       add(!!parsed.waitingRate, 'waiting ' + parsed.waitingRate, 'waiting time');
       add(!!(parsed.instructions && parsed.instructions.length), 'instructions (' + (parsed.instructions ? parsed.instructions.length : 0) + ')', 'instructions');
+    } else if (parsed._type === 'haul_card') {
+      /* web 424 (POWERREAD-FIX-NOV11): a haul card is judged by the
+         fields a haul-card read can actually carry — the card
+         number and the labeled clocks / total hours. The generic
+         branch below judged it by DISPATCH fields (job site /
+         scheduled time / material / notes) that no haul-card read
+         can ever produce, so EVERY haul-card read — even a perfect
+         one — reported "Couldn't find: job site, scheduled time,
+         material, ticket #, notes", and a read that missed only
+         the number looked exactly like a read that found nothing
+         (the owner's Nov 11 close: card #28846 plainly printed on
+         the card, the banner blaming the card while the cloud
+         reader behind the read had in fact failed). The hours
+         fields are confirm-first inputs: named when missing so
+         the driver knows what the card still owes him to type. */
+      add(!!form.ticketNo, 'ticket #' + form.ticketNo, 'ticket #', form.ticketNo);
+      add(!!form.startTime, 'start ' + form.startTime, 'start time');
+      add(!!form.finishTime, 'finish ' + form.finishTime, 'finish time');
+      add(!!form.totalHours, 'total hours ' + form.totalHours, 'total hours');
     } else {
       add(!!form.jobSite, 'job site ' + form.jobSite, 'job site', form.jobSite);
       add(!!form.scheduledAt, 'scheduled ' + form.scheduledAt, 'scheduled time');

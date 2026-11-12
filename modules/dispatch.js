@@ -708,11 +708,13 @@
     var gate = (typeof window !== 'undefined' && window.TicketOCR && window.TicketOCR.looksGibberish) || null;
     if (!gate) return docRead;
     var LABELS = ['job site', 'scheduled', 'material', 'ticket #', 'notes',
-      'amount', 'pickup', 'delivery', 'truck', 'qty', 'weight', 'waiting', 'instructions'];
+      'amount', 'pickup', 'delivery', 'truck', 'qty', 'weight', 'waiting', 'instructions',
+      'start', 'finish', 'total hours'];
     var MISS = { 'job site': 'job site', 'scheduled': 'scheduled time', 'material': 'material',
       'ticket #': 'ticket #', 'notes': 'notes', 'amount': 'amount', 'pickup': 'pickup',
       'delivery': 'delivery', 'truck': 'truck type', 'qty': 'qty/weight', 'weight': 'qty/weight',
-      'waiting': 'waiting time', 'instructions': 'instructions' };
+      'waiting': 'waiting time', 'instructions': 'instructions',
+      'start': 'start time', 'finish': 'finish time', 'total hours': 'total hours' };
     var found = [], missing = (docRead.missing || []).slice();
     (docRead.found || []).forEach(function (entry) {
       var words = String(entry).split(/\s+/);
@@ -4333,12 +4335,21 @@
          v142: prImg (the capture-time read's image, when the
          funnel started one) is what the escalation asks with —
          PowerRead.escalate adopts that in-flight read. */
-      function escalateTicketRead(ocrUrl, onMerged, prImg) {
+      function escalateTicketRead(ocrUrl, onMerged, prImg, onStatus) {
         if (!window.PowerRead || !PowerRead.escalate || !window.TicketOCR) { onMerged(null); return; }
         var got = null;
         PowerRead.escalate({
           reader: 'text', image: prImg || ocrUrl, origin: { module: 'dispatch', label: 'Dispatch' },
-          onStatus: function () {},
+          /* web 424 (POWERREAD-FIX-NOV11): the outcome is RELAYED
+             to the caller. The old empty handler swallowed it: a
+             power read that FAILED (the cloud reader never
+             answered) or was still WAITING for signal produced
+             merged=null — indistinguishable from a power read that
+             answered and found nothing — so the confirm blamed the
+             card ("Couldn't find: …") for a reader that had in
+             fact failed (the owner's Nov 11 close). The caller now
+             words the outcome honestly on the confirm screen. */
+          onStatus: function (s) { if (onStatus) onStatus(s); },
           onResult: function (res) {
             var txt = res && res.fields && res.fields.rawText;
             if (!txt) return;
@@ -4431,9 +4442,20 @@
              better read merges fill-only into the form and this
              ticket (see escalateTicketRead). */
           if (readNeedsEscalation(parsed, docRead)) {
+            var prState2 = null;
             escalateTicketRead(ocrUrl || photoUrl, function (merged) {
               applyMerged(merged);
-            }, early.prImg);
+              /* web 424 (POWERREAD-FIX-NOV11): the same honesty in
+                 the form funnel — a power read that failed or is
+                 waiting for signal is SAID on the status line
+                 instead of passing in silence. */
+              if (!merged && prState2 && (prState2.state === 'error' || prState2.state === 'unavailable' || prState2.state === 'waiting')) {
+                var ne = body.querySelector('#dp_img_name');
+                if (ne) ne.textContent = prState2.state === 'waiting'
+                  ? '⚡ Power read waiting for signal — the photo is saved and will be read when you are back online. The ticket is added below; fill the form by hand for now.'
+                  : '⚡ The power read couldn\'t complete — the cloud reader didn\'t answer. The ticket is added below; please fill the form by hand.';
+              }
+            }, early.prImg, function (s) { prState2 = s; });
           }
           // If haul card, immediately prompt for hours/payment unit
           if (parsed._type === 'haul_card') {
@@ -4928,6 +4950,13 @@
             readLines += '<div class="b" style="color:var(--orange)">Couldn\'t find: ' + esc(cleanRead2.missing.join(', ')) + '</div>';
           }
         }
+        /* web 424 (POWERREAD-FIX-NOV11): a power read that failed
+           or is still waiting is said ABOVE the read lines — it is
+           the reason the read below is thin, and it must never
+           read as "the card had nothing on it". */
+        if (closeState.readNote) {
+          readLines = '<div class="b" style="color:var(--orange)">' + esc(closeState.readNote) + '</div>' + readLines;
+        }
         /* v86: the ticket number is an editable field on EVERY
            confirm (it was display-only before, so a hand-typed
            close had nowhere to put the number at all — and a
@@ -5003,7 +5032,7 @@
         wrap.querySelector('#dp_cf_confirm').onclick = confirmClose;
         var repBtn = wrap.querySelector('#dp_cf_replace');
         if (repBtn) repBtn.onclick = function () {
-          closeState.step = 'capture'; closeState.ticket = null; closeState.readFail = false;
+          closeState.step = 'capture'; closeState.ticket = null; closeState.readFail = false; closeState.readNote = '';
           paintCloseFlow();
         };
         paintClosePlan();
@@ -5187,12 +5216,25 @@
         closeState = null;
         api.render(body);
       }
-      function closeToConfirm(ticket, readFail) {
+      function closeToConfirm(ticket, readFail, readNote) {
         if (!closeState) return; // cancelled while the read was running
         closeState.ticket = ticket;
         closeState.readFail = !!readFail;
+        /* web 424: the power read's own outcome, in plain words —
+           rendered above the read lines so a failed/waiting cloud
+           read is never mistaken for an empty card. */
+        closeState.readNote = readNote || '';
         closeState.step = 'confirm';
         paintCloseFlow();
+      }
+      /* web 424 (POWERREAD-FIX-NOV11): the confirm's plain-words
+         line for a power read that produced no better read. A
+         failed or waiting reader is SAID — never dressed up as
+         "the card had nothing on it". */
+      function closeReadNote(prState) {
+        if (prState && prState.state === 'waiting') return '⚡ The power read is still waiting for signal — the photo is saved and that read finishes when you are back online. What is below is the on-device read only — please check the fields against the card.';
+        if (prState && (prState.state === 'error' || prState.state === 'unavailable')) return '⚡ The power read couldn\'t complete — the cloud reader didn\'t answer, so what is below is the on-device read only. The photo stays attached as the record — please check the fields against the card.';
+        return '⚡ The power read answered, but couldn\'t read this card either — please check the fields against the card.';
       }
       /* the shared ticket reader — the same engine the form uses
          (recognizeWithRotation → parse → toDispatchForm) */
@@ -5243,6 +5285,7 @@
              app could get, not the first one that failed. */
           if (readNeedsEscalation(parsed, docRead)) {
             if (statusEl) statusEl.textContent = '⚡ Asking the power read…';
+            var prState = null;
             escalateTicketRead(ocrUrl || photoUrl, function (merged) {
               if (merged) {
                 if (!ticket.cardNumber && merged.parsed.cardNumber) ticket.cardNumber = merged.parsed.cardNumber;
@@ -5252,8 +5295,11 @@
                 if (!ticket.finishTime && merged.parsed.finishTime) ticket.finishTime = merged.parsed.finishTime;
                 if (merged.docRead && (!ticket.docRead || (merged.docRead.found || []).length > ((ticket.docRead && ticket.docRead.found) || []).length)) ticket.docRead = merged.docRead;
               }
-              closeToConfirm(ticket, false);
-            }, early.prImg);
+              /* web 424: no better read arrived — the confirm says
+                 WHY (the reader failed / is waiting / answered but
+                 couldn't read it), via closeReadNote. */
+              closeToConfirm(ticket, false, merged ? '' : closeReadNote(prState));
+            }, early.prImg, function (s) { prState = s; });
           } else {
             closeToConfirm(ticket, false);
           }

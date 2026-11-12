@@ -57,8 +57,15 @@
   /* Current Gemini Flash-class vision models, cheapest-adequate
      first. New projects can't always see older models, so a 404
      (model not found) automatically walks down the chain and the
-     first model that answers is remembered (powerReadModel). */
-  PowerRead.MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+     first model that answers is remembered (powerReadModel).
+     web 424 (POWERREAD-FIX-NOV11): the chain now matches the fixed
+     server route exactly. gemini-3.1-flash-lite leads — probed
+     live Nov 11 it answers clean in ~1 s, while gemini-3.5-flash
+     spent its whole output budget on hidden thinking (empty
+     MAX_TOKENS replies), stalled 30 s+ and 503'd under load; it
+     stays as second choice. gemini-2.5-flash is GONE: Google
+     retired it for new users (404 "no longer available"). */
+  PowerRead.MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-flash-latest'];
   PowerRead.ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
   /* v102: our own AI proxy on the Navigator's box (same host,
@@ -389,7 +396,15 @@
     if (!mm[2]) { /* not base64 — cannot inline it */ return Promise.resolve({ ok: false, kind: 'http', message: '⚡ Power read could not use that photo.' }); }
     var body = {
       contents: [{ parts: [{ text: promptFor(reader) }, { inline_data: { mime_type: mime, data: data } }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: reader === 'text' ? 2048 : 256 }
+      /* web 424 (POWERREAD-FIX-NOV11): thinking OFF + raised output
+         budgets — parity with the fixed server route. The current
+         flash models think by default and the thinking tokens come
+         out of the SAME maxOutputTokens budget: at the old caps the
+         lead model returned finishReason MAX_TOKENS with EMPTY
+         text (probed live Nov 11), and long card transcriptions
+         were truncated mid-card. thinkingBudget 0 restores the
+         plain answer; the caps now hold the ANSWER itself. */
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: reader === 'text' ? 8192 : 512, thinkingConfig: { thinkingBudget: 0 } }
     };
     var ctrl = null, timer = null;
     var init = { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) };
@@ -486,8 +501,9 @@
   }
 
   /* One read: the server proxy when one is set; otherwise the
-     device-saved key walks the model chain on 404s only, remembers
-     the model that worked. Counts exactly one read per success. */
+     device-saved key walks the model chain past any sick model
+     and remembers the model that worked. Counts exactly one read
+     per success. */
   function readOnce(reader, dataUrl, timeoutMs) {
     var proxy = PowerRead.proxyUrl();
     if (proxy) return callProxy(proxy, reader, dataUrl, timeoutMs);
@@ -497,10 +513,30 @@
     var remembered = String(sget('powerReadModel', '') || '');
     var start = Math.max(0, chain.indexOf(remembered));
     var order = chain.slice(start).concat(chain.slice(0, start));
+    var lastRes = null;
     function attempt(i) {
-      if (i >= order.length) return { ok: false, kind: 'http', message: '⚡ Power read is unavailable right now (no model answered) — your photo and entries are unchanged.' };
+      if (i >= order.length) {
+        /* web 424: the chain's verdict is the LAST model's own
+           result — its kind/status drive the v118 retry and the
+           caller's wording. The old status-less "no model
+           answered" placeholder swallowed a real 503 (and with it
+           the retry). A result with no words of its own (a bare
+           404) keeps the plain placeholder message. */
+        if (lastRes && lastRes.message) return lastRes;
+        return { ok: false, kind: 'http', message: '⚡ Power read is unavailable right now (no model answered) — your photo and entries are unchanged.' };
+      }
       return callModel(order[i], reader, dataUrl, key, timeoutMs).then(function (res) {
-        if (res.kind === 'nomodel') return attempt(i + 1);
+        /* web 424 (POWERREAD-FIX-NOV11): the walk no longer stops
+           at the first sick model. The old chain advanced ONLY on
+           a 404 — a lead model that stalled (network), 5xx'd
+           (http) or answered empty (http) ended the whole read
+           while healthy models sat unused behind it: exactly the
+           Nov 11 production failure (the server route carried the
+           same defect and is fixed the same way). Quota and
+           bad-key verdicts still stop immediately — they are
+           verdicts about the account, not about one model, and
+           the v118 contract pins them un-walked and un-retried. */
+        if (res.kind === 'nomodel' || res.kind === 'network' || res.kind === 'http') { lastRes = res; return attempt(i + 1); }
         if (res.ok) {
           sset('powerReadModel', order[i]);
           bumpCount();

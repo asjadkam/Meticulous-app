@@ -260,8 +260,8 @@ function statics() {
   eq('maintenance.js: one beginEarly call site (sticker)', count(mtSrc, 'PowerRead.beginEarly({'), 1);
   ok('maintenance.js: the sticker settle handler exists', mtSrc.indexOf('function nsCloudSettled') !== -1);
   eq('dispatch.js: both funnels start the cloud at capture', count(dspSrc, 'dspBeginEarly(ocrUrl || photoUrl'), 2);
-  ok('dispatch.js: the escalation takes the early image', dspSrc.indexOf('function escalateTicketRead(ocrUrl, onMerged, prImg)') !== -1);
-  ok('dispatch.js: the close funnel escalates with the early image', dspSrc.indexOf('}, early.prImg);') !== -1);
+  ok('dispatch.js: the escalation takes the early image', dspSrc.indexOf('function escalateTicketRead(ocrUrl, onMerged, prImg, onStatus)') !== -1);
+  ok('dispatch.js: the close funnel escalates with the early image', dspSrc.indexOf('}, early.prImg, function (s) { prState = s; });') !== -1);
   ok('powerread.js: the proxy route carries an abort ceiling', /callProxy[\s\S]{0,1600}AbortController/.test(prSrc));
   ok('ticket-ocr.js: fileToReadImage serves the send rendition', ocrSrc.indexOf('TicketOCR.fileToReadImage = function') !== -1);
 }

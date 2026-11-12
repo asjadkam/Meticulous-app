@@ -232,8 +232,19 @@ console.log('— FIX 3: a slow-but-healthy power read lands —');
   if (fs.existsSync(srvPath)) {
     const srv = fs.readFileSync(srvPath, 'utf8');
     const gm = /GEMINI_TIMEOUT_MS = (\d+)/.exec(srv);
-    check('C3 server per-model timeout is 45 s (the number the ceilings must beat)',
-      !!gm && +gm[1] === 45000, gm && gm[1]);
+    const wb = /GEMINI_WALK_BUDGET_MS = (\d+)/.exec(srv);
+    /* web 424 (POWERREAD-FIX-NOV11): the server contract changed
+       with the power-read fix — a single model now gets 20 s, and
+       the whole chain walk is capped at a 40 s budget. The
+       invariant the client ceilings exist for is unchanged and is
+       what is pinned now: one full server walk (40 s) fits inside
+       the client's first-attempt ceiling (60 s), so a healthy
+       walk is never aborted client-side. (The old pin — per-model
+       45 s — described the pre-fix server whose 45 s stalls were
+       themselves half the Nov 11 failure.) */
+    check('C3 server walk budget (40 s) fits inside the client first-attempt ceiling',
+      !!gm && +gm[1] === 20000 && !!wb && +wb[1] === 40000 && +wb[1] < 60000,
+      'per-model=' + (gm && gm[1]) + ' walk=' + (wb && wb[1]));
   }
 }
 (async function () {

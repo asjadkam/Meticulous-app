@@ -334,7 +334,14 @@ async function main() {
     fetchCalls = [];
     fetchHandler = () => geminiErr(503, 'down');
     const r3 = await PowerRead.read('odometer', IMG);
-    check('v118 retry: two transient failures → honest "failed twice" copy, exactly 2 fetches', r3.ok === false && r3.retried === true && /failed twice/.test(r3.message || '') && fetchCalls.length === 2, JSON.stringify(r3) + ' calls=' + fetchCalls.length);
+    /* web 424 (POWERREAD-FIX-NOV11): the chain now WALKS past a
+       sick model, so a transient failure at every model costs one
+       full walk per attempt — MODELS.length × 2 fetches for the
+       read + its v118 retry (was 2, when a 500 from the lead model
+       ended the read on the spot: the Nov 11 defect itself). The
+       contract that matters is unchanged: the verdict is the
+       honest "failed twice" copy, marked retried. */
+    check('v118 retry: two transient failures → honest "failed twice" copy, the full chain walked twice', r3.ok === false && r3.retried === true && /failed twice/.test(r3.message || '') && fetchCalls.length === PowerRead.MODELS.length * 2, JSON.stringify(r3) + ' calls=' + fetchCalls.length);
   }
   {
     fetchCalls = [];
