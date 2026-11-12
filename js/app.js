@@ -2289,6 +2289,36 @@
        is this layer's own flow) — the record is stale; overwrite
        it with this layer's idle truth instead of adopting a
        ghost session. */
+    /* v424 (CLOSE-NOT-REACHING-PHONE): the closed-day verdict is
+       documentary, not a stamp race. The v411 branch inside the
+       stateNewer gate below can only fire when the record's save
+       stamp beats this page's — but the pull that brings the
+       close stamps the stored tracker's stateAt as it resets it,
+       so a record written before the close loses that contest by
+       construction and the branch never runs in the close's own
+       lifetime: on Nov 11's 18:39 reopen the page went idle while
+       the native record — the thing the widget and the bubble
+       follow — kept counting, untold; the next lifetime's
+       collect then adopted it and the timer resurrected. So the
+       verdict is asked FIRST, on the record's own pin and the
+       store's proof alone: a record naming a session whose day
+       stands closed is ended with this layer's idle facts
+       whatever the stamps say, and never adopted. An open day's
+       record (the v93 arm seed, an overnight carry) fails the
+       proof and falls through to the arbitration below
+       untouched. */
+    if (rec.status !== 'idle' && (!t.status || t.status === 'idle')) {
+      var recPin424 = 0;
+      try { var pm424 = /^s(\d+)$/.exec(rec.sessionKey || ''); if (pm424) recPin424 = Number(pm424[1]) || 0; } catch (e) {}
+      if (recPin424 > 0) {
+        var closed424 = false;
+        try { closed424 = closedDayProof411(recPin424); } catch (e) {}
+        if (closed424) {
+          try { ShiftTrack.sessionSync(sessionFacts(true)).then(function (r2) { if (r2 && typeof r2.rev === 'number') App._sessRev = r2.rev; }); } catch (e) {}
+          return;
+        }
+      }
+    }
     if (rec.status !== 'idle' && (!t.status || t.status === 'idle') && stateNewer) {
       /* v93 (GEN74-RELAUNCH-NOV10, Nov 10, 2026): the ghost
          test above cannot tell a stale shell from TODAY'S
@@ -4056,6 +4086,43 @@
           }
         }
       } catch (e) {}
+      /* v424 (CLOSE-NOT-REACHING-PHONE): the same one-booking law
+         for a DISPATCH-completion close. The twin test above only
+         sees closes that booked a sessions entry; a completion
+         books its money on the dispatch's own Revenue line and
+         writes NO session entry (Nov 11: the day closed on the
+         web at 12 h / $348 / 11 loads while the phone's session
+         still ran). A stop landing on such a day — the session
+         the remote close never reached — stands everything down
+         and books NOTHING, or the day is paid twice. The guard
+         is the close's own endedAt against this session's pin:
+         a close that ended at or after this session began (or
+         carries no end stamp at all — older shapes err toward
+         protecting the book) is THIS session's close; a session
+         that began after an earlier same-day close ENDED is a
+         new shift and books as always. */
+      if (!twin411) {
+        try {
+          var pin424 = Number(trackerSessionKeyMs()) || 0;
+          if (pin424 > 0) {
+            var dl424 = store.get('dsp_list', []);
+            if (Array.isArray(dl424)) {
+              var day424 = todayStr(new Date(pin424));
+              for (var di424 = 0; di424 < dl424.length; di424++) {
+                var dr424 = dl424[di424];
+                if (!dr424 || dr424.status !== 'completed') continue;
+                var dDay424 = '';
+                var sched424 = (typeof dr424.scheduledAt === 'string') ? /^(\d{4}-\d{2}-\d{2})/.exec(dr424.scheduledAt) : null;
+                if (sched424) dDay424 = sched424[1];
+                else if (typeof dr424.date === 'string') dDay424 = dr424.date;
+                if (dDay424 !== day424) continue;
+                var end424 = Date.parse(dr424.endedAt || '');
+                if (!(end424 > 0) || end424 >= pin424) { twin411 = true; break; }
+              }
+            }
+          }
+        } catch (e) {}
+      }
       /* v419: a genuine overnight carry (see the gate at the top)
          books onto its ORIGINAL start day; every other booking
          keeps the end-day date it has always carried. */

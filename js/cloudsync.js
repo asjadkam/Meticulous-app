@@ -3180,6 +3180,63 @@
           try { noteCloudInv(key, teleInventory(d.v)); } catch (e) {}
         }
 
+        /* v424 (CLOSE-NOT-REACHING-PHONE): completion is one-way
+           evidence, and dsp_list is NOT a record-list key — it
+           settles by the generic stamp game below, which a
+           phone-side write stamped after another surface's close
+           push wins, leaving the local list with the dispatch
+           still OPEN. The completed record then never lands on
+           this device at all, and every page-side closed-day
+           gate (js/app.js closedDayProof411 and everything that
+           reads it) judges a store that has never seen the close
+           — Nov 11: the day closed on the web at 18:23, the
+           phone's timer resurrected at the 18:48 reopen, and the
+           resurrected page's flushes pushed the open list back
+           up over the close. So before the game runs: an incoming
+           COMPLETED dispatch record replaces the same-id local
+           copy that is not completed, and a completed record this
+           device lacks joins the list. Nothing un-completes: a
+           local completed copy is never downgraded here, and an
+           open incoming copy changes nothing. When the repair
+           makes the local value equal the incoming one the key
+           settles clean at the doc's stamp; otherwise the game
+           below settles the repaired value (and a local win now
+           pushes the completion UP instead of erasing it). */
+        if (key === 'dsp_list' && raw !== null && Array.isArray(d.v)) {
+          try {
+            var locDsp424 = parseJson(raw, null);
+            if (Array.isArray(locDsp424)) {
+              var doneById424 = {};
+              d.v.forEach(function (dd424) {
+                if (dd424 && dd424.id !== null && dd424.id !== undefined && dd424.status === 'completed') doneById424[String(dd424.id)] = dd424;
+              });
+              var seen424 = {};
+              var repaired424 = false;
+              var mergedDsp424 = locDsp424.map(function (ld424) {
+                if (ld424 && ld424.id !== null && ld424.id !== undefined) {
+                  seen424[String(ld424.id)] = true;
+                  if (ld424.status !== 'completed' && doneById424[String(ld424.id)]) { repaired424 = true; return doneById424[String(ld424.id)]; }
+                }
+                return ld424;
+              });
+              d.v.forEach(function (dd424) {
+                if (dd424 && dd424.id !== null && dd424.id !== undefined && dd424.status === 'completed' && !seen424[String(dd424.id)]) {
+                  mergedDsp424.push(dd424); repaired424 = true;
+                }
+              });
+              if (repaired424) {
+                raw = JSON.stringify(mergedDsp424);
+                lsSetRaw(key, raw);
+                applied++;
+                if (JSON.stringify(mergedDsp424) === JSON.stringify(d.v)) {
+                  meta.keys[key] = { t: cloudTs, s: cloudTs };
+                  return;
+                }
+              }
+            }
+          } catch (e424) {}
+        }
+
         /* v219 (CONNECT-DELETE-CROSS-ACCOUNT): a legacy Connect-
            family doc in MY OWN tree seeds my namespaced slot the
            first time this build pulls — the list (and my own
