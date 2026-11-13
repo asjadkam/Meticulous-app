@@ -3068,6 +3068,21 @@
      readout's "last GPS accuracy" line reads this, nothing else
      keeps it. */
   var lastFixSeen = null;
+  /* v450 (PEG-PU-FAIL-NOV13): the last fix that met the PEG bar
+     (accuracy within the engine's ACC_MAX_M — the evidence a
+     manual peg is planted from). lastFixSeen is overwritten by
+     EVERY raw watcher fix before any filtering (the miles layer's
+     raw-subscriber contract), so a single rough re-acquisition
+     fix — the normal first fix after a watcher restart — poisoned
+     a peg tap into a 'rough-fix' refusal even when a peg-grade
+     fix had arrived seconds earlier in the same stream. setPeg
+     reads THIS fix first; lastFixSeen keeps its readout/teach
+     meanings untouched. */
+  var lastPegFix = null;
+  /* v450: how old peg evidence may be and still plant a peg —
+     the geo layer's own freshness standard (js/geo.js getCurrent
+     layer 1: a cached fix <= 5 min old is "fresh"). */
+  var PEG_FIX_FRESH_MS = 5 * 60 * 1000;
   /* v267 (LOAD-COUNT-DEAD): teach mode's shadow — a pattern
      learner seeded on the load pin, watching ONLY for an
      intra-site pair (the one-pin same-place day the dump
@@ -4874,6 +4889,12 @@
         accuracy: (fix.accuracy === null || fix.accuracy === undefined) ? null : +fix.accuracy,
         t: (typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now()
       };
+      /* v450 (PEG-PU-FAIL-NOV13): the peg-grade stream fix rides
+         alongside — only a fix inside the peg bar may move it, so
+         a rough raw fix can no longer erase good peg evidence. */
+      if (lastFixSeen.accuracy === null || lastFixSeen.accuracy <= ENGINE.ACC_MAX_M) {
+        lastPegFix = lastFixSeen;
+      }
     }
     var ft0 = (fix && typeof fix.time === 'number' && fix.time > 0) ? fix.time : Date.now();
     /* v267: the day roll and the world check run BEFORE the
@@ -5291,14 +5312,50 @@
        the moment both pegs exist, and a moved peg re-arms on the
        new spot with the day's banked count carried as the base.
        Only meaningful on the live day (the tracker's session);
-       returns { ok, kind, t, armed } or { ok:false, why }. */
+       returns { ok, kind, t, armed } or { ok:false, why }.
+       v450 (PEG-PU-FAIL-NOV13): WHERE the peg's fix comes from.
+       The v282 source — the stream's lastFixSeen alone — is null
+       in a fresh page life (the phone had spent the drive to the
+       site backgrounded; the stream had delivered nothing into
+       this page life yet) and is poisoned by any single rough raw
+       fix, so at the Aecon Inf site on Nov 13 the tap refused
+       over and over while the phone knew exactly where it was.
+       The source is now, in order: (1) the stream's most recent
+       PEG-GRADE fix (lastPegFix), fresh against the stream's own
+       newest fix; (2) the geo layer's persisted last fix
+       (MeticulousGeo.last() — js/geo.js keeps it across page
+       lives in mt_geo_last for exactly this, and the navigator /
+       yard watcher already read it as "where the phone is"),
+       held to the same accuracy bar and the geo layer's own
+       5-minute freshness. Refusals keep their honest whys:
+       'rough-fix' when position evidence exists but none of it
+       is peg-grade, 'no-fix' when there is none at all. */
     setPeg: function (kind) {
       kind = (kind === 'dump') ? 'dump' : 'load';
       if (!watching || !curDate) return { ok: false, why: 'no-day' };
-      var f = lastFixSeen;
-      if (!f || !isFinite(f.lat) || !isFinite(f.lng)) return { ok: false, why: 'no-fix' };
-      if (f.accuracy !== null && f.accuracy !== undefined && f.accuracy > ENGINE.ACC_MAX_M) {
-        return { ok: false, why: 'rough-fix' };
+      var f = null;
+      var streamNewestT = lastFixSeen ? (lastFixSeen.t || 0) : 0;
+      if (lastPegFix && (!streamNewestT || (streamNewestT - (lastPegFix.t || 0)) <= PEG_FIX_FRESH_MS)) {
+        f = lastPegFix;
+      }
+      var geoSeen = false;
+      if (!f) {
+        var gf = null;
+        try { gf = (window.MeticulousGeo && MeticulousGeo.last) ? MeticulousGeo.last() : null; } catch (e) { gf = null; }
+        if (gf && isFinite(gf.latitude) && isFinite(gf.longitude)) {
+          geoSeen = true;
+          if ((gf.accuracy === null || gf.accuracy === undefined || gf.accuracy <= ENGINE.ACC_MAX_M) &&
+              typeof gf.time === 'number' && gf.time > 0 && (Date.now() - gf.time) <= PEG_FIX_FRESH_MS) {
+            f = {
+              lat: +gf.latitude, lng: +gf.longitude,
+              accuracy: (gf.accuracy === null || gf.accuracy === undefined) ? null : +gf.accuracy,
+              t: gf.time
+            };
+          }
+        }
+      }
+      if (!f) {
+        return { ok: false, why: (lastFixSeen || lastPegFix || geoSeen) ? 'rough-fix' : 'no-fix' };
       }
       persist(true);
       var rec = recordFor(curDate) || blankDay(curDate);
