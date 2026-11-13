@@ -400,6 +400,149 @@
     }
     return null;
   }
+  /* DSP-PHOTO-HEAL (owner Nov 12, 2026, ~17:52 CST — his
+     screenshot of Dispatch → History: the completed Nov 9 Aecon
+     card shows its haul-card photo; the completed Nov 10
+     (#28830) and Nov 11 (#28846) cards show NO picture, and he
+     asked why): every save/close/edit of a dispatch writes the
+     FULL record — card photo included — to the account's
+     per-record copy (fbSave → dispatches/{id}, standing since
+     the per-record copies began), but until today NO code ever
+     read that copy back. Fuel (web 426) and Documents (web
+     442) both heal a photo-less record from their account
+     copies; dispatch had no heal at all, so a completed record
+     whose list copy arrived photo-less — a close finished on a
+     surface whose copy never carried the photo the driver
+     attached on his phone, or a two-ticket close whose photo
+     never reached the surviving ticket — stayed photo-less on
+     every History card forever, while its photo sat in the
+     account copy the whole time.
+     THE HEAL (this module only): on render, a completed record
+     with no photo dspPhotoFor can find — or only a vault
+     reference the vault cannot produce — is looked up in its
+     account copy; a photo found there is restored onto the
+     record (into the vault first when the bytes are inline, so
+     the record carries a reference; onto the same ticket it
+     rode in the copy, or the number-matching / last ticket, or
+     the top level when the record has no tickets) and saved
+     through the module's own write door, so the photo then
+     rides the record itself on every surface. Facts are never
+     touched — the photo field only. A per-session ledger with
+     a retry window keeps repeat renders from re-reading, while
+     a copy that lands late still heals in the same session —
+     the fuel graft ledger's shape (web 426). */
+  var DSP_PHOTO_HEAL_RETRY_MS = 5 * 60 * 1000;
+  var dspPhotoHealTried = {}; /* record id -> ms of its last lookup round this session */
+  function dspIsDataUrl(s) { return typeof s === 'string' && s.indexOf('data:') === 0; }
+  function dspIsVaultRef(s) {
+    try { return !!(window.PhotoVault && PhotoVault.isRef && PhotoVault.isRef(s)); }
+    catch (e) { return typeof s === 'string' && s.indexOf('mtphoto://') === 0; }
+  }
+  /* the photo an account copy carries, and where it rides:
+     the copy is the raw record fbSave wrote, so the read
+     mirrors dspPhotoFor, with the ticket's place kept so the
+     restore lands the photo back on its own ticket. The
+     photos[] arm is defensive only (a summary-shaped copy). */
+  function dspDocPhoto(doc) {
+    if (!doc) return null;
+    var i, t;
+    if (doc.photo) return { url: doc.photo, idx: -1, number: null };
+    if (doc.tickets && doc.tickets.length) {
+      for (i = 0; i < doc.tickets.length; i++) {
+        t = doc.tickets[i];
+        if (t && t.photo) return { url: t.photo, idx: i, number: (t.number || t.ticketNo || null) };
+      }
+    }
+    if (doc.photos && doc.photos.length) {
+      for (i = 0; i < doc.photos.length; i++) {
+        if (doc.photos[i]) return { url: doc.photos[i], idx: -1, number: null };
+      }
+    }
+    return null;
+  }
+  /* graft onto a FRESH read of the list: the record is healed
+     only if it is still there and still photo-less (or holds
+     only the dead reference this round set out to replace).
+     Writes through W + fbSave — the module's own doors — and
+     changes nothing but the photo field. */
+  function graftDispatchPhoto(id, found, value, deadRef) {
+    var l = list();
+    var d = null, i, j;
+    for (i = 0; i < l.length; i++) { if (l[i] && l[i].id === id) { d = l[i]; break; } }
+    if (!d) return false;
+    var cur = dspPhotoFor(d);
+    if (cur && cur !== deadRef) return false;
+    if (cur) { /* replace the dead pointer where it sits */
+      if (d.photo === deadRef) d.photo = value;
+      else if (d.tickets) {
+        for (i = 0; i < d.tickets.length; i++) {
+          if (d.tickets[i] && d.tickets[i].photo === deadRef) { d.tickets[i].photo = value; break; }
+        }
+      }
+    } else if (d.tickets && d.tickets.length) {
+      var tgt = null;
+      if (found.idx >= 0 && d.tickets[found.idx] && !d.tickets[found.idx].photo) tgt = d.tickets[found.idx];
+      if (!tgt && found.number) {
+        for (j = 0; j < d.tickets.length; j++) {
+          var tn = d.tickets[j] && (d.tickets[j].number || d.tickets[j].ticketNo);
+          if (tn && String(tn) === String(found.number) && !d.tickets[j].photo) { tgt = d.tickets[j]; break; }
+        }
+      }
+      if (!tgt) tgt = d.tickets[d.tickets.length - 1];
+      if (!tgt || tgt.photo) return false;
+      tgt.photo = value;
+    } else {
+      d.photo = value;
+    }
+    if (!W('list', l)) return false;
+    try { fbSave(d); } catch (e) {}
+    return true;
+  }
+  function healDispatchPhotos(body) {
+    if (!(window.FB && FB.loadDoc && FB.user)) return;
+    var now = Date.now();
+    var candidates = [];
+    list().forEach(function (d) {
+      if (!d || !d.id || d.status !== 'completed') return;
+      var t = dspPhotoHealTried[d.id];
+      if (t && now - t <= DSP_PHOTO_HEAL_RETRY_MS) return;
+      var p = dspPhotoFor(d);
+      if (!p) { candidates.push({ d: d, ref: null }); return; }
+      if (dspIsVaultRef(p)) candidates.push({ d: d, ref: p });
+    });
+    if (!candidates.length) return;
+    candidates.forEach(function (c) { dspPhotoHealTried[c.d.id] = now; });
+    var changed = false;
+    var jobs = candidates.map(function (c) {
+      var lookup = function () {
+        return FB.loadDoc('dispatches', c.d.id).then(function (doc) {
+          var found = dspDocPhoto(doc);
+          if (!found || !found.url) return;
+          if (c.ref && found.url === c.ref) return; /* the copy holds the same dead pointer */
+          var place = function (value) {
+            if (value && graftDispatchPhoto(c.d.id, found, value, c.ref)) changed = true;
+          };
+          if (dspIsDataUrl(found.url) && window.PhotoVault && PhotoVault.put) {
+            return PhotoVault.put(found.url).then(function (ref) { place(ref || found.url); },
+              function () { place(found.url); });
+          }
+          place(found.url);
+        }).catch(function () {});
+      };
+      if (!c.ref) return lookup();
+      /* a reference the vault can still produce is a healthy
+         photo (the reader doors swap its bytes in) — heal
+         only when the vault has nothing for it */
+      try {
+        return PhotoVault.get(c.ref).then(function (url) { return url ? null : lookup(); }, lookup);
+      } catch (e) { return lookup(); }
+    });
+    Promise.all(jobs).then(function () {
+      if (changed && body && dspBody === body) {
+        try { Meticulous.modules.dispatch.render(body); } catch (e) {}
+      }
+    }).catch(function () {});
+  }
   /* v415 (DISPATCH-LINKS-SET-SITES, owner Nov 11, 2026, over
      the shipped web 414: "Like I had it before. I want the
      dispatch links be set in a pickup and my dump sets"): a
@@ -2466,6 +2609,11 @@
     },
     render: function (body) {
       dspBody = body;
+      /* DSP-PHOTO-HEAL: a completed record whose card photo
+         lives only in its account copy is restored on render
+         (see the heal block at dspPhotoFor). Fire-and-forget —
+         the heal re-renders when a photo lands. */
+      try { healDispatchPhotos(body); } catch (e) {}
       var a = active();
       /* v76 (F3, boss QA Oct 14): the OFFICE face. An office-only user
          (the boss) composes dispatches at a desk: nothing he saves
