@@ -2511,6 +2511,21 @@
       /* v273: the window just changed size (PiP in OR out) —
          re-fit the map to the size it actually has now. */
       refitDriveMap();
+      /* v447 (NAV-PIP-FLOAT-TRIO): one same-turn re-fit is not
+         enough on the phone. When the drive screen is parked
+         into the dock and shrunk, its box has not laid out yet
+         in the same turn, so Leaflet keeps its full-screen pixel
+         size and the float shows the off-plane sky gradient —
+         a plain blue window with the arrow and the turn strip
+         but no map (owner, Nov 13, 2026). The map's own creation
+         never trusts one pass either (settle re-fits at 120 ms
+         and 650 ms, v107); the same settle pair now rides every
+         posture change, park and restore alike. */
+      try {
+        [120, 650].forEach(function (ms) {
+          setTimeout(function () { try { if (S && S.drive) refitDriveMap(); } catch (e) {} }, ms);
+        });
+      } catch (e) {}
     } catch (e) {}
   }
 
@@ -2562,8 +2577,78 @@
     try {
       var scr = docEl('nv_drive_screen');
       if (scr && S && S._miniTap) scr.removeEventListener('click', S._miniTap, true);
+      /* v447: unparking also takes the drag off and hands the
+         element's placement back to the posture classes. */
+      if (scr) removeMiniDrag(scr);
     } catch (e) {}
     if (S) S._miniTap = null;
+  }
+  /* v447 (NAV-PIP-FLOAT-TRIO): the parked mini DRAGS. It used to
+     sit pinned at bottom-right with no way to move it (owner,
+     Nov 13, 2026: "I can't move the tiny screen anywhere"). A
+     pointer drag repositions the float inside the viewport; a
+     plain tap still reopens the Navigator — the drag marks its
+     pointer-up with a swallow flag so the click that follows a
+     real move is eaten by the tap handler instead of reopening
+     the module the driver only meant to slide out of the way.
+     Placement is inline style only while parked; unparking
+     clears it, so the full-screen posture is untouched. */
+  function installMiniDrag(scr) {
+    try {
+      if (!scr || !S) return;
+      removeMiniDrag(scr);
+      var drag = null;
+      S._miniDragDown = function (ev) {
+        try {
+          if (!ev || typeof ev.clientX !== 'number') return;
+          var r = scr.getBoundingClientRect();
+          drag = { x: ev.clientX, y: ev.clientY, left: r.left, top: r.top, w: r.width, h: r.height, moved: false };
+          if (scr.setPointerCapture && ev.pointerId !== undefined && ev.pointerId !== null) {
+            try { scr.setPointerCapture(ev.pointerId); } catch (e) {}
+          }
+        } catch (e) {}
+      };
+      S._miniDragMove = function (ev) {
+        try {
+          if (!drag || !ev || typeof ev.clientX !== 'number') return;
+          var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+          if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+          drag.moved = true;
+          var vw = 0, vh = 0;
+          try { vw = window.innerWidth || 0; vh = window.innerHeight || 0; } catch (e) {}
+          var nl = drag.left + dx, nt = drag.top + dy;
+          if (vw > 0) nl = Math.max(0, Math.min(nl, Math.max(0, vw - drag.w)));
+          if (vh > 0) nt = Math.max(0, Math.min(nt, Math.max(0, vh - drag.h)));
+          scr.style.left = nl + 'px';
+          scr.style.top = nt + 'px';
+          scr.style.right = 'auto';
+          scr.style.bottom = 'auto';
+          if (ev.preventDefault) ev.preventDefault();
+          if (ev.stopPropagation) ev.stopPropagation();
+        } catch (e) {}
+      };
+      S._miniDragUp = function () {
+        try { if (drag && drag.moved) S._miniDragSwallow = true; drag = null; } catch (e) {}
+      };
+      scr.addEventListener('pointerdown', S._miniDragDown);
+      scr.addEventListener('pointermove', S._miniDragMove);
+      scr.addEventListener('pointerup', S._miniDragUp);
+      scr.addEventListener('pointercancel', S._miniDragUp);
+    } catch (e) {}
+  }
+  function removeMiniDrag(scr) {
+    try {
+      if (scr && S) {
+        if (S._miniDragDown) scr.removeEventListener('pointerdown', S._miniDragDown);
+        if (S._miniDragMove) scr.removeEventListener('pointermove', S._miniDragMove);
+        if (S._miniDragUp) {
+          scr.removeEventListener('pointerup', S._miniDragUp);
+          scr.removeEventListener('pointercancel', S._miniDragUp);
+        }
+      }
+    } catch (e) {}
+    if (S) { S._miniDragDown = null; S._miniDragMove = null; S._miniDragUp = null; }
+    try { if (scr) { scr.style.left = ''; scr.style.top = ''; scr.style.right = ''; scr.style.bottom = ''; } } catch (e) {}
   }
   function parkDrive() {
     if (!S || !S.drive || S.parked) return false;
@@ -2634,9 +2719,19 @@
     unparkMiniTap();
     S._miniTap = function (ev) {
       try { if (ev && ev.stopPropagation) ev.stopPropagation(); } catch (e) {}
+      /* v447: a "tap" that actually DRAGGED the float is not a
+         tap — the drag's swallow flag eats this one click so a
+         move never reopens the module. */
+      if (S && S._miniDragSwallow) { S._miniDragSwallow = false; return; }
       try { if (window.App && App.openModule) App.openModule('navigator'); } catch (e) {}
     };
     try { scr.addEventListener('click', S._miniTap, true); } catch (e) {}
+    /* v447: the float can be dragged to where the driver wants
+       it; while it is a float the map inside does not pan (a
+       finger on it moves the WINDOW, not the road) — full-screen
+       restore re-enables the map's own dragging. */
+    installMiniDrag(scr);
+    try { if (S.driveMap && S.driveMap.dragging) S.driveMap.dragging.disable(); } catch (e) {}
     try { if (window.App && App.showDashboard) App.showDashboard(); } catch (e) {}
     return true;
   }
@@ -2968,6 +3063,18 @@
     },
 
     back: function () {
+      /* v447 (NAV-PIP-FLOAT-TRIO): an open Places panel over the
+         map folds FIRST — the v348 law ("before anything else on
+         the map face") was shadowed by the drive-first gate
+         below: with a drive live, Back parked the drive and
+         landed on the dashboard even when all the driver wanted
+         was the panel closed (owner, Nov 13, 2026: Back on the
+         GPS screen "is taking me back to the dashboard"). The
+         closer returns true only when it actually folded an open
+         panel, so every other state falls through to the park
+         exactly as before — and the drive-ending hook still runs
+         only after the park attempt, never before it. */
+      if (nvPlacesPanelCloser && nvPlacesPanelCloser()) return true;
       /* v287 (PIP-HOME, owner Oct 30 13:31 MDT — v61 failed in his
          hands): a LIVE DRIVE parks on Back, whatever face flag the
          module happens to carry. The park used to sit behind the
@@ -3067,6 +3174,9 @@
           dockScr.classList.remove('nv-mini');
           dockScr.classList.remove('nv-parked');
           dockScr.classList.remove('hidden');
+          /* v447: full-screen again — the map's own dragging,
+             parked off while the screen floated, comes back. */
+          try { if (S.driveMap && S.driveMap.dragging) S.driveMap.dragging.enable(); } catch (e) {}
           applyPipFace(false);
           /* v227: the tracker face stands down — the drive is
              full-screen again. */

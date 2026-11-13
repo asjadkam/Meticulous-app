@@ -161,9 +161,18 @@ ok('the banner and the mode row are painted inside the one stack',
   navSrc.indexOf('id="nv_banner"') < navSrc.indexOf('nv-maprow'));
 ok('the Places panel carries its visible ✕ Close in a head row',
   navSrc.indexOf('class="nv-places-head"') >= 0 && navSrc.indexOf('id="nv_places_close"') >= 0 && navSrc.indexOf('✕ Close') >= 0);
-ok('shell Back consults the panel closer before the map-root exit',
+/* v447 CITED RE-PIN (NAV-PIP-FLOAT-TRIO): the closer moved to the
+   HEAD of back() — v447 consults it before the live-drive park as
+   well, so a panel open over a drive folds before anything else
+   (the v287 drive-first gate had shadowed the v348 law whenever a
+   drive was live). The v348 law — closer before the map-root
+   exit — is subsumed, not repealed: the closer still runs before
+   the exit, and now before the park too. */
+ok('shell Back consults the panel closer before the map-root exit (v447: at the head of back(), before the park too)',
   /nvPlacesPanelCloser && nvPlacesPanelCloser\(\)/.test(navSrc) &&
-  navSrc.indexOf('nvPlacesPanelCloser && nvPlacesPanelCloser()') > navSrc.indexOf("if (nvFace === 'drive')"));
+  navSrc.indexOf('nvPlacesPanelCloser && nvPlacesPanelCloser()', navSrc.indexOf('back: function')) >= 0 &&
+  navSrc.indexOf('nvPlacesPanelCloser && nvPlacesPanelCloser()', navSrc.indexOf('back: function')) <
+    navSrc.indexOf('parkDrive()', navSrc.indexOf('back: function')));
 ok('a map tap folds the panel before any pin can drop (pinTap guard)',
   /function pinTap\(latlng\) \{\s*\/\* v348[\s\S]{0,700}if \(placesPanelOpen\) \{\s*placesPanelOpen = false;/.test(navSrc));
 ok('the search bar is a text box with a SMALL Go (the big navy Search button is gone)',

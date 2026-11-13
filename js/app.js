@@ -3855,11 +3855,34 @@
     var v = el('trkStartTime').value; // "HH:MM"
     if (!v) { closeTrackerStartSheet(); return; }
     var parts = v.split(':'), now = new Date();
+    /* v447 (START-TIME-DATE, owner Nov 13, 2026): the pick is a
+       wall-clock time TODAY — full stop. The old line rolled ANY
+       future pick back a full day ("assume yesterday"), so at
+       07:10 his 7:30 a.m. pick — 20 minutes ahead — became
+       yesterday 7:30 and the confirm asked "That is 23:41:27 ago.
+       Is that right?" A pick never lands on another date: a
+       future time today is later today (a preset start while
+       idle), a past time today is earlier today. When a confirm
+       is needed it names the actual date and time in plain
+       words, so what he approves is what he gets. */
     var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
       parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
-    if (target.getTime() > Date.now()) target = new Date(target.getTime() - 24 * 3600 * 1000); // assume yesterday
+    var aheadMs = target.getTime() - Date.now();
+    function relWords(ms) {
+      var mins = Math.round(Math.abs(ms) / 60000);
+      if (mins < 60) return mins + ' min';
+      return Math.floor(mins / 60) + ' h ' + ('0' + (mins % 60)).slice(-2) + ' min';
+    }
+    if (aheadMs > 0 && App.tracker.status !== 'idle') {
+      App.toast('That is ' + target.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+        ' today — still ' + relWords(aheadMs) + ' from now. A running timer cannot start in the future.');
+      return;
+    }
     var secs = Math.max(0, Math.floor((Date.now() - target.getTime()) / 1000));
-    if (secs > 12 * 3600 && !confirm('That is ' + fmtClock(secs) + ' ago. Is that right?')) { return; }
+    if (secs > 12 * 3600 && !confirm('Set the start time to ' +
+      target.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' today (' +
+      target.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) +
+      ')?\n\nThat is ' + relWords(secs * 1000) + ' ago.')) { return; }
     var t = App.tracker;
     if (t.status === 'idle') {
       t.presetStart = target.getTime(); // applied when START is tapped
@@ -5728,11 +5751,25 @@
      setting. */
   App.setAutostartOverride = function (timeStr) {
     if (typeof timeStr !== 'string' || !/^\d{2}:\d{2}$/.test(timeStr)) return false;
-    return store.set('autostart_override', { date: todayStr(new Date()), time: timeStr });
+    /* v447 (AUTO-START-OVERRIDE-VERIFY, owner Nov 13, 2026): a
+       write is only "saved" when it READS BACK — the v446
+       verified-write law applied to this key. store.set reports
+       its own failure (v48), but the card above this function
+       claimed success without ever looking (and at the storage
+       wall the write can die while the app says "saved"). The
+       claim is earned here: the stored override must be today's,
+       at the asked time, before true is returned. */
+    if (!store.set('autostart_override', { date: todayStr(new Date()), time: timeStr })) return false;
+    var back = store.get('autostart_override', null);
+    return !!(back && back.date === todayStr(new Date()) && back.time === timeStr);
   };
   App.clearAutostartOverride = function () {
-    if (store.del) return store.del('autostart_override');
-    return store.set('autostart_override', null);
+    /* v447: verified like the set — cleared only when no override
+       for today reads back. */
+    var okDel = store.del ? store.del('autostart_override') : store.set('autostart_override', null);
+    if (!okDel) return false;
+    var back = store.get('autostart_override', null);
+    return !(back && back.date === todayStr(new Date()));
   };
 
   /* v261 (DSP-AUTOSTART-MISS-OCT26, item 2 — MILES-FROM-DEPARTURE):

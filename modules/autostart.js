@@ -18,6 +18,11 @@
   'use strict';
   var esc = function (s) { return App._esc(s); };
   var DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  /* v447: the last failed save on this card, in plain words —
+     rendered into the Today line until a save verifies. A card
+     that cannot save must SAY so, never sit silent (or worse,
+     let a "saved" message stand) over an unchanged setting. */
+  var todaySaveError = '';
 
   function getOnboarding() { return App._store.get('onboarding', {}); }
 
@@ -53,6 +58,9 @@
       line = '<b>Today:</b> starts ' + esc(info.label) + ' (your setting)';
     }
     var h = '<p class="note" style="margin-top:10px">' + line + '</p>';
+    if (todaySaveError) {
+      h += '<p class="note" style="color:#c62828;font-weight:600">' + esc(todaySaveError) + '</p>';
+    }
     if (info.enabled) {
       h += '<label class="f">Change today\'s start</label>' +
         '<div class="row"><div><input type="time" id="' + prefix + '_ovtime" value="' + esc(info.time) + '"></div>' +
@@ -79,17 +87,32 @@
     if (setBtn) setBtn.onclick = function () {
       var inp = wrap.querySelector('#' + prefix + '_ovtime');
       if (inp && inp.value && App.setAutostartOverride) {
-        App.setAutostartOverride(inp.value);
-        try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
-        try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+        /* v447: speak only verified truth. The write's result is
+           checked BEFORE anything is claimed; on success the line
+           re-renders from the same plan the engine runs (and now
+           shows the override); on failure the card says so in
+           plain words and the engine is not nudged with a lie. */
+        var saved = false;
+        try { saved = App.setAutostartOverride(inp.value) === true; } catch (e) {}
+        todaySaveError = saved ? '' : 'That did not save — today\u2019s start was not changed. Please try again.';
+        if (saved) {
+          try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+          try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+        }
         refresh();
       }
     };
     var clrBtn = wrap.querySelector('#' + prefix + '_ovclear');
     if (clrBtn) clrBtn.onclick = function () {
-      if (App.clearAutostartOverride) App.clearAutostartOverride();
-      try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
-      try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+      /* v447: the clear verifies too — a failed clear says so
+         instead of quietly leaving the override in force. */
+      var cleared = false;
+      try { cleared = !App.clearAutostartOverride || App.clearAutostartOverride() === true; } catch (e) {}
+      todaySaveError = cleared ? '' : 'That did not save — the change for today is still on. Please try again.';
+      if (cleared) {
+        try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
+        try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+      }
       refresh();
     };
   }
@@ -121,9 +144,12 @@
       body.querySelectorAll('#' + prefix + '_autodays input[data-day]:checked'),
       function (c) { return +c.getAttribute('data-day'); }
     );
-    App._store.set('onboarding', o);
+    /* v447: the write result rides back to the caller — Revenue's
+       "saved" message is earned by this return, never automatic. */
+    var savedOk = App._store.set('onboarding', o);
     try { if (App.checkAutoStart) App.checkAutoStart(); } catch (e) {}
         try { if (App.armNativeDay) App.armNativeDay(); } catch (e) {}
+    return !!savedOk;
   }
 
   Meticulous.modules.autostart = {

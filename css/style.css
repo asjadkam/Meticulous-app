@@ -730,7 +730,7 @@ label.chk input{width:18px;height:18px;}
 .nv-drive.nv-mini{inset:auto;right:12px;bottom:calc(86px + env(safe-area-inset-bottom));
   width:min(47vw,340px);height:auto;aspect-ratio:4/3;border-radius:16px;overflow:hidden;
   box-shadow:0 10px 34px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);
-  pointer-events:auto;cursor:pointer;}
+  pointer-events:auto;cursor:pointer;touch-action:none;}
 /* v292 (PIP-MAP-COVERED-BY-DIRECTIONS; owner Oct 31, 2026 screen
    recording): in the MINI the pip line was the base wrapping pill —
    centered, 94% wide, the 47-char turn line wrapping ~4 deep at

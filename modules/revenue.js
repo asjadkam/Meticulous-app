@@ -2355,8 +2355,13 @@
          v76 (F5): the button only exists for non-office renders. */
       var rvAsSave = body.querySelector('#rv_as_save');
       if (rvAsSave) rvAsSave.onclick = function () {
-        Meticulous.modules.autostart.saveFrom('rv', body);
-        alert('Auto-start saved.');
+        /* v447: the saved message is EARNED — it shows only when
+           the write verified (saveFrom returns the store's
+           result). A failed save says so plainly instead of
+           announcing a save that never landed. */
+        var saved = false;
+        try { saved = Meticulous.modules.autostart.saveFrom('rv', body) === true; } catch (e) {}
+        alert(saved ? 'Auto-start saved.' : 'Auto-start did not save — please try again.');
       };
 
       /* v53: wire the card's "Today:" line — the Change-for-today
