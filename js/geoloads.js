@@ -3111,6 +3111,21 @@
      its ends anyway. */
   var SWAP_PAIR_MIN_M = 20;
   var pegArmed = false;
+  /* v451 (PEG-DUMP-COUNTS-NOV13): a dump peg that counted a tip
+     at its plant (see setPeg) leaves its plant here for the
+     configure() that immediately follows — one-shot: configure
+     reads and clears it, and the branches that arm a counter on
+     the new peg use it to mark that tip counted, so no machine
+     counts the same tip twice. Never persisted; a plant that no
+     configure consumes is simply gone. */
+  var pegTipPlant = null;
+  /* v451: a loaded leg — load, drive, tip — takes minutes. A
+     dump plant that follows the load peg's plant inside this
+     span is the pair being declared in one hop (v437's job
+     change: load peg, a short hop, dump peg), whatever the
+     machines think they saw; no leg has happened under that
+     load peg yet, so the plant counts nothing. */
+  var PEG_TIP_LEG_MIN_MS = 4 * 60 * 1000;
 
   function normalizePegs(p) {
     var out = { load: null, dump: null };
@@ -3916,6 +3931,10 @@
     var d = activeDispatch();
     curDispatchId = d ? d.id : null;
     curPinSig = pinSigFor(d); /* v416: the world this configure resolved */
+    /* v451: the peg-tip plant setPeg may have just made — read
+       and cleared before anything else, so it can only ever
+       speak to THIS rebuild. */
+    var tipPlant = pegTipPlant; pegTipPlant = null;
     learner = null; learnMode = null; curLoad = null;
     handCarry = false; /* v323: branches that restore corr re-read it */
     basePegEvents = [];
@@ -3940,6 +3959,11 @@
     var prevPegDay = recordFor(curDate);
     pegsNow = normalizePegs(prevPegDay && prevPegDay.pegs);
     pegArmed = false;
+    /* v451: the plant speaks only for the dump peg it made —
+       matched on the peg's own timestamp and coordinates. */
+    var tipMatchesDump = !!(tipPlant && pegsNow.dump &&
+      (pegsNow.dump.t || 0) === tipPlant.t &&
+      pegsNow.dump.lat === tipPlant.lat && pegsNow.dump.lng === tipPlant.lng);
     /* v392 (LOADS-MISSED-AFTER-REPEG-NOV9) ROLE-SWAP WINDOW: the
        day's sites swapped roles mid-day — the pickup place became
        the dump (Nov 9: dump re-pegged 15:02 ON the standing load
@@ -4075,7 +4099,13 @@
         presence: lastFixSeen ? { lat: lastFixSeen.lat, lng: lastFixSeen.lng } : null,
         presenceT: lastFixSeen ? (lastFixSeen.t || 0) : 0,
         profileScaleM: pegScaleM,
-        carryToDump: outArmed,
+        /* v451: when the dump peg's plant already counted this
+           tip, the v421 carry must NOT hand the arm over — the
+           new counter is born at the dump unarmed (the v392
+           seed), or the dwell that follows counts the same tip
+           a second time. A carry with no peg-tip behind it
+           passes exactly as v421 built it. */
+        carryToDump: outArmed && !tipMatchesDump,
         siteConfirmed: pegConf ? { sepM: pegConf.sepM, reachM: pegConf.reachM } : null
       });
       counter.begin(pegKey, savedPeg);
@@ -4108,9 +4138,24 @@
       baseEvents = (prevLone && prevLone.events && (!sameLone || !savedLone)) ? prevLone.events.slice() : [];
       corrNow = prevLone ? (prevLone.corr || 0) : 0;
       handCarry = !!(prevLone && prevLone.handCarry); /* v323 */
+      /* v451 (PEG-DUMP-COUNTS-NOV13): when this peg's plant
+         counted the tip and no snapshot exists for the peg, the
+         visit counter begins in the counted state at the peg —
+         the adoptTapDump seed's shape (v431): present and
+         already counted, so the standing presence can never
+         land as a second count; the visit closes as visits do
+         and the NEXT arrival counts. */
+      var loneSeed = null;
+      if (!savedLone && tipMatchesDump) {
+        loneSeed = {
+          sitesKey: loneKey, count: 0, events: [],
+          points: [{ lat: pegsNow.dump.lat, lng: pegsNow.dump.lng }],
+          present: true, visitCounted: true, closes: 0, lastT: tipPlant.t
+        };
+      }
       counter = ENGINE.createDumpVisitCounter(visitCfg(
         curSites.dump, curSites.load ? [curSites.load] : []));
-      counter.begin(loneKey, savedLone);
+      counter.begin(loneKey, savedLone || loneSeed);
       visitSource = true;
       pegArmed = true;
       persist(true);
@@ -4964,6 +5009,111 @@
     } catch (e) {}
   }
 
+  /* v451 (PEG-DUMP-COUNTS-NOV13): is a dump plant at f on ground
+     the day has never known as a dump? The known ground is every
+     dump position the day's machines already hold: the standing
+     dump peg, the live sites' dump end, the outgoing counter's
+     centre / site points / counted dump events (and their record
+     mirrors), the visit counter's restored site points, and the
+     taught or learned dump spots. "Known" reaches one stop's
+     width (VISIT_CLUSTER_M — the width the visit law itself
+     calls one stop): a plant inside it is the same spot being
+     re-declared, never a new tip. A plant on the standing PICKUP
+     peg's own ground is a role declaration (the v369/v392 swap
+     shape), never a tip, however new the ground is as a dump. */
+  function dumpPlantIsNewTip(f, pegs, rec) {
+    if (pegs && pegs.load &&
+        ENGINE.haversineM(f.lat, f.lng, pegs.load.lat, pegs.load.lng) <= PEG_FENCE_M) return false;
+    var known = [];
+    if (pegs && pegs.dump) known.push(pegs.dump);
+    if (curSites && curSites.dump) known.push(curSites.dump);
+    if (rec) {
+      if (rec.tapDump) known.push(rec.tapDump);
+      if (rec.learnedDump) known.push(rec.learnedDump);
+      if (rec.pegCentres && rec.pegCentres.dump) known.push(rec.pegCentres.dump);
+      if (Array.isArray(rec.pegEvents)) {
+        for (var i = 0; i < rec.pegEvents.length; i++) {
+          if (rec.pegEvents[i] && rec.pegEvents[i].kind === 'dump') known.push(rec.pegEvents[i]);
+        }
+      }
+      if (rec.state && Array.isArray(rec.state.points)) {
+        for (var j = 0; j < rec.state.points.length; j++) known.push(rec.state.points[j]);
+      }
+    }
+    if (counter) {
+      try {
+        var cen = counter.centres ? counter.centres() : null;
+        if (cen && cen.dump) known.push(cen.dump);
+      } catch (e) {}
+      try {
+        var snap = counter.snapshot ? counter.snapshot() : null;
+        if (snap && Array.isArray(snap.points)) {
+          for (var k = 0; k < snap.points.length; k++) known.push(snap.points[k]);
+        }
+      } catch (e) {}
+      try {
+        var evs = counter.pegEvents ? counter.pegEvents() : [];
+        for (var m = 0; m < evs.length; m++) {
+          if (evs[m] && evs[m].kind === 'dump') known.push(evs[m]);
+        }
+      } catch (e) {}
+    }
+    for (var n = 0; n < known.length; n++) {
+      if (ENGINE.isCoord(known[n]) &&
+          ENGINE.haversineM(f.lat, f.lng, known[n].lat, known[n].lng) <= VISIT_CLUSTER_M) return false;
+    }
+    return true;
+  }
+
+  /* v451 (PEG-DUMP-COUNTS-NOV13): a loaded leg standing proven
+     under the day's current load end — the evidence that the
+     truck reached this dump CARRYING, so a dump plant here is a
+     tip being declared and not a site being scouted. Judged on
+     the outgoing machine's own books, from evidence gathered
+     after the load peg was planted:
+       - teach mode: the dump learner's leg stands armed (it
+         watched the load dwell and the departure itself);
+       - the peg counter: it stands armed (carrying) AND its
+         load peg has WORKED since it was planted — a load
+         confirmation a full dwell after the plant, or a counted
+         tip since. (The v392 seed logs the plant itself as a
+         load event; that declaration is not a leg — v437's
+         job-change pair, re-pegged and driven straight over,
+         must not fire.)
+       - the visit counter: the load end was dwelled since the
+         last counted tip (otherSeen), or — on a lone-peg day
+         with no load end known — the day's visits have closed
+         and opened in a working rhythm (closes > 0). */
+  function loadedLegOutstanding(pegs) {
+    if (counter) {
+      try {
+        var evs = counter.pegEvents ? counter.pegEvents() : null;
+        if (evs) {
+          var dbg = counter.debug ? counter.debug() : null;
+          if (!(dbg && dbg.armed)) return false;
+          var loadT = (pegs && pegs.load) ? (pegs.load.t || 0) : 0;
+          for (var i = 0; i < evs.length; i++) {
+            if (evs[i].kind === 'load' && evs[i].t > loadT + PEG_DWELL_MS) return true;
+            if (evs[i].kind === 'dump' && evs[i].t > loadT) return true;
+          }
+          return false;
+        }
+      } catch (e) {}
+      try {
+        var snap = counter.snapshot ? counter.snapshot() : null;
+        if (snap && (snap.otherSeen || (snap.closes || 0) > 0)) return true;
+      } catch (e) {}
+      return false;
+    }
+    if (learner) {
+      try {
+        var ls = learner.snapshot ? learner.snapshot() : null;
+        if (ls && ls.legArmed) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
   var GeoLoads = {
     _engine: ENGINE,
 
@@ -5381,8 +5531,45 @@
           roleSwap = true;
         }
       }
+      /* v451 (PEG-DUMP-COUNTS-NOV13): the owner's ruling — a dump
+         peg planted on ground that is NEW for the day is the tip
+         itself being declared. Nov 13 at the Aecon Inf job he
+         pegged the dump at 11:10 and the count never moved: the
+         peg only re-pointed the counter at a tip no machine had
+         witnessed (teach mode, a short dwell, no visit landed).
+         A new plant therefore counts one load AT the peg, on the
+         machine side of the split (never his "+1 your tap"), and
+         marks the tip counted so the machines configure() arms
+         on the new peg cannot count it again. Two gates keep the
+         declaration plants honest, both read off the day's own
+         books: the day must already be COUNTING (a first plant
+         declares the day's sites — the v282 law — and never
+         counts), and a loaded leg must stand proven under the
+         current load end (a plant completing a freshly declared
+         pair, v437's job-change shape, has no leg under it).
+         A plant on known ground or the pickup's own ground, and
+         a role swap, count nothing. Judged HERE, before the
+         plant overwrites the old peg — the judge reads the
+         pre-plant books. */
+      var legSpanOk = !pegs.load || (t - (pegs.load.t || 0)) >= PEG_TIP_LEG_MIN_MS;
+      var pegTip = (kind === 'dump' && !roleSwap && (rec.count || 0) > 0 && legSpanOk) ?
+        (dumpPlantIsNewTip(f, pegs, rec) && loadedLegOutstanding(pegs)) : false;
       pegs[kind] = { lat: f.lat, lng: f.lng, t: t };
       rec.pegs = pegs;
+      if (pegTip) {
+        rec.count = (rec.count || 0) + 1;
+        rec.events = (Array.isArray(rec.events) ? rec.events.slice() : [])
+          .concat([{ t: t, site: 'dump', n: rec.count }]);
+        /* v323's discipline, mirrored: a hand-carry +1 still
+           standing for this carry is the same load — the
+           machine's verdict has landed, so the correction
+           retires as the count lands and the load reads once. */
+        if (handCarry) {
+          corrNow -= 1; rec.corr = corrNow;
+          handCarry = false; rec.handCarry = 0;
+        }
+        pegTipPlant = { lat: f.lat, lng: f.lng, t: t };
+      }
       if (roleSwap) rec.pegRoleSwap = { t: t, dumpT: t };
       rec.pegLog = (Array.isArray(rec.pegLog) ? rec.pegLog : []).concat([{ kind: kind, t: t, lat: f.lat, lng: f.lng }]);
       rec.updatedAt = Date.now();
