@@ -43,8 +43,19 @@
  * shadow on record — the first cycle after the v272 build:
  * the union keeps both records, because an absence it cannot
  * attribute must never be treated as a deletion; the delete
- * may need one repeat that cycle). The different-account
- * guard (U6) stands unchanged. The recurrence suite is
+ * may need one repeat that cycle). RE-PINNED AGAIN at v446
+ * (SHADOW-POISON-NOV12): a shadow recorded before the
+ * delete-authoring BASIS existed (km.shb, web 446) is a
+ * LEGACY shadow — it may name records the device never held
+ * (Nov 12: a failed merged write settled the phone's shadow
+ * over a fill its book never contained, and the next flush
+ * authored that fill's deletion account-wide), so a legacy
+ * shadow cannot author deletes until a basis exists: U5a's
+ * pre-basis delete is restored by the union in that cycle
+ * (the U5b tradeoff, extended), and the delete re-made
+ * against the basis that cycle lays down is honored in-cycle
+ * and propagates UP. The different-account guard (U6) stands
+ * unchanged. The recurrence suite is
  * tools/fuel-history-recurrence-v272-test.js.
  *
  * Run: node tools/cloudsync-record-union-v241-test.js
@@ -101,7 +112,7 @@ function makeWorld(opts) {
     del: function (k) { localStorage.removeItem('mt_' + k); return true; }
   };
   sb.CloudSync.attach(store);
-  return { sb: sb, data: data, pushes: pushes,
+  return { sb: sb, data: data, pushes: pushes, store: store,
     get: function (k) { const r = localStorage.getItem('mt_' + k); return r === null ? null : JSON.parse(r); } };
 }
 function settle() { return new Promise(function (r) { setTimeout(r, 400); }); }
@@ -184,8 +195,11 @@ const F_OCT22B = { date: '2026-10-22', time: '17:13', litres: 38.970, cost: 86.8
     eq('U4 both sessions survive', (w.get('sessions') || []).length, 2);
   }
 
-  /* ---- U5: GUARD, RE-PINNED v272 — a pending delete is honored
-         through the shadow, in the dirty cycle itself ---- */
+  /* ---- U5: GUARD, RE-PINNED v272, RE-PINNED AGAIN v446 —
+         a pending delete is honored through the shadow in the
+         dirty cycle itself, once the shadow has a BASIS
+         (km.shb); a delete that predates the basis is restored
+         by the union that cycle and honored when re-made ---- */
   {
     /* record identities, mirroring recordIdentity() for fuel_fills */
     const fuelId = function (rec) {
@@ -201,10 +215,20 @@ const F_OCT22B = { date: '2026-10-22', time: '17:13', litres: 38.970, cost: 86.8
     });
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle();
-    eq('U5a the deleted fill stays deleted in the dirty cycle (shadow law)',
+    /* v446: the seeded shadow above is a LEGACY shadow (no
+       km.shb beside it) — it cannot author the pending delete,
+       so the union restores the fill in this cycle (see the
+       header re-pin). The cycle's verified settle lays the
+       basis down: both fills, as the restored book proves. */
+    eq('U5a (v446) the pre-basis delete is restored by the union in that cycle',
+      (w.get('fuel_fills') || []).length, 2);
+    w.store.set('fuel_fills', [F_OCT19]); /* the owner deletes it again — through the store door, so the key is dirty by construction (the web406 prune never touches a dirty key) */
+    w.sb.CloudSync.flush();
+    await settle();
+    eq('U5a (v446) the re-made delete stays deleted (basis law)',
       (w.get('fuel_fills') || []).length, 1);
     const pushed = w.pushes.filter(function (p) { return p.id === 'fuel_fills'; });
-    ok('U5a the delete propagates UP (the pushed doc lacks it too)',
+    ok('U5a (v446) the re-made delete propagates UP (the pushed doc lacks it too)',
       pushed.length > 0 && pushed[pushed.length - 1].v.length === 1);
   }
 

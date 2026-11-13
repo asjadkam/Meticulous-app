@@ -82,9 +82,54 @@
     return out;
   }
   function saveFillsVerified(f) {
+    var before = S('fills', []);
     W('fills', f);
     var back = S('fills', null);
-    return JSON.stringify(back) === JSON.stringify(f);
+    var ok = JSON.stringify(back) === JSON.stringify(f);
+    if (ok) syncFillDocs(before, f);
+    return ok;
+  }
+  /* v446 (SHADOW-POISON-NOV12): EVERY fill gets a durable
+     per-record document in the account ('fuel' collection, the
+     same stable key the photo documents have used since v350) —
+     not only fills carrying a photo. The kv book is a cache a
+     stale or storage-walled surface can still lose a record
+     from (see js/cloudsync.js); the per-record document is the
+     fill's own home, and healMissingFills below rebuilds the
+     book from these documents. Maintained here, at the one
+     verified-save door every fill write passes through (form
+     saves, edits, the graft, the delete): a new or changed
+     record's document is (re)written, and a record that left
+     the book has its document deleted — so a deliberate delete
+     removes the document too and can never be resurrected by
+     the heal. Fire-and-forget: a cloud write never blocks or
+     breaks the local save it rides on. */
+  function syncFillDocs(before, after) {
+    try {
+      if (!(window.FB && FB.saveDoc && FB.deleteDoc && FB.user)) return;
+      var beforeByKey = {}, afterKeys = {};
+      (before || []).forEach(function (r) { if (r) beforeByKey[fillPhotoDocKey(r)] = r; });
+      (after || []).forEach(function (r) {
+        if (!r) return;
+        var dk = fillPhotoDocKey(r);
+        afterKeys[dk] = 1;
+        var old = beforeByKey[dk];
+        if (old && JSON.stringify(old) === JSON.stringify(r)) return;
+        var stack = fillPhotos(r);
+        var doc;
+        if (stack.length) doc = photoDocPayload(r, stack);
+        else { doc = {}; for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) doc[k] = r[k]; } }
+        var p = null;
+        try { p = FB.saveDoc('fuel', dk, doc); } catch (e) { p = null; }
+        if (p && p.catch) p.catch(function () {});
+      });
+      Object.keys(beforeByKey).forEach(function (dk) {
+        if (afterKeys[dk]) return;
+        var p = null;
+        try { p = FB.deleteDoc('fuel', dk); } catch (e) { p = null; }
+        if (p && p.catch) p.catch(function () {});
+      });
+    } catch (e) {}
   }
   /* v347 (EXPENSE-ADD-FORM-DROPS-PHOTO): the same verified
      write for the expenses list — the expense save carries a
@@ -163,7 +208,18 @@
     var rec = {};
     for (var k in d) { if (Object.prototype.hasOwnProperty.call(d, k)) rec[k] = d[k]; }
     if (typeof d.id === 'string' && d.id.indexOf('fillid_') === 0) rec.id = d.id.slice('fillid_'.length);
-    else delete rec.id;
+    else if (typeof d.id === 'string' && /^(fill_|exp_|f\d{10,}$)/.test(d.id)) {
+      /* v446: d.id here is the merged DOCUMENT KEY (a content
+         key, an expense key, or a legacy timestamp key) — the
+         record itself was born without an id. */
+      delete rec.id;
+    } else if (typeof rec.id !== 'string' || !rec.id) delete rec.id;
+    /* v446: otherwise d.id was overridden by the record's OWN
+       id field in the merge (FB.loadDocs assigns the doc key
+       first, the stored fields win) — rec.id already holds the
+       record's genuine id; deleting it (the pre-446 behaviour)
+       cost a restored record its identity, and with it the
+       sync engine's tombstone address. */
     delete rec.updatedAt;
     return rec;
   }
@@ -603,7 +659,75 @@
      legacy scan keep their v350–v373 behaviour exactly. */
   var PHOTO_GRAFT_RETRY_MS = 5 * 60 * 1000;
   var photoGraftTried = {}; /* match key -> ms of its last lookup round this session */
+  /* v446 (SHADOW-POISON-NOV12): THE RECORD HEAL. The v350 graft
+     heals PHOTOS onto records the book still holds; nothing
+     healed a record the book itself lost — and a record can
+     leave every copy of the book while its per-record document
+     survives in the account (the Nov 12 fill: filed from the
+     web, erased from the book twice in one evening by surfaces
+     whose sync state certified holdings they never had — see
+     js/cloudsync.js). Once per session when the module opens,
+     the book is checked against the account's per-record fuel
+     documents: a document whose fill is in NEITHER the local
+     book NOR the cloud book is a wiped record, restored into
+     the book through the verified save so sync carries it back
+     up. A fill deleted on purpose is not resurrected: this
+     build's delete removes its document (syncFillDocs above),
+     and where a tombstone for the record still rides the cloud
+     book, the heal revokes exactly that tombstone through
+     CloudSync.reviveRecord as it restores — the document's
+     survival is the proof the record was wiped, not deleted
+     (the never-lose law: a resurrection the owner can see, and
+     re-delete for good, beats a silent loss). Expense
+     documents ('exp_' keys) are not fills and never land here. */
+  var fillHealRan = false;
+  function healMissingFills(body) {
+    if (fillHealRan) return;
+    if (!(window.FB && FB.loadDoc && FB.loadDocs && FB.user)) return;
+    fillHealRan = true;
+    Promise.all([
+      FB.loadDoc('kv', 'fuel_fills').then(function (d) { return d; }, function () { return null; }),
+      FB.loadDocs('fuel').then(function (d) { return d; }, function () { return null; })
+    ]).then(function (res) {
+      var kvDoc = res[0], docs = res[1];
+      if (!docs || !docs.length) return;
+      var kvArr = (kvDoc && kvDoc.v) || [];
+      var kvDel = (kvDoc && kvDoc.del) || {};
+      var local = fills();
+      function present(arr, rec) {
+        var ks = fillMatchKeys(rec);
+        for (var i = 0; i < arr.length; i++) {
+          if (arr[i] && keysMeet(fillMatchKeys(arr[i]), ks)) return true;
+        }
+        return false;
+      }
+      var restored = [];
+      docs.forEach(function (d) {
+        if (d && typeof d.id === 'string' && d.id.indexOf('exp_') === 0) return;
+        var rec = srcFromFuelDoc(d);
+        if (!rec || !rec.date) return;
+        if (rec.what) return; /* an expense record — never a fill */
+        if (present(local, rec) || present(kvArr, rec) || present(restored, rec)) return;
+        restored.push(rec);
+      });
+      if (!restored.length) return;
+      try {
+        if (window.CloudSync && CloudSync.recordId && CloudSync.reviveRecord) {
+          restored.forEach(function (rec) {
+            var rid = CloudSync.recordId('fuel_fills', rec);
+            if (rid && kvDel[rid]) CloudSync.reviveRecord('fuel_fills', rid);
+          });
+        }
+      } catch (e) {}
+      if (saveFillsVerified(local.concat(restored))) {
+        if (body && fuelBody === body) {
+          try { Meticulous.modules.fuel.render(body); } catch (e) {}
+        }
+      }
+    }).catch(function () {});
+  }
   function healPhotoGrafts(body) {
+    try { healMissingFills(body); } catch (e) {}
     if (!(window.FB && FB.loadDoc && FB.loadDocs && FB.user)) return;
     function expensesList() { return S('expenses', []); }
     var missF = fills().filter(function (r) { return r && !fillPhotos(r).length; });

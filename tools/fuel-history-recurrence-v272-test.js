@@ -194,7 +194,17 @@ const F_OCT22B = { date: '2026-10-22', time: '17:13', litres: 38.970, cost: 86.8
 
   /* ---- R3: A PENDING DELETE STAYS DELETED — the shadow law.
          (Green on the old code by stamp luck; red under a naive
-         union-everything fix. Pins what the fix must preserve.) ---- */
+         union-everything fix. Pins what the fix must preserve.)
+         RE-PINNED v446 (SHADOW-POISON-NOV12): the seeded shadow
+         is a LEGACY shadow — no delete-authoring basis (km.shb)
+         beside it. A legacy shadow may name records the device
+         never held (Nov 12: a failed merged write settled the
+         phone's shadow over a fill its book never contained,
+         and the next flush authored that fill's deletion
+         account-wide), so it cannot author deletes until a
+         basis exists: the union restores the fill in this
+         cycle, and the delete re-made against the basis the
+         cycle lays down stays deleted and propagates UP. ---- */
   {
     const w = makeWorld({
       local: [['fuel_fills', [F_OCT19]]], /* F_OCT20 deleted here, not yet flushed */
@@ -203,9 +213,13 @@ const F_OCT22B = { date: '2026-10-22', time: '17:13', litres: 38.970, cost: 86.8
     });
     w.sb.CloudSync.onAuth({ uid: 'u1' });
     await settle();
-    eq('R3 the deleted fill is NOT resurrected by the pull', (w.get('fuel_fills') || []).length, 1);
+    eq('R3 (v446) the pre-basis delete is restored by the union in that cycle', (w.get('fuel_fills') || []).length, 2);
+    w.store.set('fuel_fills', [F_OCT19]); /* the owner deletes it again — now against the basis */
+    w.sb.CloudSync.flush();
+    await settle();
+    eq('R3 (v446) the re-made delete is NOT resurrected', (w.get('fuel_fills') || []).length, 1);
     const pushed = w.lastPush('fuel_fills');
-    ok('R3 the delete propagates UP (the pushed doc lacks it too)',
+    ok('R3 (v446) the re-made delete propagates UP (the pushed doc lacks it too)',
       Array.isArray(pushed) && pushed.length === 1 && pushed[0].cost === 206.60,
       JSON.stringify(pushed));
   }

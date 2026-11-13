@@ -183,7 +183,20 @@
     try { return localStorage.getItem(LS_PREFIX + key); } catch (e) { return null; }
   }
   function lsSetRaw(key, raw) {
-    try { localStorage.setItem(LS_PREFIX + key, raw); } catch (e) {}
+    try { localStorage.setItem(LS_PREFIX + key, raw); return true; } catch (e) { return false; }
+  }
+  /* v446 (SHADOW-POISON-NOV12): a write whose landing is PROVEN —
+     set, then read back and compare. The plain lsSetRaw above
+     swallows a quota throw, and for years the pull below settled
+     keys and advanced shadows from values it had merely TRIED to
+     write. On a device whose store sits at the wall (the owner's
+     phone — the whole v441 saga), that gap is where a record the
+     device never held got certified as held, and its later
+     absence read as a deliberate delete. Callers that advance
+     sync state on the strength of a local value use this. */
+  function lsSetVerified(key, raw) {
+    if (!lsSetRaw(key, raw)) return false;
+    return lsGetRaw(key) === raw;
   }
   function lsDelRaw(key) {
     try { localStorage.removeItem(LS_PREFIX + key); } catch (e) {}
@@ -1825,6 +1838,11 @@
         try { console.warn('[cloudsync] ' + msg); } catch (e3) {}
         return done(false);
       };
+      /* v446: the merged local list the landed push teaches this
+         device (set in the merge below before rlSave runs) and
+         whether that teaching write verifiably persisted — the
+         shadow basis may only name what the disk provably holds. */
+      var mgLocal446 = null, learnOk446 = true;
       var rlSave = function (arr, delMap, writeDel, acceptedAfter) {
         /* v289: write the sync copy (facts-complete; photos ride
            only while the whole book fits the doc cap). A copy that
@@ -1850,6 +1868,16 @@
             return done(false);
           }
           km.sh = recordIdList(key, arr);
+          /* v446: the basis names the local book as the landed
+             push leaves it PROVEN on disk — the merged list when
+             its teaching write verified, else the pre-push list
+             (what the disk still holds) — plus the deletes this
+             push itself authored (the delMap), which the merged
+             list by construction no longer names. */
+          km.shb = recordIdList(key, learnOk446 ? (mgLocal446 || arr) : val);
+          if (delMap) Object.keys(delMap).forEach(function (id) {
+            if (km.shb.indexOf(id) < 0) km.shb.push(id);
+          });
           if (acceptedAfter) {
             var mm = getMeta();
             if (Object.keys(acceptedAfter).length) { if (!mm.dels) mm.dels = {}; mm.dels[key] = acceptedAfter; }
@@ -1863,7 +1891,8 @@
         return loadCloudListDoc(key, docId).then(function (cd) {
           var cloudArr = cd.arr || [];
           var pFlags = {};
-          var mgAll = mergeRecordLists3(key, val, cloudArr, km.sh, pFlags);
+          var mgAll = mergeRecordLists3(key, val, cloudArr, km.sh, pFlags,
+            shadowBasis(key, km, val));
           /* web403: tombstone the deletes this merge applied,
              filter the write by every tombstone in force plus
              the undecided records (held back until the user
@@ -1886,7 +1915,10 @@
             return !!(id && confP[id]);
           });
           var mgLocal = applyDelFilter(key, mgWrite.concat(heldBack), val);
-          if (JSON.stringify(mgLocal) !== JSON.stringify(val)) lsSetRaw(key, JSON.stringify(mgLocal));
+          mgLocal446 = mgLocal;
+          if (JSON.stringify(mgLocal) !== JSON.stringify(val)) {
+            learnOk446 = lsSetVerified(key, JSON.stringify(mgLocal));
+          }
           var present = recordIdList(key, mgWrite).concat(recordIdList(key, cloudArr));
           uni.write = gcDelMap(uni.write, present);
           var accOut = {};
@@ -2661,22 +2693,53 @@
     });
     return out;
   }
-  function pendingRecordDeletes(key, shadowIds, localArr, cloudArr) {
+  /* v446 (SHADOW-POISON-NOV12): the shadow's BASIS — the
+     identities of the local list as last VERIFIED persisted on
+     this device under the current shadow (km.shb, kept beside
+     km.sh), plus the deletes this device has itself authored
+     (a device that deleted a record demonstrably held it).
+     A pending delete may only be read from a record the
+     device provably HELD: in the shadow, in the basis, absent
+     from the local list now, and still present in the cloud.
+     Before v446 the shadow alone was believed — but the pull
+     advanced it from the merged value it TRIED to write, and on
+     a store at the quota wall that write fails silently, so the
+     shadow came to name records the device never held (Nov 12:
+     the phone certified the day's browser-filed fuel fill as
+     held while its book never contained it; the next flush then
+     authored the fill's deletion + tombstone account-wide and
+     the entry vanished a second time, every surface reporting
+     All synced). A legacy meta with no basis yet is seeded from
+     the book the device demonstrably holds at first sight,
+     intersected with the shadow — so an inherited poisoned
+     shadow is defused by the upgrade itself, and a delete made
+     before the basis existed may need one repeat (the v272
+     tradeoff: visible and recoverable, never silent loss). */
+  function shadowBasis(key, km, localArr) {
+    if (Array.isArray(km.shb)) return km.shb;
+    var held = {};
+    (localArr || []).forEach(function (r) { var id = recordIdentity(key, r); if (id) held[id] = 1; });
+    km.shb = (km.sh || []).filter(function (id) { return held[id]; });
+    return km.shb;
+  }
+  function pendingRecordDeletes(key, shadowIds, localArr, cloudArr, basisIds) {
     var del = {};
     if (!shadowIds || !shadowIds.length) return del;
+    var basis = {};
+    (basisIds || []).forEach(function (id) { basis[id] = 1; });
     var localIds = {}, cloudIds = {};
     (localArr || []).forEach(function (r) { var id = recordIdentity(key, r); if (id !== null) localIds[id] = 1; });
     (cloudArr || []).forEach(function (r) { var id = recordIdentity(key, r); if (id !== null) cloudIds[id] = 1; });
-    shadowIds.forEach(function (id) { if (!localIds[id] && cloudIds[id]) del[id] = 1; });
+    shadowIds.forEach(function (id) { if (basis[id] && !localIds[id] && cloudIds[id]) del[id] = 1; });
     return del;
   }
-  function mergeRecordLists3(key, localArr, cloudArr, shadowIds, flags) {
+  function mergeRecordLists3(key, localArr, cloudArr, shadowIds, flags, basisIds) {
     /* v293: the pending-delete set is computed FIRST and handed
        to the merge: a shadow-deleted identity that still has a
        same-fill sibling in the union (the edit that replaced
        it) yields to that sibling inside the merge, and the
        filter below then removes only true deletions. */
-    var del = pendingRecordDeletes(key, shadowIds, localArr, cloudArr);
+    var del = pendingRecordDeletes(key, shadowIds, localArr, cloudArr, basisIds);
     /* v354 (DEDUPE LAW): a doomed fuel identity whose cloud
        record has a dedupe twin in the local list (same date +
        litres + total, no hard conflict, no id clash) is not a
@@ -3161,6 +3224,7 @@
       var km = keyMeta(key);
       if (o.kind === 'excluded') {
         if (km.sh) km.sh = km.sh.filter(function (x) { return x !== id; });
+        if (km.shb) km.shb = km.shb.filter(function (x) { return x !== id; });
         if (m.pdSeen && m.pdSeen[key]) delete m.pdSeen[key][id];
         if (!keep) {
           if (!m.dels) m.dels = {};
@@ -3210,6 +3274,44 @@
       _pullWaiters.push(finish);
       setTimeout(function () { finish(false); }, timeoutMs || 9000);
     });
+  };
+
+  /* v446 (SHADOW-POISON-NOV12): two small doors for module heals
+     (modules/fuel.js' durable-record restore). recordId exposes
+     the engine's own identity for a record, so a heal names
+     records exactly as the tombstone map does. reviveRecord
+     undoes a tombstone for ONE identity on this device — the
+     accepted entry is forgotten and the keep-revocation stamped
+     (the resolveDelConflict shape), so the next push strips the
+     tombstone from the cloud doc instead of re-applying it. A
+     heal calls it only for a record it is restoring from the
+     record's own durable account document — a record a user
+     truly deleted on this build has no such document (the
+     delete removes it), so a surviving document is the proof
+     the record was wiped, not deleted. */
+  S.recordId = function (key, rec) {
+    try { return recordIdentity(key, rec); } catch (e) { return null; }
+  };
+  S.reviveRecord = function (key, id) {
+    try {
+      if (!RECORD_LIST_KEYS[key] || !id) return false;
+      var m = getMeta(), changed = false;
+      if (m.dels && m.dels[key] && m.dels[key][id]) {
+        delete m.dels[key][id];
+        if (!Object.keys(m.dels[key]).length) delete m.dels[key];
+        changed = true;
+      }
+      if (m.delConf) {
+        var before = m.delConf.length;
+        m.delConf = m.delConf.filter(function (c) { return !(c.key === key && c.id === id); });
+        if (m.delConf.length !== before) changed = true;
+      }
+      if (!m.delRev) m.delRev = {};
+      if (!m.delRev[key]) m.delRev[key] = {};
+      if (!m.delRev[key][id]) { m.delRev[key][id] = Date.now(); changed = true; }
+      if (changed) { saveMeta(); scheduleFlush(); }
+      return changed;
+    } catch (e) { return false; }
   };
 
   function pull() {
@@ -3485,16 +3587,48 @@
                so an undecided cycle stays dirty and the flush's
                own hold-back keeps them out of the write. */
             var delFlags = {};
-            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, shadowForMerge406, delFlags);
+            var rlMerged = mergeRecordLists3(key, rlLocal, d.v, shadowForMerge406, delFlags,
+              shadowBasis(key, km, rlLocal));
             var authP = authoredTombs(key, delFlags, d.v);
             if (authP) acceptDels(key, authP);
+            /* v446: deletes authored in THIS cycle stay in the
+               basis (below) — the basis names what this device
+               provably held OR deliberately deleted, and the
+               push that follows this pull must still find the
+               id authored when it merges, or it would write the
+               record back into the cloud doc beside its own
+               fresh tombstone. */
+            var authIds446 = authP ? Object.keys(authP) : [];
             processCloudDels(key, (d.del && typeof d.del === 'object') ? d.del : {},
               rlLocal, d.v, rlMerged, cloudTs);
             var rlFinal = applyDelFilter(key, rlMerged, rlLocal);
             var rlView = stripConflictHeld(key, rlFinal);
+            /* v446 (SHADOW-POISON-NOV12): the merged book must be
+               PROVEN on disk before any state below advances on
+               its strength. A write the store refuses (quota —
+               the owner's phone lives at the wall) used to be
+               swallowed here while the shadow and the settle
+               below certified the merged list as held; the
+               device then read records it never held as its own
+               deliberate deletes. On a failed write the local
+               book stands as it was, the shadow and its basis
+               stay with it, and the key stays DIRTY — the flush
+               pushes the union UP from the cloud's own copy
+               (read-merge-write), the status stays honest, and
+               the cycle retries when room frees up. */
+            var rlWrote446 = true;
             if (JSON.stringify(rlFinal) !== JSON.stringify(rlLocal)) {
-              lsSetRaw(key, JSON.stringify(rlFinal));
-              applied++;
+              rlWrote446 = lsSetVerified(key, JSON.stringify(rlFinal));
+              if (rlWrote446) applied++;
+            }
+            if (!rlWrote446) {
+              var ds446 = dirtyStamps(cloudTs, now); km.t = ds446.t; km.s = ds446.s;
+              try {
+                detectOrphans(key, rlLocal, d.v,
+                  (d.del && typeof d.del === 'object') ? d.del : {},
+                  shadowIn406, kmSIn406);
+              } catch (e) {}
+              return;
             }
             /* v289: compare the SYNC COPY against the cloud doc —
                a photo-bearing local book's stripped copy IS the
@@ -3512,6 +3646,11 @@
                  it here would make the push resurrect it. */
               var ds442 = dirtyStamps(cloudTs, now); km.t = ds442.t; km.s = ds442.s;
               km.sh = recordIdList(key, d.v);
+              /* v446: the basis names the verified local book
+                 (rlFinal is proven on disk at this point), plus
+                 any delete this very cycle authored */
+              km.shb = recordIdList(key, rlFinal);
+              authIds446.forEach(function (id) { if (km.shb.indexOf(id) < 0) km.shb.push(id); });
             } else {
               km.t = cloudTs; km.s = cloudTs;
               /* web403: the clean shadow names what this device
@@ -3519,6 +3658,8 @@
                  settled tombstone can never re-fire as a fresh
                  pending delete on a later cycle. */
               km.sh = recordIdList(key, rlFinal);
+              km.shb = recordIdList(key, rlFinal);
+              authIds446.forEach(function (id) { if (km.shb.indexOf(id) < 0) km.shb.push(id); });
             }
             /* web406 (DELETE-PRETOMBSTONE-NOV10): surface the
                disagreements no tombstone can name — records a

@@ -210,7 +210,14 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 30); }
     w.api.render(w.body);
     await tick(60);
     eq('the id-born fill gained its photo from the stable doc', (w.data.fuel_fills[0] || {}).photo, PHOTO_IDFILL);
-    eq('no legacy scan was needed', w.fbCalls.loadDocs, 0);
+    /* v446 re-pin (SHADOW-POISON-NOV12): loadDocs now also
+       carries the RECORD heal's once-per-session collection
+       read (healMissingFills — a documented fill missing from
+       both books is restored at module open). The graft's own
+       legacy scan still never ran: its once-a-day scan stamp
+       was never written. */
+    eq('one loadDocs — the v446 record heal\'s session read, not a graft scan', w.fbCalls.loadDocs, 1);
+    ok('the graft legacy scan never ran (no scan stamp written)', !w.data.__fuel_photo_scan);
     eq('the record id survived the graft (the doc id did not clobber it)', (w.data.fuel_fills[0] || {}).id, 'fu777');
   }
 
@@ -257,7 +264,12 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 30); }
     });
     w.api.render(w.body);
     await tick(60);
-    eq('no cloud reads were spent', w.fbCalls.loadDoc.length + w.fbCalls.loadDocs, 0);
+    /* v446 re-pin (SHADOW-POISON-NOV12): the only reads spent
+       are the RECORD heal's once-per-session pair (the cloud
+       book copy + the per-record documents) — the check that
+       restores a fill the books themselves lost. The graft
+       spends nothing and, as ever, nothing is written. */
+    eq('only the v446 record heal\'s two session reads were spent', w.fbCalls.loadDoc.length + w.fbCalls.loadDocs, 2);
     eq('no store writes happened', (w.setCounts.fuel_fills || 0) + (w.setCounts.fuel_expenses || 0), 0);
   }
 
