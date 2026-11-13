@@ -70,6 +70,23 @@
  *   D — the other-day guard: a completion Revenue line for
  *       YESTERDAY's dispatch must not close TODAY's session.
  *
+ * v445 RE-PIN (UNSYNCED-RECORD-LOSS-NOV12): dsp_list joined
+ * the record-list union law, so D3's erasure itself is now
+ * impossible — the pagehide flush is a read-merge-write and
+ * the completed record survives it in the cloud, and the
+ * push's learn-back puts the completed record in the PHONE's
+ * own store at the same moment. Two B premises are re-pinned
+ * to the new law: the "model sanity" erasure assertion now
+ * asserts the completion SURVIVES the flush, and B's reopen
+ * expects the boot heal to fire PRE-pull (the proof reached
+ * the device through its own flush's learn-back — strictly
+ * earlier than the pull the 440 fix relied on). Every
+ * verdict leg of B (revenue line lands, proof holds, stored
+ * tracker idles, no resurrection, native record idle, clock
+ * frozen) is unchanged and still asserted. B2 is untouched:
+ * its flush never carried the list, so no learn-back reaches
+ * it and its pre-pull premise stands as written.
+ *
  * Worlds: each page lifetime gets a FRESH cloudsync world
  * over the SAME localStorage + server (a real app reload
  * rebuilds the engine; the same-uid guard is per-lifetime).
@@ -309,10 +326,18 @@ async function pump() { for (let i = 0; i < 12; i++) await new Promise(function 
 /* One reopen lifetime: fresh world + page, boot heal
    (pre-pull), the sign-in pull, onAuth's re-read, the boot
    collect, two heal ticks. Returns the page. */
-async function reopen(phone, label) {
+async function reopen(phone, label, healPrePull) {
   const world = phone.newWorld();
   const page = makePage(phone, world);
-  eq(label + ' boot heal cannot fire pre-pull (the proof is not on the device yet)', page.H.healClosedTracker(), false);
+  /* v445: B's own flush learned the completed record into
+     this device's store (see the header re-pin), so for B
+     the heal legitimately fires pre-pull; B2's flush never
+     carried the list and its premise is the original one. */
+  if (healPrePull) {
+    eq(label + ' boot heal fires pre-pull (the proof reached the device through its own flush)', page.H.healClosedTracker(), true);
+  } else {
+    eq(label + ' boot heal cannot fire pre-pull (the proof is not on the device yet)', page.H.healClosedTracker(), false);
+  }
   world.csb.CloudSync.onAuth({ uid: 'u1' });
   await settle(900);
   page.sb.App.tracker = world.store.get('tracker', page.sb.App.tracker);   // onAuth's re-read
@@ -352,13 +377,16 @@ async function reopen(phone, label) {
     await settle(900);
     webClose(phone);                                    // 16:47 — no sync on the phone after this
     await pagehideFlush(world, true);
-    eq('B the pagehide flush ERASES the completed list from the cloud (model sanity)',
-      (phone.server.docs['dsp_list'].v[0] || {}).status, 'saved');
+    /* v445 re-pin: the flush is a union read-merge-write now —
+       the erasure this line proved on pre-443 bytes cannot
+       happen; the completion survives the phone's own flush. */
+    eq('B the pagehide flush can no longer ERASE the completed list (v445 union push)',
+      (phone.server.docs['dsp_list'].v[0] || {}).status, 'completed');
     eq('B the completion\u2019s Revenue line SURVIVES in the cloud (union key, never pushed by the phone)',
       (phone.server.docs['rev_entries'].v[0] || {}).dspId, 'dspT');
     fakeNow = atDay(16, 50);
     if (phone.bridge.rec.status !== 'idle') phone.bridge.seed({ updatedAt: fakeNow });
-    const r = await reopen(phone, 'B');
+    const r = await reopen(phone, 'B', true);
     eq('B the completion\u2019s Revenue line LANDS in the phone\u2019s store', (r.world.store.get('rev_entries', [])[0] || {}).dspId, 'dspT');
     ok('B the page-side proof holds in the store (the revenue prong)', r.page.H.closedDayProof411(PINMS) === true);
     eq('B the pull idles the STORED tracker', r.world.store.get('tracker', {}).status, 'idle');

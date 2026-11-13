@@ -348,6 +348,24 @@
     if (km.d) return true; // unpushed tombstone (local delete)
     return (km.t || 0) > (km.s || 0);
   }
+  /* v445 (UNSYNCED-RECORD-LOSS-NOV12): the keep-dirty idiom,
+     skew-proof. Every "the local/merged value stands — keep
+     the key dirty so the flush pushes it UP" site in pull()
+     stamped { t: max(cloudTs, now) or now, s: cloudTs }. When
+     the cloud doc's stamp is AHEAD of this device's clock
+     (server-stamped docs vs a skewed device clock — a cloud
+     browser's VM clock is exactly that), t lands <= s, the
+     key reads SETTLED, the flush never fires, and the status
+     can paint "All synced" over records the cloud has never
+     seen — which then vanish at the next fresh pull. The
+     idiom now guarantees t > s by construction: t is at
+     least cloudTs + 1. The arbitration is unchanged in every
+     other respect (a genuinely newer cloud doc still wins;
+     the same doc never re-triggers "cloud changed", since
+     s still names its stamp). */
+  function dirtyStamps(cloudTs, now) {
+    return { t: Math.max(now || 0, (cloudTs || 0) + 1), s: cloudTs };
+  }
   /* v276: the telemetry coalesce clock lives at the TOP level
      of the meta (m.teleTp), never inside a per-key record: the
      pull replaces whole per-key records in several branches
@@ -1138,6 +1156,7 @@
      are untouched. */
   var RECORD_PHOTO_FIELDS = {
     fuel_fills: ['photo'],
+    fuel_expenses: ['photo'],
     sessions: ['startPhoto', 'endPhoto', 'photo'],
     pti_reports: ['photo'],
     dmg_reports: ['photo'],
@@ -1698,9 +1717,17 @@
     var km = keyMeta(key);
     var raw = lsGetRaw(key);
     var docId = docIdFor(key);
+    /* v445: the stamp whose value this push is writing. done()
+       confirms exactly this stamp — never the wall clock: a
+       local write that lands DURING the push re-stamps km.t
+       past it and must stay dirty, and a km.t minted against
+       a cloud stamp ahead of this device's clock (the
+       dirtyStamps idiom) must still be able to settle, or the
+       key re-pushes forever under clock skew. */
+    var kmT0 = km.t || 0;
     var done = function (ok) {
       if (ok) {
-        km.s = Date.now(); delete km.d; S.stats.pushed++;
+        km.s = Math.max(km.s || 0, kmT0); delete km.d; S.stats.pushed++;
         /* v276: the coalesce clock starts at the landed write
            (a tombstone delete stamps nothing — the key is gone,
            and a later recreate is a new snapshot, not a tick). */
@@ -1743,8 +1770,14 @@
       // error shown (found in the v34 audit). Treat it like the oversized
       // case below: stop retrying, keep the local copy as the truth.
       try { console.warn('[cloudsync] skipping unparseable key (kept locally):', key); } catch (e) {}
-      km.s = km.t;
-      delete S._keyFails[key]; // v136: handled by design — not a standing failure
+      /* v445: NO SEAL. The v34 seal (km.s = km.t) marked the key
+         backed-up while nothing had been written, so the status
+         could read "All synced" over a local record the cloud
+         had never seen — the Nov 12 shape. The owner's law: a
+         record that genuinely cannot be pushed stays local,
+         stays DIRTY (retried every cycle), and the failure is
+         named through the flush's own bookkeeping. */
+      try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': the local copy cannot be read for backup (kept on this device)' }); } catch (e2) {}
       saveMeta();
       return Promise.resolve(done(false));
     }
@@ -1765,8 +1798,11 @@
        cap (telemetrySyncCopy), or fails honestly. */
     if (size > MAX_DOC_BYTES && !RECORD_LIST_KEYS[key] && !isTelemetryKey(key)) {
       try { console.warn('[cloudsync] skipping oversized key (kept locally):', key, size); } catch (e) {}
-      km.s = km.t; // don't retry forever; local copy remains the truth
-      delete S._keyFails[key]; // v136: handled by design — not a standing failure
+      /* v445: NO SEAL (see the unparseable branch above) — the
+         key stays dirty, the failure is named, and the local
+         copy remains the truth AND the standing warning. A
+         later pull must never be told this key is settled. */
+      try { (S._flushErrors = S._flushErrors || []).push({ key: key, msg: 'push ' + key + ': too large for one cloud document (kept on this device)' }); } catch (e2) {}
       saveMeta();
       return Promise.resolve(false);
     }
@@ -2240,7 +2276,22 @@
      deliberate deletion only when the record was part of the
      last cloud state this device verified. The different-
      account guard stands unchanged. */
-  var RECORD_LIST_KEYS = { fuel_fills: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1, docs_items: 1 };
+  /* v445 (UNSYNCED-RECORD-LOSS-NOV12): fuel_expenses, dsp_list
+     and inv_list join the union law. They are record lists on
+     the same store/sync path as fuel_fills, but they settled by
+     the generic whole-key stamp game and pushed by blind
+     overwrite — so an unsynced local record on any of them was
+     discarded the first time a pull met a cloud doc another
+     device had re-stamped newer (Nov 12: the day's fuel entry
+     vanished between "Retry sync now" reporting "All synced"
+     and the next reload), and a stale device's flush could
+     roll the cloud back over records it had never seen. The
+     law is the owner's standing one, the revenue-union family:
+     a record that has not backed up yet is NEVER discarded by
+     a sync, pull, reload or migration — lists merge by union
+     on both sides of the sync, and deliberate deletions ride
+     the shadow + tombstones exactly as the older keys'. */
+  var RECORD_LIST_KEYS = { fuel_fills: 1, fuel_expenses: 1, rev_entries: 1, rev_extras: 1, pti_reports: 1, sessions: 1, dmg_reports: 1, docs_items: 1, dsp_list: 1, inv_list: 1 };
   function recordIdentity(key, rec) {
     if (!rec || typeof rec !== 'object') return null;
     if (key === 'pti_reports') return rec.id ? 'id:' + rec.id : null;
@@ -2249,6 +2300,16 @@
        document's id is built from its Connect shareId, so the
        union can never double-file a document. */
     if (key === 'docs_items') return rec.id ? 'id:' + rec.id : null;
+    /* v445: dispatch and invoice records are born with stable
+       ids (an edit preserves them), so the id is the identity;
+       an id-less copy falls through to the whole-record
+       fingerprint below, and fuel_expenses records — which
+       carry no id — live on that fingerprint entirely (an
+       expense edit is then delete-old + add-new under the
+       shadow law, the same shape id-less fuel edits took
+       before v293). */
+    if (key === 'dsp_list' && rec.id) return 'id:' + rec.id;
+    if (key === 'inv_list' && rec.id) return 'id:' + rec.id;
     /* v293 (FUEL-EDIT-STOMPED): a fuel fill born under the new
        save path carries a stable id that an edit preserves, so
        its identity survives the edit — the fingerprint below
@@ -3312,7 +3373,7 @@
               /* the merge holds set values the cloud lacks — keep
                  the key dirty (t ahead of the cloud's stamp) so
                  the flush pushes the union UP. */
-              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+              meta.keys[key] = dirtyStamps(cloudTs, now);
             } else {
               meta.keys[key] = { t: cloudTs, s: cloudTs };
             }
@@ -3353,7 +3414,7 @@
             if (telemetryCopyJson(key, teleMerged) !== JSON.stringify(d.v)) {
               /* the union holds days the cloud lacks — keep the
                  key dirty so the flush pushes the union UP. */
-              meta.keys[key] = { t: Math.max(cloudTs, now), s: cloudTs };
+              meta.keys[key] = dirtyStamps(cloudTs, now);
             } else {
               meta.keys[key] = { t: cloudTs, s: cloudTs };
             }
@@ -3449,7 +3510,7 @@
                  locally, still in the cloud) until a landed
                  write confirms it — advancing the shadow past
                  it here would make the push resurrect it. */
-              km.t = Math.max(cloudTs, now); km.s = cloudTs;
+              var ds442 = dirtyStamps(cloudTs, now); km.t = ds442.t; km.s = ds442.s;
               km.sh = recordIdList(key, d.v);
             } else {
               km.t = cloudTs; km.s = cloudTs;
@@ -3538,7 +3599,7 @@
               var sa365LocalRunning = sa361Local.status === 'running';
               var sa365CloudRunning = d.v.status === 'running';
               if (sa365LocalRunning && !sa365CloudRunning) {
-                meta.keys[key] = { t: now, s: cloudTs };
+                meta.keys[key] = dirtyStamps(cloudTs, now);
                 return;
               }
               if (sa361C > sa361L) {
@@ -3546,7 +3607,7 @@
                 meta.keys[key] = { t: cloudTs, s: cloudTs };
                 applied++;
               } else {
-                meta.keys[key] = { t: now, s: cloudTs };
+                meta.keys[key] = dirtyStamps(cloudTs, now);
               }
               return;
             }
@@ -3626,7 +3687,7 @@
                 if (!tb271e || !tb271e.endedAt || !(Number(tb271e.seconds) > 0)) continue;
                 var tb271Start = Date.parse(tb271e.endedAt) - Number(tb271e.seconds) * 1000;
                 if (isFinite(tb271Start) && Math.abs(tb271Start - tb271Sid) <= 5000) {
-                  meta.keys[key] = { t: now, s: cloudTs };
+                  meta.keys[key] = dirtyStamps(cloudTs, now);
                   return;
                 }
               }
@@ -3674,7 +3735,7 @@
               if (!rv303Same) {
                 var rv303Discarded = Number(rv303Local.discardedSid) === rv303Sid;
                 if (rv303Discarded || staleSessionMs303(rv303Sid, now)) {
-                  meta.keys[key] = { t: now, s: cloudTs };
+                  meta.keys[key] = dirtyStamps(cloudTs, now);
                   return;
                 }
               }
@@ -3796,10 +3857,10 @@
                 applied++;
               } else if (cd411LocalLive) {
                 lsSetRaw(key, JSON.stringify({ status: 'idle', startTs: 0, elapsed: 0, stateAt: now }));
-                meta.keys[key] = { t: now, s: cloudTs };
+                meta.keys[key] = dirtyStamps(cloudTs, now);
                 applied++;
               } else {
-                meta.keys[key] = { t: now, s: cloudTs };
+                meta.keys[key] = dirtyStamps(cloudTs, now);
               }
               return;
             }
@@ -3852,7 +3913,7 @@
             var lp423CloudSid = Number(d.v.sessionId) || 0;
             if (lp423CloudSid === 0 || lp423LocalSid === 0 ||
                 Math.abs(lp423CloudSid - lp423LocalSid) <= 5000) {
-              meta.keys[key] = { t: now, s: cloudTs };
+              meta.keys[key] = dirtyStamps(cloudTs, now);
               return;
             }
           }
