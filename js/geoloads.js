@@ -5350,7 +5350,44 @@
        correction, or null when no day is active (the caller then
        falls back to the session's tap count). */
     nudge: function (delta) {
-      if (!curDate || !watching) return null;
+      if (!watching) {
+        /* v452 (LOAD-CORRECTION-DEAD-WHEN-NOT-WATCHING): the
+           door used to refuse outright unless the engine was
+           live-watching the day in THIS page — while today()
+           still reads the day ARMED from its saved record
+           (sites on file), so js/app.js routed the hero taps
+           here and took the null as consumed nowhere: the tap
+           fell back to the session tap count, which neither the
+           armed day's card (it reads the record's count + corr)
+           nor the Manifest (forDate: rec.count + rec.corr) ever
+           reads, and the record's correction never moved. The
+           Nov 13 close-out ran in the desktop web book — no
+           location stream, startDay inert, the engine never
+           watched — and five −1 taps against a wrong 5 (the
+           signed cards say 4) changed nothing; the 5 rode into
+           the Manifest. A page that is not watching holds no
+           live state to protect: the tap is the driver's signed
+           correction to TODAY's record, so write it straight
+           onto that record with the live door's own clamp (the
+           displayed total floors at 0 — extra −1 taps bank no
+           invisible debt) and persist it at once via writeDay.
+           Only corr and updatedAt move. No record for today →
+           null, and the caller's session-tap fallback stands
+           exactly as before; another day's record is never
+           touched — the door names today, the only day a hero
+           tap can mean. */
+        var dOff = parseInt(delta, 10) || 0;
+        if (!dOff) return null;
+        var recOff = recordFor(dateStrOf(Date.now()));
+        if (!recOff) return null;
+        var machOff = recOff.count || 0;
+        var ncOff = (recOff.corr || 0) + dOff;
+        if (machOff + ncOff < 0) ncOff = -machOff;
+        recOff.corr = ncOff;
+        recOff.updatedAt = Date.now();
+        writeDay(recOff);
+        return ncOff;
+      }
       nudgedLive = true; // v222: a live correction outranks a pulled record's older corr on reseed
       corrNow += (parseInt(delta, 10) || 0);
       /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): a +1 tapped at
