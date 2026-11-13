@@ -4021,6 +4021,77 @@
      button now opens an end-time sheet (defaults to now — same result as
      before) where he can set the real finish; the saved session's duration
      and endedAt are computed to that end. Mirrors the start-time Edit. */
+  /* v449 (CLOSE-SHUTS-EVERYTHING, owner Nov 13, 2026): the one-close
+     law's missing half. A timer Stop booked the session and stood
+     the timer down — and left the day's dispatch standing ACTIVE:
+     the End-shift review even told him to go close it from the
+     Dispatch card, a second close the law forbids ("one closing
+     should close everything; I should not have to close it
+     everywhere else"). stopSessionAt now calls this for the
+     session's own day: the day's ACTIVE dispatch completes with
+     the shift, stamped with the stop's own end time, the active
+     snapshot clears with it, and the closed record mirrors to its
+     cloud doc exactly as a Dispatch-card close mirrors it
+     (fbSave's shape). What it will NOT touch: a 'saved' dispatch
+     (never started — starting one is his word, so is closing one),
+     another day's record, or a record already completed — its own
+     endedAt stands. The dispatch module's own close keeps its
+     richer path (tickets, wage posting, the travel claim); this
+     half carries the facts the timer close already holds. The
+     write is verified by read-back before the mirror fires, and a
+     failed write leaves the record exactly as it stood — visibly
+     open, recoverable — rather than half-closed. */
+  function closeDispatchOnStop449(dayStr, endMs) {
+    if (!dayStr) return false;
+    var list = store.get('dsp_list', []);
+    if (!Array.isArray(list)) return false;
+    var act = store.get('dsp_active', null);
+    var actId = (act && act.id !== null && act.id !== undefined) ? String(act.id) : null;
+    var closedAt = new Date(endMs).toISOString();
+    var out = [], closed = [], i, r, rd, sm;
+    var touched = false;
+    for (i = 0; i < list.length; i++) {
+      r = list[i];
+      if (!r || r.id === null || r.id === undefined) { out.push(r); continue; }
+      rd = '';
+      sm = (typeof r.scheduledAt === 'string') ? /^(\d{4}-\d{2}-\d{2})/.exec(r.scheduledAt) : null;
+      if (sm) rd = sm[1];
+      else if (typeof r.date === 'string') rd = r.date;
+      if (rd === dayStr && (r.status === 'active' ||
+          (actId !== null && String(r.id) === actId && r.status !== 'completed' && r.status !== 'cancelled'))) {
+        r = Object.assign({}, r, { status: 'completed', endedAt: closedAt });
+        closed.push(r); touched = true;
+      }
+      out.push(r);
+    }
+    if (touched) {
+      if (store.set('dsp_list', out) === false) return false;
+      var back = store.get('dsp_list', []);
+      if (!Array.isArray(back)) return false;
+      for (i = 0; i < closed.length; i++) {
+        var found = false;
+        for (var j = 0; j < back.length; j++) {
+          if (back[j] && String(back[j].id) === String(closed[i].id) && back[j].status === 'completed') { found = true; break; }
+        }
+        if (!found) return false;
+      }
+      for (i = 0; i < closed.length; i++) {
+        try { if (window.FB && FB.saveDoc) FB.saveDoc('dispatches', closed[i].id, closed[i]); } catch (e) {}
+      }
+      list = out;
+    }
+    /* The snapshot clears when it names a record this close just
+       completed — or one the list already holds completed (a stale
+       snapshot outliving its close is cleared, never re-closed). */
+    if (actId !== null) {
+      var twinDone = false;
+      for (i = 0; i < list.length; i++) {
+        if (list[i] && String(list[i].id) === actId && list[i].status === 'completed') { twinDone = true; break; }
+      }
+      if (twinDone) { try { store.set('dsp_active', null); } catch (e) {} }
+    }
+    return touched;
+  }
   function trackedSecondsAt(endMs) {
     var t = App.tracker;
     /* v174: clamped at zero — an anchored session's start can lie
@@ -4329,6 +4400,24 @@
         }
       }
     }
+    /* v449 (CLOSE-SHUTS-EVERYTHING): the Stop closes the day's
+       dispatch with the shift — see closeDispatchOnStop449. Runs
+       on every stop that stood a session down (a dispatch-close
+       stop finds its record already completed and moves nothing;
+       the v419 cross-day burial returned far above and never
+       reaches here). The day is the session's own — the pin's
+       day, already resolved into bookDate419 when the booking
+       crossed midnight. A failure inside never blocks the stop:
+       the timer is down either way, and an unclosed dispatch
+       stays visibly open rather than half-closed. */
+    try {
+      if (App.tracker.status === 'running' || App.tracker.status === 'paused') {
+        var pinMs449 = 0;
+        try { pinMs449 = Number(trackerSessionKeyMs()) || Number(trackerSessionStartMs()) || 0; } catch (e) {}
+        var stopDay449 = bookDate419 || (pinMs449 > 0 ? todayStr(new Date(pinMs449)) : todayStr(new Date(endMs)));
+        closeDispatchOnStop449(stopDay449, endMs);
+      }
+    } catch (e449) {}
     App.tracker = { status: 'idle', startTs: 0, elapsed: 0, stateAt: Date.now() };
     trackerSave(); trackerPaint();
     // v39: shift stopped — by-mile days with a start reading and no end
@@ -4561,7 +4650,23 @@
       h += '<div class="b" style="color:var(--orange)">No ticket photo — the shift still closes. Go back to add one.</div>';
     }
     var dspA = store.get('dsp_active', null);
-    if (dspA) h += '<div class="b">Your dispatch is still open — ending the shift does not close it. Close it from the Dispatch card to log its ticket and pay.</div>';
+    /* v449 (CLOSE-SHUTS-EVERYTHING, owner Nov 13, 2026): this
+       review used to send him to the Dispatch card for a second
+       close after ending the shift. The law is one close: this
+       Stop completes the day's dispatch with the shift, and the
+       review says so — shown only when the open dispatch is this
+       session's own day (another day's dispatch is not this
+       shift's to close, and the words must never promise what
+       the stop will not do). */
+    if (dspA) {
+      var dspADay449 = '';
+      var dspASm449 = (typeof dspA.scheduledAt === 'string') ? /^(\d{4}-\d{2}-\d{2})/.exec(dspA.scheduledAt) : null;
+      if (dspASm449) dspADay449 = dspASm449[1];
+      else if (typeof dspA.date === 'string') dspADay449 = dspA.date;
+      if (dspADay449 && dspADay449 === todayStr(new Date(startMs))) {
+        h += '<div class="b">Your dispatch closes with this shift — this one close ends the whole day.</div>';
+      }
+    }
     h += '<div class="row" style="margin-top:10px">' +
       '<button class="btn ghost" id="trkEndBack">← Back</button>' +
       '<button class="btn primary" id="trkEndConfirm">✅ Confirm — end shift</button></div>';

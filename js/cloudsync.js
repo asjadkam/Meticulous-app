@@ -2067,6 +2067,54 @@
         }).catch(tlPushFail);
       } catch (e) { return Promise.resolve(tlPushFail(e)); }
     }
+    /* v449 (CLOSE-SHUTS-EVERYTHING): the active-dispatch snapshot
+       is a whole-doc key with no merge of its own, settled by
+       stamps alone — so a device still holding a stale snapshot
+       (its close form open since before another surface closed
+       the day; the Nov 11 shape) overwrites the close's clearing
+       null on its next flush, and every surface sees the day
+       open again: the record list converged while the snapshot
+       resurrected (tools/close-shuts-everything-v449-test.js,
+       S-B). Before a non-null snapshot goes up, the dispatch
+       list decides — this device's own copy first, then the
+       cloud's, read fresh at this push because a list push in
+       the same flush settles concurrently and cannot be waited
+       on: if either holds this record COMPLETED, the snapshot
+       is a stale echo of a closed day and what pushes is the
+       clearing null. A failed list read fails the push honestly
+       (the key stays dirty and retries) rather than overwriting
+       a close blind — the telemetry door's rule. No legitimate
+       flow is refused: activation only ever runs on a 'saved'
+       record and a completed dispatch is never re-activated, so
+       a live snapshot never faces a completed twin that is not
+       a close. */
+    if (key === 'dsp_active' && val && typeof val === 'object' &&
+        !Array.isArray(val) && val.id !== null && val.id !== undefined) {
+      var snapId449 = String(val.id);
+      var snapListDone449 = function (lv) {
+        if (!Array.isArray(lv)) return false;
+        for (var si449 = 0; si449 < lv.length; si449++) {
+          var sr449 = lv[si449];
+          if (sr449 && String(sr449.id) === snapId449 && sr449.status === 'completed') return true;
+        }
+        return false;
+      };
+      var snapWrite449 = function (v) {
+        try {
+          return FB.saveDoc(KV_COLLECTION, docId, { v: sanitizeForFirestore(v, '', [], 0) }).then(function (res) {
+            return done(res !== null);
+          }).catch(function () { return done(false); });
+        } catch (e) { return Promise.resolve(done(false)); }
+      };
+      var snapLocalDone449 = false;
+      try { snapLocalDone449 = snapListDone449(parseJson(lsGetRaw('dsp_list'), null)); } catch (e) {}
+      if (snapLocalDone449) return snapWrite449(null);
+      try {
+        return loadCloudValue('dsp_list', docIdFor('dsp_list')).then(function (cloudList449) {
+          return snapWrite449(snapListDone449(cloudList449) ? null : val);
+        }).catch(function () { return done(false); });
+      } catch (e) { return Promise.resolve(done(false)); }
+    }
     try {
       /* v301 (SYNC-RETRY-RESIDUAL): the generic fall-through was
          the last write door with no sanitizer — a value carrying
@@ -2595,6 +2643,29 @@
              begun) can never outrank the real entry on any
              device, in either merge direction. */
           var takeIt;
+          /* v449 (CLOSE-SHUTS-EVERYTHING): for dsp_list a COMPLETED
+             copy beats a non-completed copy of the same record
+             outright, whichever side holds it and however the
+             field counts fall — the same one-way-evidence standing
+             the sessions liveKm rule above gives a grown fact. A
+             completion is one-way: the v424 pull repair already
+             applies this rule when a completed record lands, but
+             the union arbitration here never got it — it compared
+             field counts, so a stale open copy carrying one extra
+             mid-day field (an offline note, a top-level photo the
+             close later folded into its ticket) TIED OR BEAT the
+             completed copy, the cloud rolled back to OPEN, and
+             the device that closed the day was the only surface
+             still showing it closed
+             (tools/close-shuts-everything-v449-test.js, S-T). When
+             both copies are completed — or neither is — the
+             ordinary arbitration below still decides, so a later
+             edit of a closed record wins on its facts as before. */
+          if (key === 'dsp_list') {
+            var curDone449 = !!(cur && cur.status === 'completed');
+            var recDone449 = !!(rec && rec.status === 'completed');
+            if (curDone449 !== recDone449) takeIt = recDone449;
+          }
           if (key === 'sessions') {
             var lkC = (cur && typeof cur.liveKm === 'number') ? cur.liveKm : -1;
             var lkR = (rec && typeof rec.liveKm === 'number') ? rec.liveKm : -1;
@@ -4092,6 +4163,45 @@
         }
         // else: only local changed (flush handles it) or nothing changed.
       });
+
+      /* v449 (CLOSE-SHUTS-EVERYTHING): the snapshot heal. The loop
+         above settles dsp_active by stamps alone — a device that
+         re-saved its stale snapshot after another surface's close
+         carries the newest stamp, so the open snapshot survives a
+         pull whose own list merge just settled the same record
+         COMPLETED (tools/close-shuts-everything-v449-test.js,
+         S-B's second half: list closed, snapshot open, the
+         Dispatch face offering a second close on stale facts).
+         The list this pull leaves behind is the authority: a
+         snapshot naming a record the list holds COMPLETED is a
+         stale echo — clear it in place and stamp the key dirty,
+         so the clearing pushes up and heals the cloud copy too.
+         A snapshot whose record is not completed in the list is
+         a live dispatch and is never touched (S-C). The list of
+         a DIFFERENT account (a uid mismatch on its stamp) is
+         never read as evidence. */
+      try {
+        var lkm449 = keyMeta('dsp_list');
+        if (!(lkm449.u && S.uid && lkm449.u !== S.uid)) {
+          var actRaw449 = lsGetRaw('dsp_active');
+          var act449 = (actRaw449 !== null) ? parseJson(actRaw449, null) : null;
+          if (act449 && act449.id !== null && act449.id !== undefined) {
+            var list449 = parseJson(lsGetRaw('dsp_list'), null);
+            if (Array.isArray(list449)) {
+              for (var hi449 = 0; hi449 < list449.length; hi449++) {
+                var hr449 = list449[hi449];
+                if (hr449 && String(hr449.id) === String(act449.id) && hr449.status === 'completed') {
+                  lsSetRaw('dsp_active', 'null');
+                  var akm449 = keyMeta('dsp_active');
+                  akm449.t = Math.max(akm449.t || 0, (akm449.s || 0) + 1, Date.now());
+                  applied++;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (e449) {}
 
       // Fresh account (cloud empty) + local data from local-mode use:
       // mark everything dirty so the flush uploads it. ONLY on this device's
