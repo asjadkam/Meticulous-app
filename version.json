@@ -1,8 +1,8 @@
 {
   "version": 76,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v76.apk",
-  "webVersion": 452,
-  "notes": "Web 452 — LOAD-CORRECTION-DEAD-WHEN-NOT-WATCHING (Nov 13, 2026; layers on web 451). At the Nov 13 close-out in the web book the tracker showed 5 loads against the signed cards' 4, and the −1 correction did nothing — tapped five times, plus +1 once, even after a reload: the count and the '+2 your taps' line never moved, and the wrong 5 rode into the Manifest. Root: GeoLoads.nudge (the +1/−1 correction door) refused unless the counting engine was live-watching the day in that page, while today() still reads the day armed from its saved record — so the taps were routed to a door that silently returned null and fell back to the session tap count, which neither the armed day's card nor the Manifest reads. A desktop page has no location stream, so the engine never watches there. Fix (js/geoloads.js only): when the engine is not watching, nudge writes the correction straight onto today's day record with the live door's own clamp (total floors at 0) and persists it at once — only corr and updatedAt move; no record for today still returns null and the session-tap fallback stands. Counting rules, the peg law and the live watching path are untouched. NO NATIVE CHANGE.",
+  "webVersion": 453,
+  "notes": "Web 453 — CLOSED-DAY-LOAD-CORRECTION (Nov 13, 2026; layers on web 452). Web 452 fixed the +1/−1 taps for a LIVE day the engine isn't watching, but a browser pass on the live build proved a CLOSED day had no load-correction control on any surface: the tracker stands idle with no count shown, the Manifest day view was read-only (Print/PDF/Download only), Revenue's day view shows no loads control — Nov 13 closed at 5 loads in the Manifest while its two signed haul cards total 4, and there was no door to make it right. Fix: (1) js/geoloads.js gains GeoLoads.nudgeDate(date, delta) — the v452 record-write named by date: the tap writes the driver's signed correction onto THAT day's record with the same clamp (the day's total floors at 0), only corr and updatedAt move, persisted at once via writeDay; the day the engine is live-watching is refused (the live door owns it), no record for the date returns null and creates nothing. (2) modules/manifest.js: the day preview carries the same +1 load / −1 load pair in the quiet spot beside the Edit door (btn small ghost, outside the printed document), shown only when the day is not live and carries a counting record; a tap calls nudgeDate for the day on screen and the preview repaints from the record, so the printed loads figure moves with it. Counting rules, the peg law, live-day behaviour, close/Revenue logic untouched. NO NATIVE CHANGE.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -27,7 +27,7 @@
     "js/dispatch-ingest.js": "fc65395509e692b8677c82b90764393745768b551cddad8793772737b3ee3c2f",
     "js/firebase.js": "8ce2f36679eee2f7e567d6391e4a4e4833ce927130fb5fbe2f854a63289cebbc",
     "js/geo.js": "c465b5956bfac79ec7e8837ce7fc14e5ed91a81ee9b1b4b5c7582522fcff6fc1",
-    "js/geoloads.js": "f342976d31c37a2d157133ebe6b8d9627e4a915531f94f961128ef3e044aedb0",
+    "js/geoloads.js": "1cff6f86fcc00faac136120f4b784a5502057216c2e73842c647e40027cb056f",
     "js/i18n.js": "750ffcf7e64332a9b129aed6dbab815e47a33630a10e3642ff51dac7a00179d1",
     "js/miles.js": "d2e83d6d9722b513e53c0de30bd0c1c0f3e1aa6045aea35af909c7466a111b3e",
     "js/mirror.js": "819cfe335781c45a5c3d3341f1d86bf6c63b6a032f96b8e694e040d9ee023f92",
@@ -54,7 +54,7 @@
     "modules/fuel.js": "a2c7f394f2ad32b8258f683e6ad040ecb6c41bfcccccb4952a4e255ccdafc005",
     "modules/invoice.js": "ea6effd9c9c47540fe779b1d7a78a0a6fef79c675844462e442c798278e0bcee",
     "modules/maintenance.js": "7205217364b464aeb6f8e68220033078b4f8dc796de1dd90bd69e061d0dab33e",
-    "modules/manifest.js": "9450fe059f62d97d76f976b465642840eef9eef28c9c3f90e33a37c06220c88a",
+    "modules/manifest.js": "d3524896172abe664f5dfd14192cb52f1b971c8e3f0a537ded728613b0b8c755",
     "modules/navigation.js": "6f049a62b46ffbf8d2777f2ce10b2043c29bfb76a54d8b46badf819435fe4b8e",
     "modules/navigator.js": "2973a6ddababba871353c71e53616c612f49946edd31385c33cc19a39e951a2a",
     "modules/pnl.js": "72a2e372b1ae7222ce8889599579e948c4be273abb95f1b3d5dad271b329cfbd",

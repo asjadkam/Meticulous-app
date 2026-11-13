@@ -2144,6 +2144,29 @@
           '<div class="note" style="margin-top:6px">Fixes this day after the fact. The end reading also becomes the next morning\'s starting point, the way your sheet chains.</div>' +
           '</div>';
       }
+      /* v453 (CLOSED-DAY-LOAD-CORRECTION-NOV13): the load-count
+         fix for a day nobody is counting any more — the same
+         +1 / −1 the tracker hero carries, hung in the same
+         quiet spot as the Edit door. Until now a closed day's
+         count could never be corrected: the tracker stands
+         idle with no count shown, this preview was read-only,
+         and Revenue's day view carries no loads control (Nov 13
+         closed at 5 against the signed cards' 4). Shown only
+         when the day is not live (a running day's corrections
+         belong to the tracker) and the day carries a counting
+         record: the tap writes the driver's signed correction
+         onto THAT day's record (GeoLoads.nudgeDate), so this
+         preview's own loads line — the peg-day figure IS the
+         record's count + correction — and every other reader
+         of the record show the corrected count on repaint. */
+      if (!c.live && c.geoDay && window.GeoLoads && window.GeoLoads.nudgeDate) {
+        var fdNow453 = Math.max(0, (parseInt(c.geoDay.count, 10) || 0) + (parseInt(c.geoDay.corr, 10) || 0));
+        h += '<div class="row" style="margin-top:8px;align-items:center">' +
+          '<div style="flex:1"><label class="f" style="margin:0">Loads hauled — ' + fdNow453 + '</label>' +
+          '<div class="note">Wrong count on a closed day? Fix it here — the correction rides the day\'s record.</div></div>' +
+          '<button class="btn small ghost" id="mn_load_minus">−1 load</button>' +
+          '<button class="btn small ghost" id="mn_load_plus">+1 load</button></div>';
+      }
       h += '</div>';
       } /* v184: end of the one-day preview (range drew its own above) */
       h += '<div class="row"><button class="btn navy" id="mn_print">🖨️ Print / PDF</button>' +
@@ -2277,6 +2300,22 @@
           if (msgEl3) msgEl3.textContent = 'Saved — this day now carries your fix.';
         };
       }
+      /* v453: the closed-day load correction's wiring — one tap
+         moves the day's signed correction on its record through
+         GeoLoads.nudgeDate (which refuses the day the engine is
+         live-watching), then the preview repaints from the
+         record, so the loads line and the row's own figure move
+         together. */
+      var loadMinus453 = body.querySelector('#mn_load_minus');
+      if (loadMinus453) loadMinus453.onclick = function () {
+        try { window.GeoLoads.nudgeDate(d, -1); } catch (e) {}
+        Meticulous.modules.manifest.render(body);
+      };
+      var loadPlus453 = body.querySelector('#mn_load_plus');
+      if (loadPlus453) loadPlus453.onclick = function () {
+        try { window.GeoLoads.nudgeDate(d, 1); } catch (e) {}
+        Meticulous.modules.manifest.render(body);
+      };
       var fromEl = body.querySelector('#mn_from');
       if (fromEl) fromEl.onchange = function (e) { App._store.set('mani_from', maniDateOk(e.target.value) ? e.target.value : App._today()); Meticulous.modules.manifest.render(body); };
       var toEl = body.querySelector('#mn_to');

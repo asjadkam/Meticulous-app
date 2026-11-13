@@ -5459,6 +5459,43 @@
       return corrNow;
     },
 
+    /* v453 (CLOSED-DAY-LOAD-CORRECTION-NOV13): the +1 / −1 door
+       for a day the engine is NOT counting — a closed day, or a
+       past day opened later. Web 452 gave the unwatched page a
+       door onto TODAY's record (nudge's not-watching branch),
+       but a CLOSED day had no correction control on any surface:
+       the tracker stands idle with no count shown, the Manifest
+       day view was read-only (Print/PDF/Download only), and
+       Revenue's day view carries no loads control — yet the
+       record still stands to be wrong (Nov 13 closed at 5 in
+       the Manifest while the day's two signed haul cards total
+       4), and there was no way to make it right. This door is
+       the v452 branch named by date: the tap is the driver's
+       signed correction to THAT day's record — same clamp (the
+       day's total floors at 0, so extra −1 taps bank no
+       invisible debt), only corr and updatedAt move, persisted
+       at once via writeDay, so every reader of the record
+       (GeoLoads.forDate, the peg-day Manifest line) shows the
+       corrected count after a reload. The day the engine IS
+       watching is refused: the live door owns it (hero taps,
+       teach marks, the reseed law), and nothing here may race
+       it. No record for the date → null, and nothing is
+       created. Any other day's record is never touched. */
+    nudgeDate: function (date, delta) {
+      var dd = parseInt(delta, 10) || 0;
+      if (!dd || !date) return null;
+      if (watching && curDate === date) return null;
+      var recD = recordFor(date);
+      if (!recD) return null;
+      var machD = recD.count || 0;
+      var ncD = (recD.corr || 0) + dd;
+      if (machD + ncD < 0) ncD = -machD;
+      recD.corr = ncD;
+      recD.updatedAt = Date.now();
+      writeDay(recD);
+      return ncD;
+    },
+
     /* v436 (COUNT-PLUSONE-TEACHES-PEG-NOV12): the +1 door for a
        day with NO counter yet — teach mode, where the dump was
        given out loud on site and never pinned. app.js calls
