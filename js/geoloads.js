@@ -5371,7 +5371,9 @@
            onto that record with the live door's own clamp (the
            displayed total floors at 0 — extra −1 taps bank no
            invisible debt) and persist it at once via writeDay.
-           Only corr and updatedAt move. No record for today →
+           Only corr and updatedAt move (v454: the correction's
+           own corrAt/corrFrom stamps ride along — see the
+           stampOff note below). No record for today →
            null, and the caller's session-tap fallback stands
            exactly as before; another day's record is never
            touched — the door names today, the only day a hero
@@ -5383,8 +5385,19 @@
         var machOff = recOff.count || 0;
         var ncOff = (recOff.corr || 0) + dOff;
         if (machOff + ncOff < 0) ncOff = -machOff;
+        /* v454 (CLOSED-DAY-CORRECTION-DURABILITY-NOV13): the
+           correction carries its own arbitration evidence —
+           corrFrom (the value it replaces) and corrAt (its
+           stamp, minted AHEAD of every stamp the record
+           already carries, the v445 idiom at record level, so
+           a skewed clock on the surface that wrote the record
+           cannot make the correction the older copy). The
+           sync merge reads them; see nudgeDate's note. */
+        var stampOff = Math.max(Date.now(), (recOff.updatedAt || 0) + 1, (recOff.corrAt || 0) + 1);
+        recOff.corrFrom = recOff.corr || 0;
         recOff.corr = ncOff;
-        recOff.updatedAt = Date.now();
+        recOff.corrAt = stampOff;
+        recOff.updatedAt = stampOff;
         writeDay(recOff);
         return ncOff;
       }
@@ -5490,8 +5503,36 @@
       var machD = recD.count || 0;
       var ncD = (recD.corr || 0) + dd;
       if (machD + ncD < 0) ncD = -machD;
+      /* v454 (CLOSED-DAY-CORRECTION-DURABILITY-NOV13): on web
+         453 this door's write died in the cloud round-trip —
+         the tap repainted the corrected figure, but a reload
+         handed the day back to the stale cloud copy and the
+         Manifest read the wrong total again (the Nov 13 night:
+         5 -> tap -> 4 on screen -> reload -> 5). Proven in
+         bench (tools/closed-day-correction-durability-v454):
+         the honest push and pull legs were never broken; what
+         kills the correction is the sync merge's same-lineage
+         arbitration by raw updatedAt alone — a stamp every
+         engine/state re-persist bumps — so a later-stamped
+         copy of the day whose facts PREDATE the correction
+         (an evening re-persist of the uncorrected record, or
+         a twin stamped on a skewed clock) outvotes it on both
+         the pull and the push merge. The write therefore
+         carries the correction's own evidence: corrFrom (the
+         value this tap replaces) and corrAt (the tap's stamp,
+         minted AHEAD of every stamp the record already
+         carries — max(now, updatedAt+1, corrAt+1), the v445
+         dirtyStamps idiom at record level — so the correction
+         is never the "older" copy against the record it
+         corrects, whatever the clocks say). The merge's
+         geoloads branch arbitrates a differing corr by this
+         evidence; counting rules and the peg law are
+         untouched, as is every other field of the record. */
+      var stampD = Math.max(Date.now(), (recD.updatedAt || 0) + 1, (recD.corrAt || 0) + 1);
+      recD.corrFrom = recD.corr || 0;
       recD.corr = ncD;
-      recD.updatedAt = Date.now();
+      recD.corrAt = stampD;
+      recD.updatedAt = stampD;
       writeDay(recD);
       return ncD;
     },

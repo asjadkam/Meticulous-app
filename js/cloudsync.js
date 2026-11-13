@@ -2268,7 +2268,57 @@
          full day), and livemiles totals only ever grow within
          a day, so the totals law stands there untouched. */
       if (key === 'geoloads' && geoSameLineage(lr, cr)) {
-        out[k] = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+        var win454 = ((cr.updatedAt || 0) >= (lr.updatedAt || 0)) ? cr : lr;
+        out[k] = win454;
+        /* v454 (CLOSED-DAY-CORRECTION-DURABILITY-NOV13): the
+           v293 stamp arbitration above hands the whole record
+           to the later-stamped copy — but updatedAt moves on
+           EVERY engine/state re-persist, so a copy of the day
+           whose facts predate the driver's signed correction
+           can carry the fresher stamp (an evening re-persist
+           of the uncorrected record; a twin stamped on a
+           skewed clock). On web 453 exactly that ate the
+           Nov 13 closed-day correction: tap -> 4 on screen,
+           reload -> the stale copy's +2 was re-taught and the
+           Manifest read 5 again, on the pull AND the push
+           merge alike. The doors (js/geoloads.js nudge /
+           nudgeDate) now stamp each correction with corrAt
+           (its own stamp, minted ahead of the record it
+           corrects) and corrFrom (the value it replaced).
+           When the two records' corr DIFFERS, arbitrate the
+           corr by that evidence, over the stamp winner's
+           record: (1) both sides stamped — the later corrAt
+           donates its corr (a later genuine correction still
+           wins, exactly as v293 intended); (2) one side
+           stamped — it donates when the other side's corr IS
+           its corrFrom, i.e. the other side is the
+           pre-correction state of the day however fresh its
+           updatedAt (a re-persist, not a correction). Any
+           other shape keeps the v293 winner whole. Counts
+           that differ never reach here (the v224 totals law
+           below), and livemiles is untouched. */
+        if ((lr.corr || 0) !== (cr.corr || 0)) {
+          var lA454 = (typeof lr.corrAt === 'number' && isFinite(lr.corrAt)) ? lr.corrAt : null;
+          var cA454 = (typeof cr.corrAt === 'number' && isFinite(cr.corrAt)) ? cr.corrAt : null;
+          var donor454 = null;
+          if (lA454 !== null && cA454 !== null && lA454 !== cA454) {
+            donor454 = lA454 > cA454 ? lr : cr;
+          } else if (lA454 !== null && cA454 === null &&
+                     typeof lr.corrFrom === 'number' && (cr.corr || 0) === lr.corrFrom) {
+            donor454 = lr;
+          } else if (cA454 !== null && lA454 === null &&
+                     typeof cr.corrFrom === 'number' && (lr.corr || 0) === cr.corrFrom) {
+            donor454 = cr;
+          }
+          if (donor454 && donor454 !== win454) {
+            var rec454 = {}, fk454;
+            for (fk454 in win454) if (Object.prototype.hasOwnProperty.call(win454, fk454)) rec454[fk454] = win454[fk454];
+            rec454.corr = donor454.corr;
+            rec454.corrAt = donor454.corrAt;
+            if (typeof donor454.corrFrom === 'number') rec454.corrFrom = donor454.corrFrom;
+            out[k] = rec454;
+          }
+        }
         continue;
       }
       if (ct > lt) out[k] = cr;
