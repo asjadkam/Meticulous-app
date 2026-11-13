@@ -525,8 +525,18 @@
        - "<RoadType> <Dir1> <Dir2>" abbreviates the pair
          ("Trail South East" -> "Trail SE") — ONLY after a
          road-type word, so a road genuinely NAMED "South East"
-         something keeps its name. */
-  function cleanInstructionText(s) {
+         something keeps its name.
+     v448 (NAV-TTS-NE): the pair abbreviation is a DISPLAY
+     cleanup — the verbal (spoken) fields must NOT receive it.
+     The engine's verbal lines spell the pair out ("Glenmore
+     Trail South East") precisely so the voice can say it;
+     compressing them here handed the voice "Trail SE", which
+     every TTS engine reads as letters ("S E"). maneuverPlan
+     now passes keepSpelled for verbalPre/verbalPost, so the
+     spelled form survives to speak() (whose own speechText
+     normalizer covers the lines that still arrive abbreviated
+     — the turn-onto lines that embed the raw street name). */
+  function cleanInstructionText(s, keepSpelled) {
     if (!s) return '';
     var t = String(s);
     t = t.replace(/\bTake the (\d+) exit\b/gi, 'Take exit $1');
@@ -535,8 +545,43 @@
     if (tw && tw[1].toLowerCase().indexOf(tw[2].trim().replace(/\.$/, '').toLowerCase()) >= 0) {
       t = tw[1] + (/\.$/.test(t) ? '.' : '');
     }
-    t = t.replace(/\b(Trail|Drive|Avenue|Road|Street|Boulevard|Highway|Way|Terrace|Crescent|Parkway) (North|South) (East|West)\b/g,
-      function (m, rt, d1, d2) { return rt + ' ' + d1.charAt(0) + d2.charAt(0); });
+    if (!keepSpelled) {
+      t = t.replace(/\b(Trail|Drive|Avenue|Road|Street|Boulevard|Highway|Way|Terrace|Crescent|Parkway) (North|South) (East|West)\b/g,
+        function (m, rt, d1, d2) { return rt + ' ' + d1.charAt(0) + d2.charAt(0); });
+    }
+    return t;
+  }
+
+  /* v448 (NAV-TTS-NE, owner Nov 13, 2026, on the drive to
+     work: spoken directions read the quadrant as letters —
+     "Métis Trail N E" — instead of "North East"): speech text
+     gets its own normalizer, applied at the ONE mouth (speak())
+     so every spoken line — maneuver prompts, warnings, street
+     read-outs, the native engine and the WebView voice alike —
+     says compass words, never letter pairs. Conservative by
+     construction:
+       - a standalone two-letter quadrant token (NE/NW/SE/SW),
+         or its dotted form (N.E.), always expands — in
+         navigation text such a token is a quadrant, full stop;
+       - a ONE-letter quadrant expands only where it rides as
+         a street suffix: directly after a road-type word
+         ("Centre Street N") and at a word end — ordinary words
+         and sentences are never touched ("Take exit 2", "Head
+         north" and every normal word containing these letters
+         pass through byte-identical);
+       - display text is NOT this function's business: the
+         banner and the steps keep the compact "NE" the eye
+         wants; only the ear gets the long form. */
+  function speechText(text) {
+    if (text === null || text === undefined) return text;
+    var t = String(text);
+    if (!t) return t;
+    var PAIR = { NE: 'North East', NW: 'North West', SE: 'South East', SW: 'South West' };
+    var ONE = { N: 'North', S: 'South', E: 'East', W: 'West' };
+    t = t.replace(/\b([NS])\.([EW])(?=\.|[\s,;:!?)]|$)/g, function (m, a, b) { return PAIR[a + b]; });
+    t = t.replace(/\b(NE|NW|SE|SW)\b/g, function (m) { return PAIR[m]; });
+    t = t.replace(/\b(Trail|Drive|Avenue|Ave\.?|Road|Rd\.?|Street|St\.?|Boulevard|Blvd\.?|Highway|Way|Terrace|Crescent|Parkway|Court|Ct\.?|Place|Pl\.?|Lane|Ln\.?|Gate|Heights|Common|Landing|Rise|Row|Square|Loop|Close|Green|View|Point|Bay|Cove|Walk|Link|Crossing|Centre|Center) ([NSEW])(?=[\s,;:.!?)]|$)/g,
+      function (m, rt, d) { return rt + ' ' + ONE[d]; });
     return t;
   }
 
@@ -549,8 +594,8 @@
         var len = Number(m.length) || 0;
         out.push({
           instruction: cleanInstructionText(m.instruction || ''),
-          verbalPre: cleanInstructionText(m.verbal_pre_transition_instruction || ''),
-          verbalPost: cleanInstructionText(m.verbal_post_transition_instruction || ''),
+          verbalPre: cleanInstructionText(m.verbal_pre_transition_instruction || '', true),
+          verbalPost: cleanInstructionText(m.verbal_post_transition_instruction || '', true),
           streets: (m.street_names || []).slice(),
           sign: maneuverSign(m.sign),
           lengthKm: len, cumStartKm: cum, cumEndKm: cum + len, type: m.type
@@ -2128,6 +2173,73 @@
     return 'adopt';
   }
 
+  /* v448 (NAV-ROUTE-LEARN, owner Nov 13, 2026: "I have taught
+     it a couple of times how to get to work; it doesn't show
+     me that route — it's constantly telling me to take Métis
+     Trail"): THE LEARNING VERDICT. The full route screen
+     (truckNetScreen) counts three flagging kinds, and for
+     WARNING a driver about a route all three matter. But the
+     v433 guard wired that same verdict into LEARNING, where
+     'offnet' is not an offence at all: a street simply absent
+     from the designated truck network is legal for a truck
+     (the warning text itself calls it "local access only") —
+     and every real home->work drive runs such streets (the
+     residential exit past the 600 m access allowance, the
+     collectors the City layer does not list). Screened that
+     way, his taught drives could never plant, a planted route
+     could never be adopted (its own adoption screen tainted
+     it), and the server — which pulls to the designated
+     network, Métis Trail — won by default forever. The 435
+     law stands exactly where it was written: a drive over a
+     REPORTED street (the 48 Avenue class: a posted load ban)
+     or a City RESTRICTED street teaches nothing and taints a
+     learned record it rode. What changes is only the verdict
+     LEARNING reads: reported/restricted -> 'flagged';
+     anything else the screen could judge -> 'clean'. Route
+     warnings and the exclusion re-ask keep the full screen,
+     untouched. */
+  function learnVerdictFromScreen(screen) {
+    if (!screen || !screen.stretches) return 'unknown';
+    for (var i = 0; i < screen.stretches.length; i++) {
+      var k = screen.stretches[i].kind;
+      if (k === 'reported' || k === 'restricted') return 'flagged';
+    }
+    return 'clean';
+  }
+
+  /* v448 (NAV-BLANK-SCREEN, owner Nov 13, 2026: "The entire
+     navigation screen — majority of my drive — the truck and
+     all the directions and everything were just not there"):
+     his Nov 13 drive recording shows the drive face wearing
+     the SYSTEM PiP POSTURE (.nv-pip — banner, ETA bar, speed
+     and the big truck all display:none by design for the
+     small system window) at FULL SCREEN SIZE from ~15 s into
+     the drive until ~4:20 in: the native bridge's pipChanged
+     said "in PiP" and no exit event ever landed, and nothing
+     in the web layer ever questioned it. THE POSTURE TRUTH:
+     a posture is only as true as the box the screen actually
+     occupies. This pure decision is fed the drive screen's
+     real box and the real window:
+       - the in-app mini owns its posture (isMini) -> keep;
+       - the screen fills the window (>= 90% both ways) -> it
+         is NOT a picture-in-picture, whatever the channel
+         last said: an inPip posture must EXIT;
+       - the screen is small in the window (<= 65% BOTH
+         ways — a shrunk window shrinks in both dimensions;
+         a split screen keeps one full dimension and keeps
+         the channel's word) -> a full posture must ENTER
+         the compact face;
+       - anywhere between (split screen, a wide floating
+         window) -> keep the channel's word; the face there is
+         a judgment call, not a lie. */
+  function pipPostureDecision(inPip, isMini, boxW, boxH, winW, winH) {
+    if (isMini) return 'keep';
+    if (!(boxW > 0) || !(boxH > 0) || !(winW > 0) || !(winH > 0)) return 'keep';
+    if (boxW >= winW * 0.9 && boxH >= winH * 0.9) return inPip ? 'exit' : 'keep';
+    if (boxW <= winW * 0.65 && boxH <= winH * 0.65) return inPip ? 'keep' : 'enter';
+    return 'keep';
+  }
+
   /* ================= NAVPURE-END ================= */
 
   /* v135: THE AVATAR — a truck, not a puny arrow (owner, Oct 17,
@@ -2465,7 +2577,13 @@
       window.addEventListener('resize', function () {
         try {
           if (driveResizeTimer) clearTimeout(driveResizeTimer);
-          driveResizeTimer = setTimeout(function () { driveResizeTimer = null; refitDriveMap(); }, 160);
+          driveResizeTimer = setTimeout(function () {
+            driveResizeTimer = null;
+            refitDriveMap();
+            /* v448: a resize IS a window-truth change — the
+               moment a stuck posture can be caught. */
+            reconcilePipPosture();
+          }, 160);
         } catch (e) {}
       });
     }
@@ -2528,6 +2646,43 @@
       } catch (e) {}
     } catch (e) {}
   }
+
+  /* v448 (NAV-BLANK-SCREEN): the posture SELF-CHECK. The
+     event channel (the native bridge) is a REPORT, not the
+     truth — on Nov 13, 2026 it reported "in PiP" as his
+     window reached full screen and never reported the exit,
+     so the drive face sat in the chrome-hiding PiP posture
+     for most of a drive to work. The truth is measurable:
+     the drive screen's own box against the window
+     (pipPostureDecision, NAVPURE). Called on window resize,
+     on return to visibility, at drive start, and on a slow
+     cadence from the drive tick — a wrong posture now heals
+     itself within a couple of seconds, in both directions,
+     instead of lasting a whole drive. The parked faces are
+     left alone: a hidden screen has no box to judge by, and
+     the in-app mini owns its posture by design. */
+  function reconcilePipPosture() {
+    try {
+      if (!S || !S.drive) return;
+      var scr = docEl('nv_drive_screen') ||
+        (nvBody ? nvBody.querySelector('#nv_drive_screen') : null);
+      if (!scr) return;
+      if (scr.classList.contains('nv-parked')) return;
+      var dec = pipPostureDecision(!!S._inPip, scr.classList.contains('nv-mini'),
+        scr.clientWidth || 0, scr.clientHeight || 0,
+        (typeof window !== 'undefined' && window && window.innerWidth) || 0,
+        (typeof window !== 'undefined' && window && window.innerHeight) || 0);
+      if (dec === 'exit') applyPipFace(false);
+      else if (dec === 'enter') applyPipFace(true);
+    } catch (e) {}
+  }
+  try {
+    if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        try { if (!document.hidden) reconcilePipPosture(); } catch (e) {}
+      });
+    }
+  } catch (e) {}
 
   /* v222 (PIP-LANDS-HOME-OCT22, owner spec): Back on the map page
      sends the map into screen-in-screen AND OPENS THE MAIN
@@ -2896,6 +3051,12 @@
   }
   function speak(text) {
     if (!text || !S || S.settings.muted) return;
+    /* v448 (NAV-TTS-NE): the ONE mouth normalizes for the ear
+       first — compass quadrants become words (speechText,
+       NAVPURE) before either engine hears the line, so no
+       spoken instruction or street read-out can ever spell
+       "N E" again, whichever voice path carries it. */
+    text = speechText(text);
     /* v212 (NATIVE TTS — Stage E): in the Android shell the
        NATIVE speech engine says the line (ShiftTrack.speakText).
        It is not bound by the WebView speechSynthesis failure
@@ -5238,9 +5399,20 @@
                 var destAtAsk = S.dest;
                 screenLine(lbuilt0.line, lbuilt0.plan, function (lres) {
                   if (!S || S.dest !== destAtAsk) { if (S) S.rerouting = false; return; }
-                  var dec = learnedRouteDecision(true, lres.verdict);
+                  /* v448: adoption reads the LEARNING verdict
+                     (learnVerdictFromScreen) — a learned line
+                     whose only offence is leaving the designated
+                     network is ADOPTED (it is his legal usual
+                     way); reported/restricted still taints. */
+                  var lverdict = lres.verdict;
+                  if (lverdict === 'flagged' && learnVerdictFromScreen(lres.screen) !== 'flagged') lverdict = 'clean';
+                  var dec = learnedRouteDecision(true, lverdict);
                   if (dec === 'taint') {
-                    try { NavLearn.markTainted(NavLearn.pairKeyFor(S.pos, S.dest), 'trucknet'); } catch (e) {}
+                    /* v448: taint the record that was actually
+                       offered (the endpoint match's own key),
+                       not a re-derived cell key that may name
+                       an empty cell and let the record live. */
+                    try { NavLearn.markTainted(lbuilt0.key || NavLearn.pairKeyFor(S.pos, S.dest), 'trucknet'); } catch (e) {}
                     S.rerouting = false; doRoute(); return;
                   }
                   if (dec === 'skip-once') { S.learnSkipOnce = dCell0; S.rerouting = false; doRoute(); return; }
@@ -5818,7 +5990,19 @@
             if (S.onLearnedRoute) {
               try { S.learnSuppressDest = NavLearn.destCellOf(S.dest); } catch (e) {}
               S.onLearnedRoute = false;
-              if (S.learnTrip) { S.learnTrip.onLearned = false; S.learnTrip.suggested = null; }
+              /* v448: the trip keeps its reference line and its
+                 learned provenance. The v433 code nulled both,
+                 which made the finished drive unjudgeable
+                 (no reference -> no deviation -> "followed" ->
+                 nothing learned): leaving a learned route once
+                 erased everything the drive could teach,
+                 including the way he actually drove it.
+                 nlApplyDrive now judges the drive whole: rode
+                 the learned line -> strengthened; left it and
+                 drove his own way -> that way is the newest
+                 plant for the pair. Suppression above still
+                 spends the learned route for this drive's
+                 fresh routes, exactly as before. */
             }
             banner('Off route — re-routing…', '');
             speak('Off route. Re-routing.');
@@ -6620,7 +6804,14 @@
           if (typeof window === 'undefined' || !window.NavLearn) { /* learning inert */ }
           else if (!S.settings || S.settings.mode === 'car' || truckNetCoverage(ltrip433.trace) === 'out') closeTrip433(undefined);
           else screenLine(ltrip433.trace, null, function (tres) {
-            closeTrip433(tres.verdict === 'flagged' ? 'flagged' : (tres.verdict === 'unknown' ? 'unknown' : 'clean'));
+            /* v448: the teach/taint flag reads the LEARNING
+               verdict — a drive whose only offence is off-network
+               streets TEACHES (and never taints); reported /
+               restricted still blocks the teach and taints a
+               learned record the drive rode. */
+            var lflag448 = tres.verdict;
+            if (lflag448 === 'flagged' && learnVerdictFromScreen(tres.screen) !== 'flagged') lflag448 = 'clean';
+            closeTrip433(lflag448 === 'flagged' ? 'flagged' : (lflag448 === 'unknown' ? 'unknown' : 'clean'));
           });
         }
         /* v212: the shell's drive bridges stand down with the
@@ -7075,6 +7266,16 @@
       }
       function driveTickBody() {
         if (!S.drive || !S.plan || !S.line || !S.pos || S.arrived) return null;
+        /* v448 (NAV-BLANK-SCREEN): the posture self-check on a
+           slow cadence — the tick is the one heartbeat that is
+           guaranteed alive for the whole drive, so a posture
+           the event channel got wrong heals here within ~2 s
+           instead of lasting the drive. Two layout reads every
+           couple of seconds; nothing else moves. */
+        if (!S._pipHealAt || Date.now() - S._pipHealAt >= 2000) {
+          S._pipHealAt = Date.now();
+          try { reconcilePipPosture(); } catch (e) {}
+        }
         var pr = distToRouteM(navPos(), S.line); /* v432: believed position — the countdown holds still on a parked truck */
         var dp = driveProgress(S.plan, pr.along);
         var showNext = !!dp.next;

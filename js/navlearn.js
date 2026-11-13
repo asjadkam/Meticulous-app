@@ -73,8 +73,25 @@
                                   suggested line counts as OFF that route */
   var NL_DEVIATE_FRAC = 0.25;  /* share of off-line points that makes the
                                   drive a material deviation */
-  var NL_COMPLETE_DEST_M = 250;/* the trace must end within this of the
-                                  destination for the drive to teach */
+  var NL_COMPLETE_DEST_M = 400;/* the trace must end within this of the
+                                  destination for the drive to teach.
+                                  v448: 250 -> 400 — a big yard's gate
+                                  sits hundreds of metres from its pin
+                                  (his Nov 4 tape: parked AT the site
+                                  with 140 m of route still left); at
+                                  250 m his completed drives to work
+                                  judged "incomplete" and taught
+                                  nothing, however often he drove
+                                  his own way. The end-of-trace test
+                                  still bars pass-bys: the drive must
+                                  END here, after a real drive. */
+  var NL_MATCH_M = 350;        /* v448: a stored pair matches a asked
+                                  pair when BOTH endpoints sit within
+                                  this — the ~150 m cell key alone
+                                  made the same home->work pair a
+                                  different pair whenever a drive
+                                  started a street over or the pin
+                                  moved a yard gate's width. */
   var NL_COMPLETE_MIN_M = 400; /* shortest driven length that can teach */
   var NL_COMPLETE_MIN_PTS = 8; /* fewest trace points that can teach */
   var NL_MAX_PAIRS = 60;       /* learned pairs kept (oldest-driven evicted) */
@@ -216,14 +233,28 @@
          way — and adds one to its count;
        - a completed drive ON the learned route (it was the
          suggestion this time) strengthens it: count + 1, the
-         stored line kept (stability beats chasing GPS noise). */
+         stored line kept (stability beats chasing GPS noise).
+     v448: two contract repairs. (1) The record a drive belongs
+     to is found by endpoint match (nlFindRecord), not only by
+     the drive's own cell key — a refresh lands on the record
+     the driver was actually offered, never a duplicate under a
+     neighbouring cell. (2) A completed drive that STARTED on
+     the learned route but then materially DEVIATED from it is
+     a deviation like any other: the way he actually drove is
+     the newest plant/refresh for the pair. Before v448 the
+     Navigator nulled such a trip's reference line, the
+     assessment read it as "followed", and the drive taught
+     nothing at all — leaving a learned route even once made
+     the whole drive invisible to the learner. */
   function nlApplyDrive(data, drive) {
     data = nlNormData(data);
     if (!drive || !drive.pairKey || !drive.assessment) return { data: data, changed: false, why: 'nodrive' };
     var a = drive.assessment;
     if (!a.completed) return { data: data, changed: false, why: 'incomplete' };
     var now = drive.now || Date.now();
-    var rec = data.routes[drive.pairKey] || null;
+    var found = nlFindRecord(data, drive.origin, drive.dest);
+    var recKey = found ? found.key : drive.pairKey;
+    var rec = found ? found.rec : (data.routes[drive.pairKey] || null);
     var dur = (typeof drive.durationSec === 'number' && drive.durationSec > 0) ? drive.durationSec : 0;
     /* v433 (NAV-TRUCK-ROUTING): the truck-legality guard runs
        BEFORE every stage-1 rule. A flagged drive teaches
@@ -240,7 +271,7 @@
       return { data: data, changed: false, why: 'restricted' };
     }
     if (drive.screenFlag === 'unknown') return { data: data, changed: false, why: 'unverified' };
-    if (drive.onLearned) {
+    if (drive.onLearned && !a.deviated) {
       if (!rec) return { data: data, changed: false, why: 'learned-gone' };
       rec.count = (rec.count || 0) + 1;
       rec.totalDurSec = (rec.totalDurSec || 0) + dur;
@@ -263,7 +294,7 @@
         origin: nlRoundLine([drive.origin])[0], dest: nlRoundLine([drive.dest])[0],
         destLabel: drive.destLabel || ''
       };
-      data.routes[drive.pairKey] = rec;
+      data.routes[recKey] = rec;
     }
     var keys = Object.keys(data.routes);
     if (keys.length > NL_MAX_PAIRS) {
@@ -273,19 +304,49 @@
     return { data: data, changed: true, why: rec.count === 1 ? 'planted' : 'refreshed' };
   }
 
+  /* v448: the stored record (if any) that belongs to an
+     origin->dest pair — matched on the pair's ACTUAL endpoints,
+     not only its cell key. A record matches when both its
+     endpoints sit within NL_MATCH_M of the asked ones; the
+     nearest match wins and an exact cell hit scores ~0, so
+     yesterday's behaviour is preserved wherever it worked.
+     Records planted before endpoints were stored fall back to
+     their line's own ends. Returns {key, rec} or null. */
+  function nlFindRecord(data, origin, dest) {
+    if (!origin || !dest) return null;
+    var best = null, bestScore = Infinity;
+    var keys = Object.keys(data.routes || {});
+    for (var i = 0; i < keys.length; i++) {
+      var rec = data.routes[keys[i]];
+      if (!rec || !rec.line || rec.line.length < 2) continue;
+      var ro = rec.origin || rec.line[0];
+      var rd = rec.dest || rec.line[rec.line.length - 1];
+      if (!ro || !rd) continue;
+      var dO = nlHavM(origin, ro), dD = nlHavM(dest, rd);
+      if (dO <= NL_MATCH_M && dD <= NL_MATCH_M) {
+        var score = dO + dD;
+        if (score < bestScore) { bestScore = score; best = { key: keys[i], rec: rec }; }
+      }
+    }
+    return best;
+  }
+
   /* The learned record for a pair, or null — the fresh-account
      answer is null for every pair, which IS standard routing. */
   function nlLookupIn(data, origin, dest) {
     data = nlNormData(data);
-    var key = nlPairKey(origin, dest);
-    if (!key) return null;
-    var rec = data.routes[key];
-    if (!rec || !rec.line || rec.line.length < 2) return null;
+    var found = nlFindRecord(data, origin, dest);
+    if (!found) return null;
     /* v433: a tainted record (its line runs a truck-illegal
        stretch — see nlApplyDrive / markTainted) is never
        offered, exactly as if it had never been learned. */
-    if (rec.tainted) return null;
-    return rec;
+    if (found.rec.tainted) return null;
+    /* v448: remember WHICH key matched — the caller taints by
+       this key, not by a re-derived cell key that may name a
+       different (empty) cell. The mark rides the in-memory
+       object only; a store round-trip never carries it. */
+    found.rec.__foundKey = found.key;
+    return found.rec;
   }
 
   /* Build the route the Navigator adopts for a learned pair:
@@ -325,15 +386,44 @@
     try { return (typeof window !== 'undefined' && window.App && App._store) ? App._store : null; }
     catch (e) { return null; }
   }
+  /* v448: the session's own truth, held only while the store
+     REFUSES a write. The store has reported failure since v48
+     and the owner's phone sits at the storage wall (the v446 /
+     v447 family) — the pre-v448 nlSave swallowed the refusal
+     whole, so a route learned in the morning could be gone by
+     the next lookup and nobody ever knew. Now a save counts
+     only when it READS BACK (the v447 verified-write law); a
+     refused save keeps the data here, nlLoad merges it over
+     the stale store copy, and the next successful save clears
+     it — learning survives the session and heals to disk the
+     first time the store takes a write again. */
+  var nlMem = null;
   function nlLoad() {
     var s = nlStore();
     var d = null;
     try { d = s ? s.get(NL_KEY, null) : null; } catch (e) { d = null; }
-    return nlNormData(d);
+    d = nlNormData(d);
+    if (nlMem) {
+      var merged = nlEmptyData();
+      Object.keys(d.routes).forEach(function (k) { merged.routes[k] = d.routes[k]; });
+      Object.keys(nlMem.routes).forEach(function (k) { merged.routes[k] = nlMem.routes[k]; });
+      return merged;
+    }
+    return d;
   }
   function nlSave(d) {
     var s = nlStore();
-    try { if (s) s.set(NL_KEY, d); } catch (e) {}
+    var ok = false;
+    try { if (s) ok = !!s.set(NL_KEY, d); } catch (e) { ok = false; }
+    if (ok) {
+      try {
+        var back = s.get(NL_KEY, null);
+        ok = !!(back && back.routes &&
+          Object.keys(back.routes).length === Object.keys((d && d.routes) || {}).length);
+      } catch (e) { ok = false; }
+    }
+    nlMem = ok ? null : d;
+    return ok;
   }
 
   var NavLearn = {
@@ -341,6 +431,7 @@
     cellKeyOf: nlCellKeyOf, pairKeyFor: nlPairKey, thinTrace: nlThinTrace,
     lineLengthM: nlLineLengthM, assessDrive: nlAssessDrive,
     applyDrive: nlApplyDrive, lookupIn: nlLookupIn, buildPlan: nlBuildPlan,
+    findRecord: nlFindRecord,
     emptyData: nlEmptyData,
 
     /* the destination's cell — the Navigator's suppression key
@@ -353,12 +444,15 @@
     },
 
     /* the adoptable route for a learned record: {line, plan,
-       count} in the shapes finalizeRoute consumes. */
+       count, key} in the shapes finalizeRoute consumes. v448:
+       key is the record's own store key (the endpoint match
+       that found it), so a taint lands on the record that was
+       actually offered. */
     planFor: function (rec, destLabel) {
       if (!rec || !rec.line || rec.line.length < 2) return null;
       var plan = nlBuildPlan(rec.line, rec, destLabel);
       if (!plan) return null;
-      return { line: rec.line.slice(), plan: plan, count: rec.count || 1 };
+      return { line: rec.line.slice(), plan: plan, count: rec.count || 1, key: rec.__foundKey || null };
     },
 
     /* v433: taint a learned record by pair key — its line
