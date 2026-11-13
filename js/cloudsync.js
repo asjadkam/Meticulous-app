@@ -3857,10 +3857,46 @@
           var trkLocalSid = (localVal && typeof localVal === 'object' && !Array.isArray(localVal))
             ? (Number(localVal.sessionId) || 0) : 0;
           if (trkLocalSid > 0 && trkCloudSid > trkLocalSid) {
-            lsSetRaw(key, JSON.stringify(d.v));
-            meta.keys[key] = { t: cloudTs, s: cloudTs };
-            applied++;
-            return;
+            /* v452 (TIMER-SELF-PAUSE-NOV13, owner Fri Nov 13,
+               2026 ~11:10: his card stood PAUSED at 03:40:47 —
+               the full bank to the minute — with no tap from
+               him): a later pin is not proof of a later SESSION.
+               A session's pin is a DERIVATION on the surfaces
+               that restore it (trackerSessionStartMs), and one
+               dispatch legitimately carries two pins — his
+               manual start pinned the session at the 7:04 tap
+               while the plan/arm key is the 7:30 anchor the
+               card counts from (the v411 twin-identity note).
+               This rule therefore installed a PAUSED twin copy
+               WHOLESALE over the locally RUNNING session — no
+               status check, no stamp arbitration — ahead of
+               every never-pause guard below, whose pin families
+               (±5000 ms, or pin-less) the twin sits outside.
+               The law (Nov 7, restated Nov 11/13): a cloud copy
+               may NEVER install a PAUSED state over a locally
+               RUNNING copy that carries a deliberate-transition
+               stamp (stateAt > 0 — every copy the shipped code
+               has written since v361; a stateAt-less local is
+               the pre-v361 legacy fossil of the v365 A5
+               boundary and keeps its pin-order arbitration
+               exactly). A protected copy falls through to the
+               v423-family guard below, which stands the local
+               and marks it to push UP. A genuinely newer
+               RUNNING session still installs here exactly as
+               before (the Oct 26 shape this rule was built
+               for); restores over idle/paused locals never
+               reach the protection (it requires a RUNNING
+               local). Proven in tools/timer-self-pause-nov13
+               -test.js (A2/A3/A3b fail on web 450 bytes). */
+            var trk265Local = (localVal && typeof localVal === 'object' && !Array.isArray(localVal)) ? localVal : null;
+            var trk265Protected = !!(trk265Local && trk265Local.status === 'running' &&
+              (Number(trk265Local.stateAt) || 0) > 0 && d.v.status === 'paused');
+            if (!trk265Protected) {
+              lsSetRaw(key, JSON.stringify(d.v));
+              meta.keys[key] = { t: cloudTs, s: cloudTs };
+              applied++;
+              return;
+            }
           }
         }
 
@@ -4123,7 +4159,25 @@
               lp423Local.status === 'running') {
             var lp423LocalSid = Number(lp423Local.sessionId) || 0;
             var lp423CloudSid = Number(d.v.sessionId) || 0;
-            if (lp423CloudSid === 0 || lp423LocalSid === 0 ||
+            /* v452 (TIMER-SELF-PAUSE-NOV13): the pin family
+               gains the stamp-carrying case. A paused copy
+               whose pin is an EARLIER twin of the day's session
+               (the 7:04 tap pin against the live 7:30-pinned
+               copy) reached the generic stamp game below
+               unguarded and installed in the settled window —
+               the mirror image of the v265 road closed above.
+               A locally RUNNING copy carrying a deliberate-
+               transition stamp (stateAt > 0) is therefore
+               pause-proof at ANY pin distance, in either
+               direction; the pin-family and pin-less clauses
+               stand for stamp-less copies exactly as v423
+               wrote them (the v365 A5 legacy boundary is a
+               stateAt-less local under a LATER pin, decided
+               at v265 long before this guard — untouched).
+               Proven in tools/timer-self-pause-nov13-test.js
+               (A4 fails on web 450 bytes). */
+            var lp423Stamped = (Number(lp423Local.stateAt) || 0) > 0;
+            if (lp423CloudSid === 0 || lp423LocalSid === 0 || lp423Stamped ||
                 Math.abs(lp423CloudSid - lp423LocalSid) <= 5000) {
               meta.keys[key] = dirtyStamps(cloudTs, now);
               return;
