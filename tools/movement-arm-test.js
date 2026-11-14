@@ -18,12 +18,14 @@
  *  B. at 08:00:00 exactly the session starts, stamped 08:00:00.
  *  C. app asleep until 08:37: the session starts backdated to
  *     08:00:00 exactly — never the wake time.
- *  D. v255 (owner, Sat Oct 24, 2026): no dispatch + no override
- *     -> NO plan at all. The standing setting alone is not a day
- *     of work; the tracker stays idle ('no-work-today').
+ *  D. v455 (owner, Sat Nov 14, 2026; supersedes the v255 rule of
+ *     Oct 24, 2026): no dispatch + no override -> the standing
+ *     setting IS the day's plan on a checked day; the tracker
+ *     starts at the saved time, backdated.
  *  E. the armed-plan label (the dashboard line): dispatch plan
- *     names the dispatch; a setting-only day promises nothing;
- *     override notes itself; fired / off plans promise nothing.
+ *     names the dispatch; a setting-only day promises its saved
+ *     time; override notes itself; fired / off plans promise
+ *     nothing.
  *  F. a plain manual Start with no plan still stamps the tap time.
  *  G. a closed session today -> 'done-today', never a phantom
  *     second start; a paused session is never force-resumed.
@@ -114,6 +116,12 @@ function makeWorld(opts) {
     resetAccum: function () {},
     trackerSave: function () {},
     trackerPaint: function () {},
+    /* v455 harness repair: pinSplitDay is a real function in the
+       shipped file (js/app.js, v355) outside the sliced region;
+       unstubbed, successful starts threw there and read 'error'
+       (the standing B1/C1/I1/I5 failures). Stubbed like the other
+       outside deps so starts report truthfully. */
+    pinSplitDay: function () {},
     maybePromptOdo: function () { return false; },
     App: {
       tracker: opts.tracker
@@ -200,16 +208,16 @@ console.log('— late wake —');
   eq(w._calls.confirms.length, 0, 'C4 no prompt gates the late start');
 }
 
-/* ================= D: no dispatch -> no plan (v255) ================= */
-console.log('— no dispatch: the standing time alone starts nothing —');
+/* ================= D: no dispatch -> the setting's own plan (v455) ================= */
+console.log('— no dispatch: the standing time starts the day (v455) —');
 {
   setClock(9, 15);
   const w = makeWorld({}); // standing setting 08:00, all days, no dispatch anywhere
   eq(w.App.autostartTodayInfo().source, 'setting', 'D1 no dispatch -> setting source');
-  eq(w.App.checkAutoStart(), 'no-work-today', 'D2 v255: no plan on a no-work day');
-  eq(w.App.tracker.status, 'idle', 'D3 tracker stays idle — nothing runs uncommanded');
-  eq(w.App.tracker.elapsed, 0, 'D4 no phantom elapsed accrues');
-  ok(!w._mem.autostart, 'D5 the fired flag is not consumed by a non-start');
+  eq(w.App.checkAutoStart(), 'started', 'D2 v455: the setting alone starts the day (v255 no-work-today superseded)');
+  eq(w.App.tracker.status, 'running', 'D3 tracker running from the setting start');
+  eq(w.App.tracker.elapsed, 4500, 'D4 elapsed counts from the 08:00 setting time (75 min at 09:15)');
+  ok(!!(w._mem.autostart && w._mem.autostart[TODAY]), 'D5 the fired flag is consumed by the start, as for any start');
 }
 
 /* ================= E: the armed-plan label ================= */
@@ -221,8 +229,8 @@ console.log('— armed-plan label —');
     'E1 dispatch plan: time + the dispatch named');
 
   w = makeWorld({});
-  eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), null,
-    'E2 setting-only day: no plan is promised (v255 — the card falls back to "Starts from now")');
+  eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), 'Starts 8:00 AM',
+    'E2 v455: a setting-only day promises its saved time (the v255 "Starts from now" fallback is superseded)');
 
   w = makeWorld({ active: dsp0800Active(), override: { date: TODAY, time: '07:30' } });
   eq(w.App.autostartPlanLabel(w.App.autostartTodayInfo()), 'Starts 7:30 AM (changed for today)',
@@ -312,7 +320,7 @@ console.log('— MILES-DISPATCH-GATE: passive miles need an active dispatch —'
   eq(w.App.armDayMiles(), 'no-dispatch', 'J1b a later re-check (watchdog/resume) changes nothing');
   eq(w._lm.starts.length, 0, 'J1c LiveMiles.startDay was never called');
   eq(w._lm.dayKey(), null, 'J1d no watch is live — personal movement records nothing');
-  eq(w.App.checkAutoStart(), 'no-work-today', 'J1e the start plan is untouched by the gate (v255 holds)');
+  eq(w.App.checkAutoStart(), 'started', 'J1e v455: the start plan is the setting\u2019s own and fires — the v263 gate governs the passive MILES watch (J1a\u2013d), not the start');
 
   /* a dispatch for TOMORROW does not arm today */
   w = makeWorld({ liveMiles: true, list: [{ id: 'dT', jobSite: 'Future', scheduledAt: TMRO + 'T08:00', status: 'active' }] });

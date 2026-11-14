@@ -1,8 +1,8 @@
 {
   "version": 76,
   "apkUrl": "https://asjadkam.github.io/Meticulous-app/meticulous-v76.apk",
-  "webVersion": 454,
-  "notes": "Web 454 — CLOSED-DAY-CORRECTION-DURABILITY (Nov 13, 2026; layers on web 453). Web 453 gave a closed day its −1/+1 door and the tap did land — the Manifest repainted the corrected figure — but a browser pass on the live 453 build proved the correction did not survive a reload: Nov 13 read 5, one tap showed 4, a reload read 5 again. Root cause, proven in a new bench (two page lives over one store and one cloud, the real geoloads driving the tap and the real cloudsync running every pull, push and merge): the honest push and pull legs were never broken; the sync merge's same-lineage arbitration for geoloads days runs on raw updatedAt alone — a stamp every engine/state re-persist bumps — so a later-stamped copy of the day whose facts PREDATE the correction (an evening re-persist of the uncorrected record, or a twin stamped on a skewed clock) outvoted the correction in both the pull and the push merge, and the stale correction was re-taught to every surface. Fix: (1) js/geoloads.js — the two record-writing correction doors (GeoLoads.nudgeDate, and nudge's not-watching branch) stamp each correction with corrAt (its own stamp, minted ahead of every stamp the record already carries — max(now, updatedAt+1, corrAt+1), the v445 idiom at record level) and corrFrom (the value it replaced); only the correction fields move on the record, exactly as before. (2) js/cloudsync.js — mergeTelemetryDays' geoloads same-lineage branch keeps the v293 stamp winner for the record, but when the two copies' corr differs it arbitrates the corr by that evidence: both sides stamped → the later corrAt donates (a later genuine correction still wins); one side stamped → it donates when the other side's corr is exactly its corrFrom (the other side is the pre-correction state of the day, however fresh its updatedAt). Counts that differ keep the v224 totals law; livemiles untouched; counting rules, the peg law, live-day behaviour, close/Revenue logic untouched. NO NATIVE CHANGE.",
+  "webVersion": 455,
+  "notes": "Web 455 — AUTOSTART-ARMING (Nov 14, 2026; layers on web 454). The owner's Saturday recording: auto-start saved ON for 07:00, Mon–Sat checked, no dispatch for the day — yet the Revenue card read \"Today: no auto-start scheduled\" and at 08:31 the dashboard stood at 00:00:00, \"Starts from now\": nothing had started, nothing backdated to 07:00, against the card's own promise. Root cause (js/app.js, autostartPlan): the v255 gate — a day whose plan resolved to the standing setting (no dispatch, no per-day override) was refused outright ('no-work-today'), so the checker never reached its backdated start, the card printed 'no auto-start scheduled', the native wake was disarmed and the dashboard fell back to 'Starts from now'. Fix (js/app.js; modules/autostart.js comment only): the v255 setting gate is removed — with the setting ON and today a checked day, the resolved time IS the day's start: a dispatch still governs at its currently edited time, an override at its time, and the saved time governs when neither exists; the OFF gate and the unchecked-day gate (the phantom law) are untouched. The one hazard the old gate also covered is re-homed explicitly: a NEW store-only proof, autostartDayClosed, refuses a proven-closed day at the start door ('closed-today') — a completed dispatch claiming the day, or its rev_entries completion echo naming a claiming record (a shape web 454 could actually re-start) — while a cancelled dispatch closes nothing and a genuinely open claim outranks completed ones; the card's willStart reads the same proof, so no face promises a refused start. NO NATIVE CHANGE.",
   "files": {
     "assets/avatar-dump.png": "666495146fe74dcbf25b4d288bc3876753217b0d125dbd7298b6ce2ebf4a2746",
     "assets/avatar-pickup.png": "87173d57ec3582476febfa47de99c128cd6a290dd23a8fa1a53f646c70473f37",
@@ -17,7 +17,7 @@
     "css/style.css": "30906dc9974aff0f559d6bb211cffa9b314f327e237af1d7d3d3448b3d999e7e",
     "firebase-messaging-sw.js": "6cf723932d2eb97e16ee1f0534dbf9b3235782b4f6810b2128b971ed2fffa10c",
     "index.html": "778f1a9593910b776c9a0626802f9fa6dbfed27defc47aab8e6cf8c827204215",
-    "js/app.js": "8a485fd4ca01b9e5b2b56823e7cf96fd40fc90de96b272deff9714d8b879a485",
+    "js/app.js": "a8d850ffad051cd38c617fe191e28cb4bdf55c2f46fc4e89c41881bc41de22ee",
     "js/chat-routes.json": "946b15991cbce65776b6683d7246f2f6df911d8dc262f4678b4d1fb2c9932b2d",
     "js/chatbot.js": "182b328b64d7fa2b491e6a4a35432c8515532eb4e0655c67b03aaf4cd13784cc",
     "js/cloudsync.js": "b49dedc064c7347c0fece5443d21c7a3d3b2e429259cba3e6abb7baa02aec0c7",
@@ -45,7 +45,7 @@
     "js/vendor/pdf.worker.min.js": "feabdf309770ed24bba31a5467836cdc8cf639c705af27d52b585b041bb8527b",
     "js/yardstart.js": "8f93982d6f8b94414c34f8b182127fc59de55f14237e1d5becafc3dd87fb86cd",
     "modules/account.js": "003e4b97827623be46f74146cb192cb268da379269ac6c88f5cf01f083f1afcf",
-    "modules/autostart.js": "b99afc5d1933db48ff5957ab2fd901c0f93f73b07a022a967fefb14ef0a09236",
+    "modules/autostart.js": "93c9c9d0e47eaa7da14b22a11d1d4079d0b5df09b9e9c610d77c042a34484b89",
     "modules/billing.js": "5027d7d3fad18d698c819aad4168d763fd5346c78b4daa5a5ebce1fb70c53aeb",
     "modules/connect.js": "cd0f25a84ece432d4bc8bb3432f15eefe06088997f1d9e21a43657373249b418",
     "modules/damage.js": "368b434eb9ed8cf9f986636892bf442a44c62017fe458241dbef7147897e4299",

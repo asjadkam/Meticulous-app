@@ -4,9 +4,10 @@
  * the tracker auto-start must follow the day's DISPATCH time as
  * currently saved/edited — tomorrow (Fri Nov 6) carries a 10:00 AM
  * dispatch, so tomorrow's start is 10:00, not the fixed saved
- * 9:00 AM. The fixed saved time remains only as a fallback for a
- * dispatch day that carries no time of its own (and, per v255, is
- * never a day of work by itself). Added face (21:50): the home
+ * 9:00 AM. The fixed saved time remains a fallback for a
+ * dispatch day that carries no time of its own (and, per v455 —
+ * superseding v255 — IS the day's schedule by itself on a checked
+ * day with no dispatch). Added face (21:50): the home
  * tracker card's "Will count from …" line must show that same
  * dispatch-derived time for the day.
  *
@@ -23,8 +24,9 @@
  *  - a date-only dispatch (claims the day, carries no time) falls
  *    back to the saved 09:00 WITH source 'dispatch' (fallback ON a
  *    dispatch day);
- *  - no dispatch at all -> no next plan (the fixed time alone
- *    arms nothing, v255);
+ *  - no dispatch at all -> the next plan is the fixed saved time
+ *    on the next selected day (v455; the v255 arms-nothing pin is
+ *    superseded);
  *  - today's still-pending dispatch plan is the next plan while
  *    today is unstarted (arm selection parity).
  * Static pins then hold the wiring: trackerPaint's v342 label
@@ -142,7 +144,7 @@ section('editing the dispatch moves the auto-start');
 }
 
 /* ================= fallback law ================= */
-section('the fixed saved time is only a fallback');
+section('the fixed saved time: fallback on a dispatch day, the schedule itself without one (v455)');
 {
   const fired = {}; fired[TODAY] = true;
   const w = makeWorld({ fired: fired, list: [dsp('n6', TOMORROW, null)] }); // date-only record
@@ -152,7 +154,9 @@ section('the fixed saved time is only a fallback');
   eq(info.source, 'dispatch', '…on a dispatch day (source stays dispatch)');
 
   const w2 = makeWorld({ fired: fired, list: [] });
-  eq(w2.App.autostartNextInfo(), null, 'no dispatch anywhere -> no next plan: the fixed time alone arms nothing');
+  const nx2 = w2.App.autostartNextInfo();
+  ok(!!nx2 && nx2.date === TOMORROW && nx2.source === 'setting' && nx2.time === '09:00',
+    'v455: no dispatch anywhere -> the next plan is the saved time on the next selected day (the fixed time IS the schedule without a dispatch; the v255 arms-nothing pin is superseded)');
 }
 
 /* ================= today still pending ================= */

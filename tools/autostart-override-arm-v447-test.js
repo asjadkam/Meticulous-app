@@ -109,7 +109,11 @@ function bootApp(opts) {
   evalIn(storeLit + '\nwindow.__store = store;');
   const fns = ['todayStr', 'autoStartPrefs', 'autoStartFired', 'autoStartLabel',
     'autostartParseSched', 'autostartRecordDate', 'autostartDispatchFor',
-    'autostartEffective', 'autostartPlan', 'autostartTodayMs'];
+    'autostartEffective', 'autostartPlan', 'autostartTodayMs',
+    /* v455 harness completeness: autostartTodayInfo now also reads
+       autostartDayClosed (the engine's closed-day gate) — the slice
+       list must carry it or the info function throws in this box. */
+    'autostartDayClosed'];
   for (const f of fns) { const src = extractFn(appSrc, 'function ' + f + '('); if (src) evalIn(src); }
   evalIn(extractFn(appSrc, 'App.setAutostartOverride = function'));
   evalIn(extractFn(appSrc, 'App.autostartTodayInfo = function'));

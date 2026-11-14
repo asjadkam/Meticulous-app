@@ -29,9 +29,12 @@
  *    a start that may never happen)
  *  - v255 (owner, Sat Oct 24, 2026): the standing setting alone is
  *    NOT a day of work — no dispatch + no override -> no plan, no
- *    start ('no-work-today'). The scheduled-time start belongs to
- *    dispatch-driven auto-start on a dispatch day (or a day he
- *    explicitly set an override for).
+ *    start ('no-work-today'). SUPERSEDED by v455 (owner, Sat Nov 14,
+ *    2026): the saved setting IS the schedule on a checked day —
+ *    no dispatch + no override -> a plan at the saved time, started
+ *    backdated; a CLOSED day is refused at the start door instead
+ *    ('closed-today'). The v255 pins below were re-pinned to the
+ *    v455 law; see tools/autostart-arming-v455-test.js.
  */
 'use strict';
 const fs = require('fs');
@@ -105,6 +108,13 @@ function makeWorld(opts) {
     resetAccum: function () {},
     trackerSave: function () {},
     trackerPaint: function () {},
+    /* v455 harness repair: pinSplitDay is a real function in the
+       shipped file (js/app.js, v355) that lives OUTSIDE the sliced
+       region; unstubbed, every successful start in this sandbox
+       threw at that call and read back 'error' (the six standing
+       'error' failures). Stubbed like the region's other outside
+       deps (resetAccum, trackerSave) so starts report truthfully. */
+    pinSplitDay: function () {},
     maybePromptOdo: function () { return false; },
     trackerSessionStartMs: function () { return Date.now(); },
     App: {
@@ -192,14 +202,15 @@ console.log('— effective-time precedence —');
   eq(p.willStart, true, 'enabled + right day -> will start');
   eq(p.time, '06:30', 'plan carries the dispatch time');
 
-  /* v255: the standing time alone makes NO plan — it is a fallback
-     FOR a dispatch day, never a day of work by itself. The resolved
-     time/source are still reported so the card speaks honestly. */
+  /* v455 (supersedes the v255 pin): the standing time alone DOES
+     make the day's plan on a checked day — the saved setting is
+     the schedule when no dispatch exists. The resolved time/source
+     ride along as before. */
   p = E.plan(prefs, null, [], null, TODAY, DOW);
-  eq(p.willStart, false, 'v255: no dispatch + no override -> no plan');
-  eq(p.reason, 'no-work-today', 'v255: no-work-today reason reported');
-  eq(p.source, 'setting', 'v255: resolved source still reported as setting');
-  eq(p.time, '08:00', 'v255: resolved fallback time still reported');
+  eq(p.willStart, true, 'v455: no dispatch + no override -> a plan on the setting alone');
+  eq(p.reason, 'ok', 'v455: ok reason reported (no-work-today is gone)');
+  eq(p.source, 'setting', 'v455: resolved source reported as setting');
+  eq(p.time, '08:00', 'v455: the plan carries the saved time');
   p = E.plan(prefs, null, [], { date: TODAY, time: '07:15' }, TODAY, DOW);
   eq(p.willStart, true, 'v255: a per-day override (his explicit command for today) still makes a plan');
   eq(p.time, '07:15', 'v255: the override plan carries its time');
@@ -225,14 +236,18 @@ console.log('— checkAutoStart behavior —');
   ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
     'session anchored to dispatch time (elapsed ~30m, got ' + w.App.tracker.elapsed + 's)');
 
-  /* standing setting 30 min ago, NO dispatch: v255 — the standing
-     time alone never starts a session. This is the owner's Sat
-     Oct 24, 2026 incident: a Saturday inside his Mon–Sat days, no
-     dispatch, and the tracker ran uncommanded from 8:00 AM. */
+  /* standing setting 30 min ago, NO dispatch: v455 (supersedes the
+     v255 pin) — the standing time alone starts the session on a
+     checked day, backdated to the saved time. This is the owner's
+     Sat Nov 14, 2026 incident, the mirror of Oct 24's: a Saturday
+     inside his Mon–Sat days, no dispatch, 07:00 saved — and the
+     shift had NOT started at 08:31 ("Why does the auto starter
+     say 7 am but the shift hasn't started?"). */
   w = makeWorld({ onboarding: { autoStart: true, autoStartTime: hhmm(t30), autoStartDays: [0, 1, 2, 3, 4, 5, 6] } });
-  eq(w.App.checkAutoStart(), 'no-work-today', 'standing time reached, no dispatch -> no start (v255)');
-  eq(w.App.tracker.status, 'idle', 'no-dispatch day leaves the tracker idle');
-  eq(w.App.tracker.elapsed, 0, 'no phantom elapsed on a no-work day');
+  eq(w.App.checkAutoStart(), 'started', 'v455: standing time reached, no dispatch -> the setting starts the day');
+  eq(w.App.tracker.status, 'running', 'v455: the tracker runs from the setting start');
+  ok(w.App.tracker.elapsed >= 25 * 60 && w.App.tracker.elapsed <= 35 * 60,
+    'v455: elapsed is anchored to the saved time (~30m, got ' + w.App.tracker.elapsed + 's)');
 
   /* missed start: dispatch 3h ago, app was asleep -> on open it starts
      by itself, backdated to the dispatch time, and NO prompt is shown
@@ -275,15 +290,15 @@ console.log('— checkAutoStart behavior —');
   w = makeWorld({ active: dsp('a', TODAY, hhmm(minsAheadTime(60))), onboarding: { autoStart: true, autoStartTime: hhmm(minsAheadTime(90)), autoStartDays: [0, 1, 2, 3, 4, 5, 6] } });
   eq(w.App.checkAutoStart(), 'not-yet', 'dispatch later today -> not-yet');
 
-  /* completing today's dispatch removes the day's only claim:
-     with no live dispatch and no override there is no plan at
-     all (v255) — the standing time does not take over and start
-     a session nobody dispatched */
+  /* completing today's dispatch removes the day's only claim —
+     and under v455 that is a CLOSED day, refused at the start
+     door ('closed-today'): the standing time does not take over
+     and resurrect a session on a day that stands complete */
   w = makeWorld({
     list: [dsp('a', TODAY, hhmm(t30), 'completed')],
     onboarding: { autoStart: true, autoStartTime: hhmm(minsAheadTime(90)), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
   });
-  eq(w.App.checkAutoStart(), 'no-work-today', 'completed dispatch -> no plan remains (v255)');
+  eq(w.App.checkAutoStart(), 'closed-today', 'v455: completed dispatch -> the day stands closed, no start');
   eq(w.App.tracker.status, 'idle', 'completed dispatch does not start the tracker');
 }
 
@@ -320,14 +335,14 @@ console.log('— untimed dispatch shapes still claim the day (v261) —');
     list: [{ id: 'c2', jobSite: 'Tomorrow Job', scheduledAt: '', date: TOMORROW, status: 'Scheduled' }],
     onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
   });
-  eq(w.App.checkAutoStart(), 'no-work-today', 'tomorrow date-field record -> no plan today');
+  eq(w.App.checkAutoStart(), 'started', 'v455: tomorrow date-field record claims nothing today — the saved setting starts today');
 
   /* a completed untimed dispatch claims nothing either */
   w = makeWorld({
     active: { id: 'u2', jobSite: 'Done Job', scheduledAt: TODAY, status: 'completed' },
     onboarding: { autoStart: true, autoStartTime: hhmm(t30b), autoStartDays: [0, 1, 2, 3, 4, 5, 6] }
   });
-  eq(w.App.checkAutoStart(), 'no-work-today', 'completed date-only dispatch -> no plan');
+  eq(w.App.checkAutoStart(), 'closed-today', 'v455: completed date-only dispatch -> the day stands closed');
 }
 
 /* ================= Revenue card wiring (static) ================= */

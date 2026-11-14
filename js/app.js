@@ -5595,18 +5595,63 @@
     if (!Array.isArray(prefs.days) || prefs.days.indexOf(dayIdx) === -1) return { willStart: false, reason: 'wrong-day' };
     var eff = autostartEffective(prefs, active, list, override, today);
     /* v255 (MANUAL-START-BACKDATED / TRACKER-RUNNING-UNCOMMANDED,
-       owner, Sat Oct 24, 2026 18:19–18:33 MDT): the standing setting
-       time is only ever a fallback FOR a dispatch day — it is not a
-       day of work by itself. A day with no eligible dispatch and no
-       per-day override (his own explicit command for today) has NO
-       plan: nothing auto-starts, nothing arms natively, and the
-       tracker stays idle until he starts it himself. Before this,
-       a Saturday inside his Mon–Sat days with the standing 8:00 AM
-       setting started a session by itself on a no-work day. The
-       resolved time/source still ride along so the card can speak
-       honestly about what WOULD have been the fallback. */
-    if (eff.source === 'setting') return { willStart: false, reason: 'no-work-today', time: eff.time, source: eff.source };
+       owner, Sat Oct 24, 2026): the standing setting time was made
+       "only a fallback FOR a dispatch day" — a day with no eligible
+       dispatch and no per-day override had NO plan at all
+       ('no-work-today'). SUPERSEDED by v455 below: the gate is
+       gone, and the history is kept with the fix that replaced it. */
+    /* v455 (AUTOSTART-ARMING, owner, Sat Nov 14, 2026): his word —
+       "I told you exactly this last night! Why does the auto
+       starter say 7 am but the shift hasn't started?" His saved
+       setting (on, 07:00, Mon–Sat checked) IS the schedule: on a
+       checked day the standing time makes the day's plan by
+       itself, exactly as the card's own note promises ("if the
+       app was closed, it starts counting from this time when you
+       open it"). A dispatch still governs WHEN one exists for
+       today (its edited time), an override still beats both, and
+       the on/off + day-of-week gates above remain the WHETHER —
+       an unchecked day (Sunday) still starts nothing, dispatch or
+       not: the phantom law is the days gate, never this one. A
+       CLOSED day is refused separately, at the start door
+       (autostartDayClosed in checkAutoStart), not by un-scheduling
+       the day here. */
     return { willStart: true, reason: 'ok', time: eff.time, source: eff.source };
+  }
+  /* v455 (AUTOSTART-ARMING): the day-closed proof for the START
+     door — the day-based prongs of closedDayProof411 (v411/v440),
+     read for the auto-start question: does today's booked work
+     stand COMPLETE, with nothing still open? A dispatch record
+     claiming today closes it when the record itself stands
+     completed, or when the completion's Revenue line names it
+     (the v440 echo shape: the record rolled back open, the booked
+     completion still standing — prong 3). Any OTHER record still
+     genuinely open for today (no completion line against it)
+     means the day is not closed and its start proceeds. A
+     cancelled record is not a close: it claims nothing, and the
+     saved setting governs the day as usual. Store-only, like the
+     rest of this region. */
+  function autostartDayClosed(active, list, today) {
+    var rev = store.get('rev_entries', []);
+    var paidIds = {};
+    if (Array.isArray(rev)) {
+      for (var ri = 0; ri < rev.length; ri++) {
+        var re = rev[ri];
+        if (re && re.dspId !== null && re.dspId !== undefined) paidIds[String(re.dspId)] = 1;
+      }
+    }
+    var completedClaim = false, seen = {};
+    function consider(d) {
+      if (!d || typeof d !== 'object') return;
+      if (d.id) { if (seen[d.id]) return; seen[d.id] = 1; }
+      if (autostartRecordDate(d) !== today) return;
+      if (d.status === 'completed') { completedClaim = true; return; }
+      if (d.status === 'cancelled') return; // claims nothing, closes nothing
+      if (d.id !== null && d.id !== undefined && paidIds[String(d.id)]) { completedClaim = true; return; }
+      completedClaim = null; // a genuinely open claim: the day is not closed
+    }
+    consider(active);
+    if (Array.isArray(list)) for (var i = 0; i < list.length; i++) { if (completedClaim !== null) consider(list[i]); }
+    return completedClaim === true;
   }
   function autostartTodayMs(today, timeStr) {
     // ms epoch of `today` ('YYYY-MM-DD') at 'HH:MM' local — the anchor a
@@ -5686,6 +5731,17 @@
           markAutoStartFired(today); return 'done-today';
         }
       }
+      /* v455 (AUTOSTART-ARMING): a CLOSED day never resurrects a
+         running timer (the v411 close law, at the start door).
+         The done-today guard above catches the day whose session
+         ran on THIS surface; this catches the day booked closed
+         without one — its dispatch completed on an idle surface
+         (v411's shape), or the completion's Revenue line standing
+         over a record the echo rolled back open (v440's shape).
+         The fired flag stays unset: the refusal consumes nothing,
+         and a genuinely open dispatch landing later the same day
+         is judged fresh by this same test. */
+      if (autostartDayClosed(store.get('dsp_active', null), store.get('dsp_list', []), today)) return 'closed-today';
       var tp = String(plan.time).split(':');
       var startMins = (+tp[0] || 0) * 60 + (+tp[1] || 0);
       var nowMins = now.getHours() * 60 + now.getMinutes();
@@ -5781,13 +5837,19 @@
     var list = store.get('dsp_list', []);
     var override = store.get('autostart_override', null);
     var plan = autostartPlan(p, active, list, override, today, now.getDay());
+    /* v455: the card reads the closed-day gate too, so it can
+       never promise a start checkAutoStart will refuse — on a
+       closed day the plan's schedule stands but willStart reads
+       false, exactly as the engine will answer. */
+    var closed = autostartDayClosed(active, list, today);
     var oTime = (override && override.date === today && typeof override.time === 'string' && /^\d{2}:\d{2}$/.test(override.time)) ? override.time : null;
     var win = autostartDispatchFor(active, list, today);
     return {
       enabled: p.enabled,
       dayOk: Array.isArray(p.days) && p.days.indexOf(now.getDay()) !== -1,
-      willStart: plan.willStart,
-      reason: plan.reason || 'ok',
+      willStart: plan.willStart && !closed,
+      closed: closed,
+      reason: (closed && plan.willStart) ? 'closed-today' : (plan.reason || 'ok'),
       time: plan.time || p.time,
       source: plan.source || 'setting',
       label: autoStartLabel(plan.time || p.time),
@@ -5842,7 +5904,7 @@
         startMs: autostartTodayMs(dateStr, plan.time)
       };
     }
-    if (t.status === 'idle' && !autoStartFired(today)) {
+    if (t.status === 'idle' && !autoStartFired(today) && !autostartDayClosed(active, list, today)) {
       var t0 = of(today, now.getDay(), true);
       if (t0) return t0;
     }
@@ -5978,7 +6040,10 @@
       // already fired (or been declined) for today.
       if (t.status === 'idle') {
         var today = todayStr(now);
-        if (!autoStartFired(today)) {
+        /* v455: the arm is a starter too — a closed today is never
+           armed (autostartDayClosed, the same gate checkAutoStart
+           answers to); the arm falls through to tomorrow. */
+        if (!autoStartFired(today) && !autostartDayClosed(active, list, today)) {
           var plT = autostartPlan(p, active, list, ov, today, now.getDay());
           if (plT.willStart) {
             var msT = autostartTodayMs(today, plT.time);

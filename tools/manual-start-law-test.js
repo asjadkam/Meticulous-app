@@ -29,6 +29,13 @@
  * per-day override he set himself). The standing setting alone
  * never starts anything and never arms anything.
  *
+ * v455 annotation (owner, Sat Nov 14, 2026): the last sentence is
+ * superseded — the standing setting DOES start (and arm) the day
+ * on a checked day, as the engine's own auto-start. THIS suite's
+ * law is untouched: a MANUAL tap still stamps the tap and is
+ * never backdated to any plan (§2–§5 stand as written); only §1's
+ * engine expectation and §6f's static were re-pinned.
+ *
  * Drives the REAL shipped code: the AUTOSTART-ENGINE region, the
  * tracker slice (trackerSessionStartMs / trackerElapsedSec /
  * trackerToggle), fmtClock, loadsGlance and pushBubbleFace, over
@@ -125,15 +132,20 @@ function makeWorld(opts) {
 }
 const DSP_SAT_0800 = { id: 'd-sat', jobSite: 'Aecon Inf', scheduledAt: '2026-10-24T08:00', status: 'active' };
 
-/* ============ 1: no dispatch + fresh day => tracker NOT counting ============ */
-console.log('— 1: Saturday, no dispatch — nothing runs uncommanded —');
+/* ============ 1: no dispatch + fresh day => the setting's own start (v455) ============ */
+console.log('— 1: Saturday, no dispatch — the saved setting starts the day (v455) —');
 {
   setClock(18, 14, 0);
   const w = makeWorld({});
-  eq(w.App.checkAutoStart(), 'no-work-today', '1a the engine starts nothing on a no-work day');
-  eq(w.App.tracker.status, 'idle', '1b tracker idle');
-  eq(w.App.tracker.elapsed, 0, '1c no elapsed');
-  eq(w.stKeys.length, 0, '1d no native session was started');
+  /* v455 (owner, Sat Nov 14, 2026) supersedes this section's v255
+     pin: a checked day with the setting on starts on the setting
+     alone, backdated — the manual-start law below is untouched
+     (a TAP still stamps the tap; only the engine's own start
+     changed). */
+  eq(w.App.checkAutoStart(), 'started', '1a v455: the engine starts the day on the saved setting (v255 no-work-today superseded)');
+  eq(w.App.tracker.status, 'running', '1b tracker running from the setting start');
+  eq(w.App.tracker.elapsed, 36840, '1c elapsed counts from the 08:00 setting time (10h14m at 18:14), not from the open');
+  eq(w.stKeys.length, 1, '1d the native session rides the setting start');
 }
 
 /* ============ 2: manual start, no dispatch => counts from the tap ============ */
@@ -208,7 +220,8 @@ console.log('— 6: statics —');
   const stopBody = sliceFn(appSrc, 'function stopSessionAt(', 'App.trackerStop = function');
   ok(stopBody.indexOf('trackerPaint()') !== -1, '6e stop repaints (and so re-pushes the cleared face: Ready to work · 00:00:00)');
   const planBody = sliceFn(appSrc, 'function autostartPlan(', 'function autostartTodayMs');
-  ok(planBody.indexOf("'no-work-today'") !== -1, '6f the plan gate for setting-only days is in the shipped engine');
+  ok(planBody.indexOf("willStart: true, reason: 'ok'") !== -1 && planBody.indexOf('autostartDayClosed') !== -1,
+    '6f v455: the plan arms on the setting alone; the closed-day gate (autostartDayClosed) stands at the start door');
 }
 
 console.log('\nmanual-start-law-test: ' + pass + ' passed, ' + fail + ' failed');

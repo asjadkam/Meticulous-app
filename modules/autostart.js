@@ -46,9 +46,11 @@
     if (!info) return '';
     var line;
     if (!info.enabled || !info.dayOk || !info.willStart) {
-      /* v255: !willStart covers the no-work-today day (no dispatch,
-         no override): the card must never promise the standing-time
-         start the engine will no longer perform on its own. */
+      /* v455: !willStart covers the off / unchecked-day / closed-day
+         reads (the engine's autostartTodayInfo folds the closed-day
+         gate in): the card must never promise a start the engine
+         will not perform. A checked day on the standing setting DOES
+         promise — and perform — its saved-time start again. */
       line = '<b>Today:</b> no auto-start scheduled';
     } else if (info.source === 'dispatch') {
       line = '<b>Today:</b> starts ' + esc(info.label) + ' (from Dispatch)';
