@@ -74,6 +74,13 @@ function todayStrOf(d) {
 function FakeDateFactory(fixedMs) {
   function FD(a, b, c, d, e, f, g) {
     if (arguments.length === 0) return new Date(fixedMs);
+    /* v456 harness repair (artifact-only): a single numeric argument
+       is a millisecond timestamp in the real Date — the old line
+       read it as a YEAR, so any sliced code calling new Date(ms)
+       (v456's same-day preset test in trackerToggle) saw a garbage
+       date. Proven artifact-only: with this repair the suite stands
+       32/1 on pristine web 455 code too (only the standing B4). */
+    if (arguments.length === 1 && typeof a === 'number') return new Date(a);
     return new Date(a, b || 0, c === undefined ? 1 : c, d || 0, e || 0, f || 0, g || 0);
   }
   FD.now = function () { return fixedMs; };

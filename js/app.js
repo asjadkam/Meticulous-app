@@ -3549,7 +3549,15 @@
   /* Overall session start in ms, accounting for accumulated elapsed across pauses. */
   function trackerSessionStartMs() {
     var t = App.tracker, now = Date.now();
-    if (t.status === 'idle') return t.presetStart || now;
+    /* v456 (MANUAL-START-STALE-PRESET, owner Nov 14, 2026): a
+       presetStart is a SAME-DAY word — the rule the dashboard
+       face has carried since v342 — so an idle read honours it
+       only when it names today. A leftover from an earlier day
+       reads as no preset at all here, at the start door
+       (trackerToggle) and on the face alike: on Nov 14 a preset
+       left over from Nov 12 7:30 AM was applied blind at his
+       manual tap and the timer opened at 54:44:23. */
+    if (t.status === 'idle') return (t.presetStart && todayStr(new Date(t.presetStart)) === todayStr(new Date())) ? t.presetStart : now;
     var live = t.elapsed + (t.status === 'running' ? Math.floor((now - t.startTs) / 1000) : 0);
     return now - live * 1000;
   }
@@ -3925,8 +3933,19 @@
     if (t.status === 'idle') {
       t.status = 'running'; t.startTs = Date.now();
       // v28: if a start time was preset ("I actually started at 8:30"), count from there
-      presetUsed = !!t.presetStart;
-      t.elapsed = t.presetStart ? Math.max(0, Math.floor((Date.now() - t.presetStart) / 1000)) : 0;
+      /* v456 (MANUAL-START-STALE-PRESET, owner Nov 14, 2026):
+         …but only a preset that names TODAY. The face has hidden
+         an earlier day's preset since v342 ("a same-day, pre-start
+         word"), yet this door still applied it blind: a preset
+         left over from Nov 12 7:30 AM — set that morning, never
+         consumed because the day's session was started by another
+         door — sat invisible behind the "Starts from now" promise
+         and his Nov 14 manual tap opened the timer at 54:44:23,
+         the session pinned to the two-day-old anchor. A stale
+         preset is no preset: the tap stamps the tap (the v255
+         law), and the leftover is deleted with the rest. */
+      presetUsed = !!t.presetStart && todayStr(new Date(t.presetStart)) === todayStr(new Date());
+      t.elapsed = presetUsed ? Math.max(0, Math.floor((Date.now() - t.presetStart) / 1000)) : 0;
       delete t.presetStart;
       resetAccum(); // v41: a fresh shift starts with empty weight/trip totals
     }
