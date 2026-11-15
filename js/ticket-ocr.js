@@ -596,22 +596,37 @@
     { type: 'appointment',  label: 'Appointment',      re: /\bAppointment(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bAppointment\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i },
     { type: 'ship',         label: 'Ship number',      re: /\bShip(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bShip\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i },
     { type: 'invoice',      label: 'Invoice number',   re: /\bInvoice(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bInvoice\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i },
-    { type: 'ticket',       label: 'Ticket number',    re: /\bTicket(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bTicket\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i }
+    { type: 'ticket',       label: 'Ticket number',    re: /\bTicket(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bTicket\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i },
+    /* v459: the cross-border pair the owner named Nov 15, 2026 —
+       the PAPS number and the trip (TRP) number ride the same
+       typed-number machinery as every other key number */
+    { type: 'paps',         label: 'PAPS number',      re: /\bPAPS(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\bPAPS\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i },
+    { type: 'trip',         label: 'Trip number',      re: /\b(?:TRP|Trip)(?=\s*(?:#|No\.?|Number|Num\b|:))/i, bare: /\b(?:TRP|Trip)\s*(?:#|No\.?|Number|Num\b)?\s*[:#-]?\s*/i }
   ];
 
   /* A key-number VALUE: starts alphanumeric, is digit-bearing,
      3+ chars, may carry dashes and one "//"-joined second part
      (a broker's "G401993-01 // A401992-01"). Dates, times, phone
      numbers and money never qualify (they carry '/', ':', '(',
-     '$' or '.' shapes the token pattern refuses). */
-  function keyNumberValue(rest) {
+     '$' or '.' shapes the token pattern refuses).
+     keyNumberSpan also reports HOW MUCH text the value ate, so
+     a scan can step PAST a value it just read: v459 — a value
+     that itself starts with its label word ("Pro: PRO00299219")
+     was re-scanned as a second label and its digits landed as
+     a second, split number on the owner's card. One printed
+     number must produce ONE field. */
+  function keyNumberSpan(rest) {
     var m = String(rest || '').match(/^\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9-]{2,}(?:\s*\/\/\s*[A-Za-z0-9][A-Za-z0-9-]{2,})?)/);
     if (!m) return null;
     var v = m[1].replace(/\s+/g, ' ').trim();
     if (!/\d/.test(v)) return null;
     if (/^\d{4}$/.test(v)) return null; // a bare year is not a key number
     if (/^(AM|PM|EST|EDT|CST|CDT|MST|MDT|PST|PDT)$/i.test(v)) return null;
-    return v;
+    return { value: v, len: m[0].length };
+  }
+  function keyNumberValue(rest) {
+    var s = keyNumberSpan(rest);
+    return s ? s.value : null;
   }
 
   TicketOCR.extractKeyNumbers = function (text, learnedLabels) {
@@ -623,6 +638,25 @@
       if (!value) return;
       var k = type + '|' + value.toLowerCase();
       if (seen[k]) return;
+      var vl = value.toLowerCase();
+      /* v459: same-type containment — a fragment of a number
+         already read under this type ("0299219" inside
+         "PRO00299219") is the same printed number, never a
+         second field; a fuller read replaces its fragment */
+      for (var ci = 0; ci < out.length; ci++) {
+        if (out[ci].type !== type) continue;
+        var ev = out[ci].value.toLowerCase();
+        if (ev === vl) return;
+        if (vl.length >= 5 && ev.indexOf(vl) !== -1) return;
+        if (ev.length >= 5 && vl.indexOf(ev) !== -1) {
+          out[ci].value = value;
+          for (var cj = 0; cj < takenLabels.length; cj++) {
+            if (takenLabels[cj].value === ev) takenLabels[cj].value = vl;
+          }
+          seen[type + '|' + vl] = true;
+          return;
+        }
+      }
       var ln = String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
       for (var ti = 0; ti < takenLabels.length; ti++) {
         if (takenLabels[ti].value === value.toLowerCase() && ln && takenLabels[ti].label &&
@@ -642,8 +676,12 @@
         var g2 = new RegExp('\\b' + escRe + '\\b\\s*(?:#|No\\.?|Number|Num\\b)?\\s*[:#-]?\\s*', 'gi');
         var m2;
         while ((m2 = g2.exec(t)) !== null) {
-          var v2 = keyNumberValue(t.slice(m2.index + m2[0].length, m2.index + m2[0].length + 60));
-          if (v2) push(ll.type, String(ll.spelling), v2);
+          var sp2 = keyNumberSpan(t.slice(m2.index + m2[0].length, m2.index + m2[0].length + 60));
+          if (sp2) {
+            push(ll.type, String(ll.spelling), sp2.value);
+            var end2 = m2.index + m2[0].length + sp2.len;
+            if (end2 > g2.lastIndex) g2.lastIndex = end2;
+          }
           if (g2.lastIndex === m2.index) g2.lastIndex++;
         }
       });
@@ -654,8 +692,12 @@
       var m;
       while ((m = g.exec(t)) !== null) {
         var rest = t.slice(m.index + m[0].length, m.index + m[0].length + 60);
-        var v = keyNumberValue(rest);
-        if (v) push(kt.type, m[0].replace(/[\s:#-]+$/, '').trim() || kt.label, v);
+        var sp = keyNumberSpan(rest);
+        if (sp) {
+          push(kt.type, m[0].replace(/[\s:#-]+$/, '').trim() || kt.label, sp.value);
+          var end = m.index + m[0].length + sp.len;
+          if (end > g.lastIndex) g.lastIndex = end;
+        }
         if (g.lastIndex === m.index) g.lastIndex++;
       }
     });
@@ -663,15 +705,19 @@
        label is kept verbatim and the type is its slug, so an
        unlisted label still lands typed instead of in a blob.
        Furniture phrases (column words, note headers) never count. */
-    var GENERIC_STOP = /^(phone|fax|email|date|time|page|total|amount|rate|charges?|weight|temp|temperature|notes?|contact|driver|trailer|tractor|equipment|commodity|case|size|payment|terms|signature|position|cell|name|address|location|description|instructions?)$/i;
+    var GENERIC_STOP = /^(phone|fax|email|date|time|page|total|amount|rate|charges?|weight|temp|temperature|notes?|contact|driver|trailer|tractor|equipment|commodity|case|size|payment|terms|signature|position|cell|name|address|location|description|instructions?|quantity|qty|pieces|pallets|skids|units|count|broker|customs\s+broker)$/i;
     var gg = /\b([A-Z][A-Za-z]{1,20}(?:\s+[A-Z][A-Za-z]{1,20}){0,2})\s*(?:#|No\.|Number)\s*[:#-]?\s*/g;
     var gm;
     while ((gm = gg.exec(t)) !== null) {
       var phrase = gm[1].replace(/\s+/g, ' ').trim();
       if (GENERIC_STOP.test(phrase)) continue;
       if (KEY_NUMBER_TYPES.some(function (kt) { return kt.re.test(phrase + ' #'); })) continue;
-      var gv = keyNumberValue(t.slice(gm.index + gm[0].length, gm.index + gm[0].length + 60));
-      if (gv) push(phrase.toLowerCase().replace(/[^a-z0-9]+/g, '-'), phrase, gv);
+      var gsp = keyNumberSpan(t.slice(gm.index + gm[0].length, gm.index + gm[0].length + 60));
+      if (gsp) {
+        push(phrase.toLowerCase().replace(/[^a-z0-9]+/g, '-'), phrase, gsp.value);
+        var gend = gm.index + gm[0].length + gsp.len;
+        if (gend > gg.lastIndex) gg.lastIndex = gend;
+      }
       if (gg.lastIndex === gm.index) gg.lastIndex++;
     }
     /* 4) table-column fallback: a header row that NAMES a number
@@ -727,10 +773,31 @@
     return String(s || '').replace(/\s+/g, ' ').trim();
   }
 
+  /* v459: a printed phone number, boundary-guarded — the digit
+     runs inside longer numbers (an appointment number like
+     40061-1482529), dates, times and zips never qualify */
+  function findPhone(s) {
+    var str = String(s || '');
+    var re = /\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/g, m;
+    while ((m = re.exec(str)) !== null) {
+      var before = m.index > 0 ? str.charAt(m.index - 1) : '';
+      var after = str.charAt(m.index + m[0].length) || '';
+      if (!/[\d\-]/.test(before) && !/[\d\-]/.test(after)) return m[0];
+    }
+    return '';
+  }
+
   TicketOCR.parseDispatchPlaces = function (text) {
     var t = String(text == null ? '' : text);
     var lines = t.split('\n');
-    var out = { company: '', companyAddress: '', pickups: [], deliveries: [] };
+    /* v459: the read also carries each party's phone (found on
+       the block's own lines) and the names a "Shipper:" /
+       "Consignee:" LABEL prints — the owner photographed a
+       Routed Trip Report whose shipper/consignee blocks the
+       v457 reader missed entirely: it had no "shipper" section
+       cue at all, so the shipper block never took the pickup
+       role. The address strings themselves are unchanged. */
+    var out = { company: '', companyAddress: '', pickups: [], deliveries: [], pickupPhone: '', deliveryPhone: '', shipperName: '', consigneeName: '' };
 
     /* company name: a "Bill To:" name, else the letterhead (a
        company-shaped segment in the first 3 lines), else the
@@ -775,6 +842,11 @@
       if (/\bbill\s*to\s*:/i.test(line)) { mode = 'company'; modeLine = idx; }
       else if (/^\s*(pick\s?-?\s?ups?|pickups)\b/i.test(line)) { mode = 'pickup'; modeLine = idx; }
       else if (/^\s*(deliver\w*|drop\s?-?\s?off)\b/i.test(line)) { mode = 'delivery'; modeLine = idx; }
+      /* v459: SHIPPER heads the pickup party on trip reports and
+         BOLs — a header-shaped line only (the word inside prose
+         sentences never flips a section) */
+      else if (/^\s*(shipper|ship\s*from)\b/i.test(line)) { mode = 'pickup'; modeLine = idx; }
+      else if (line.length <= 80 && /\bshipper\s*:/i.test(line)) { mode = 'pickup'; modeLine = idx; }
       else if (line.length <= 80 && /\b(pick\s?-?\s?up|load\s+at)\b/i.test(line) && !/\bdeliver/i.test(line)) { mode = 'pickup'; modeLine = idx; }
       else if (line.length <= 80 && /\b(deliver|consignee|receiver|drop\s?-?\s?off)\b/i.test(line)) { mode = 'delivery'; modeLine = idx; }
     }
@@ -798,6 +870,7 @@
         if (FURNITURE_RE.test(cand) || cand.indexOf('@') !== -1 || /^\d{1,2}:\d{2}/.test(cand)) continue;
         break;
       }
+      var nameIdx = -1;
       if (street && mode !== 'company') {
         /* the name sits above the street; the OTHER printed
            column's header ("SHIPMENT DESCRIPTION") may intervene
@@ -809,13 +882,22 @@
           if (STREET_LINE_RE.test(cand) || SUITE_LINE_RE.test(cand)) continue;
           if (FURNITURE_RE.test(cand)) continue;
           if (/[:#]/.test(cand) || /\b(pick\s?-?\s?up|deliver\w*)\b/i.test(cand)) break;
-          if (cand.length >= 3) name = cand;
+          if (cand.length >= 3) { name = cand; nameIdx = j; }
           break;
         }
       }
       var addr = (name ? name + ', ' : '') + (street ? street + ', ' : '') + city;
       var role = (mode && i - modeLine <= 12) ? mode : null;
-      blocks.push({ addr: addr, role: role, line: i, gap: i - lastBlockEnd });
+      /* v459: the party's phone rides its own block — printed
+         on the name line (a rate con's table row), the street
+         or city line, or the line right under the city */
+      var blockPhone = '';
+      var scanFrom = nameIdx >= 0 ? nameIdx : (streetIdx >= 0 ? streetIdx : i);
+      for (j = scanFrom; j <= Math.min(i + 1, lines.length - 1); j++) {
+        blockPhone = findPhone(lines[j]);
+        if (blockPhone) break;
+      }
+      blocks.push({ addr: addr, role: role, line: i, gap: i - lastBlockEnd, phone: blockPhone });
       lastBlockEnd = i;
       if (role) modeLine = i; // the section continues from its last block
     }
@@ -831,7 +913,7 @@
       if (seenAddr[iaddr.toLowerCase()]) continue;
       seenAddr[iaddr.toLowerCase()] = true;
       var before = t.slice(Math.max(0, im.index - 600), im.index).toLowerCase();
-      var cueAt = Math.max(before.lastIndexOf('pickup'), before.lastIndexOf('pick up'), before.lastIndexOf('pick-up'));
+      var cueAt = Math.max(before.lastIndexOf('pickup'), before.lastIndexOf('pick up'), before.lastIndexOf('pick-up'), before.lastIndexOf('shipper'), before.lastIndexOf('ship from'));
       var delAt = Math.max(before.lastIndexOf('deliver'), before.lastIndexOf('consignee'));
       var comAt = Math.max(before.lastIndexOf('bill to'), before.lastIndexOf('carrier signature'), before.lastIndexOf('signature'));
       var irole = null;
@@ -855,13 +937,237 @@
       seenCore[core] = true;
       var role = b.role;
       if (!role) role = (!havePickup && !haveDelivery) ? 'pickup' : (b.gap > 6 && haveDelivery ? 'company' : 'delivery');
-      if (role === 'pickup') { out.pickups.push(b.addr); havePickup = true; }
-      else if (role === 'delivery') { out.deliveries.push(b.addr); haveDelivery = true; }
+      if (role === 'pickup') { out.pickups.push(b.addr); havePickup = true; if (b.phone && !out.pickupPhone) out.pickupPhone = b.phone; }
+      else if (role === 'delivery') { out.deliveries.push(b.addr); haveDelivery = true; if (b.phone && !out.deliveryPhone) out.deliveryPhone = b.phone; }
       else if (role === 'company' && !out.companyAddress) out.companyAddress = b.addr;
     });
+    /* v459: a party LABEL that prints its name inline —
+       "Shipper: MAGNA SEATING SYSTEMS" — names the party even
+       when the address block below it carries no name line.
+       A value that is itself an address is not a name. */
+    for (var ni = 0; ni < lines.length; ni++) {
+      var nlm = lines[ni].match(/^\s*(shipper|ship\s*from|consignee|deliver\s*to|receiver)\s*[:\-]\s*(.{2,60})$/i);
+      if (!nlm) continue;
+      var nval = nlm[2].replace(/\s+/g, ' ').trim().replace(/,+$/, '');
+      if (!/[A-Za-z]{2,}/.test(nval)) continue;
+      if (STREET_LINE_RE.test(nval) || CITY_ANCHOR_RE.test(nval)) continue;
+      if (/\d/.test(nval) && new RegExp('\\b' + STREET_SUFFIX + '\\b', 'i').test(nval)) continue;
+      if (findPhone(nval)) continue;
+      if (/ship/i.test(nlm[1])) { if (!out.shipperName) out.shipperName = nval; }
+      else if (!out.consigneeName) out.consigneeName = nval;
+    }
     out.pickups = out.pickups.slice(0, 4);
     out.deliveries = out.deliveries.slice(0, 6);
     return out;
+  };
+
+  /* ---------- v459: dispatch DETAILS — the long-haul fields ----------
+     Owner (Nov 15, 2026, over his Routed Trip Report test): the
+     v457 card carried only addresses + numbers. A cross-border
+     trip report also prints — and the card must show, as
+     EDITABLE fields — the shipper/consignee phones, the
+     commodity, the customs broker's information, the start
+     date/time, the PU and DEL date/times, the reefer
+     temperature, the weight and the quantity. (The PAPS and
+     TRP numbers are key numbers — extractKeyNumbers above.)
+     extractDispatchDetails(text, learnedDetailLabels?,
+       blockPhones?) -> [{key, label, value, srcLabel}]
+     Values are AS PRINTED, never normalised, never invented:
+     a field appears only when a label or a value's own shape
+     says what it is. learnedDetailLabels: [{spelling, key}]
+     remembered from this account's confirmed dispatches — a
+     remembered spelling is matched even without its ':' marker,
+     exactly like the number labels. srcLabel is the label as
+     printed (what a confirmation teaches); the fixed-form
+     fields (dates, phones) carry none and are not learned. */
+
+  var DETAIL_DISPLAY = {
+    startDate: 'Start date', startTime: 'Start time',
+    puDateTime: 'PU date/time', delDateTime: 'DEL date/time',
+    commodity: 'Commodity', broker: 'Customs broker',
+    temperature: 'Temperature', weight: 'Weight', quantity: 'Quantity',
+    shipperPhone: 'Shipper phone', consigneePhone: 'Consignee phone'
+  };
+
+  /* value takers for the measured fields: text right after a
+     label -> the value as printed, or null */
+  function detailTake(key, rest, labelText) {
+    var r = String(rest || '');
+    var m;
+    if (key === 'temperature') {
+      /* the separator dash is punctuation only when it is not a
+         minus sign: "Temp: -10°F" must keep its minus */
+      m = r.match(/^\s*(?:[:#]|-(?!\d))?\s*(-?\d{1,3}(?:\.\d)?\s*°\s*[FC]|-?\d{1,3}(?:\.\d)?\s*[FC]\b|-?\d{1,3}(?:\.\d)?\s*Degrees\b|-?\d{1,3}(?:\.\d)?\s*°)/i);
+      return m ? m[1].replace(/\s+/g, ' ') : null;
+    }
+    if (key === 'weight') {
+      m = r.match(/^\s*(?:[:#]|-(?!\d))?\s*([\d,]{2,}(?:\.\d+)?)\s*(lbs?|kg|tons?|kgs)?/i);
+      if (!m) return null;
+      if (/^0+$/.test(m[1].replace(/[,.]/g, ''))) return null;
+      var wv = m[1];
+      if (m[2]) wv += ' ' + m[2];
+      else if (/\(lbs\)/i.test(labelText || '')) wv += ' lbs';
+      return wv;
+    }
+    if (key === 'quantity') {
+      m = r.match(/^\s*(?:[:#]|-(?!\d))?\s*(\d[\d,]*)\s*(pieces|pcs|units|skids|pallets|boxes|cases)?/i);
+      if (!m) return null;
+      if (/^0+$/.test(m[1].replace(/,/g, ''))) return null;
+      return m[2] ? m[1] + ' ' + m[2] : m[1];
+    }
+    return null;
+  }
+
+  /* the labelled fields and the spellings that name them */
+  var DETAIL_DEFS = [
+    { key: 'commodity', line: true, labels: [/\bCommodity\s*[:#]?/i, /\bShipment\s+Description\b/i, /\bProduct\s*[:#]?/i] },
+    { key: 'broker', line: true, labels: [/\bCustoms\s+Brokerage\s*[:#\-]?/i, /\bCustoms\s+Broker\s*[:#\-]?/i, /\bBroker\s*[:\-]/i] },
+    { key: 'temperature', labels: [/\bTemp\s*Control\s*(?:Required)?\s*[:#]?/i, /\bTemperature\s*[:#]?/i, /\bReefer\s*Temp\s*[:#]?/i, /\bSet\s*Point\s*[:#]?/i, /\bSetpoint\s*[:#]?/i, /\bTemp\s*[:#]?/i] },
+    { key: 'weight', labels: [/\bGross\s*Weight\s*(?:\([^)]*\))?\s*[:#]?/i, /\bNet\s*Weight\s*(?:\([^)]*\))?\s*[:#]?/i, /\bWeight\s*(?:\([^)]*\))?\s*[:#]?/i, /\bWt\.?\s*[:#]/i] },
+    { key: 'quantity', labels: [/\bQuantity\s*[:#]?/i, /\bQty\.?\s*[:#]?/i, /\bPieces\s*[:#]?/i, /\bPallets\s*[:#]?/i, /\bSkids\s*[:#]?/i, /\bUnits\s*[:#]?/i, /\bCases\s*[:#]?/i, /\bCount\s*[:#]?/i] }
+  ];
+  /* a line-scoped value (commodity / broker): the rest of the
+     label's own line — commodity stops at the next printed
+     column, the broker's line is taken whole (its phone rides
+     the same line) — or, when the label stands alone, the next
+     printed line (skipping a furniture first column) */
+  function detailLineValue(key, lines, li, restSameLine) {
+    var raw = String(restSameLine || '');
+    var v = '';
+    if (key === 'broker') v = raw.replace(/\s+/g, ' ').trim().slice(0, 90);
+    else v = raw.split(/\s{2,}/)[0].replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!v) {
+      for (var nx = li + 1; nx < Math.min(li + 2, lines.length); nx++) {
+        var nl = String(lines[nx] || '').replace(/\s+/g, ' ').trim();
+        if (!nl) continue;
+        var segs = String(lines[nx] || '').split(/\s{2,}/).map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+        if (segs.length > 1 && /^(contact|phone|email|fax)$/i.test(segs[0])) v = segs[segs.length - 1].slice(0, 60);
+        else v = nl.slice(0, 60);
+        break;
+      }
+    }
+    if (!v || !/[A-Za-z]{2,}/.test(v)) return null;
+    if (!/^[A-Za-z0-9]/.test(v)) return null;
+    if (/^(notes?|phone|email|fax|contact|date|time)\b/i.test(v)) return null;
+    return v;
+  }
+
+  TicketOCR.extractDispatchDetails = function (text, learnedDetailLabels, blockPhones) {
+    var t = String(text == null ? '' : text);
+    var lines = t.split('\n');
+    var found = {}; // key -> entry
+    function put(key, value, srcLabel) {
+      if (!value || found[key]) return;
+      found[key] = { key: key, label: DETAIL_DISPLAY[key] || key, value: value, srcLabel: srcLabel || '' };
+    }
+    function lineOf(index) {
+      var upto = t.slice(0, index);
+      return upto.split('\n').length - 1;
+    }
+    /* 1) remembered spellings first (this account's confirmed
+       detail labels), matched even without a ':' marker */
+    if (Array.isArray(learnedDetailLabels)) {
+      learnedDetailLabels.forEach(function (ld) {
+        if (!ld || !ld.spelling || !ld.key || found[ld.key]) return;
+        var def = null;
+        DETAIL_DEFS.forEach(function (d) { if (d.key === ld.key) def = d; });
+        if (!def) return;
+        var esc = String(ld.spelling).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+        var m = new RegExp('\\b' + esc + '\\b').exec(t);
+        if (!m) return;
+        var rest = t.slice(m.index + m[0].length, m.index + m[0].length + 90);
+        var v = def.line ? detailLineValue(ld.key, lines, lineOf(m.index), rest.split('\n')[0]) : detailTake(ld.key, rest, m[0]);
+        if (v) put(ld.key, v, String(ld.spelling));
+      });
+    }
+    /* 2) the built-in label lists */
+    DETAIL_DEFS.forEach(function (def) {
+      if (found[def.key]) return;
+      for (var li2 = 0; li2 < def.labels.length && !found[def.key]; li2++) {
+        var g = new RegExp(def.labels[li2].source, 'gi');
+        var m, tries = 0;
+        while ((m = g.exec(t)) !== null && tries++ < 5) {
+          var rest = t.slice(m.index + m[0].length, m.index + m[0].length + 90);
+          var v = def.line ? detailLineValue(def.key, lines, lineOf(m.index), rest.split('\n')[0]) : detailTake(def.key, rest, m[0]);
+          if (v) {
+            put(def.key, v, m[0].replace(/[\s:#\-]+$/, '').replace(/\s+/g, ' ').trim());
+            break;
+          }
+          if (g.lastIndex === m.index) g.lastIndex++;
+        }
+      }
+    });
+    /* 3) shape-typed pass: an UNKNOWN capitalised label whose
+       value has a measured field's own shape ("Reefer Setting:
+       34 F") still lands typed — and its printed spelling is
+       what a confirmation teaches, like the generic numbers */
+    var SHAPE_STOP = /^(date|time|phone|fax|email|total|rate|amount|charges?|page|notes?|contact|driver|truck|trailer|equipment|signature|position|name|address|location|description|instructions?|payment|terms|po|pro|order|reference|appt|appointment|load|booking|ref|start date|start time|pu date|pu time|del date|del time|shipper|consignee|customs broker|broker|commodity|product|shipment description|weight|temp|temperature|quantity|qty|case|size)$/i;
+    lines.forEach(function (line) {
+      var lm = line.match(/^\s*([A-Z][A-Za-z][A-Za-z .]{1,28}?)\s*:\s*(.+)$/);
+      if (!lm) return;
+      var lab = lm[1].replace(/\s+/g, ' ').trim();
+      if (SHAPE_STOP.test(lab)) return;
+      var rest = lm[2];
+      /* the shape alone must be unambiguous: temperature
+         always carries its F/C/degree mark; weight and
+         quantity must carry their unit word — bare digits
+         under an unknown label ("Trailer: 73412") type as
+         nothing */
+      var keys = ['temperature', 'weight', 'quantity'];
+      for (var ki = 0; ki < keys.length; ki++) {
+        if (found[keys[ki]]) continue;
+        var sv = null;
+        if (keys[ki] === 'temperature') sv = detailTake('temperature', rest, lab);
+        else if (keys[ki] === 'weight') { var wsm = rest.match(/^([\d,]{2,}(?:\.\d+)?)\s*(lbs?|kg|tons?|kgs)\b/i); if (wsm && !/^0+$/.test(wsm[1].replace(/[,.]/g, ''))) sv = wsm[1] + ' ' + wsm[2]; }
+        else { var qsm = rest.match(/^(\d[\d,]*)\s*(pieces|pcs|units|skids|pallets|boxes|cases)\b/i); if (qsm && !/^0+$/.test(qsm[1].replace(/,/g, ''))) sv = qsm[1] + ' ' + qsm[2]; }
+        if (sv) { put(keys[ki], sv, lab); break; }
+      }
+    });
+    /* 4) the fixed-form dates and times, as printed */
+    var D_SRC = '\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}';
+    var T_SRC = '\\d{1,2}:\\d{2}\\s*(?:[AP]M)?';
+    function dt1(re) { var m = t.match(re); return m ? m[1].replace(/\s+/g, ' ').trim() : ''; }
+    function dt2(re) { var m = t.match(re); return m ? (m[1] + (m[2] ? ' ' + m[2] : '')).replace(/\s+/g, ' ').trim() : ''; }
+    put('startDate', dt1(new RegExp('Start\\s*Date\\s*[:#]?\\s*(' + D_SRC + ')', 'i')));
+    put('startTime', dt1(new RegExp('Start\\s*Time\\s*[:#]?\\s*(' + T_SRC + ')', 'i')));
+    put('puDateTime', dt2(new RegExp('\\bPU\\s*Date\\s*[:#]?\\s*(' + D_SRC + ')(?:[^\\n]{0,24}?PU\\s*Time\\s*[:#]?\\s*(' + T_SRC + '))?', 'i')) ||
+                      dt2(new RegExp('\\bPICKUP\\b\\s+(' + D_SRC + ')\\s+(' + T_SRC + '(?:\\s*-\\s*' + T_SRC + ')?)', 'i')) ||
+                      dt1(new RegExp('\\bPick\\s?-?\\s?up\\s*(?:Date|Time|Appt\\w*)?\\s*[:#]\\s*(' + D_SRC + '(?:\\s+' + T_SRC + ')?|' + T_SRC + ')', 'i')));
+    put('delDateTime', dt2(new RegExp('\\bDEL\\s*Date\\s*[:#]?\\s*(' + D_SRC + ')(?:[^\\n]{0,24}?DEL\\s*Time\\s*[:#]?\\s*(' + T_SRC + '))?', 'i')) ||
+                       dt2(new RegExp('\\bDELIVER\\w*\\b\\s+(' + D_SRC + ')\\s+(' + T_SRC + '(?:\\s*-\\s*' + T_SRC + ')?)', 'i')) ||
+                       dt1(new RegExp('\\bDeliver\\w*\\s*(?:Date|Time|Appt\\w*)?\\s*[:#]\\s*(' + D_SRC + '(?:\\s+' + T_SRC + ')?|' + T_SRC + ')', 'i')));
+    /* 5) the parties' phones: an explicit party phone label,
+       else a Phone/Tel line inside the party's own section
+       (fresh for 15 lines past its header, never past a
+       signature block), else the phone on the address block */
+    var ship = '', cons = '';
+    var sm = t.match(/(?:Shipper|Pick\s?-?\s?up|PU)\s*Phone\s*[:#]?\s*([^\n]{0,30})/i);
+    if (sm) ship = findPhone(sm[1]);
+    var cm = t.match(/(?:Consignee|Deliver\w*|Receiver|DEL)\s*Phone\s*[:#]?\s*([^\n]{0,30})/i);
+    if (cm) cons = findPhone(cm[1]);
+    if (!ship || !cons) {
+      var mode = null, modeLine = -99;
+      for (var pi = 0; pi < lines.length; pi++) {
+        var pline = lines[pi];
+        if (/^\s*(shipper|ship\s*from)\b/i.test(pline) || /\bshipper\s*:/i.test(pline) || /^\s*pick\s?-?\s?ups?\b/i.test(pline)) { mode = 'pickup'; modeLine = pi; }
+        else if (/^\s*(consignee|deliver\w*|drop\s?-?\s?off)\b/i.test(pline)) { mode = 'delivery'; modeLine = pi; }
+        else if (/\bbill\s*to\s*:/i.test(pline) || /^\s*(signature|carrier\s+signature|please)\b/i.test(pline)) { mode = null; }
+        if (!mode || pi - modeLine > 15) continue;
+        var pm = pline.match(/\b(?:Phone|Tel)\s*[:#]?\s*(.{0,30})$/i);
+        if (!pm) continue;
+        var ph = findPhone(pm[1]);
+        if (!ph) continue;
+        if (mode === 'pickup' && !ship) ship = ph;
+        if (mode === 'delivery' && !cons) cons = ph;
+      }
+    }
+    if (!ship && blockPhones && blockPhones.pickup) ship = blockPhones.pickup;
+    if (!cons && blockPhones && blockPhones.delivery) cons = blockPhones.delivery;
+    put('shipperPhone', ship);
+    put('consigneePhone', cons);
+    /* the card's order: when, what, measures, broker, phones */
+    var ORDER = ['startDate', 'startTime', 'puDateTime', 'delDateTime', 'commodity', 'temperature', 'weight', 'quantity', 'broker', 'shipperPhone', 'consigneePhone'];
+    return ORDER.filter(function (k) { return found[k]; }).map(function (k) { return found[k]; });
   };
 
   /* ---------- AECON DAILY TRUCK HAUL CARD (foreman ticket) parser ----------

@@ -149,10 +149,11 @@
   function learnStore() {
     var st = store(); if (!st) return null;
     var v = st.get(LEARN_KEY, null);
-    if (!v || typeof v !== 'object') v = { labels: {}, roles: {}, companyAddr: {} };
+    if (!v || typeof v !== 'object') v = { labels: {}, roles: {}, companyAddr: {}, detailLabels: {} };
     if (!v.labels) v.labels = {};
     if (!v.roles) v.roles = {};
     if (!v.companyAddr) v.companyAddr = {};
+    if (!v.detailLabels) v.detailLabels = {};
     return v;
   }
   function saveLearn(v) {
@@ -168,6 +169,7 @@
     v.labels = capObj(v.labels, 60);
     v.roles = capObj(v.roles, 40);
     v.companyAddr = capObj(v.companyAddr, 40);
+    v.detailLabels = capObj(v.detailLabels, 40);
     return st.set(LEARN_KEY, v) !== false;
   }
   function normKey(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -194,6 +196,27 @@
       return { spelling: v.labels[k].spelling, type: v.labels[k].type };
     }).filter(function (x) { return x.spelling && x.type; });
   }
+  /* v459: the detail fields' remembered label spellings —
+     the same lesson shape as the number labels, kept apart so
+     a detail spelling is never read as a number label */
+  function learnedDetailLabelsList(v) {
+    if (!v || !v.detailLabels) return [];
+    return Object.keys(v.detailLabels).map(function (k) {
+      return { spelling: v.detailLabels[k].spelling, key: v.detailLabels[k].key };
+    }).filter(function (x) { return x.spelling && x.key; });
+  }
+  /* the name an address string carries: its first segment,
+     when the next segment is a street (starts with a digit) —
+     "PUBLIX DACULA, 445 HURRICANE TRL, …" -> "PUBLIX DACULA";
+     a city-only address ("TAMPA, FL 33619") carries none */
+  function nameOfAddr(addr) {
+    var parts = String(addr || '').split(', ');
+    if (parts.length >= 3 && /^\d/.test(parts[1])) return parts[0];
+    return '';
+  }
+  /* the v459 detail keys the card may carry — anything else a
+     patch offers is ignored, exactly like the v457 shapes */
+  var DETAIL_KEYS = { startDate: 1, startTime: 1, puDateTime: 1, delDateTime: 1, commodity: 1, broker: 1, temperature: 1, weight: 1, quantity: 1, shipperPhone: 1, consigneePhone: 1 };
 
   /* extractDetail(text, p) -> { companyName, companyAddress,
      pickupAddress, pickups, deliveries, numbers } — the v457
@@ -204,7 +227,7 @@
      document left, and remembered number-label spellings are
      read beside the built-in table. */
   function extractDetail(text, p) {
-    var empty = { companyName: '', companyAddress: '', pickupAddress: '', pickups: [], deliveries: [], numbers: [] };
+    var empty = { companyName: '', companyAddress: '', pickupAddress: '', pickups: [], deliveries: [], numbers: [], pickupName: '', deliveryName: '', details: [] };
     if (!window.TicketOCR || !TicketOCR.parseDispatchPlaces || !TicketOCR.extractKeyNumbers) return empty;
     var learn = learnStore();
     var places = null, numbers = [];
@@ -217,8 +240,27 @@
       pickupAddress: (places.pickups && places.pickups[0]) || '',
       pickups: (places.pickups || []).slice(),
       deliveries: (places.deliveries || []).slice(),
-      numbers: numbers
+      numbers: numbers,
+      /* v459: the parties as NAMED fields — the shipper is the
+         pickup party, the consignee the (first) delivery party;
+         the name is the address's own name segment when it has
+         one, else the name a party label printed */
+      pickupName: nameOfAddr((places.pickups || [])[0]) || places.shipperName || '',
+      deliveryName: nameOfAddr((places.deliveries || [])[0]) || places.consigneeName || '',
+      details: []
     };
+    /* v459: the long-haul detail fields (commodity, broker,
+       temperature, weight, quantity, dates/times, phones) —
+       read by TicketOCR.extractDispatchDetails with this
+       account's remembered detail-label spellings and the
+       phones the address blocks carried */
+    try {
+      if (TicketOCR.extractDispatchDetails) {
+        out.details = TicketOCR.extractDispatchDetails(text, learnedDetailLabelsList(learn), {
+          pickup: places.pickupPhone || '', delivery: places.deliveryPhone || ''
+        }) || [];
+      }
+    } catch (e) {}
     var key = learnKeyFor(text, places, p);
     if (learn && key) {
       /* remembered roles: an address this sender/company already
@@ -307,6 +349,15 @@
       cur.count = (cur.count || 0) + 1;
       learn.labels[lk] = cur;
     });
+    /* v459: a confirmed detail field teaches its printed label
+       spelling -> its key ("Reefer Setting" -> temperature),
+       the same lesson the number labels learn */
+    (f.details || []).forEach(function (d) {
+      if (!d || !d.srcLabel || !d.key || !DETAIL_KEYS[d.key]) return;
+      var dk = normKey(d.srcLabel);
+      if (!dk) return;
+      learn.detailLabels[dk] = { spelling: d.srcLabel, key: d.key };
+    });
     saveLearn(learn);
   }
 
@@ -382,6 +433,12 @@
     out.fields.pickups = detail.pickups || [];
     out.fields.deliveries = detail.deliveries || [];
     out.fields.numbers = detail.numbers || [];
+    /* v459: the named parties and the long-haul detail fields
+       ride the suggestion the same way — separate, labelled,
+       editable on the card */
+    out.fields.pickupName = detail.pickupName || '';
+    out.fields.deliveryName = detail.deliveryName || '';
+    out.fields.details = detail.details || [];
     return out;
   }
 
@@ -399,9 +456,16 @@
   var WEEKDAY_NUM = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
   var MONTH_SRC = '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)';
   var WEEKDAY_SRC = '(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thur|thurs|sun|mon|tue|wed|thu|fri|sat)';
-  /* words that must never be read as a sender's name */
-  var NOT_A_NAME_RE = /^(note|reminder|subject|re|fyi|update|important|warning|tandem|tridem|tri-?axle|end\s?dump|single\s?axle)$/i;
-  var NOT_A_NAME_LINE_RE = /\b(tandem|tridem|tri-?axle|end\s?dump|single\s?axle|aecon|construction|trucking|hauling|aggregates|infrastructure|developments|yard|plant|pond|pit|empty|loaded|today|tomorrow|yesterday|haul|bring|grab|dump|load|please|thanks)\b/i;
+  /* words that must never be read as a sender's name —
+     v459: a DOCUMENT's structural labels join the list. On a
+     trip report or BOL, "Shipper:" / "Consignee:" head the
+     parties' own blocks; read as sender labels they cut one
+     dispatch into three fragments (the header scored as its
+     own message, each party became a separate "dispatch" and
+     the consignee landed as a pickup). They are structure,
+     never a sender — no dispatcher's name is "Shipper". */
+  var NOT_A_NAME_RE = /^(note|reminder|subject|re|fyi|update|important|warning|tandem|tridem|tri-?axle|end\s?dump|single\s?axle|shipper|ship\s+from|consignee|receiver|deliver\s+to|customs\s+broker|broker|carrier|pick\s?-?\s?up|delivery|drop\s?-?\s?off|dispatch|driver)$/i;
+  var NOT_A_NAME_LINE_RE = /\b(tandem|tridem|tri-?axle|end\s?dump|single\s?axle|aecon|construction|trucking|hauling|aggregates|infrastructure|developments|yard|plant|pond|pit|empty|loaded|today|tomorrow|yesterday|haul|bring|grab|dump|load|please|thanks|shipper|consignee)\b/i;
 
   function pad2(n) { return ('0' + n).slice(-2); }
   function fmtDateStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
@@ -880,7 +944,7 @@
     if (!entry) return null;
     var before = {};
     var f = entry.fields || (entry.fields = {});
-    ['companyName', 'companyAddress', 'pickupAddress', 'pickups', 'deliveries', 'numbers'].forEach(function (k) {
+    ['companyName', 'companyAddress', 'pickupAddress', 'pickups', 'deliveries', 'numbers', 'pickupName', 'deliveryName', 'details'].forEach(function (k) {
       before[k] = Array.isArray(f[k]) ? f[k].slice() : f[k];
     });
     function cleanStr(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300); }
@@ -901,6 +965,15 @@
     if (Array.isArray(patch.numbers)) {
       f.numbers = patch.numbers.filter(function (n) { return n && n.value; }).slice(0, 14).map(function (n) {
         return { type: cleanStr(n.type || 'other').slice(0, 40), label: cleanStr(n.label || n.type || 'Number').slice(0, 40), value: cleanStr(n.value).slice(0, 60) };
+      });
+    }
+    /* v459: the named parties and the detail fields are
+       patchable on the card the same way */
+    if (patch.pickupName !== undefined) f.pickupName = cleanStr(patch.pickupName);
+    if (patch.deliveryName !== undefined) f.deliveryName = cleanStr(patch.deliveryName);
+    if (Array.isArray(patch.details)) {
+      f.details = patch.details.filter(function (d) { return d && d.value && DETAIL_KEYS[d.key]; }).slice(0, 12).map(function (d) {
+        return { key: d.key, label: cleanStr(d.label || d.key).slice(0, 40), value: cleanStr(d.value).slice(0, 120), srcLabel: cleanStr(d.srcLabel || '').slice(0, 60) };
       });
     }
     if (st.set(SUGGEST_KEY, all) === false) return null;
@@ -928,9 +1001,15 @@
     if (f.companyAddress) addLine('Company: ' + (f.companyName ? f.companyName + ' — ' : '') + f.companyAddress);
     else if (f.companyName && f.companyName !== f.jobSite) addLine('Company: ' + f.companyName);
     var pks = (f.pickups && f.pickups.length) ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : []);
+    /* v459: a party name earns its own line only when it adds
+       something the address does not already say (an address's
+       leading segment IS its name — never written twice) */
+    if (f.pickupName && f.pickupName !== nameOfAddr(pks[0] || '')) addLine('Shipper: ' + f.pickupName);
     pks.forEach(function (a, i) { addLine((pks.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup') + ': ' + a); });
+    if (f.deliveryName && f.deliveryName !== nameOfAddr((f.deliveries || [])[0] || '')) addLine('Consignee: ' + f.deliveryName);
     (f.deliveries || []).forEach(function (a, i) { addLine('Delivery ' + (i + 1) + ': ' + a); });
     (f.numbers || []).forEach(function (n) { if (n && n.value) addLine((n.label || n.type || 'Number') + ': ' + n.value); });
+    (f.details || []).forEach(function (d) { if (d && d.value) addLine((d.label || d.key || 'Detail') + ': ' + d.value); });
     if (lines.length) notes = notes ? notes + ' · ' + lines.join(' · ') : lines.join(' · ');
     return {
       jobSite: f.jobSite || '',
@@ -954,7 +1033,12 @@
       pickupAddress: f.pickupAddress || '',
       pickups: f.pickups || [],
       deliveries: f.deliveries || [],
-      numbers: f.numbers || []
+      numbers: f.numbers || [],
+      /* v459: the named parties and the detail fields ride
+         along the same way */
+      pickupName: f.pickupName || '',
+      deliveryName: f.deliveryName || '',
+      details: f.details || []
     };
   }
 

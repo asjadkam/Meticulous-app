@@ -3929,15 +3929,27 @@
                    the moment the field loses focus. */
                 (function () {
                   var pks457 = (f.pickups && f.pickups.length) ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : []);
-                  var has457 = f.companyAddress || pks457.length || (f.deliveries && f.deliveries.length) || (f.numbers && f.numbers.length);
+                  /* v459: the section also opens for the named
+                     parties and the long-haul detail fields */
+                  var has457 = f.companyAddress || pks457.length || (f.deliveries && f.deliveries.length) || (f.numbers && f.numbers.length) ||
+                    f.pickupName || f.deliveryName || (f.details && f.details.length);
                   if (!has457) return '';
                   var dh = '<div style="margin-top:6px;border-top:1px dashed #bbb;padding-top:6px">';
                   dh += '<label class="f">Company address</label>' +
                     '<input data-sugaddr="company" data-sugid="' + esc(e.id) + '" value="' + esc(f.companyAddress || '') + '" style="width:100%" placeholder="The company\'s own address">';
+                  /* v459: the parties as named fields — Shipper
+                     over the pickup, Consignee over the
+                     deliveries */
+                  dh += '<label class="f">Shipper</label>' +
+                    '<input data-sugname="shipper" data-sugid="' + esc(e.id) + '" value="' + esc(f.pickupName || '') + '" style="width:100%" placeholder="The shipper\'s name">';
                   pks457.forEach(function (a, i) {
                     dh += '<label class="f">' + (pks457.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup address') + '</label>' +
                       '<input data-sugaddr="pickup:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
                   });
+                  if ((f.deliveries && f.deliveries.length) || f.deliveryName) {
+                    dh += '<label class="f">Consignee</label>' +
+                      '<input data-sugname="consignee" data-sugid="' + esc(e.id) + '" value="' + esc(f.deliveryName || '') + '" style="width:100%" placeholder="The consignee\'s name">';
+                  }
                   (f.deliveries || []).forEach(function (a, i) {
                     dh += '<label class="f">Delivery ' + (i + 1) + '</label>' +
                       '<input data-sugaddr="delivery:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
@@ -3946,6 +3958,14 @@
                   (f.numbers || []).forEach(function (n, i) {
                     dh += '<label class="f">' + esc(n.label || n.type || 'Number') + '</label>' +
                       '<input data-sugnum="' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(n.value || '') + '" style="width:100%">';
+                  });
+                  /* v459: the detail fields — commodity, broker,
+                     temperature, weight, quantity, the dates
+                     and times, the parties' phones — each under
+                     its own label, editable the same way */
+                  (f.details || []).forEach(function (d) {
+                    dh += '<label class="f">' + esc(d.label || d.key || 'Detail') + '</label>' +
+                      '<input data-sugdetail="' + esc(d.key || '') + '" data-sugid="' + esc(e.id) + '" value="' + esc(d.value || '') + '" style="width:100%">';
                   });
                   dh += '</div>';
                   return dh;
@@ -4078,9 +4098,14 @@
           if (!entry) return;
           var f = entry.fields || {};
           var patch = { numbers: (f.numbers || []).map(function (n) { return { type: n.type, label: n.label, value: n.value }; }) };
+          /* v459: the detail set rides the patch the same way,
+             keyed — an edit lands on its own field */
+          patch.details = (f.details || []).map(function (d) { return { key: d.key, label: d.label, value: d.value, srcLabel: d.srcLabel }; });
           wrap.querySelectorAll('[data-sugid="' + id + '"]').forEach(function (inp) {
             var a = inp.getAttribute('data-sugaddr');
             var num = inp.getAttribute('data-sugnum');
+            var nm = inp.getAttribute('data-sugname');
+            var dk = inp.getAttribute('data-sugdetail');
             if (a === 'company') patch.companyAddress = inp.value;
             else if (a && a.indexOf('pickup:') === 0) {
               patch.pickups = patch.pickups || ((f.pickups && f.pickups.length) ? f.pickups.slice() : (f.pickupAddress ? [f.pickupAddress] : []));
@@ -4090,11 +4115,17 @@
               patch.deliveries[parseInt(a.slice(9), 10)] = inp.value;
             } else if (num !== null && patch.numbers[parseInt(num, 10)]) {
               patch.numbers[parseInt(num, 10)].value = inp.value;
+            } else if (nm === 'shipper') {
+              patch.pickupName = inp.value;
+            } else if (nm === 'consignee') {
+              patch.deliveryName = inp.value;
+            } else if (dk) {
+              patch.details.forEach(function (d) { if (d.key === dk) d.value = inp.value; });
             }
           });
           try { if (window.DispatchIngest && DispatchIngest.updateSuggestionFields) DispatchIngest.updateSuggestionFields(id, patch); } catch (e) {}
         }
-        wrap.querySelectorAll('[data-sugaddr], [data-sugnum]').forEach(function (inp) {
+        wrap.querySelectorAll('[data-sugaddr], [data-sugnum], [data-sugname], [data-sugdetail]').forEach(function (inp) {
           inp.onchange = function () { sugPatchFromDom(inp.getAttribute('data-sugid')); };
         });
         wrap.querySelectorAll('[data-sugadddel]').forEach(function (b) {
