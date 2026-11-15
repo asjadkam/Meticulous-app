@@ -47,6 +47,22 @@
    Learning hook (groundwork only): when a suggestion is Used, its
    source + any sender hint the raw text carried are remembered in
    the synced key dsp_suggest_stats. Nothing reads it yet.
+
+   v457 (DISPATCH-PHOTO-INTAKE, owner Nov 15, 2026): two more
+   doors into this same intake — a PHOTO of the dispatch and an
+   uploaded dispatch FILE (image or PDF). The Dispatch module
+   turns the file into text with the readers it already owns
+   (TicketOCR for images and scanned PDFs, the bundled pdf.js
+   text layer for printed PDFs) and hands the text to
+   intakeResolved with source 'photo' / 'file', so a photographed
+   or uploaded dispatch lands on exactly the suggestion a paste
+   produces. The recognition itself grew: TicketOCR's places +
+   key-number readers keep the company address, pickup address
+   and every delivery address separate and every key number
+   typed, and the learn store (dsp_learn) remembers what the
+   driver confirms — address roles, company addresses, number
+   label spellings, per sender/company — and applies it to the
+   next read. See extractDetail / learnFromEntry below.
 */
 (function () {
   'use strict';
@@ -55,6 +71,11 @@
   var STATS_KEY = 'dsp_suggest_stats';
   var INBOX_KEY = 'dsp_share_inbox';
   var DRAFT_KEY = 'dsp_draft';
+  /* v457 (DISPATCH-PHOTO-INTAKE, owner Nov 15, 2026): the learn
+     store — what this account's CONFIRMED dispatches teach the
+     reader (see the learning section below). Synced kv like
+     dsp_suggest_stats, per-account by construction. */
+  var LEARN_KEY = 'dsp_learn';
 
   function store() {
     try { return (window.App && App._store) || null; } catch (e) { return null; }
@@ -116,6 +137,179 @@
     return parts.join(' · ');
   }
 
+  /* ---------------- v457: places, key numbers, learning ----------------
+     The recognition the owner ordered Nov 15, 2026: a dispatch's
+     company address, pickup address and delivery addresses stay
+     SEPARATE, its key numbers stay TYPED, and what the driver
+     confirms teaches the next read. The extractors live in
+     TicketOCR (pure text readers); everything account-shaped —
+     the learn store, the application of remembered roles — lives
+     here, beside the suggestion store it feeds. */
+
+  function learnStore() {
+    var st = store(); if (!st) return null;
+    var v = st.get(LEARN_KEY, null);
+    if (!v || typeof v !== 'object') v = { labels: {}, roles: {}, companyAddr: {} };
+    if (!v.labels) v.labels = {};
+    if (!v.roles) v.roles = {};
+    if (!v.companyAddr) v.companyAddr = {};
+    return v;
+  }
+  function saveLearn(v) {
+    var st = store(); if (!st || !v) return false;
+    /* caps: the store stays small enough to sync forever */
+    function capObj(o, n) {
+      var keys = Object.keys(o);
+      if (keys.length <= n) return o;
+      var out = {};
+      keys.slice(keys.length - n).forEach(function (k) { out[k] = o[k]; });
+      return out;
+    }
+    v.labels = capObj(v.labels, 60);
+    v.roles = capObj(v.roles, 40);
+    v.companyAddr = capObj(v.companyAddr, 40);
+    return st.set(LEARN_KEY, v) !== false;
+  }
+  function normKey(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function normAddr(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+  /* an address's core — street + city, without the name line —
+     so a remembered role survives the name line being present
+     in one read and missing in the next */
+  function coreOfAddr(s) {
+    var m = String(s || '').match(/(\d{1,6}\s+[^,]+(?:,[^,]+)?,\s*[A-Z]{2}\s+\S+)\s*$/i);
+    return m ? normAddr(m[1]) : '';
+  }
+  /* the key a dispatch's lessons file under: the sender when the
+     text carries one, else the company/site it names */
+  function learnKeyFor(text, places, p) {
+    var hint = senderHint(text);
+    if (hint) return normKey(hint);
+    if (places && places.company) return normKey(places.company);
+    if (p && p.site) return normKey(p.site);
+    return '';
+  }
+  function learnedLabelsList(v) {
+    if (!v) return [];
+    return Object.keys(v.labels).map(function (k) {
+      return { spelling: v.labels[k].spelling, type: v.labels[k].type };
+    }).filter(function (x) { return x.spelling && x.type; });
+  }
+
+  /* extractDetail(text, p) -> { companyName, companyAddress,
+     pickupAddress, pickups, deliveries, numbers } — the v457
+     structured read of one dispatch text, with this account's
+     remembered lessons applied: an address a confirmed dispatch
+     already placed keeps its confirmed role for this sender /
+     company, a remembered company address fills a blank the
+     document left, and remembered number-label spellings are
+     read beside the built-in table. */
+  function extractDetail(text, p) {
+    var empty = { companyName: '', companyAddress: '', pickupAddress: '', pickups: [], deliveries: [], numbers: [] };
+    if (!window.TicketOCR || !TicketOCR.parseDispatchPlaces || !TicketOCR.extractKeyNumbers) return empty;
+    var learn = learnStore();
+    var places = null, numbers = [];
+    try { places = TicketOCR.parseDispatchPlaces(text); } catch (e) {}
+    try { numbers = TicketOCR.extractKeyNumbers(text, learnedLabelsList(learn)) || []; } catch (e) {}
+    if (!places) return empty;
+    var out = {
+      companyName: places.company || '',
+      companyAddress: places.companyAddress || '',
+      pickupAddress: (places.pickups && places.pickups[0]) || '',
+      pickups: (places.pickups || []).slice(),
+      deliveries: (places.deliveries || []).slice(),
+      numbers: numbers
+    };
+    var key = learnKeyFor(text, places, p);
+    if (learn && key) {
+      /* remembered roles: an address this sender/company already
+         confirmed somewhere is filed under that role again */
+      var roles = learn.roles[key] || {};
+      var all = [];
+      out.pickups.forEach(function (a) { all.push({ a: a, role: 'pickup' }); });
+      out.deliveries.forEach(function (a) { all.push({ a: a, role: 'delivery' }); });
+      if (out.companyAddress) all.push({ a: out.companyAddress, role: 'company' });
+      var moved = { pickup: [], delivery: [], company: '' };
+      all.forEach(function (it) {
+        var r = roles[normAddr(it.a)];
+        if (!r) { var c = coreOfAddr(it.a); if (c) r = roles['c:' + c]; }
+        r = r || it.role;
+        if (r === 'pickup') moved.pickup.push(it.a);
+        else if (r === 'delivery') moved.delivery.push(it.a);
+        else if (r === 'company' && !moved.company) moved.company = it.a;
+      });
+      if (moved.pickup.length || moved.delivery.length || moved.company) {
+        out.pickups = moved.pickup;
+        out.deliveries = moved.delivery;
+        if (moved.company) out.companyAddress = moved.company;
+        out.pickupAddress = out.pickups[0] || '';
+      }
+      /* remembered company address fills a blank — never
+         overwrites an address the document itself carries */
+      if (!out.companyAddress && learn.companyAddr[key]) out.companyAddress = learn.companyAddr[key];
+    }
+    return out;
+  }
+
+  /* learnFromEntry(entry, beforeFields): record what a CONFIRMED
+     suggestion teaches — called when a suggestion is Used (the
+     confirmation) and when its fields are edited on the card
+     (a correction). Learns, per sender/company key:
+       - address -> role (the fields as they stand AFTER the
+         driver's word, so a correction replaces the guess);
+       - company -> its confirmed company address;
+       - number label spellings -> their types, for every typed
+         number the confirmed suggestion carries.
+     Nothing else is learned: no raw text is kept, no guess is
+     ever promoted — only what the driver confirmed. */
+  function learnFromEntry(entry, beforeFields) {
+    if (!entry || !entry.fields) return;
+    var learn = learnStore(); if (!learn) return;
+    var f = entry.fields;
+    var places = { company: f.companyName || '' };
+    var key = learnKeyFor(entry.rawText || '', places, { site: f.jobSite || '' });
+    if (!key) return;
+    var roles = learn.roles[key] || (learn.roles[key] = {});
+    function mark(addr, role) {
+      if (!addr) return;
+      roles[normAddr(addr)] = role;
+      var c = coreOfAddr(addr);
+      if (c) roles['c:' + c] = role;
+    }
+    (f.pickups && f.pickups.length ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : [])).forEach(function (a) { mark(a, 'pickup'); });
+    (f.deliveries || []).forEach(function (a) { mark(a, 'delivery'); });
+    mark(f.companyAddress, 'company');
+    /* a corrected-away address keeps no stale role: when the
+       before-fields held an address the after-fields place
+       differently (or drop), the after word above already won
+       for shared addresses; a dropped address is forgotten */
+    if (beforeFields) {
+      var afterAddrs = {};
+      (f.pickups || []).forEach(function (a) { afterAddrs[normAddr(a)] = true; });
+      (f.deliveries || []).forEach(function (a) { afterAddrs[normAddr(a)] = true; });
+      if (f.companyAddress) afterAddrs[normAddr(f.companyAddress)] = true;
+      if (f.pickupAddress) afterAddrs[normAddr(f.pickupAddress)] = true;
+      [beforeFields.pickupAddress].concat(beforeFields.pickups || [], beforeFields.deliveries || [], [beforeFields.companyAddress]).forEach(function (a) {
+        if (a && !afterAddrs[normAddr(a)]) {
+          delete roles[normAddr(a)];
+          var c = coreOfAddr(a);
+          if (c) delete roles['c:' + c];
+        }
+      });
+    }
+    if (f.companyAddress) learn.companyAddr[key] = f.companyAddress;
+    (f.numbers || []).forEach(function (n) {
+      if (!n || !n.label || !n.type) return;
+      var lk = normKey(n.label);
+      if (!lk) return;
+      var cur = learn.labels[lk] || { spelling: n.label, type: n.type, count: 0 };
+      cur.spelling = n.label;
+      cur.type = n.type;
+      cur.count = (cur.count || 0) + 1;
+      learn.labels[lk] = cur;
+    });
+    saveLearn(learn);
+  }
+
   function parseDispatchText(text) {
     var out = { isDispatchShape: false, score: 0, confidence: null, fields: null, parsed: null };
     var t = String(text == null ? '' : text).trim();
@@ -124,6 +318,9 @@
     var p = TicketOCR.parseDispatch(t);
     out.parsed = p;
     var form = TicketOCR.toDispatchForm ? TicketOCR.toDispatchForm(p) : {};
+
+    var detail = extractDetail(t, p);
+    out.detail = detail;
 
     var score = 0;
     if (p.moveType) score += 2;
@@ -135,6 +332,16 @@
     if (p.datetime || p.time) score += 1;
     if (p.instructions) score += 1;
     if (MATERIAL_RE.test(t)) score += 1;
+    /* v457: a DOCUMENT-shaped dispatch (a rate confirmation, a
+       BOL) speaks in addresses and typed numbers instead of
+       driver-speak; that structure is its own dispatch signal.
+       It can only add to a read that also carries a place — a
+       lone labelled number (an invoice line in a family chat)
+       still produces nothing. */
+    var placeCount = detail.pickups.length + detail.deliveries.length + (detail.companyAddress ? 1 : 0);
+    if (placeCount >= 1 && detail.numbers.length >= 1) score += 3;
+    else if (placeCount >= 2) score += 2;
+    else if (placeCount === 1) score += 1;
     out.score = score;
     out.isDispatchShape = score >= 3;
     if (!out.isDispatchShape) return out;
@@ -166,6 +373,15 @@
       var bits358 = un358.map(function (u) { return 'Pin link: ' + u; }).join(' · ');
       out.fields.notes = out.fields.notes ? out.fields.notes + ' · ' + bits358 : bits358;
     }
+    /* v457: the structured read rides the suggestion as its own
+       fields — separate, labelled, editable on the card — and
+       never folded into the notes blob at this stage. */
+    out.fields.companyName = detail.companyName || '';
+    out.fields.companyAddress = detail.companyAddress || '';
+    out.fields.pickupAddress = detail.pickupAddress || '';
+    out.fields.pickups = detail.pickups || [];
+    out.fields.deliveries = detail.deliveries || [];
+    out.fields.numbers = detail.numbers || [];
     return out;
   }
 
@@ -649,10 +865,73 @@
     return st.set(SUGGEST_KEY, keep) !== false;
   }
 
+  /* updateSuggestionFields(id, patch) — v457: the confirmation
+     card's own edits. The driver corrects the structured read
+     (company / pickup / delivery addresses, typed numbers) ON
+     the suggestion, before Use; the correction is stored on the
+     suggestion and taught to the learn store in the same step,
+     so the next similar dispatch reads better. Only the v457
+     field shapes are patchable; anything else is ignored. */
+  function updateSuggestionFields(id, patch) {
+    var st = store(); if (!st || !patch) return null;
+    var all = list();
+    var entry = null;
+    for (var i = 0; i < all.length; i++) { if (all[i] && all[i].id === id) { entry = all[i]; break; } }
+    if (!entry) return null;
+    var before = {};
+    var f = entry.fields || (entry.fields = {});
+    ['companyName', 'companyAddress', 'pickupAddress', 'pickups', 'deliveries', 'numbers'].forEach(function (k) {
+      before[k] = Array.isArray(f[k]) ? f[k].slice() : f[k];
+    });
+    function cleanStr(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300); }
+    function cleanList(v, cap) {
+      if (!Array.isArray(v)) return null;
+      return v.map(cleanStr).filter(Boolean).slice(0, cap);
+    }
+    if (patch.companyName !== undefined) f.companyName = cleanStr(patch.companyName);
+    if (patch.companyAddress !== undefined) f.companyAddress = cleanStr(patch.companyAddress);
+    var pk = cleanList(patch.pickups, 4);
+    if (pk !== null) { f.pickups = pk; f.pickupAddress = pk[0] || ''; }
+    if (patch.pickupAddress !== undefined && pk === null) {
+      f.pickupAddress = cleanStr(patch.pickupAddress);
+      f.pickups = f.pickupAddress ? [f.pickupAddress] : [];
+    }
+    var dl = cleanList(patch.deliveries, 6);
+    if (dl !== null) f.deliveries = dl;
+    if (Array.isArray(patch.numbers)) {
+      f.numbers = patch.numbers.filter(function (n) { return n && n.value; }).slice(0, 14).map(function (n) {
+        return { type: cleanStr(n.type || 'other').slice(0, 40), label: cleanStr(n.label || n.type || 'Number').slice(0, 40), value: cleanStr(n.value).slice(0, 60) };
+      });
+    }
+    if (st.set(SUGGEST_KEY, all) === false) return null;
+    try { learnFromEntry(entry, before); } catch (e) {}
+    return entry;
+  }
+
   /* The form fields a suggestion loads, in the dispatch form's own
      field names — identical shape to the drafts dsp_draft carries. */
   function formFieldsFor(entry) {
     var f = (entry && entry.fields) || {};
+    /* v457: the structured read lands on the record in labelled
+       lines (the form's Notes is the field that carries them
+       through the draft machinery), and as its own keys for the
+       direct-save door, which keeps every key it is handed. A
+       line already in the notes is never duplicated. */
+    var notes = f.notes || '';
+    var lines = [];
+    function addLine(s) {
+      if (!s) return;
+      if (notes.toLowerCase().indexOf(s.toLowerCase()) !== -1) return;
+      if (lines.indexOf(s) !== -1) return;
+      lines.push(s);
+    }
+    if (f.companyAddress) addLine('Company: ' + (f.companyName ? f.companyName + ' — ' : '') + f.companyAddress);
+    else if (f.companyName && f.companyName !== f.jobSite) addLine('Company: ' + f.companyName);
+    var pks = (f.pickups && f.pickups.length) ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : []);
+    pks.forEach(function (a, i) { addLine((pks.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup') + ': ' + a); });
+    (f.deliveries || []).forEach(function (a, i) { addLine('Delivery ' + (i + 1) + ': ' + a); });
+    (f.numbers || []).forEach(function (n) { if (n && n.value) addLine((n.label || n.type || 'Number') + ': ' + n.value); });
+    if (lines.length) notes = notes ? notes + ' · ' + lines.join(' · ') : lines.join(' · ');
     return {
       jobSite: f.jobSite || '',
       scheduledAt: f.scheduledAt || '',
@@ -666,8 +945,16 @@
       ticketNo: '',
       amount: '',
       loads: '1',
-      notes: f.notes || '',
-      driverId: ''
+      notes: notes,
+      driverId: '',
+      /* v457: the structured read, kept as itself on the record
+         wherever the save door keeps handed keys */
+      companyName: f.companyName || '',
+      companyAddress: f.companyAddress || '',
+      pickupAddress: f.pickupAddress || '',
+      pickups: f.pickups || [],
+      deliveries: f.deliveries || [],
+      numbers: f.numbers || []
     };
   }
 
@@ -712,6 +999,10 @@
     if (st.set(DRAFT_KEY, newDraft) === false) return { ok: false, reason: 'store', entry: entry };
     var keep = all.filter(function (e) { return e && e.id !== id; });
     st.set(SUGGEST_KEY, keep);
+    /* v457: a Use is a confirmation — what it carries teaches
+       the learn store (address roles, company address, number
+       label spellings) for this sender/company. */
+    try { learnFromEntry(entry, null); } catch (e) {}
     try {
       var stats = st.get(STATS_KEY, []);
       if (!Array.isArray(stats)) stats = [];
@@ -782,8 +1073,13 @@
     dismiss: dismiss,
     use: use,
     formFieldsFor: formFieldsFor,
+    /* v457 */
+    extractDetail: extractDetail,
+    updateSuggestionFields: updateSuggestionFields,
+    learnFromEntry: learnFromEntry,
+    learnSnapshot: function () { return learnStore(); },
     captureShare: captureShare,
     drainShareInbox: drainShareInbox,
-    KEYS: { suggest: SUGGEST_KEY, stats: STATS_KEY, inbox: INBOX_KEY, draft: DRAFT_KEY }
+    KEYS: { suggest: SUGGEST_KEY, stats: STATS_KEY, inbox: INBOX_KEY, draft: DRAFT_KEY, learn: LEARN_KEY }
   };
 })();

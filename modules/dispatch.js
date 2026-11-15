@@ -330,6 +330,32 @@
       });
     });
   }
+  /* v457 (DISPATCH-PHOTO-INTAKE, owner Nov 15, 2026): the
+     dispatch intake's file reader — the same three reads the
+     route-sheet door above uses, pointed at a dispatch: an
+     image goes through the ticket OCR (with its upside-down
+     retry), a PDF with a text layer is read as text, a scanned
+     PDF's pages are rendered and read by the same OCR. The
+     text lands in DispatchIngest exactly like a paste — one
+     pipeline, one kind of suggestion. */
+  function dpIngestFileText(file) {
+    var sniffed = file.arrayBuffer()
+      .then(function (buf) { return RouteSheetFile.sniffKind(new Uint8Array(buf)); })
+      .catch(function () { return null; });
+    return sniffed.then(function (kind) {
+      var asPdf = kind ? (kind === 'pdf') : RouteSheetFile.isPdfFile(file);
+      if (asPdf) {
+        return dpSheetPdfText(file).then(function (res) {
+          if (res && res.chars >= RouteSheetFile.TEXT_MIN) return res.text;
+          return dpSheetPdfOcr(file);
+        });
+      }
+      if (window.TicketOCR && TicketOCR.recognizeWithRotation) return TicketOCR.recognizeWithRotation(file);
+      if (window.TicketOCR && TicketOCR.recognize) return TicketOCR.recognize(file);
+      return '';
+    });
+  }
+
   /* The scanned-PDF read: each page rendered and handed to
      the same OCR the photo door uses; the pages' text is
      concatenated in page order — the photo path's input,
@@ -3893,7 +3919,38 @@
                 (confByDate[eDate] ? '<div class="b" style="color:#b45309">⚠️ One of ' + confByDate[eDate] + ' suggestions for this day — pick one.</div>' : '') +
                 (f.notes ? '<div class="b">📝 ' + esc(f.notes) + '</div>' : '') +
                 '<div class="b" style="color:var(--muted)">' + esc(raw) + '</div>' +
-                '<div class="b" style="color:var(--muted);font-size:11px">From a ' + esc(e.source || 'paste') + '</div></div>' +
+                '<div class="b" style="color:var(--muted);font-size:11px">From a ' + esc(e.source || 'paste') + '</div>' +
+                /* v457: the structured read, as separate labelled
+                   fields the driver can correct right here — the
+                   company address, the pickup, every delivery,
+                   and each typed key number. A correction is
+                   saved on the suggestion and taught to the
+                   reader (DispatchIngest.updateSuggestionFields)
+                   the moment the field loses focus. */
+                (function () {
+                  var pks457 = (f.pickups && f.pickups.length) ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : []);
+                  var has457 = f.companyAddress || pks457.length || (f.deliveries && f.deliveries.length) || (f.numbers && f.numbers.length);
+                  if (!has457) return '';
+                  var dh = '<div style="margin-top:6px;border-top:1px dashed #bbb;padding-top:6px">';
+                  dh += '<label class="f">Company address</label>' +
+                    '<input data-sugaddr="company" data-sugid="' + esc(e.id) + '" value="' + esc(f.companyAddress || '') + '" style="width:100%" placeholder="The company\'s own address">';
+                  pks457.forEach(function (a, i) {
+                    dh += '<label class="f">' + (pks457.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup address') + '</label>' +
+                      '<input data-sugaddr="pickup:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
+                  });
+                  (f.deliveries || []).forEach(function (a, i) {
+                    dh += '<label class="f">Delivery ' + (i + 1) + '</label>' +
+                      '<input data-sugaddr="delivery:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
+                  });
+                  dh += '<div style="margin-top:4px"><button class="btn small ghost" data-sugadddel="' + esc(e.id) + '">+ Add a delivery</button></div>';
+                  (f.numbers || []).forEach(function (n, i) {
+                    dh += '<label class="f">' + esc(n.label || n.type || 'Number') + '</label>' +
+                      '<input data-sugnum="' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(n.value || '') + '" style="width:100%">';
+                  });
+                  dh += '</div>';
+                  return dh;
+                })() +
+                '</div>' +
                 '<div style="display:flex;flex-direction:column;gap:6px">' +
                 '<button class="btn small primary" data-suguse="' + esc(e.id) + '">Use</button>' +
                 '<button class="btn small ghost" data-sugdismiss="' + esc(e.id) + '">Dismiss</button></div></div>';
@@ -3902,9 +3959,15 @@
         } else {
           h += '<h3>📩 Add from a message</h3><div>';
         }
-        h += '<p class="note">Paste a dispatch from a text, email or WhatsApp — whoever sent it. If it reads like a dispatch, it becomes a suggestion for you to confirm.</p>' +
+        h += '<p class="note">Paste a dispatch from a text, email or WhatsApp — whoever sent it. Or take a photo of the dispatch, or upload the dispatch file (a photo or a PDF). If it reads like a dispatch, it becomes a suggestion for you to confirm.</p>' +
           '<textarea id="dp_paste" rows="3" placeholder="Paste the message here…" style="width:100%"></textarea>' +
           '<div class="row" style="margin-top:6px"><button class="btn secondary" id="dp_paste_btn">Read message</button></div>' +
+          /* v457: the photo and file doors into the same intake */
+          '<div class="row" style="margin-top:6px;gap:6px">' +
+          '<button class="btn secondary" id="dp_ing_cam_btn" style="flex:1">📷 Take a photo</button>' +
+          '<button class="btn secondary" id="dp_ing_file_btn" style="flex:1">📁 Upload photo / file</button></div>' +
+          '<input type="file" id="dp_ing_cam" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
+          '<input type="file" id="dp_ing_file" accept="image/*,.pdf,application/pdf" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
           (ingestFlash ? '<p class="note" style="margin-top:6px">' + ingestFlash + '</p>' : '') +
           '</div></div>';
         return h;
@@ -3915,22 +3978,25 @@
         wrap.innerHTML = ingestHTML();
         ingestFlash = '';
         ingestTopFlash = '';
+        /* v457: one finisher for every intake door — the words
+           name the door the dispatch came through. */
+        var finishIngest = function (res, doorWord) {
+          if (res && res.added.length > 1) {
+            ingestFlash = '✓ That ' + doorWord + ' held ' + res.added.length + ' dispatches — each one is in your suggestions above. Tap <b>Use</b> to put one in the form.';
+          } else if (res && res.added.length === 1) {
+            ingestFlash = '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.';
+          } else if (res && res.duplicates > 0) {
+            ingestFlash = 'Those dispatches are already in your suggestions above — nothing was added twice.';
+          } else {
+            ingestFlash = 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
+          }
+          paintIngest();
+        };
         var pb = wrap.querySelector('#dp_paste_btn');
         if (pb) pb.onclick = function () {
           var ta = wrap.querySelector('#dp_paste');
           var txt = ta ? ta.value : '';
-          var finishPaste = function (res) {
-            if (res && res.added.length > 1) {
-              ingestFlash = '✓ That message held ' + res.added.length + ' dispatches — each one is in your suggestions above. Tap <b>Use</b> to put one in the form.';
-            } else if (res && res.added.length === 1) {
-              ingestFlash = '✓ That reads like a dispatch — it is in your suggestions above. Tap <b>Use</b> to put it in the form.';
-            } else if (res && res.duplicates > 0) {
-              ingestFlash = 'Those dispatches are already in your suggestions above — nothing was added twice.';
-            } else {
-              ingestFlash = 'That doesn\'t look like a dispatch — nothing was added. You can still type the dispatch in the form below.';
-            }
-            paintIngest();
-          };
+          var finishPaste = function (res) { finishIngest(res, 'message'); };
           /* v358 (GOOGLE-MAPS-PIN-INTO-NAVIGATOR): a pasted message
              carrying Maps links goes through the resolving door —
              short links are followed first so their pins land on
@@ -3958,6 +4024,101 @@
           } catch (e) {}
           finishPaste(res);
         };
+        /* v457: the photo / file doors — the file becomes text
+           through the module's own readers (dpIngestFileText),
+           then enters the SAME intake as a paste, tagged with
+           its source. The button says what it is doing while
+           the read runs; a file that yields no readable text is
+           refused plainly and saves nothing. */
+        var camBtn = wrap.querySelector('#dp_ing_cam_btn');
+        var fileBtn = wrap.querySelector('#dp_ing_file_btn');
+        var camIn = wrap.querySelector('#dp_ing_cam');
+        var fileIn = wrap.querySelector('#dp_ing_file');
+        if (camBtn && camIn) camBtn.onclick = function () { camIn.click(); };
+        if (fileBtn && fileIn) fileBtn.onclick = function () { fileIn.click(); };
+        function dpIngestDoor(input, btn) {
+          if (!input) return;
+          input.onchange = function () {
+            var file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            var doorWord = (window.RouteSheetFile && RouteSheetFile.isPdfFile(file)) ? 'file' : 'photo';
+            if (btn) { btn.disabled = true; btn.textContent = 'Reading the ' + doorWord + '…'; }
+            dpIngestFileText(file).then(function (text) {
+              if (!text || String(text).replace(/\s/g, '').length < 10) {
+                ingestFlash = 'That ' + doorWord + ' could not be read — nothing was added. You can still type the dispatch in the form below.';
+                paintIngest();
+                return;
+              }
+              var src = doorWord === 'file' ? 'file' : 'photo';
+              if (window.DispatchIngest && DispatchIngest.intakeResolved) {
+                DispatchIngest.intakeResolved(text, src).then(function (res) { finishIngest(res, doorWord); },
+                  function () { finishIngest(null, doorWord); });
+              } else {
+                finishIngest(null, doorWord);
+              }
+            }, function () {
+              ingestFlash = 'That ' + doorWord + ' could not be read — nothing was added. You can still type the dispatch in the form below.';
+              paintIngest();
+            });
+          };
+        }
+        dpIngestDoor(camIn, camBtn);
+        dpIngestDoor(fileIn, fileBtn);
+        /* v457: the confirmation card's own fields — a change on
+           any of an entry's address/number inputs saves the
+           whole set back onto the suggestion (and teaches the
+           reader) without a repaint, so the driver's place in
+           the list never moves under his fingers. */
+        function sugPatchFromDom(id) {
+          var entry = null;
+          try {
+            (DispatchIngest.list() || []).forEach(function (e2) { if (e2 && e2.id === id) entry = e2; });
+          } catch (e) {}
+          if (!entry) return;
+          var f = entry.fields || {};
+          var patch = { numbers: (f.numbers || []).map(function (n) { return { type: n.type, label: n.label, value: n.value }; }) };
+          wrap.querySelectorAll('[data-sugid="' + id + '"]').forEach(function (inp) {
+            var a = inp.getAttribute('data-sugaddr');
+            var num = inp.getAttribute('data-sugnum');
+            if (a === 'company') patch.companyAddress = inp.value;
+            else if (a && a.indexOf('pickup:') === 0) {
+              patch.pickups = patch.pickups || ((f.pickups && f.pickups.length) ? f.pickups.slice() : (f.pickupAddress ? [f.pickupAddress] : []));
+              patch.pickups[parseInt(a.slice(7), 10)] = inp.value;
+            } else if (a && a.indexOf('delivery:') === 0) {
+              patch.deliveries = patch.deliveries || (f.deliveries || []).slice();
+              patch.deliveries[parseInt(a.slice(9), 10)] = inp.value;
+            } else if (num !== null && patch.numbers[parseInt(num, 10)]) {
+              patch.numbers[parseInt(num, 10)].value = inp.value;
+            }
+          });
+          try { if (window.DispatchIngest && DispatchIngest.updateSuggestionFields) DispatchIngest.updateSuggestionFields(id, patch); } catch (e) {}
+        }
+        wrap.querySelectorAll('[data-sugaddr], [data-sugnum]').forEach(function (inp) {
+          inp.onchange = function () { sugPatchFromDom(inp.getAttribute('data-sugid')); };
+        });
+        wrap.querySelectorAll('[data-sugadddel]').forEach(function (b) {
+          b.onclick = function () {
+            /* a blank Delivery row appears in place; typing in
+               it and moving on saves it through the same patch
+               path as every other field on the card */
+            var id = b.getAttribute('data-sugadddel');
+            var holder = b.parentNode;
+            if (!holder || !holder.parentNode) return;
+            var idx = wrap.querySelectorAll('[data-sugaddr^="delivery:"][data-sugid="' + id + '"]').length;
+            var lab = document.createElement('label');
+            lab.className = 'f';
+            lab.textContent = 'Delivery ' + (idx + 1);
+            var inp = document.createElement('input');
+            inp.setAttribute('data-sugaddr', 'delivery:' + idx);
+            inp.setAttribute('data-sugid', id);
+            inp.style.width = '100%';
+            inp.onchange = function () { sugPatchFromDom(id); };
+            holder.parentNode.insertBefore(lab, holder);
+            holder.parentNode.insertBefore(inp, holder);
+            try { inp.focus(); } catch (e) {}
+          };
+        });
         wrap.querySelectorAll('[data-sugdismiss]').forEach(function (b) {
           b.onclick = function () {
             try { if (window.DispatchIngest) DispatchIngest.dismiss(b.getAttribute('data-sugdismiss')); } catch (e) {}
