@@ -1373,9 +1373,18 @@
     var role = App.userRole();
     var tc = el('trkCard');
     if (tc) tc.style.display = roleShowsTracker(role) ? '' : 'none';
+    /* v458 (TILE-REARRANGE-NOV15): the visible set is computed
+       exactly as before (role order + the v199 account gates),
+       then the USER'S OWN saved tile order permutes it — the
+       gates still decide WHAT shows; the preference decides
+       where it sits. See TILE-ORDER below. */
+    var dashKeys = [];
     roleModuleOrder(role).forEach(function (key) {
       if (key === 'pnl' && !pnlAllowed()) return; // v199: Driver accounts never surface P&L
       if (key === 'maintenance' && !maintAllowed()) return; // v199: Driver accounts never surface Maintenance
+      dashKeys.push(key);
+    });
+    tileOrderApply(tileOrderLoad(), dashKeys).forEach(function (key) {
       var meta = MODULE_META[key];
       var ok = App.tierAllows(key);
       html += '<div class="modcard' + (ok ? '' : ' locked') + '" data-mod="' + key + '">' +
@@ -1387,6 +1396,7 @@
     Array.prototype.forEach.call(g.querySelectorAll('.modcard'), function (c) {
       c.onclick = function () { App.openModule(c.getAttribute('data-mod')); };
     });
+    wireTileEdit(g); // v458: long-press jiggle edit mode + drag rearrange (TILE-ORDER below)
     paintNameCard(); // v147: the one-time name ask (self-hiding once settled)
     /* v357 (CONNECT-ALL DASHBOARD MIRROR): the whose-book picker
        rides every dashboard paint — self-hiding unless this
@@ -1471,6 +1481,366 @@
   }
   App._tileHeal = tileHeal; // v397: harness door (trackerTick below is the live driver)
   /* ================= TILE-HEAL-END ================= */
+
+  /* ================= TILE-ORDER-BEGIN =================
+     v458 (TILE-REARRANGE-NOV15, owner, Nov 15, 2026 01:17 CST —
+     his words over his own dashboard screenshot: "All of these
+     tile should be adjustable... So if a user long press any
+     tile... All the tile should start shaking (like tiles shake
+     on iPhone when long pressed) to signify that edit mode is
+     on and then a user should be able to adjust tiles based on
+     preferences.. Some user will prioritize the revenue, some
+     navigator, some dispatch... They should have the option to
+     adjust it how they like!").
+     THE SHAPE:
+       - The arrangement is a plain store key, 'tile_order' —
+         an array of module keys. It rides the ONE store every
+         preference rides (the local mt_ slot + CloudSync's
+         per-account kv mirror — any key not starting '__'
+         syncs), so the order is per-account, survives reload
+         and restart, and follows the user like his other
+         settings. No new store, no new service, nothing to pay
+         for.
+       - buildDashboard computes the visible set exactly as it
+         always has (role order, then the v199 Driver gates for
+         P&L / Maintenance) and tileOrderApply permutes ONLY
+         that set: saved keys that are visible lead, in saved
+         order; visible keys the save has never seen follow in
+         role order. A role change can hide or reveal a tile,
+         but it can never scramble the ones that stay.
+       - A drop saves tileOrderNext(saved, visibleNow): the
+         order just made, followed by any saved keys NOT on
+         this face (their saved order kept) — arranging the
+         driver face never erases the office-only tiles'
+         places, and back.
+       - Long-press (App._tileLongPressMs, 450 ms, finger held
+         still — any real move or a release cancels it) enters
+         edit mode: the grid gains .editing, EVERY card gains
+         .jiggle (the iPhone shake, css/style.css), one Done
+         pill appears. In edit mode a card drags under the
+         finger — touch and mouse alike, Pointer Events with
+         guarded capture (the navigator / pti pattern) — and
+         the rest slide aside live around a placeholder slot.
+         The same hold that enters edit mode flows straight
+         into a drag of the pressed card, iPhone-style. Done —
+         or any dashboard repaint — ends it: the shaking stops
+         and the order on screen is already the order saved
+         (each drop persists at once).
+       - A normal tap is untouched: the cards' onclick still
+         belongs to buildDashboard alone. While editing, a
+         capture-phase click gate on the grid swallows every
+         click (and the trailing click of the long-press
+         itself), so a long-press can NEVER fire a module open.
+     Harness-extractable: the pure doors (tileOrderApply /
+     tileOrderNext / tileInsertIndex) use only their arguments;
+     the store doors use only `store`; the wiring uses el +
+     document + App. */
+  function tileOrderSanitize(saved) {
+    var out = [];
+    if (!Array.isArray(saved)) return out;
+    for (var i = 0; i < saved.length; i++) {
+      var k = saved[i];
+      if (typeof k === 'string' && k && out.indexOf(k) === -1) out.push(k);
+    }
+    return out;
+  }
+  /* The display order for one face: the saved keys that are on
+     it, in saved order, then the face's own order for the rest. */
+  function tileOrderApply(saved, visible) {
+    var s = tileOrderSanitize(saved);
+    var vis = tileOrderSanitize(visible);
+    var out = [];
+    s.forEach(function (k) { if (vis.indexOf(k) !== -1) out.push(k); });
+    vis.forEach(function (k) { if (out.indexOf(k) === -1) out.push(k); });
+    return out;
+  }
+  /* The next save after a drag on one face: this face's new
+     order first, then every saved key that is NOT on this face,
+     in its saved order — one face's arranging never reaches
+     across to another face's tiles. */
+  function tileOrderNext(saved, visibleNow) {
+    var s = tileOrderSanitize(saved);
+    var out = tileOrderSanitize(visibleNow);
+    s.forEach(function (k) { if (out.indexOf(k) === -1) out.push(k); });
+    return out;
+  }
+  /* The drag's one geometric question, kept pure so the bench
+     drives it with synthetic rects: given the CENTRES of the
+     cards the dragged one moves among (DOM order, the dragged
+     card itself excluded) and the pointer point, before which
+     card does the placeholder belong? Reading order — a centre
+     counts as "after" the pointer when it sits a row below
+     (the pointer is above its centre by more than half its
+     height), or inside the pointer's own row band and to the
+     pointer's right. */
+  function tileInsertIndex(centers, x, y) {
+    for (var i = 0; i < centers.length; i++) {
+      var c = centers[i];
+      var band = (c.h || 0) / 2;
+      if (y < c.y - band) return i;
+      if (Math.abs(y - c.y) <= band && x < c.x) return i;
+    }
+    return centers.length;
+  }
+  function tileOrderLoad() {
+    var v = null;
+    try { v = store.get('tile_order', null); } catch (e) {}
+    return tileOrderSanitize(v);
+  }
+  function tileOrderStore(order) {
+    try { store.set('tile_order', tileOrderSanitize(order)); } catch (e) {}
+  }
+
+  var tileEdit = { on: false, grid: null, press: null, pend: null, drag: null, suppressUntil: 0 };
+  App._tileLongPressMs = 450; // harness-shrinkable
+
+  function tileCards(g) {
+    return Array.prototype.slice.call(g.querySelectorAll('.modcard'));
+  }
+  function tileCardOf(node) {
+    if (!node) return null;
+    if (node.closest) { try { return node.closest('.modcard'); } catch (e) {} }
+    var n = node;
+    while (n && !(n.classList && n.classList.contains('modcard'))) n = n.parentNode;
+    return n || null;
+  }
+  /* The ONE way out of edit mode, built once and parked inside
+     the dashboard view: a quiet navy pill, bottom centre,
+     shown only while editing. */
+  function tileDoneBtn(show) {
+    var dv = el('dashView');
+    if (!dv) return;
+    var b = el('tileDone');
+    if (!b) {
+      try {
+        b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'tileDone';
+        b.className = 'tileDone hidden';
+        b.textContent = 'Done';
+        b.addEventListener('click', function () { tileEditExit(); });
+        dv.appendChild(b);
+      } catch (e) { return; }
+    }
+    if (show) b.classList.remove('hidden'); else b.classList.add('hidden');
+  }
+  function tileEditEnter(g) {
+    if (tileEdit.on || !g) return;
+    tileEdit.on = true;
+    tileEdit.grid = g;
+    g.classList.add('editing');
+    tileCards(g).forEach(function (c) { c.classList.add('jiggle'); });
+    tileDoneBtn(true);
+    try { if (typeof navigator !== 'undefined' && navigator && navigator.vibrate) navigator.vibrate(8); } catch (e) {}
+  }
+  function tileEditExit() {
+    if (tileEdit.drag) tileDragDrop();
+    tilePressCancel();
+    tileEdit.pend = null;
+    /* the suppress window existed only to swallow the entering
+       press's own trailing click, which fires while editing is
+       still on (the gate's `on` check covers it) — once edit
+       mode ends, no later tap may be eaten by it */
+    tileEdit.suppressUntil = 0;
+    var g = tileEdit.grid;
+    tileEdit.on = false;
+    tileEdit.grid = null;
+    if (g) {
+      g.classList.remove('editing');
+      tileCards(g).forEach(function (c) { c.classList.remove('jiggle'); });
+    }
+    tileDoneBtn(false);
+  }
+  function tileOrderPersist() {
+    var g = tileEdit.grid;
+    if (!g) return;
+    var now = [];
+    tileCards(g).forEach(function (c) {
+      var k = c.getAttribute('data-mod');
+      if (k) now.push(k);
+    });
+    tileOrderStore(tileOrderNext(tileOrderLoad(), now));
+  }
+  function tilePressCancel() {
+    if (tileEdit.press) {
+      try { clearTimeout(tileEdit.press.timer); } catch (e) {}
+      tileEdit.press = null;
+    }
+  }
+
+  function tileDragStart(card, pid, x, y) {
+    var g = tileEdit.grid;
+    if (!g || tileEdit.drag) return;
+    var r = card.getBoundingClientRect();
+    var ph = document.createElement('div');
+    ph.className = 'tilePh';
+    ph.style.height = r.height + 'px';
+    card.parentNode.insertBefore(ph, card);
+    card.classList.add('dragging');
+    card.classList.remove('jiggle');
+    card.style.width = r.width + 'px';
+    card.style.height = r.height + 'px';
+    card.style.left = r.left + 'px';
+    card.style.top = r.top + 'px';
+    try { if (card.setPointerCapture && pid !== undefined && pid !== null) card.setPointerCapture(pid); } catch (e) {}
+    tileEdit.drag = { card: card, ph: ph, dx: x - r.left, dy: y - r.top, pid: pid };
+  }
+  function tileDragMove(x, y) {
+    var d = tileEdit.drag;
+    if (!d) return;
+    d.card.style.left = (x - d.dx) + 'px';
+    d.card.style.top = (y - d.dy) + 'px';
+    var g = tileEdit.grid;
+    if (!g) return;
+    var sibs = tileCards(g).filter(function (c) { return c !== d.card; });
+    var centers = [];
+    sibs.forEach(function (c) {
+      var r = c.getBoundingClientRect();
+      centers.push({ x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height });
+    });
+    var idx = tileInsertIndex(centers, x, y);
+    var ref = idx >= sibs.length ? null : sibs[idx];
+    if (ref ? d.ph.nextSibling !== ref : g.lastChild !== d.ph) {
+      if (ref) g.insertBefore(d.ph, ref); else g.appendChild(d.ph);
+    }
+  }
+  function tileDragDrop() {
+    var d = tileEdit.drag;
+    if (!d) return;
+    tileEdit.drag = null;
+    var card = d.card, ph = d.ph;
+    if (ph.parentNode) ph.parentNode.insertBefore(card, ph);
+    if (ph.parentNode) ph.parentNode.removeChild(ph);
+    card.classList.remove('dragging');
+    card.style.width = '';
+    card.style.height = '';
+    card.style.left = '';
+    card.style.top = '';
+    if (tileEdit.on) card.classList.add('jiggle');
+    tileOrderPersist();
+  }
+
+  /* Wired by buildDashboard on every paint. The #modGrid
+     element itself is static (only its innerHTML is rebuilt),
+     so the listeners attach ONCE (the _tileWired stamp) and the
+     edit state — never the listeners — is what a repaint
+     resets: a fresh paint is a fresh face, and since every drop
+     already saved, leaving edit mode on a repaint loses
+     nothing. */
+  function wireTileEdit(g) {
+    if (!g) return;
+    if (tileEdit.on || tileEdit.drag || tileEdit.press || tileEdit.pend) {
+      tilePressCancel();
+      tileEdit.drag = null; // a drag in flight dies with its paint; its card is gone with it
+      tileEdit.pend = null;
+      tileEdit.on = false;
+      tileEdit.suppressUntil = 0;
+      if (tileEdit.grid && tileEdit.grid !== g) tileEdit.grid.classList.remove('editing');
+      g.classList.remove('editing');
+      tileDoneBtn(false);
+    }
+    tileEdit.grid = null;
+    if (g._tileWired) return;
+    g._tileWired = true;
+
+    g.addEventListener('pointerdown', function (e) {
+      var card = tileCardOf(e.target);
+      if (!card || card.parentNode !== g) return;
+      var pid = (e.pointerId === undefined || e.pointerId === null) ? 'mouse' : e.pointerId;
+      if (tileEdit.on) {
+        if (!tileEdit.pend && !tileEdit.drag) {
+          tileEdit.pend = { card: card, pid: pid, x: e.clientX, y: e.clientY, active: false };
+        }
+        return;
+      }
+      tilePressCancel();
+      var press = { card: card, pid: pid, x: e.clientX, y: e.clientY, timer: null };
+      press.timer = setTimeout(function () {
+        if (tileEdit.press !== press) return;
+        tileEdit.press = null;
+        tileEdit.suppressUntil = Date.now() + 500;
+        tileEditEnter(g);
+        /* the same hold flows straight into a drag of this
+           card, iPhone-style — no second touch needed */
+        tileEdit.pend = { card: card, pid: pid, x: press.x, y: press.y, active: false };
+      }, App._tileLongPressMs || 450);
+      tileEdit.press = press;
+    });
+
+    g.addEventListener('pointermove', function (e) {
+      var pid = (e.pointerId === undefined || e.pointerId === null) ? 'mouse' : e.pointerId;
+      if (tileEdit.press) {
+        if (tileEdit.press.pid !== pid) return;
+        var p = tileEdit.press;
+        /* a real move before the hold lands is a scroll, not
+           a press — the edit mode ask dies quietly */
+        if (Math.abs(e.clientX - p.x) > 10 || Math.abs(e.clientY - p.y) > 10) tilePressCancel();
+        return;
+      }
+      var pd = tileEdit.pend;
+      if (!pd || pd.pid !== pid) return;
+      if (!pd.active) {
+        if (Math.abs(e.clientX - pd.x) <= 6 && Math.abs(e.clientY - pd.y) <= 6) return;
+        tileDragStart(pd.card, pid, pd.x, pd.y);
+        if (!tileEdit.drag) { tileEdit.pend = null; return; }
+        pd.active = true;
+      }
+      tileDragMove(e.clientX, e.clientY);
+    });
+
+    function tilePointerEnd(e) {
+      var pid = (e.pointerId === undefined || e.pointerId === null) ? 'mouse' : e.pointerId;
+      if (tileEdit.press && tileEdit.press.pid === pid) tilePressCancel();
+      var pd = tileEdit.pend;
+      if (pd && pd.pid === pid) {
+        tileEdit.pend = null;
+        if (pd.active) tileDragDrop();
+      }
+    }
+    g.addEventListener('pointerup', tilePointerEnd);
+    g.addEventListener('pointercancel', tilePointerEnd);
+    /* Belt-and-braces: a release OUTSIDE the grid (the finger
+       dragged past the last card) still lands the drop. The
+       handlers are idempotent — whichever fires first does the
+       work, the other finds nothing left to do. Guarded like
+       everything else here: a world whose document cannot take
+       listeners (a bench harness's stub) simply goes without
+       the backstop — the grid's own handlers still land every
+       drop that ends over the grid. */
+    try {
+      if (document && document.addEventListener) {
+        document.addEventListener('pointerup', function (e) {
+          if (tileEdit.pend || tileEdit.drag) tilePointerEnd(e);
+        }, true);
+        document.addEventListener('pointercancel', function (e) {
+          if (tileEdit.pend || tileEdit.drag) tilePointerEnd(e);
+        }, true);
+      }
+    } catch (e) {}
+
+    /* The click gate: while editing — and for the one trailing
+       click of the long-press itself — no tap ever reaches a
+       card's onclick. Capture phase on the grid fires before
+       the event descends to the card. */
+    g.addEventListener('click', function (e) {
+      if (tileEdit.on || Date.now() < tileEdit.suppressUntil) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+
+    /* A long-press must never summon the browser's own
+       context menu mid-hold. */
+    g.addEventListener('contextmenu', function (e) {
+      if (tileCardOf(e.target)) e.preventDefault();
+    });
+  }
+  App._tileOrder = {
+    apply: tileOrderApply, next: tileOrderNext, insertIndex: tileInsertIndex,
+    load: tileOrderLoad, store: tileOrderStore,
+    state: tileEdit, enter: tileEditEnter, exit: tileEditExit, wire: wireTileEdit
+  };
+  /* ================= TILE-ORDER-END ================= */
 
   /* NAME-CARD-BEGIN — v147 (owner, Oct 17, 2026 21:31 MDT): the
      ONE-TIME name ask for accounts created before setup asked.

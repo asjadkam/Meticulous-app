@@ -147,6 +147,30 @@ body.updBannerOn .topbar,body.updBannerOn .modhead{top:var(--updBannerH,44px);}
 .modcard .s{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .modcard.locked{opacity:.55;}
 .modcard .lock{position:absolute;top:10px;right:12px;font-size:16px;}
+/* v458 (TILE-REARRANGE-NOV15): the jiggle edit mode — long-press
+   a dashboard tile and EVERY tile shakes (the iPhone home-screen
+   tell) while the user drags tiles into their own order. The
+   animation owns the transform while it runs, so the :active
+   press-scale above never fights it; even cards run a half-cycle
+   out of phase so the grid shimmers instead of marching. In edit
+   mode the cards give up text selection, the touch callout and
+   the scroll gesture (touch-action:none) so a drag is a drag,
+   never a page scroll. The dragged card lifts off the grid
+   (fixed, finger-following, pointer-transparent — the drop math
+   reads the OTHER cards' rects) over a dashed placeholder slot
+   that shows where it will land. Done is the one way out: a
+   quiet navy pill, bottom centre, only while editing. */
+@keyframes tileJiggle{from{transform:rotate(-1.1deg)}to{transform:rotate(1.1deg)}}
+.modcard.jiggle{animation:tileJiggle .25s ease-in-out infinite alternate;}
+.modgrid .modcard.jiggle:nth-child(even){animation-delay:-.125s;}
+.modgrid.editing .modcard{cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+.modcard.dragging{position:fixed;margin:0;z-index:64;opacity:.94;transform:scale(1.03);
+  box-shadow:0 16px 34px rgba(31,55,100,.30);pointer-events:none;cursor:grabbing;}
+.tilePh{border:2px dashed rgba(31,55,100,.28);border-radius:var(--radius);box-sizing:border-box;background:rgba(31,55,100,.04);}
+.tileDone{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:65;
+  background:var(--navy);color:#fff;border:0;border-radius:999px;padding:13px 42px;
+  font-size:16px;font-weight:700;box-shadow:0 8px 22px rgba(31,55,100,.35);cursor:pointer;}
+.tileDone.hidden{display:none;}
 
 /* ---------- module view ---------- */
 .modhead{background:var(--navy);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;
