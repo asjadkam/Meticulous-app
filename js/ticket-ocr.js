@@ -642,11 +642,38 @@
       /* v459: same-type containment — a fragment of a number
          already read under this type ("0299219" inside
          "PRO00299219") is the same printed number, never a
-         second field; a fuller read replaces its fragment */
+         second field; a fuller read replaces its fragment.
+         v460 (LAYOUT-RESTORE-DISPATCH bench, owner screenshot
+         Nov 15, 2026): containment compared the values as
+         PRINTED, so the same number read twice with ONE zero
+         dropped by the camera ("PRO00299219" / "PRO0299219" —
+         his card, verbatim) slipped past as two fields. The
+         comparison now also runs on the digit runs with
+         leading zeros stripped: equal digit runs, or one a
+         suffix of the other, are the same printed number. Two
+         genuinely different numbers (different digit runs,
+         neither a suffix of the other) still land as two. */
+      function digitRun(s) { return String(s).replace(/\D/g, '').replace(/^0+/, ''); }
+      var vdig = digitRun(value);
       for (var ci = 0; ci < out.length; ci++) {
         if (out[ci].type !== type) continue;
         var ev = out[ci].value.toLowerCase();
         if (ev === vl) return;
+        var edig = digitRun(out[ci].value);
+        if (vdig && edig && vdig.length >= 5 && edig.length >= 5 &&
+            (vdig === edig || vdig.slice(-edig.length) === edig || edig.slice(-vdig.length) === vdig)) {
+          /* the same number — keep the fuller printed read
+             (more digits as printed wins) */
+          if (String(value).length > String(out[ci].value).length) {
+            var oldV = out[ci].value;
+            out[ci].value = value;
+            for (var ck = 0; ck < takenLabels.length; ck++) {
+              if (takenLabels[ck].value === oldV.toLowerCase()) takenLabels[ck].value = vl;
+            }
+            seen[type + '|' + vl] = true;
+          }
+          return;
+        }
         if (vl.length >= 5 && ev.indexOf(vl) !== -1) return;
         if (ev.length >= 5 && vl.indexOf(ev) !== -1) {
           out[ci].value = value;
@@ -944,9 +971,26 @@
     /* v459: a party LABEL that prints its name inline —
        "Shipper: MAGNA SEATING SYSTEMS" — names the party even
        when the address block below it carries no name line.
-       A value that is itself an address is not a name. */
+       A value that is itself an address is not a name.
+       v460 (PU-DEL-ADDRESS-FIELDS bench): the label also heads
+       a block whose name stands on the NEXT printed line —
+       "Shipper:" alone, then the name — the shape a trip
+       report's party table takes through the camera read.
+       That name was missed, and with no address under it the
+       party vanished from the read entirely. */
     for (var ni = 0; ni < lines.length; ni++) {
       var nlm = lines[ni].match(/^\s*(shipper|ship\s*from|consignee|deliver\s*to|receiver)\s*[:\-]\s*(.{2,60})$/i);
+      if (!nlm) {
+        var nhead = lines[ni].match(/^\s*(shipper|ship\s*from|consignee|deliver\s*to|receiver)\s*[:\-]\s*$/i);
+        if (nhead) {
+          for (var nj = ni + 1; nj < Math.min(ni + 3, lines.length); nj++) {
+            var nnext = String(lines[nj] || '').replace(/\s+/g, ' ').trim();
+            if (!nnext) continue;
+            nlm = [null, nhead[1], nnext];
+            break;
+          }
+        }
+      }
       if (!nlm) continue;
       var nval = nlm[2].replace(/\s+/g, ' ').trim().replace(/,+$/, '');
       if (!/[A-Za-z]{2,}/.test(nval)) continue;
@@ -986,7 +1030,10 @@
     puDateTime: 'PU date/time', delDateTime: 'DEL date/time',
     commodity: 'Commodity', broker: 'Customs broker',
     temperature: 'Temperature', weight: 'Weight', quantity: 'Quantity',
-    shipperPhone: 'Shipper phone', consigneePhone: 'Consignee phone'
+    shipperPhone: 'Shipper phone', consigneePhone: 'Consignee phone',
+    /* v460 (DRIVER-FIELDS-EDITABLE, owner Nov 15, 2026): the
+       drivers a trip report prints are card fields too */
+    driver1: 'Driver 1', driver2: 'Driver 2'
   };
 
   /* value takers for the measured fields: text right after a
@@ -1165,8 +1212,37 @@
     if (!cons && blockPhones && blockPhones.delivery) cons = blockPhones.delivery;
     put('shipperPhone', ship);
     put('consigneePhone', cons);
-    /* the card's order: when, what, measures, broker, phones */
-    var ORDER = ['startDate', 'startTime', 'puDateTime', 'delDateTime', 'commodity', 'temperature', 'weight', 'quantity', 'broker', 'shipperPhone', 'consigneePhone'];
+    /* 6) v460 (DRIVER-FIELDS-EDITABLE, owner Nov 15, 2026 —
+       "why are the drivers not editable?"): a trip report
+       prints its drivers in the header ("Driver 1:RaeesKhan
+       Truck:T204 Driver 2:AdeelKhan Trailer:S1113"). The name
+       runs to the next printed label on the line (Truck /
+       Trailer / Start / Date / Time / Driver 2) or the line's
+       end; a name carrying digits or a number label's shape
+       is refused, never guessed. A bare "Driver:" names
+       Driver 1. These are fixed-form (not learned), like the
+       dates above. */
+    function driverName(num) {
+      var re = new RegExp('\\bDriver\\s*' + num + '\\s*[:#]\\s*([^\\n]{2,40})', 'i');
+      var m = t.match(re);
+      if (!m) return '';
+      var v = m[1].split(/\b(?:Truck|Tractor|Trailer|Start|Date|Time|Driver\s*\d)\b/i)[0].replace(/\s+/g, ' ').trim().replace(/[,:;]+$/, '');
+      if (!/^[A-Za-z][A-Za-z .'-]*$/.test(v)) return '';
+      if (/\b(?:AM|PM)$/i.test(v)) return '';
+      return v.slice(0, 40);
+    }
+    var drv1 = driverName('1'), drv2 = driverName('2');
+    if (!drv1) {
+      var dm = t.match(/\bDriver\s*[:#]\s*([^\n]{2,40})/i);
+      if (dm) {
+        var dv = dm[1].split(/\b(?:Truck|Tractor|Trailer|Start|Date|Time)\b/i)[0].replace(/\s+/g, ' ').trim().replace(/[,:;]+$/, '');
+        if (/^[A-Za-z][A-Za-z .'-]*$/.test(dv) && !/\b(?:AM|PM)$/i.test(dv)) drv1 = dv.slice(0, 40);
+      }
+    }
+    put('driver1', drv1);
+    put('driver2', drv2);
+    /* the card's order: when, what, measures, broker, phones, drivers */
+    var ORDER = ['startDate', 'startTime', 'puDateTime', 'delDateTime', 'commodity', 'temperature', 'weight', 'quantity', 'broker', 'shipperPhone', 'consigneePhone', 'driver1', 'driver2'];
     return ORDER.filter(function (k) { return found[k]; }).map(function (k) { return found[k]; });
   };
 

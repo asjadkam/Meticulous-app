@@ -216,7 +216,7 @@
   }
   /* the v459 detail keys the card may carry — anything else a
      patch offers is ignored, exactly like the v457 shapes */
-  var DETAIL_KEYS = { startDate: 1, startTime: 1, puDateTime: 1, delDateTime: 1, commodity: 1, broker: 1, temperature: 1, weight: 1, quantity: 1, shipperPhone: 1, consigneePhone: 1 };
+  var DETAIL_KEYS = { startDate: 1, startTime: 1, puDateTime: 1, delDateTime: 1, commodity: 1, broker: 1, temperature: 1, weight: 1, quantity: 1, shipperPhone: 1, consigneePhone: 1, driver1: 1, driver2: 1 };
 
   /* extractDetail(text, p) -> { companyName, companyAddress,
      pickupAddress, pickups, deliveries, numbers } — the v457
@@ -390,6 +390,15 @@
        lone labelled number (an invoice line in a family chat)
        still produces nothing. */
     var placeCount = detail.pickups.length + detail.deliveries.length + (detail.companyAddress ? 1 : 0);
+    /* v460 (PU-DEL-ADDRESS-FIELDS bench): a party the document
+       NAMES (a "Shipper:" / "Consignee:" block whose address
+       the camera read could not lift) is place structure too —
+       without this, a trip report whose party addresses did
+       not survive the read scored as no-dispatch at all and
+       its numbers/details never reached a card. A lone
+       labelled number still scores nothing (the test below is
+       unchanged: names alone, without numbers, add nothing). */
+    if (detail.pickupName || detail.deliveryName) placeCount += 1;
     if (placeCount >= 1 && detail.numbers.length >= 1) score += 3;
     else if (placeCount >= 2) score += 2;
     else if (placeCount === 1) score += 1;
@@ -972,7 +981,7 @@
     if (patch.pickupName !== undefined) f.pickupName = cleanStr(patch.pickupName);
     if (patch.deliveryName !== undefined) f.deliveryName = cleanStr(patch.deliveryName);
     if (Array.isArray(patch.details)) {
-      f.details = patch.details.filter(function (d) { return d && d.value && DETAIL_KEYS[d.key]; }).slice(0, 12).map(function (d) {
+      f.details = patch.details.filter(function (d) { return d && d.value && DETAIL_KEYS[d.key]; }).slice(0, 14).map(function (d) {
         return { key: d.key, label: cleanStr(d.label || d.key).slice(0, 40), value: cleanStr(d.value).slice(0, 120), srcLabel: cleanStr(d.srcLabel || '').slice(0, 60) };
       });
     }

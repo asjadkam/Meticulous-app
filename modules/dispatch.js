@@ -2736,9 +2736,18 @@
         pipeFlash = '';
       }
 
-      /* ---- Active dispatch card ---- */
+      /* ---- Active dispatch card ----
+         v460 (LAYOUT-RESTORE-DISPATCH, owner Nov 15, 2026
+         17:36–17:38 CST): the card's HTML is built HERE, at the
+         top of the string, but it is INSERTED further down —
+         after the Upcoming card (see the v460 splice at the
+         ingest door below). His order: "Active comes out
+         second if upcoming is there... If not 1st then read
+         from text." The card's markup and wiring are untouched;
+         only its place in the string moved. */
+      var dspActiveHtml460 = '';
       if (a) {
-        h += '<div class="card" style="border:2px solid var(--orange)"><h3>🚛 Active dispatch</h3>' +
+        dspActiveHtml460 = '<div class="card" style="border:2px solid var(--orange)"><h3>🚛 Active dispatch</h3>' +
           (isOffice
             ? '<div class="kv"><span>Status</span><b>Saved on this device</b></div>'
             : '<div class="kv"><span>Status</span><b style="color:var(--orange)">● In progress</b></div>') +
@@ -2770,6 +2779,27 @@
           '<button class="btn ghost small" id="dp_edit_active">✏️ Edit</button>' +
           '<button class="btn ghost small" id="dp_cancel">Cancel</button></div>' +
           '<div id="dp_closeflow"></div></div>';
+      }
+      /* v460: when NO future-dated dispatch will stand in an
+         Upcoming card, the Active card is FIRST — it is spliced
+         in right here, ahead of every other section. When an
+         Upcoming card stands, it stays withheld and is spliced
+         in directly under Upcoming (see the Upcoming block
+         below), making Active second. (The future set is
+         computed from the record list directly — the section
+         buckets further down are built later in this render.) */
+      var dspHasFuture460 = false;
+      try {
+        var today460 = ''; try { today460 = App._today(); } catch (e) {}
+        var lst460 = list();
+        for (var fi460 = 0; fi460 < lst460.length; fi460++) {
+          var rd460 = dspRecordDate(lst460[fi460]) || today460;
+          if (rd460 > today460) { dspHasFuture460 = true; break; }
+        }
+      } catch (e) {}
+      if (!dspHasFuture460) {
+        h += dspActiveHtml460;
+        dspActiveHtml460 = '';
       }
 
       /* ---- v129: the COMPLETED FACE ----
@@ -3069,6 +3099,12 @@
       if (futureItems.length) {
         h += '<div class="card" id="dp_upcoming_card"><h3>📅 Upcoming</h3>' +
           futureItems.map(dspRowHtml).join('') + '</div>';
+        /* v460 (LAYOUT-RESTORE-DISPATCH, owner Nov 15, 2026):
+           with an Upcoming card standing, the Active card (built
+           at the top, withheld there) stands SECOND — directly
+           under Upcoming, above everything else on the day. */
+        h += dspActiveHtml460;
+        dspActiveHtml460 = '';
       }
 
       /* ---- v241 (DSP-COMPLETED-DROPS, owner, Oct 22, 2026
@@ -3109,6 +3145,25 @@
           }).join('') + '</div>';
       }
 
+      /* v460 (LAYOUT-RESTORE-DISPATCH, owner Nov 15, 2026
+         17:36–17:38 CST — "Why did you mess with the layout? I
+         only asked you to repair the ocr not the layout!"):
+         the section order on this screen is HIS, settled here:
+         1. Upcoming (when one stands) — first;
+         2. Active — second when Upcoming stands, FIRST when
+            none does (it was spliced in at the top above);
+         3. Read from a message — the paste box + Read message,
+            with the Camera and Choose-from-file doors directly
+            under it (the v457 doors, in this card);
+         4. the form door / the form;
+         5. History — under all of it.
+         The v457/v459 intake's sin was never moving a card —
+         it was GROWING the suggestion card (structured fields,
+         details) until it filled the whole first screen and
+         pushed every section out of sight; this order is now
+         pinned by tools/dispatch-layout-460-test.js. Sections
+         that don't exist that day don't appear — no empty
+         placeholders. Nothing else about the layout changes. */
       h += '<div id="dp_ingest"></div>';
 
       /* ---- v132: THE PIPE — crew board + send (boss faces) ----
@@ -3930,9 +3985,21 @@
                 (function () {
                   var pks457 = (f.pickups && f.pickups.length) ? f.pickups : (f.pickupAddress ? [f.pickupAddress] : []);
                   /* v459: the section also opens for the named
-                     parties and the long-haul detail fields */
-                  var has457 = f.companyAddress || pks457.length || (f.deliveries && f.deliveries.length) || (f.numbers && f.numbers.length) ||
-                    f.pickupName || f.deliveryName || (f.details && f.details.length);
+                     parties and the long-haul detail fields.
+                     v460 (PU-DEL-ADDRESS-FIELDS, owner Nov 15,
+                     2026 — "Where are pu and delivery
+                     addresses?"): the section now opens on EVERY
+                     suggestion — a document-shaped read (typed
+                     numbers or details present) always carries
+                     the address fields, and the Pickup address /
+                     Delivery address rows stand on the card even
+                     when the reader could not fill them, so the
+                     driver can type what the document says. A
+                     plain chat dispatch (no document structure
+                     at all) keeps the old quiet card. */
+                  var hasDoc460 = (f.numbers && f.numbers.length) || (f.details && f.details.length) ||
+                    f.companyAddress || f.pickupName || f.deliveryName;
+                  var has457 = hasDoc460 || pks457.length || (f.deliveries && f.deliveries.length);
                   if (!has457) return '';
                   var dh = '<div style="margin-top:6px;border-top:1px dashed #bbb;padding-top:6px">';
                   dh += '<label class="f">Company address</label>' +
@@ -3942,17 +4009,24 @@
                      deliveries */
                   dh += '<label class="f">Shipper</label>' +
                     '<input data-sugname="shipper" data-sugid="' + esc(e.id) + '" value="' + esc(f.pickupName || '') + '" style="width:100%" placeholder="The shipper\'s name">';
-                  pks457.forEach(function (a, i) {
-                    dh += '<label class="f">' + (pks457.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup address') + '</label>' +
-                      '<input data-sugaddr="pickup:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
+                  /* v460: at least one Pickup address row always
+                     stands (the reader's read, or an empty row
+                     for the driver's own typing) */
+                  var pkRows460 = pks457.length ? pks457 : [''];
+                  pkRows460.forEach(function (a, i) {
+                    dh += '<label class="f">' + (pkRows460.length > 1 ? 'Pickup ' + (i + 1) : 'Pickup address') + '</label>' +
+                      '<input data-sugaddr="pickup:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%" placeholder="The pickup address">';
                   });
-                  if ((f.deliveries && f.deliveries.length) || f.deliveryName) {
-                    dh += '<label class="f">Consignee</label>' +
-                      '<input data-sugname="consignee" data-sugid="' + esc(e.id) + '" value="' + esc(f.deliveryName || '') + '" style="width:100%" placeholder="The consignee\'s name">';
-                  }
-                  (f.deliveries || []).forEach(function (a, i) {
+                  /* v460: the Consignee name stands with the
+                     delivery rows, filled or not */
+                  dh += '<label class="f">Consignee</label>' +
+                    '<input data-sugname="consignee" data-sugid="' + esc(e.id) + '" value="' + esc(f.deliveryName || '') + '" style="width:100%" placeholder="The consignee\'s name">';
+                  /* v460: at least one Delivery address row
+                     always stands, the same way */
+                  var dlRows460 = (f.deliveries && f.deliveries.length) ? f.deliveries : [''];
+                  dlRows460.forEach(function (a, i) {
                     dh += '<label class="f">Delivery ' + (i + 1) + '</label>' +
-                      '<input data-sugaddr="delivery:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%">';
+                      '<input data-sugaddr="delivery:' + i + '" data-sugid="' + esc(e.id) + '" value="' + esc(a) + '" style="width:100%" placeholder="The delivery address">';
                   });
                   dh += '<div style="margin-top:4px"><button class="btn small ghost" data-sugadddel="' + esc(e.id) + '">+ Add a delivery</button></div>';
                   (f.numbers || []).forEach(function (n, i) {

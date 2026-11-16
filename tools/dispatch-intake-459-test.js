@@ -32,7 +32,8 @@
  *  (a) R6 places: shipper/consignee blocks land as pickup /
  *      delivery with names and phones;
  *  (b) R6 numbers: PAPS + TRP typed, PRO exactly once;
- *  (c) R6 details: all eleven detail fields as printed;
+ *  (c) R6 details: all eleven detail fields as printed
+ *       (v460: + driver1/driver2 from the header — thirteen);
  *  (d) R6 is ONE dispatch (the document's own "Shipper:" /
  *      "Consignee:" headers are structure, not senders — the
  *      batch splitter must not cut the report into fragments);
@@ -202,7 +203,7 @@ console.log('(b) R6: PAPS + TRP typed; the printed PRO lands exactly once');
 }
 
 /* ================= (c) R6 details ================= */
-console.log('(c) R6: the eleven detail fields, as printed');
+console.log('(c) R6: the eleven detail fields, as printed (+ v460 drivers)');
 {
   const w = makeWorld(freshBacking());
   const T = w.TicketOCR, DI = w.DispatchIngest;
@@ -218,7 +219,9 @@ console.log('(c) R6: the eleven detail fields, as printed');
   ok('R6 customs broker named', String(det(d.details, 'broker') || '').indexOf('Thompson Ahern') !== -1, det(d.details, 'broker'));
   eq('R6 shipper phone', det(d.details, 'shipperPhone'), '(519) 653-2200');
   eq('R6 consignee phone', det(d.details, 'consigneePhone'), '(586) 826-4400');
-  eq('R6 eleven details, no more', d.details.length, 11);
+  eq('R6 driver 1 from the header', det(d.details, 'driver1'), 'RaeesKhan');
+  eq('R6 driver 2 from the header', det(d.details, 'driver2'), 'AdeelKhan');
+  eq('R6 thirteen details, no more (11 + v460 drivers)', d.details.length, 13);
 }
 
 /* ================= (d) one dispatch, not fragments ================= */
@@ -232,7 +235,7 @@ console.log('(d) R6: one document = one suggestion');
   const e = added.added[0];
   eq('the suggestion keeps the shipper name', e.fields.pickupName, 'MAGNA SEATING SYSTEMS');
   eq('the suggestion keeps the consignee name', e.fields.deliveryName, 'FCA STERLING HEIGHTS');
-  eq('the suggestion keeps all eleven details', e.fields.details.length, 11);
+  eq('the suggestion keeps all thirteen details', e.fields.details.length, 13);
 }
 
 /* ================= (e) the confirmation carries it ================= */
@@ -255,7 +258,9 @@ console.log('(e) R6: notes lines + structured keys; card edits persist');
   ok('the name is not written twice (it heads its address)', ff.notes.indexOf('Shipper: MAGNA') === -1);
   eq('structured pickupName survives', ff.pickupName, 'MAGNA SEATING SYSTEMS');
   eq('structured deliveryName survives', ff.deliveryName, 'FCA STERLING HEIGHTS');
-  eq('structured details survive whole', ff.details.length, 11);
+  eq('structured details survive whole', ff.details.length, 13);
+  ok('notes carry Driver 1', ff.notes.indexOf('Driver 1: RaeesKhan') !== -1, ff.notes);
+  ok('notes carry Driver 2', ff.notes.indexOf('Driver 2: AdeelKhan') !== -1);
   const upd = DI.updateSuggestionFields(e.id, {
     pickupName: 'MAGNA SEATING (CORRECTED)',
     deliveryName: 'FCA STERLING HEIGHTS PLANT',
@@ -266,7 +271,7 @@ console.log('(e) R6: notes lines + structured keys; card edits persist');
   eq('a corrected shipper name persists', upd.fields.pickupName, 'MAGNA SEATING (CORRECTED)');
   eq('a corrected consignee name persists', upd.fields.deliveryName, 'FCA STERLING HEIGHTS PLANT');
   eq('a corrected temperature persists', det(upd.fields.details, 'temperature'), '36 F');
-  eq('the other details survive the edit', upd.fields.details.length, 11);
+  eq('the other details survive the edit', upd.fields.details.length, 13);
 }
 
 /* ================= (f) the learning loop ================= */
